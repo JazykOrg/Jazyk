@@ -809,6 +809,24 @@ fn previous_release_capsule(
         }
     }
     old_wire(&mut capsule, current_hash, &base);
+    // A previous release recorded no argument digest on its tool receipts.
+    fn strip_digests(value: &mut Value) {
+        match value {
+            Value::Object(object) => {
+                if let Some(Value::Object(receipts)) = object.get_mut("tool_receipts") {
+                    for receipt in receipts.values_mut() {
+                        if let Some(receipt) = receipt.as_object_mut() {
+                            receipt.remove("args");
+                        }
+                    }
+                }
+                object.values_mut().for_each(strip_digests);
+            }
+            Value::Array(values) => values.iter_mut().for_each(strip_digests),
+            _ => {}
+        }
+    }
+    strip_digests(&mut capsule);
     // Parent keys were derived from the signature, so recompute exactly the old
     // key while preserving every captured sequence, frame and request receipt.
     let parents = capsule["parent"].as_object_mut().unwrap();

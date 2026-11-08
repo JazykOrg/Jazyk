@@ -51,6 +51,38 @@ pub struct McpServer {
     finished: std::sync::Mutex<Option<String>>,
     // Ownership for optional file tools between a ledger begin and successful record.
     ledger_target: std::sync::Mutex<Option<String>>,
+    // What the transport saw while a call runs: cancelled request ids and end of
+    // input, so a long poll stops waiting. Mirrors docs/frontends/mcp.md#the-work-loop.
+    interrupts: std::sync::Arc<Interrupts>,
+    // The guard and feedback cap across per-call sessions outside a batch, keyed by
+    // the ledger claim they ran under. Mirrors docs/compiler/sessions.md#repeated-calls.
+    call_memory: std::sync::Mutex<(Option<String>, crate::tools::CallMemory)>,
+}
+
+#[derive(Default)]
+struct Interrupts {
+    cancelled: std::sync::Mutex<BTreeSet<String>>,
+    current: std::sync::Mutex<Option<String>>,
+    eof: std::sync::atomic::AtomicBool,
+}
+
+impl Interrupts {
+    // Record a `notifications/cancelled` the reader saw, alone or inside a batch.
+    fn note(&self, message: &Value) {
+        match message {
+            Value::Array(items) => items.iter().for_each(|m| self.note(m)),
+            m if m["method"] == "notifications/cancelled" && !m["params"]["requestId"].is_null() => {
+                self.cancelled.lock().unwrap().insert(m["params"]["requestId"].to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // The running call should stop: the client cancelled it or went away.
+    fn stop_current(&self) -> bool {
+        self.eof.load(std::sync::atomic::Ordering::SeqCst)
+            || self.current.lock().unwrap().as_ref().is_some_and(|id| self.cancelled.lock().unwrap().contains(id))
+    }
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -169,7 +201,11 @@ impl McpServer {
         if self.modes.len() == 1 && self.modes[0] == "runtime" {
             return Ok(format!("{}{}", crate::task_runtime::PROMPT, integration));
         }
-        let policy = crate::agent_workflows::render(&self.project.root).map_err(|e| (-32603, e))?;
+        // A project file that does not load still lets the agent connect and repair it
+        // (docs/frontends/mcp.md#mcp-into-acp-sessions).
+        let policy = crate::agent_workflows::render(&self.project.root).unwrap_or_else(|e| format!(
+            "The project file `{}` does not load: {}. Tools that need the project refuse until it is repaired; edit the file with your own tools.",
+            crate::document_sets::CONFIG, e));
         let capabilities = if self.bridge.reader { reader_instructions() }
             else { instructions_for(&self.modes, self.write, initialized) };
         Ok(format!("{policy}\n\n## Serving capabilities\n\n{capabilities}\n{integration}"))
@@ -341,6 +377,8 @@ impl McpServer {
             delivered: std::sync::Mutex::new(Delivered { generation_contract, ..Default::default() }),
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
+            interrupts: Default::default(),
+            call_memory: Default::default(),
         }
     }
 
@@ -402,7 +440,8 @@ impl McpServer {
             let mut restored = self.children.lock().map_err(|_| "MCP child state poisoned")?;
             for (id, state) in children {
                 let project = workspace.resolve(Some(id)).map_err(|e| e.1)?;
-                let child = Self::with_bridge(project.clone(), project.out.clone(), self.modes.clone(), self.write, self.bridge.clone());
+                let mut child = Self::with_bridge(project.clone(), project.out.clone(), self.modes.clone(), self.write, self.bridge.clone());
+                child.interrupts = self.interrupts.clone();
                 child.restore(state.clone())?;
                 restored.insert(id.clone(), child);
             }
@@ -412,7 +451,7 @@ impl McpServer {
 
     // The server's own long poll: returns when the graph's generation counter moves, a
     // documentation file changes on disk, or the ledger or a watched deliverable file
-    // changes, or at the timeout. timeout_seconds 0 waits indefinitely; the default
+    // changes, or at the timeout, capped at an hour (0 waits for the cap); the default
     // returns because most MCP clients bound a tool call with their own timeout.
     // Mirrors docs/frontends/mcp.md#the-work-loop.
     // Watch from the first request. Mirrors docs/frontends/mcp.md#watching-edits.
@@ -504,9 +543,11 @@ impl McpServer {
     }
 
     fn await_changes(&self, params: &Value) -> Value {
-        let timeout = params["arguments"]["timeout_seconds"]
-            .as_u64()
-            .unwrap_or(300);
+        // Capped, and 0 waits for the cap: a call the client forgot still ends.
+        let timeout = match params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300) {
+            0 => AWAIT_CAP_SECS,
+            t => t.min(AWAIT_CAP_SECS),
+        };
         let gs = self.current_gen_settings();
         let fingerprint = |path: &std::path::Path| -> String {
             crate::vfs::entry_metadata(path)
@@ -535,9 +576,7 @@ impl McpServer {
             .map(|f| (f.clone(), fingerprint(&f)))
             .collect();
         let start_gen = Store::load(&self.out).status.generation;
-        let deadline = (timeout > 0).then(|| {
-            crate::sys::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600))
-        });
+        let deadline = Some(crate::sys::Instant::now() + std::time::Duration::from_secs(timeout));
         let mut changed_docs: Vec<String> = Vec::new();
         let mut changed = false;
         // A tab has one thread and nothing else that could move the graph while it
@@ -548,7 +587,7 @@ impl McpServer {
         let edits = crate::edit_watch::for_root(&self.project.root);
         #[cfg(not(target_arch = "wasm32"))]
         let edit_cursor = edits.cursor();
-        while deadline.is_none_or(|d| crate::sys::Instant::now() < d) {
+        while deadline.is_none_or(|d| crate::sys::Instant::now() < d) && !self.interrupts.stop_current() {
             // A recorded edit wakes the poll at once; the 2 s tick still catches the
             // generation, ledger, and control surfaces.
             #[cfg(not(target_arch = "wasm32"))]
@@ -776,7 +815,8 @@ impl McpServer {
     }
 
     fn scoped_matcher_call(&self, name: &str, args: &Value) -> Result<Value, (i64,String)> {
-        if !self.serves_matcher_repairs() { return Err((-32602,"matcher edits are unavailable in this worker".into())); }
+        // Not listed here, so not served: an unknown tool, like any other.
+        if !self.serves_matcher_repairs() { return Err((-32602,format!("{UNKNOWN_TOOL} `{}`", name))); }
         let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e|(-32602,e.1))?;
         if name == "list_document_sets" { return Ok(result_value(workspace.summary())); }
         if self.finished.lock().unwrap().is_some() { return Err((-32602,"this worker session is complete".into())); }
@@ -899,45 +939,92 @@ impl McpServer {
 
     // The stdio transport: line-delimited JSON-RPC until stdin ends.
     pub fn run(&self) {
-        let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
-        let mut input = stdin.lock();
-        let mut bytes: Vec<u8> = Vec::new();
-        loop {
+        self.serve(std::io::BufReader::new(std::io::stdin()), std::io::stdout());
+        self.finish();
+    }
+
+    // The stdio loop over any reader and writer. A reader thread takes the lines so a
+    // cancellation or the end of input reaches a call that is still running.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    pub fn serve<R: BufRead + Send + 'static, W: Write>(&self, mut input: R, mut out: W) {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let interrupts = self.interrupts.clone();
+        std::thread::spawn(move || loop {
             // Bytes, not `lines()`: one non-UTF-8 byte must not end the serving as if
             // the agent had hung up, and a line is decoded lossily instead.
-            bytes.clear();
+            let mut bytes: Vec<u8> = Vec::new();
             match input.read_until(b'\n', &mut bytes) {
-                Ok(0) | Err(_) => break,
+                Ok(0) | Err(_) => {
+                    interrupts.eof.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
+                }
                 Ok(_) => {}
             }
+            if let Ok(message) = serde_json::from_slice::<Value>(&bytes) {
+                interrupts.note(&message);
+            }
+            if tx.send(bytes).is_err() {
+                break;
+            }
+        });
+        for bytes in rx {
             let line = String::from_utf8_lossy(&bytes);
             if line.trim().is_empty() {
                 continue;
             }
-            let Ok(req) = serde_json::from_str::<Value>(&line) else {
-                continue;
+            let resp = match serde_json::from_str::<Value>(&line) {
+                Ok(message) => self.dispatch_message(&message),
+                Err(e) => Some(json!({"jsonrpc": "2.0", "id": null,
+                    "error": {"code": -32700, "message": format!("parse error: {}", e)}})),
             };
-            let Some(resp) = self.dispatch(&req) else {
-                continue; // notification, no response
-            };
-            let mut out = stdout.lock();
-            writeln!(out, "{}", resp).ok();
-            out.flush().ok();
+            if let Some(resp) = resp {
+                writeln!(out, "{}", resp).ok();
+                out.flush().ok();
+            }
         }
-        self.finish();
+    }
+
+    // One parsed message, whatever the transport: a request answers its response, a
+    // notification nothing, a batch the array of its responses (None when it held
+    // notifications only), and anything else an invalid request.
+    pub fn dispatch_message(&self, message: &Value) -> Option<Value> {
+        let invalid = |what: &str| json!({"jsonrpc": "2.0", "id": null,
+            "error": {"code": -32600, "message": format!("invalid request: {}", what)}});
+        match message {
+            Value::Array(items) if items.is_empty() => Some(invalid("an empty batch")),
+            Value::Array(items) => {
+                let replies: Vec<Value> = items.iter().filter_map(|m| match m {
+                    Value::Object(_) => self.dispatch(m),
+                    _ => Some(invalid("a batch entry is not an object")),
+                }).collect();
+                (!replies.is_empty()).then_some(Value::Array(replies))
+            }
+            Value::Object(_) => self.dispatch(message),
+            _ => Some(invalid("not a JSON-RPC object")),
+        }
     }
 
     // One JSON-RPC message in, its response out, whatever the transport carried it
     // (the stdio loop above, or the HTTP serving in acp/http.rs). A notification (no
-    // id) gets no response. Mirrors docs/frontends/mcp.md#mcp-over-http.
+    // id) gets no response, and neither does a request the client cancelled while it
+    // ran. Mirrors docs/frontends/mcp.md#mcp-over-http.
     pub fn dispatch(&self, req: &Value) -> Option<Value> {
-        let method = req["method"].as_str().unwrap_or_default().to_string();
         let id = req["id"].clone();
         if id.is_null() {
             return None;
         }
-        Some(match self.handle(&method, &req["params"]) {
+        let Some(method) = req["method"].as_str() else {
+            return Some(json!({"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32600, "message": "invalid request: method is required"}}));
+        };
+        let key = id.to_string();
+        *self.interrupts.current.lock().unwrap() = Some(key.clone());
+        let result = self.handle(method, &req["params"]);
+        *self.interrupts.current.lock().unwrap() = None;
+        if self.interrupts.cancelled.lock().unwrap().remove(&key) {
+            return None;
+        }
+        Some(match result {
             Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
             Err((code, msg)) => {
                 json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
@@ -1211,7 +1298,7 @@ impl McpServer {
         // session. The first batch of a serving ships the agent contract and the
         // skills in full; later batches elide what the agent already saw.
         let (loaded, mut skills) = crate::session::initial_loaded(&store, &goals);
-        let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
+        let mut pb = crate::session::ProjectBlock::from_goals(&store, &board.goals, &goals, &control.compile)
             .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
         let full = args["full"].as_bool() == Some(true);
@@ -2031,11 +2118,10 @@ impl McpServer {
             return self.handle(method, params);
         }
         if self.cancelled() { return Err((-32602, "the build was stopped".into())); }
-        if !self.serves_project_writes() {
-            return Err((-32602, "this serving is read-only".into()));
-        }
-        if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
-            return Err((-32602, "nested compilation is unavailable in a scoped worker".into()));
+        // Neither a read-only nor a scoped serving lists the tool, so neither serves it.
+        if !self.serves_project_writes()
+            || self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
+            return Err((-32602, format!("{UNKNOWN_TOOL} `compile_document_sets`")));
         }
         let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         let response = crate::webapi::dispatch::request_at_async(&workspace.root, "POST", "/api/compile", &params["arguments"].to_string()).await;
@@ -2044,7 +2130,29 @@ impl McpServer {
         Ok(result_value(response))
     }
 
+    // A refusal inside a tool call is a tool result the agent can read and repair; a
+    // JSON-RPC error stays for an unknown method or tool, a call without a name, and a
+    // stopped or suspended run. Mirrors docs/frontends/mcp.md#toolsets.
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        let reply = self.route(method, params);
+        if method != "tools/call" || !params["name"].is_string() {
+            return reply;
+        }
+        match reply {
+            Err((code, message))
+                if code != -32601
+                    && !message.starts_with(UNKNOWN_TOOL)
+                    && !crate::session_recovery::is_interruption(&message)
+                    && message != "execution suspended"
+                    && !self.cancelled() =>
+            {
+                Ok(text_result(json!({"error": {"rule": "refused", "message": message}}), true))
+            }
+            other => other,
+        }
+    }
+
+    fn route(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
         if method == "tools/call" && crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
             if self.modes.len() == 1 && self.modes[0] == "runtime" {
@@ -2102,8 +2210,22 @@ impl McpServer {
         if self.modes.len() == 1 && self.modes[0] == "runtime" {
             return self.handle_local(method, params);
         }
-        let w =
-            crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
+        let w = match crate::document_sets::Workspace::load(&self.project.root) {
+            Ok(w) => w,
+            // A broken project file refuses tool calls, not the connection: initialize,
+            // ping, and tools/list still answer (docs/frontends/mcp.md#mcp-into-acp-sessions).
+            Err(e) if method == "tools/call" || !matches!(method, "initialize" | "ping" | "tools/list") => return Err((-32602, e.1)),
+            Err(_) if method == "initialize" => {
+                self.watch_edits();
+                if let Some(name) = params["clientInfo"]["name"].as_str() {
+                    *self.client.lock().unwrap() = Some(name.into());
+                }
+                return Ok(json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
+                    "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
+                    "instructions":self.initialize_instructions(self.initialized())?}));
+            }
+            Err(_) => return self.handle_local(method, params),
+        };
         if method == "initialize" {
             self.watch_edits();
             // Registration belongs to each set-local child, created lazily.
@@ -2111,7 +2233,7 @@ impl McpServer {
                 *self.client.lock().unwrap() = Some(name.into());
             }
             return Ok(
-                json!({"protocolVersion":params["protocolVersion"].as_str().unwrap_or("2024-11-05"),
+                json!({"protocolVersion":negotiate_protocol(&params["protocolVersion"]),
                 "capabilities":{"tools":{}},"serverInfo":{"name":"jazyk","version":env!("CARGO_PKG_VERSION")},
                 "instructions":self.initialize_instructions(w.exists)?}),
             );
@@ -2121,7 +2243,8 @@ impl McpServer {
             let mut result = self.handle_local(method, params)?;
             let tools = result["tools"].as_array_mut().unwrap();
             for t in tools.iter_mut() {
-                if crate::agent_workflows::TOOLS.contains(&t["name"].as_str().unwrap_or_default()) { continue; }
+                // Project-wide tools take no set: project_context says so in its description.
+                if crate::agent_workflows::TOOLS.contains(&t["name"].as_str().unwrap_or_default()) || t["name"] == "project_context" { continue; }
                 t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
@@ -2155,7 +2278,8 @@ impl McpServer {
         }
         if name == "write_document" {
             if !writable || !self.modes.iter().any(|m| m == "chat") {
-                return Err((-32602, "document edits require a writable chat serving".into()));
+                // Listed only on a writable chat serving: elsewhere it is not served.
+                return Err((-32602, format!("{UNKNOWN_TOOL} `write_document`")));
             }
             let args = &params["arguments"];
             let path = args["path"].as_str().ok_or((-32602, "path is required".into()))?;
@@ -2179,9 +2303,12 @@ impl McpServer {
                 if base != hash.as_deref() || (base.is_none() && old.is_some()) {
                     return Ok(text_result(json!({"error":{"rule":"stale-document","message":"document changed; read_document before retrying","diskHash":hash}}), true));
                 }
-                sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text)
-                    .map_err(|m| (-32603, m))?;
-                return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true})));
+                match sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text) {
+                    Ok(()) => return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true}))),
+                    // Nothing listening: the direct write below, as for any serving.
+                    Err(SinkError::Unavailable(reason)) => self.note(&format!("edit sink unavailable ({reason}); writing {path} directly")),
+                    Err(SinkError::Failed(m)) => return Ok(text_result(json!({"error":{"rule":"editor-refused","message":format!("the editor did not apply the edit: {m}")}}), true)),
+                }
             }
             return match crate::webapi::docs::doc_write(&project, path, text, base) {
                 crate::webapi::docs::DocWrite::Written(v) => Ok(result_value(v)),
@@ -2206,7 +2333,7 @@ impl McpServer {
         }
         if name == "compile_document_sets" {
             if !writable {
-                return Err((-32602, "this serving is read-only".into()));
+                return Err((-32602, format!("{UNKNOWN_TOOL} `{name}`")));
             }
             #[cfg(target_arch = "wasm32")]
             return Err((-32602, "compilation requires the asynchronous MCP entry point".into()));
@@ -2233,7 +2360,7 @@ impl McpServer {
                 | "remove_document_set"
         ) {
             if !writable {
-                return Err((-32602, "this serving is read-only".into()));
+                return Err((-32602, format!("{UNKNOWN_TOOL} `{name}`")));
             }
             if matches!(name, "preview_document_set" | "update_document_set") {
                 if let Some(id) = params["arguments"]["set"]["id"].as_str() {
@@ -2298,13 +2425,15 @@ impl McpServer {
             }
             if !children.contains_key(&id) {
                 let p = w.resolve(Some(&id)).map_err(|e| (-32602, e.1))?;
-                let child = Self::with_bridge(
+                let mut child = Self::with_bridge(
                     p.clone(),
                     p.out.clone(),
                     self.modes.clone(),
                     self.write,
                     self.bridge.clone(),
                 );
+                // A set's call runs under the transport's request: one interrupt record.
+                child.interrupts = self.interrupts.clone();
                 child.handle_local("initialize",&json!({"clientInfo":{"name":self.client.lock().unwrap().clone().unwrap_or_else(||"agent".into())}}))?;
                 children.insert(id.clone(), child);
             }
@@ -2378,12 +2507,11 @@ impl McpServer {
                         }
                     }
                 }
-                // The serving is version-lenient line JSON; echoing the client's
-                // requested protocol version keeps strict clients (rmcp) from
-                // treating the reply as a downgrade.
-                let requested = params["protocolVersion"].as_str().unwrap_or("2024-11-05");
+                // Echoing a supported requested version keeps strict clients (rmcp)
+                // from treating the reply as a downgrade; an unknown one gets the
+                // latest the serving speaks (docs/frontends/mcp.md#mcp-into-acp-sessions).
                 Ok(json!({
-                    "protocolVersion": requested,
+                    "protocolVersion": negotiate_protocol(&params["protocolVersion"]),
                     "capabilities": {"tools": {}},
                     "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
                     "instructions": self.initialize_instructions(self.initialized())?
@@ -2415,7 +2543,7 @@ impl McpServer {
                 // catalog's own `done` (the goal tools) yields to the lifecycle entry:
                 // a client that forwards the list as is (Claude Code) is refused by
                 // its API when a name repeats.
-                if self.modes.iter().any(|m| m == "compile" || m == "chat") {
+                if !self.bridge.reader && self.modes.iter().any(|m| m == "compile" || m == "chat") {
                     tools.retain(|t| !LIFECYCLE.contains(&t["name"].as_str().unwrap_or_default()));
                     tools.push(json!({
                         "name": "goals",
@@ -2495,7 +2623,7 @@ impl McpServer {
                         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "scope": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}
                     }));
                 }
-                if self.modes.iter().any(|m| m == "chat") {
+                if !self.bridge.reader && self.modes.iter().any(|m| m == "chat") {
                     tools.push(json!({
                         "name": "revise_requirement",
                         "description": "Change one requirement: the new prose replaces the old verbatim quote in its source document, and the graph node updates in the same atomic commit. Optional statement carries the new statement (defaults to keeping the old one).",
@@ -2552,8 +2680,8 @@ impl McpServer {
                     } else {
                         tools.push(json!({
                             "name": "update_project_settings",
-                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile, workflow.generate, workflow.worker, acp.agent, gen.deliverable, gen.worker, llm.model, llm.base_url.",
-                            "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}}, "required": ["settings"], "additionalProperties": false}
+                            "description": "Edit jazyk.toml keys as minimal line edits. Supported keys: workflow.compile and workflow.generate (manual|auto), workflow.worker (internal|agent|any), gen.deliverable, gen.worker (agentic|pipeline). baseHash is the configuration hash from list_document_sets; refused while a build runs.",
+                            "inputSchema": {"type": "object", "properties": {"settings": {"type": "object", "additionalProperties": {"type": "string"}}, "baseHash": {"type": "string", "description": "configuration hash from list_document_sets"}}, "required": ["settings", "baseHash"], "additionalProperties": false}
                         }));
                     }
                 }
@@ -2564,8 +2692,8 @@ impl McpServer {
                     tools.push(Self::recent_edits_tool());
                     tools.push(json!({
                         "name": "await_changes",
-                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
-                        "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
+                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s, at most 3600s; 0 waits the full 3600s, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
+                        "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged, at most 3600; 0 = wait 3600"}}, "additionalProperties": false}
                     }));
                 }
                 // One name, one tool, whatever the modes: the union of servings must
@@ -2639,6 +2767,15 @@ impl McpServer {
     }
 
     fn tool_call(&self, name: &str, params: &Value, _label: &str) -> Result<Value, (i64, String)> {
+        // A reader serving answers reads alone, whatever its mode lists elsewhere: the
+        // chat tools, the lifecycles, and every write are not served there
+        // (docs/frontends/wasm.md#chat).
+        if self.bridge.reader
+            && !crate::tools::READ_TOOLS.contains(&name)
+            && !matches!(name, "await_changes" | "recent_edits")
+        {
+            return Err((-32602, format!("{UNKNOWN_TOOL} `{}`", name)));
+        }
         {
             {
                 let name = name.to_string();
@@ -2869,7 +3006,7 @@ impl McpServer {
                 let args = params["arguments"].clone();
                 let enabled = self.enabled_tools();
                 if !enabled.contains(&name.as_str()) {
-                    return Err((-32602, format!("unknown or disabled tool `{}`", name)));
+                    return Err((-32602, format!("{UNKNOWN_TOOL} `{}`", name)));
                 }
                 let is_write = !crate::tools::READ_TOOLS.contains(&name.as_str())
                     && name != crate::tools::FEEDBACK_TOOL;
@@ -3217,13 +3354,25 @@ impl McpServer {
                     }
                     scope.target = target;
                 }
+                let unit = (!scope.target.is_empty()).then(|| scope.target.clone());
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = self.current_gen_settings();
                 session.lint = self.project.linting.clone();
                 session.caller =
                     self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
-                match session.dispatch(&name, &args) {
+                // One session per call, one guard per unit: the serving's ledger claim,
+                // or its calls outside any claim.
+                {
+                    let mut memory = self.call_memory.lock().unwrap();
+                    if memory.0 != unit {
+                        *memory = (unit.clone(), Default::default());
+                    }
+                    session.adopt_memory(memory.1.clone());
+                }
+                let reply = session.dispatch(&name, &args);
+                *self.call_memory.lock().unwrap() = (unit, session.memory());
+                match reply {
                     Ok(v) => {
                         if matches!(name.as_str(), "begin_generation" | "begin_binding") {
                             if let Some(target) = args[if name == "begin_generation" { "entity" } else { "requirement" }].as_str() {
@@ -3297,10 +3446,14 @@ impl McpServer {
             return Err("DOCX and PDF cannot be changed by a text edit; use the format editor".into());
         }
         if let Some(sink) = &self.bridge.edit_sink {
-            if sink_write(sink, &path, old_text, new_text, full).is_ok() {
-                return Ok(());
+            match sink_write(sink, &path, old_text, new_text, full) {
+                Ok(()) => return Ok(()),
+                // Nothing listening, or an IDE that cannot take edits: write directly.
+                Err(SinkError::Unavailable(reason)) => self.note(&format!("edit sink unavailable ({reason}); writing {rel} directly")),
+                // A refusal or an unanswered edit is the call's failure; writing the
+                // disk behind the IDE could race or override its answer.
+                Err(SinkError::Failed(e)) => return Err(format!("the editor did not apply the edit to {}: {}", rel, e)),
             }
-            // Nothing listening: fall through to the direct write.
         }
         crate::vfs::write(&path, full).map_err(|e| format!("write {}: {}", path.display(), e))
     }
@@ -3732,10 +3885,18 @@ impl McpServer {
                 return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", doc, e)}})
             }
         };
-        // The insertion point: after the located quote, or at the section's end.
+        // The insertion point: after the quote located inside the named section, or at
+        // the section's end. A quote elsewhere in the document is not this section's.
+        let window = Some(sec_raw.trim())
+            .filter(|raw| !raw.is_empty())
+            .and_then(|raw| old_full.find(raw).map(|b| (b, b + raw.len())));
         let edit = match args["after_quote"].as_str() {
-            Some(q) => match crate::md::locate_bytes(&old_full, q) {
-                Some((_, at)) => ProseEdit {
+            Some(_) if window.is_none() => {
+                return json!({"error": {"rule": "stale-anchor", "message": format!(
+                    "section {}#{} drifted from the document on disk; compile first", doc, section)}})
+            }
+            Some(q) => match window.and_then(|(wb, we)| crate::md::locate_bytes(&old_full[wb..we], q).map(|(_, e)| wb + e)) {
+                Some(at) => ProseEdit {
                     doc: doc.clone(),
                     section: section.clone(),
                     old_text: String::new(),
@@ -3749,7 +3910,8 @@ impl McpServer {
                     old_full,
                 },
                 None => {
-                    return json!({"error": {"rule": "stale-anchor", "message": "after_quote does not locate in the document"}})
+                    return json!({"error": {"rule": "stale-anchor", "message": format!(
+                        "after_quote does not locate in {}#{}; copy a sentence of that section verbatim", doc, section)}})
                 }
             },
             None => match ProseEdit::locate(&doc, &section, Some(&sec_raw), &old_full, "", &text) {
@@ -3833,15 +3995,13 @@ impl McpServer {
         if root.join(crate::document_sets::CONFIG).vexists() {
             return json!({"error": {"rule": "already-a-project", "message": "jazyk.toml already exists here"}});
         }
-        if let Err(e) = crate::vfs::write(
-            {
-                let path = root.join(".jazyk/jazyk.toml");
-                crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
-                path
-            },
-            crate::cli::INIT_TOML,
-        ) {
-            return json!({"error": {"rule": "write-failed", "message": e.to_string()}});
+        let path = root.join(crate::document_sets::CONFIG);
+        let written = path
+            .parent()
+            .map_or(Ok(()), crate::vfs::create_dir_all)
+            .and_then(|_| crate::vfs::write(&path, crate::cli::INIT_TOML));
+        if let Err(e) = written {
+            return json!({"error": {"rule": "write-failed", "message": format!("{}: {}", path.display(), e)}});
         }
         let made = match crate::cli::init_scaffold(root) {
             Ok(made) => made,
@@ -3856,17 +4016,18 @@ impl McpServer {
         json!({"error": "the browser backend does not scaffold a project"})
     }
 
+    // Edits the allowlisted keys under the project lock and a configuration hash, never
+    // while a build runs. The agent, executor, and model settings stay out of reach.
+    // Mirrors docs/frontends/acp.md#project-tools.
     fn update_project_settings(&self, args: &Value) -> Value {
-        const KEYS: [&str; 8] = [
-            "workflow.compile",
-            "workflow.generate",
-            "workflow.worker",
-            "acp.agent",
-            "gen.deliverable",
-            "gen.worker",
-            "llm.model",
-            "llm.base_url",
+        const KEYS: [(&str, &[&str]); 5] = [
+            ("workflow.compile", &["manual", "auto"]),
+            ("workflow.generate", &["manual", "auto"]),
+            ("workflow.worker", &["internal", "agent", "any"]),
+            ("gen.deliverable", &[]),
+            ("gen.worker", &["agentic", "pipeline"]),
         ];
+        let supported = || KEYS.iter().map(|(k, _)| *k).collect::<Vec<_>>().join(", ");
         let Some(settings) = args["settings"].as_object() else {
             return json!({"error": {"rule": "missing-argument", "message": "settings is required: a map of key to value"}});
         };
@@ -3874,45 +4035,111 @@ impl McpServer {
             return json!({"error": {"rule": "not-a-project", "message":
                 "no jazyk.toml here to edit; call init_project first"}});
         }
-        let path = self.project.root.join(crate::document_sets::CONFIG);
-        let old_full = crate::vfs::read_to_string(&path).unwrap_or_default();
-        let mut full = old_full.clone();
         for (key, value) in settings {
-            if !KEYS.contains(&key.as_str()) {
+            let Some((_, allowed)) = KEYS.iter().find(|(k, _)| k == key) else {
                 return json!({"error": {"rule": "unsupported-key", "message": format!(
-                    "`{}` is not editable here; supported: {}", key, KEYS.join(", "))}});
-            }
+                    "`{}` is not editable here; supported: {}", key, supported())}});
+            };
             let Some(value) = value.as_str() else {
                 return json!({"error": {"rule": "bad-value", "message": format!("`{}` takes a string value", key)}});
             };
-            let (section, k) = key.split_once('.').unwrap();
-            full = toml_set(&full, section, k, value);
+            if !allowed.is_empty() && !allowed.contains(&value) {
+                return json!({"error": {"rule": "bad-value", "message": format!(
+                    "`{}` takes one of {}", key, allowed.join(", "))}});
+            }
+        }
+        let Some(base) = args["baseHash"].as_str() else {
+            return json!({"error": {"rule": "missing-argument", "message":
+                "baseHash is required: the configuration hash list_document_sets returns"}});
+        };
+        let root = &self.project.root;
+        let Ok(_project) = crate::document_sets::ProjectLock::acquire(root, "project.lock") else {
+            return json!({"error": {"rule": "project-busy", "message":
+                "a build or another project operation holds the project; retry when it finishes"}});
+        };
+        let before = match crate::document_sets::Workspace::load(root) {
+            Ok(w) => w,
+            Err((_, e)) => return json!({"error": {"rule": "bad-config", "message": e}}),
+        };
+        let running = std::iter::once(self.out.clone())
+            .chain(before.sets.iter().filter_map(|s| before.resolve(Some(&s.id)).ok().map(|p| p.out)))
+            .find_map(|out| crate::control::build_lease(&out));
+        if let Some(lease) = running {
+            return json!({"error": {"rule": "build-running", "message": format!(
+                "a build is running (lease `{}`); settings change after it finishes", lease.worker)}});
+        }
+        let path = root.join(crate::document_sets::CONFIG);
+        let Ok(_config) = crate::document_sets::ProjectLock::acquire(root, "config.lock") else {
+            return json!({"error": {"rule": "project-busy", "message": "another configuration edit is in progress; retry"}});
+        };
+        let old_full = match crate::vfs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) => return json!({"error": {"rule": "read-failed", "message": format!("{}: {}", path.display(), e)}}),
+        };
+        if crate::model::hash_hex(&old_full) != base || before.hash != base {
+            return json!({"error": {"rule": "stale-config", "message":
+                "configuration changed; call list_document_sets for the current hash and review the file before retrying"}});
+        }
+        let mut full = old_full.clone();
+        for (key, value) in settings {
+            let (section, k) = key.split_once('.').unwrap_or(("", key.as_str()));
+            full = match try_toml_set(&full, section, k, value.as_str().unwrap_or_default()) {
+                Ok(text) => text,
+                Err(e) => return json!({"error": {"rule": "bad-config", "message": e}}),
+            };
+        }
+        if let Err((_, e)) = crate::document_sets::Workspace::parse(root, &full, true) {
+            return json!({"error": {"rule": "bad-config", "message": e}});
         }
         if let Err(e) = self.write_edit(crate::document_sets::CONFIG, &old_full, &full, &full) {
             return json!({"error": {"rule": "write-failed", "message": e}});
         }
-        crate::agents_md::sync(&self.project.root).report();
+        drop(_config);
+        crate::agents_md::sync(root).report();
         json!({"updated": settings.keys().cloned().collect::<Vec<_>>(),
+               "hash": crate::model::hash_hex(&full),
                "note": "jazyk.toml edited in place; a running GUI reloads it live"})
     }
 }
 
 // Minimal line edit on a TOML text: set `key = "value"` inside `[section]`, appending
-// the section or the key when missing, touching nothing else.
+// the section or the key when missing, touching nothing else. A text that does not
+// parse, or a section path that names a non-table value, comes back unchanged.
 pub fn toml_set(text: &str, section: &str, key: &str, value: &str) -> String {
-    let Ok(mut document) = text.parse::<toml_edit::DocumentMut>() else {
-        return text.to_string();
-    };
-    if section.is_empty() {
-        document[key] = toml_edit::value(value);
-    } else {
-        let mut item = &mut document[section.split('.').next().unwrap()];
-        for part in section.split('.').skip(1) {
-            item = &mut item[part];
-        }
-        item[key] = toml_edit::value(value);
+    try_toml_set(text, section, key, value).unwrap_or_else(|_| text.to_string())
+}
+
+// The same edit, saying why it cannot apply instead of panicking or guessing.
+pub fn try_toml_set(text: &str, section: &str, key: &str, value: &str) -> Result<String, String> {
+    let mut document = text
+        .parse::<toml_edit::DocumentMut>()
+        .map_err(|e| format!("{} does not parse: {}", crate::document_sets::CONFIG, e))?;
+    let mut table: &mut dyn toml_edit::TableLike = document.as_table_mut();
+    let mut path = String::new();
+    for part in section.split('.').filter(|p| !p.is_empty()) {
+        path = if path.is_empty() { part.to_string() } else { format!("{path}.{part}") };
+        table = table
+            .entry(part)
+            .or_insert(toml_edit::Item::Table(toml_edit::Table::new()))
+            .as_table_like_mut()
+            .ok_or_else(|| format!("`{path}` is not a table in {}", crate::document_sets::CONFIG))?;
     }
-    document.to_string()
+    if table.get(key).is_some_and(|item| item.is_table_like()) {
+        return Err(format!("`{key}` is a table in {}, not a value", crate::document_sets::CONFIG));
+    }
+    table.insert(key, toml_edit::value(value));
+    Ok(document.to_string())
+}
+
+// Why a delegated edit did not land: the sink cannot take edits at all (nothing
+// listens, or the IDE lacks the capability), or it was asked and failed.
+// Mirrors docs/frontends/acp.md#doc-edit-delegation.
+#[derive(Debug)]
+enum SinkError {
+    Unavailable(String),
+    // A tab has no sink to fail.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    Failed(String),
 }
 
 // One edit over the delegation socket: a JSON line out, an acknowledgement line back.
@@ -3924,42 +4151,40 @@ fn sink_write(
     old_text: &str,
     new_text: &str,
     full: &str,
-) -> Result<(), String> {
+) -> Result<(), SinkError> {
     if crate::vfs::is_scoped() {
-        return Err("hosted workspaces do not connect to editor sockets".into());
+        return Err(SinkError::Unavailable("hosted workspaces do not connect to editor sockets".into()));
     }
     use std::io::{BufRead, BufReader, Write};
-    let mut stream = crate::local_socket::UnixStream::connect(sink).map_err(|e| e.to_string())?;
+    let mut stream = crate::local_socket::UnixStream::connect(sink)
+        .map_err(|e| SinkError::Unavailable(e.to_string()))?;
+    let failed = |e: std::io::Error| SinkError::Failed(e.to_string());
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(30)))
-        .map_err(|e| e.to_string())?;
+        .map_err(failed)?;
     let line = json!({"path": path.display().to_string(), "oldText": old_text, "newText": new_text, "content": full});
-    writeln!(stream, "{}", line).map_err(|e| e.to_string())?;
+    writeln!(stream, "{}", line).map_err(failed)?;
     let mut reply = String::new();
-    BufReader::new(stream)
-        .read_line(&mut reply)
-        .map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(reply.trim()).map_err(|e| e.to_string())?;
+    BufReader::new(stream).read_line(&mut reply).map_err(failed)?;
+    let v: Value = serde_json::from_str(reply.trim())
+        .map_err(|_| SinkError::Failed("the editor sink sent no acknowledgement".into()))?;
     if v["ok"].as_bool().unwrap_or(false) {
-        Ok(())
-    } else {
-        Err(v["error"]
-            .as_str()
-            .unwrap_or("sink refused the edit")
-            .to_string())
+        return Ok(());
     }
+    let message = v["error"].as_str().unwrap_or("sink refused the edit").to_string();
+    Err(if v["unavailable"] == true { SinkError::Unavailable(message) } else { SinkError::Failed(message) })
 }
 
 // A tab has no unix socket, so there is no editor to hand the edit to.
 #[cfg(target_arch = "wasm32")]
 fn sink_write(
-    sink: &str,
-    path: &std::path::Path,
-    old_text: &str,
-    new_text: &str,
-    full: &str,
-) -> Result<(), String> {
-    Err("the browser backend has no editor sink".to_string())
+    _sink: &str,
+    _path: &std::path::Path,
+    _old_text: &str,
+    _new_text: &str,
+    _full: &str,
+) -> Result<(), SinkError> {
+    Err(SinkError::Unavailable("the browser backend has no editor sink".to_string()))
 }
 
 // The reply pretty-printed, one field per line, so the agent's user reads the tool
@@ -3991,8 +4216,28 @@ fn compile_interruption(value: &Value) -> Option<String> {
     }
 }
 
+// The longest await_changes waits, in seconds (docs/frontends/mcp.md#the-work-loop).
+const AWAIT_CAP_SECS: u64 = 3600;
+
+// The prefix of the JSON-RPC error for a tool the serving does not serve.
+const UNKNOWN_TOOL: &str = "unknown or disabled tool";
+
+// The MCP protocol versions the serving speaks, oldest first.
+const PROTOCOL_VERSIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
+
+// The requested version when supported, the latest supported otherwise, and the
+// oldest for a client that names none. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+fn negotiate_protocol(requested: &Value) -> &'static str {
+    match requested.as_str() {
+        None => PROTOCOL_VERSIONS[0],
+        Some(v) => PROTOCOL_VERSIONS.iter().find(|p| **p == v).copied()
+            .unwrap_or(PROTOCOL_VERSIONS[PROTOCOL_VERSIONS.len() - 1]),
+    }
+}
+
+// A project tool's reply, pretty-printed like every other reply (docs/frontends/mcp.md#toolsets).
 fn result_value(value: Value) -> Value {
-    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
+    text_result(value, false)
 }
 
 #[cfg(test)]
@@ -4142,7 +4387,7 @@ mod tests {
         let context = crate::task_runtime::call(&dir,"task_context",&json!({})).unwrap();
         call("update_tasks",json!({"expected_revision":context["revision"],"tasks":[]})).unwrap();
         let refused = call("write_text_file",json!({"setId":"ds_main","path":"generated/foreign.txt","content":"Changed"}));
-        assert!(refused.unwrap_err().1.contains("configuration changed"));
+        assert!(refusal(refused).contains("configuration changed"));
         assert!(!dir.join("generated/foreign.txt").vexists());
         drop(parent);
         crate::vfs::remove_dir_all(dir).unwrap();
@@ -4270,20 +4515,20 @@ mod tests {
         assert!(!current.doc_files().contains(&dir.join("generated/greeting.py")));
         assert_eq!(after.select("ds_other").unwrap().source,workspace.select("ds_other").unwrap().source);
         let call = |s:&McpServer,name:&str,args:Value|s.handle("tools/call",&json!({"name":name,"arguments":args}));
-        assert!(call(&server,"update_document_set",edit.clone()).unwrap_err().1.contains("configuration changed"));
+        assert!(refusal(call(&server,"update_document_set",edit.clone())).contains("configuration changed"));
         let mut cross = edit.clone(); cross["baseHash"]=json!(after.hash);cross["set"]["id"]=json!("ds_other");
-        assert!(call(&server,"update_document_set",cross).unwrap_err().1.contains("only its current"));
+        assert!(refusal(call(&server,"update_document_set",cross)).contains("only its current"));
         let other_config = crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap();
         let overlap = json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**","other/**"]},
             "roleIntents":[{"role":"source","patterns":["other/**"]}]});
         for name in ["preview_document_set","update_document_set"] {
-            assert!(call(&server,name,overlap.clone()).unwrap_err().1.contains("another document set"));
+            assert!(refusal(call(&server,name,overlap.clone())).contains("another document set"));
             assert_eq!(crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap(),other_config);
         }
         let mut foreign_flags = flags.clone();foreign_flags.build_token=Some("another-owner".into());
         let foreign=McpServer::with_bridge(project.clone(),out.clone(),vec!["generate".into()],true,foreign_flags);
         let current_edit=json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]}});
-        assert!(call(&foreign,"update_document_set",current_edit.clone()).unwrap_err().1.contains("does not own"));
+        assert!(refusal(call(&foreign,"update_document_set",current_edit.clone())).contains("does not own"));
         for (mode,reader) in [("verify",false),("compile",false),("graph",true),("runtime",false)] {
             let s=McpServer::with_bridge(project.clone(),out.clone(),vec![mode.into()],false,BridgeFlags{ephemeral:true,reader,..flags.clone()});
             let names=tool_names(&s);
@@ -4667,6 +4912,23 @@ mod tests {
         crate::vfs::remove_dir_all(dir).unwrap();
     }
 
+    // The project-level chat serving, the one `jazyk mcp chat` builds at the root.
+    fn workspace_chat(dir: &std::path::Path, flags: BridgeFlags) -> McpServer {
+        let project = crate::document_sets::Workspace::load(dir).unwrap().files_project();
+        let out = project.out.clone();
+        McpServer::with_bridge(project, out, vec!["chat".to_string()], false, flags)
+    }
+
+    // A refused tool call's message, whether the serving answered it as an isError
+    // result or a JSON-RPC error; panics on a call that succeeded.
+    fn refusal(reply: Result<Value, (i64, String)>) -> String {
+        match reply {
+            Err((_, message)) => message,
+            Ok(v) if v["isError"] == true => v["content"][0]["text"].as_str().unwrap_or_default().to_string(),
+            Ok(v) => panic!("the call was not refused: {v}"),
+        }
+    }
+
     fn chat_server(dir: &std::path::Path) -> McpServer {
         let project = crate::project::Project::load(dir);
         let out = project.out.clone();
@@ -4855,7 +5117,7 @@ mod tests {
             assert!(value["projection"]["text"].as_str().unwrap().contains("The gateway shall return"));
             assert!(value.get("base64").is_none());
             assert_eq!(value["diagnostics"][0]["code"], "broken-link");
-            assert!(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}})).is_err());
+            assert!(!refusal(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}}))).is_empty());
         }
     }
 
@@ -4876,8 +5138,8 @@ mod tests {
         let stale=call("write_document",json!({"path":"docs/hosting.md","text":"must not land","baseHash":read["hash"]}));
         assert_eq!(stale["isError"],true);
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(),changed);
-        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"../outside.md","text":"x"}})).is_err());
-        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}})).is_err());
+        assert!(!refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"../outside.md","text":"x"}}))).is_empty());
+        assert!(!refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}}))).is_empty());
         assert!(Store::load(&dir.join(".jazyk/ds_main")).graph.entities.is_empty());
         assert!(crate::control::Control::load(&project,&project.out).released.compile.is_empty());
     }
@@ -4923,8 +5185,8 @@ mod tests {
         crate::vfs::write(dir.join("docs/invalid.md"),[0xff,0xfe]).unwrap();
         let project=crate::document_sets::Workspace::load(&dir).unwrap().files_project();
         let s=McpServer::with_bridge(project.clone(),project.out,vec!["chat".into()],false,BridgeFlags{ephemeral:true,edit_sink:Some("not-a-live-editor-sink".into()),..Default::default()});
-        let error=s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/invalid.md","text":"must not replace bytes"}})).unwrap_err();
-        assert!(error.1.contains("cannot read existing document"),"{error:?}");
+        let error=refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/invalid.md","text":"must not replace bytes"}})));
+        assert!(error.contains("cannot read existing document"),"{error:?}");
         assert_eq!(crate::vfs::read(dir.join("docs/invalid.md")).unwrap(),vec![0xff,0xfe]);
     }
 
@@ -4979,7 +5241,7 @@ mod tests {
                 let reply: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
                 assert_eq!(reply["body"], skill.body);
             }
-            assert!(server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"../../secret"}})).is_err());
+            assert!(!refusal(server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"../../secret"}}))).is_empty());
         }
         crate::vfs::remove_file(config).unwrap();
         let uninitialized = chat_server(&dir);
@@ -5920,4 +6182,373 @@ mod tests {
         crate::vfs::remove_dir_all(dir).unwrap();
     }
 
+    // Every reply's text is the JSON object pretty-printed, project tools included.
+    // Mirrors docs/frontends/mcp.md#toolsets.
+    #[test]
+    fn project_tool_replies_are_pretty_printed() {
+        let dir = bare_dir("pretty-project-tools");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let reply = serving.handle("tools/call", &json!({"name":"list_document_sets","arguments":{}})).unwrap();
+        let text = reply["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\n  \""), "{text}");
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["sets"][0]["id"], "ds_main");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // project_context is project-wide: its schema takes no setId, while set tools do.
+    #[test]
+    fn project_context_schema_takes_no_set_id() {
+        let dir = bare_dir("context-schema");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let list = serving.handle("tools/list", &json!({})).unwrap();
+        let tool = |name: &str| list["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).cloned().unwrap();
+        let context = tool("project_context");
+        assert!(context["inputSchema"]["properties"]["setId"].is_null(), "{context}");
+        assert_eq!(context["inputSchema"]["additionalProperties"], false);
+        assert!(tool("search")["inputSchema"]["properties"]["setId"].is_object());
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // initialize echoes a supported requested version and answers its latest supported
+    // version for anything else, on the project serving and a set-scoped one alike.
+    #[test]
+    fn initialize_negotiates_the_protocol_version() {
+        let dir = bare_dir("protocol-version");
+        for serving in [workspace_chat(&dir, BridgeFlags::default()), chat_server(&dir)] {
+            let version = |requested: Value| serving.handle("initialize", &json!({"protocolVersion": requested})).unwrap()["protocolVersion"].clone();
+            assert_eq!(version(json!("2025-03-26")), "2025-03-26");
+            assert_eq!(version(json!("2024-11-05")), "2024-11-05");
+            assert_eq!(version(json!("2099-01-01")), "2025-11-25");
+            assert_eq!(version(json!("not a version")), "2025-11-25");
+            assert_eq!(version(Value::Null), "2024-11-05");
+        }
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // toml_set never panics on reachable input: a section path through a value, a key
+    // naming a table, or a file that does not parse comes back unchanged, and a missing
+    // section is appended as a table.
+    #[test]
+    fn toml_set_refuses_non_tables_without_panicking() {
+        let base = "version = 1\nworkflow = \"manual\"\n";
+        assert!(try_toml_set(base, "workflow", "compile", "auto").unwrap_err().contains("not a table"));
+        assert_eq!(toml_set(base, "workflow", "compile", "auto"), base);
+        assert_eq!(toml_set(base, "workflow.inner", "compile", "auto"), base);
+        let nested = "version = 1\n[gen.worker]\nx = 1\n";
+        assert!(try_toml_set(nested, "gen", "worker", "pipeline").unwrap_err().contains("is a table"));
+        assert!(try_toml_set("version = [", "gen", "worker", "pipeline").is_err());
+        let added = toml_set("version = 1\n", "workflow", "compile", "auto");
+        assert!(added.contains("[workflow]\ncompile = \"auto\""), "{added}");
+        let kept = toml_set("version = 1 # keep\n\n[workflow]\ngenerate = \"manual\"\n", "workflow", "compile", "auto");
+        assert!(kept.contains("version = 1 # keep") && kept.contains("generate = \"manual\"") && kept.contains("compile = \"auto\""), "{kept}");
+    }
+
+    // init_project reports a filesystem failure instead of panicking.
+    #[cfg(unix)]
+    #[test]
+    fn init_project_reports_an_unwritable_project_dir() {
+        let base = std::env::temp_dir().join(format!("jazyk-mcp-init-blocked-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&base).ok();
+        crate::vfs::create_dir_all(&base).unwrap();
+        // `.jazyk` exists as a file, so the config directory cannot be created.
+        crate::vfs::write(base.join(".jazyk"), "not a directory").unwrap();
+        let reply = chat_server(&base).init_project();
+        assert_eq!(reply["error"]["rule"], "write-failed", "{reply}");
+        crate::vfs::remove_dir_all(&base).ok();
+    }
+
+    // update_project_settings edits only the allowlisted keys, under the project lock,
+    // against the configuration hash, and never while a build runs.
+    // Mirrors docs/frontends/acp.md#project-tools.
+    #[test]
+    fn project_settings_need_a_hash_the_lock_and_no_build() {
+        let dir = bare_dir("settings-guard");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let call = |args: Value| -> Value {
+            let reply = serving.handle("tools/call", &json!({"name":"update_project_settings","arguments":args})).unwrap();
+            let body: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(reply["isError"], !body["error"].is_null(), "{reply}");
+            body
+        };
+        let config = dir.join(crate::document_sets::CONFIG);
+        let original = crate::vfs::read_to_string(&config).unwrap();
+        let hash = crate::model::hash_hex(&original);
+        for key in ["llm.base_url", "llm.model", "acp.agent", "executors.compile"] {
+            assert_eq!(call(json!({"settings":{key:"x"},"baseHash":hash}))["error"]["rule"], "unsupported-key", "{key}");
+        }
+        assert_eq!(call(json!({"settings":{"workflow.compile":"sometimes"},"baseHash":hash}))["error"]["rule"], "bad-value");
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"}}))["error"]["rule"], "missing-argument");
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":"stale"}))["error"]["rule"], "stale-config");
+        {
+            let _held = crate::document_sets::ProjectLock::acquire(&dir, "project.lock").unwrap();
+            assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "project-busy");
+        }
+        let out = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap().out;
+        crate::control::claim(&out, crate::control::BUILD_LEASE, "internal-test").unwrap();
+        assert_eq!(call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}))["error"]["rule"], "build-running");
+        crate::control::release_lease(&out, crate::control::BUILD_LEASE);
+        assert_eq!(crate::vfs::read_to_string(&config).unwrap(), original, "a refused edit wrote the file");
+        let ok = call(json!({"settings":{"workflow.compile":"auto"},"baseHash":hash}));
+        let edited = crate::vfs::read_to_string(&config).unwrap();
+        assert!(edited.contains("[workflow]\ncompile = \"auto\""), "{edited}");
+        assert_eq!(ok["hash"], crate::model::hash_hex(&edited));
+        crate::document_sets::Workspace::load(&dir).unwrap();
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A reader serving lists and serves reads alone even in chat mode: no dual write,
+    // project tool, decree tool, or lifecycle reaches it. Mirrors docs/frontends/wasm.md#chat.
+    #[test]
+    fn a_reader_chat_serving_offers_and_serves_no_writes() {
+        let dir = bare_dir("reader-chat");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe tool sorts lines.\n").unwrap();
+        let reader = workspace_chat(&dir, BridgeFlags { ephemeral: true, reader: true, ..Default::default() });
+        let names = tool_names(&reader);
+        let writes = ["revise_requirement", "add_requirement", "retract_requirement", "edit_fact", "retract_decree",
+            "bump_limit", "answer_diagnostic", "update_diagnostic", "update_project_settings", "init_project",
+            "begin_goals", "done", "goals", "abandon_goals", "release_work", "write_document"];
+        for name in writes {
+            assert!(!names.iter().any(|n| n == name), "{name} listed: {names:?}");
+        }
+        let config = crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap();
+        for (name, args) in [
+            ("update_project_settings", json!({"settings":{"workflow.compile":"auto"},"baseHash":crate::model::hash_hex(&config),"setId":"ds_main"})),
+            ("add_requirement", json!({"doc":"docs/a.md","section":"/a","text":"It must not land.","statement":"x","entities":[],"setId":"ds_main"})),
+            ("begin_goals", json!({"setId":"ds_main"})),
+        ] {
+            let refused = reader.handle("tools/call", &json!({"name":name,"arguments":args}));
+            assert!(refused.is_err() || refused.as_ref().unwrap()["isError"] == true, "{name}: {refused:?}");
+        }
+        assert_eq!(crate::vfs::read_to_string(dir.join(crate::document_sets::CONFIG)).unwrap(), config);
+        assert_eq!(crate::vfs::read_to_string(dir.join("docs/a.md")).unwrap(), "# A\n\nThe tool sorts lines.\n");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // add_requirement's after_quote locates inside the named section: the same sentence
+    // in an earlier section is not the anchor, and a sentence found only elsewhere is
+    // refused. Mirrors docs/frontends/acp.md#dual-write-tools.
+    #[test]
+    fn add_requirement_anchors_after_quote_inside_its_section() {
+        use crate::model::Entity;
+        use crate::store::{Commit, Op};
+        let dir = bare_dir("add-after-quote");
+        let doc = "# Pay\n\n## Terms\n\nAn Order is paid on time.\n\nOnly terms say this.\n\n## Late\n\nAn Order is paid on time.\n\nLate fees apply.\n";
+        crate::vfs::write(dir.join("docs/pay.md"), doc).unwrap();
+        let project = crate::project::Project::load(&dir);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut s = Store::load(&project.out);
+        s.sync_docs(&parsed);
+        let late = s.docs["docs/pay.md"].sections.keys().find(|k| k.ends_with("late")).cloned().unwrap();
+        // The entity needs a requirement holding it, or the commit's sweep drops it.
+        let terms = s.docs["docs/pay.md"].sections.keys().find(|k| k.ends_with("terms")).cloned().unwrap();
+        s.apply(vec![
+            Op::CreateEntity { id: "ent:order".into(), entity: Entity { name: "Order".into(), ..Default::default() } },
+            Op::CreateRequirement { id: "req:pay-1".into(), requirement: crate::model::Requirement {
+                statement: "An Order is paid on time.".into(), entities: vec!["ent:order".into()],
+                source: Some(crate::model::SourceRef { doc: "docs/pay.md".into(), section: terms, quote: "An Order is paid on time.".into() }),
+                ..Default::default() } },
+        ], &Commit::store("session"));
+        drop(s);
+        let server = chat_server(&dir);
+        let elsewhere = server.add_requirement(&json!({"doc":"docs/pay.md","section":late,"text":"A late Order is flagged.",
+            "statement":"A late Order is flagged.","entities":["ent:order"],"after_quote":"Only terms say this."}));
+        assert_eq!(elsewhere["error"]["rule"], "stale-anchor", "{elsewhere}");
+        assert_eq!(crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap(), doc);
+        let v = server.add_requirement(&json!({"doc":"docs/pay.md","section":late,"text":"A late Order is flagged.",
+            "statement":"A late Order is flagged.","entities":["ent:order"],"after_quote":"An Order is paid on time."}));
+        assert_eq!(v["committed"], true, "{v}");
+        let text = crate::vfs::read_to_string(dir.join("docs/pay.md")).unwrap();
+        let (terms_at, late_at, added_at) = (text.find("## Terms").unwrap(), text.find("## Late").unwrap(), text.find("A late Order is flagged.").unwrap());
+        assert!(terms_at < late_at && late_at < added_at, "{text}");
+        assert!(text[late_at..].starts_with("## Late\n\nAn Order is paid on time.\n\nA late Order is flagged."), "{text}");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A delegated edit falls back to the disk only when the sink cannot take edits;
+    // a refusal or a missing acknowledgement fails the write and leaves the disk alone.
+    // Mirrors docs/frontends/acp.md#doc-edit-delegation.
+    #[cfg(unix)]
+    #[test]
+    fn delegated_edits_fall_back_only_when_the_editor_is_unavailable() {
+        use std::io::{BufRead, BufReader, Write};
+        let dir = bare_dir("sink-outcomes");
+        let doc = dir.join("docs/a.md");
+        crate::vfs::write(&doc, "# A\n").unwrap();
+        let serve = |reply: &'static str| -> String {
+            let path = format!("/tmp/jz-sink-{}-{}.sock", crate::sys::process_id(), reply.len());
+            let _ = std::fs::remove_file(&path);
+            let listener = crate::local_socket::UnixListener::bind(&path).unwrap();
+            std::thread::spawn(move || {
+                let (stream, _) = listener.accept().unwrap();
+                let mut line = String::new();
+                BufReader::new(&stream).read_line(&mut line).unwrap();
+                let mut w = &stream;
+                if !reply.is_empty() { writeln!(w, "{}", reply).unwrap(); }
+            });
+            path
+        };
+        let with_sink = |sink: String| McpServer::with_bridge(crate::project::Project::load(&dir), dir.join(".jazyk/ds_main"),
+            vec!["chat".into()], false, BridgeFlags { edit_sink: Some(sink), ..Default::default() });
+        let refused = with_sink(serve(r#"{"ok":false,"error":"the user declined"}"#)).write_edit("docs/a.md", "# A\n", "# B\n", "# B\n");
+        assert!(refused.unwrap_err().contains("the user declined"));
+        let unanswered = with_sink(serve("")).write_edit("docs/a.md", "# A\n", "# B\n", "# B\n");
+        assert!(unanswered.is_err());
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# A\n", "a failed delegation wrote the disk");
+        with_sink(serve(r#"{"ok":false,"unavailable":true,"error":"the client has no fs.writeTextFile capability"}"#))
+            .write_edit("docs/a.md", "# A\n", "# B\n", "# B\n").unwrap();
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# B\n");
+        with_sink("/tmp/jz-sink-nobody-listens.sock".into()).write_edit("docs/a.md", "# B\n", "# C\n", "# C\n").unwrap();
+        assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# C\n");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A jazyk.toml that does not load refuses tool calls but not the connection.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    #[test]
+    fn a_broken_project_file_still_connects() {
+        let dir = bare_dir("broken-config");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let scoped = chat_server(&dir);
+        crate::vfs::write(dir.join(crate::document_sets::CONFIG), "version = 1\n[[sets]\n").unwrap();
+        assert!(scoped.handle("initialize", &json!({})).is_ok());
+        assert!(scoped.handle("tools/list", &json!({})).is_ok());
+        let init = serving.handle("initialize", &json!({"protocolVersion":"2025-06-18"})).unwrap();
+        assert!(init["instructions"].as_str().unwrap().contains("does not load"), "{init}");
+        assert_eq!(serving.handle("ping", &json!({})).unwrap(), json!({}));
+        assert!(!serving.handle("tools/list", &json!({})).unwrap()["tools"].as_array().unwrap().is_empty());
+        let call = serving.handle("tools/call", &json!({"name":"search","arguments":{"query":"x"}}));
+        assert!(call.is_err() || call.unwrap()["isError"] == true);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A refusal inside tools/call is an isError result naming the refusal; JSON-RPC
+    // errors stay for unknown tools, calls without a name, and unknown methods.
+    // Mirrors docs/frontends/mcp.md#toolsets.
+    #[test]
+    fn refusals_are_tool_results_and_unknown_tools_are_protocol_errors() {
+        let dir = bare_dir("refusal-shape");
+        let reader = McpServer::with_bridge(crate::document_sets::Workspace::load(&dir).unwrap().files_project(),
+            dir.join(".jazyk/ds_main"), vec!["graph".into()], false, BridgeFlags::default());
+        for (name, args) in [
+            ("read_jazyk_skill", json!({})),
+            ("read_jazyk_skill", json!({"name":"../../secret"})),
+            ("read_document", json!({})),
+        ] {
+            let reply = reader.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+            assert_eq!(reply["isError"], true, "{name}: {reply}");
+            let body: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body["error"]["rule"], "refused", "{name}: {body}");
+            assert!(body["error"]["message"].as_str().is_some_and(|m| !m.is_empty()));
+        }
+        // A tool the serving does not list is not served: a protocol error.
+        for name in ["no_such_tool", "write_document", "compile_document_sets", "update_document_set"] {
+            let unknown = reader.handle("tools/call", &json!({"name":name,"arguments":{}})).unwrap_err();
+            assert_eq!(unknown.0, -32602);
+            assert!(unknown.1.starts_with(UNKNOWN_TOOL), "{name}: {unknown:?}");
+        }
+        assert!(reader.handle("tools/call", &json!({"arguments":{}})).is_err());
+        assert_eq!(reader.handle("no/such/method", &json!({})).unwrap_err().0, -32601);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // The stdio loop answers what it cannot dispatch instead of dropping it: a parse
+    // error, an invalid request, and a batch with the array of its responses.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    #[test]
+    fn stdio_answers_parse_errors_invalid_requests_and_batches() {
+        let dir = bare_dir("stdio-shapes");
+        let serving = workspace_chat(&dir, BridgeFlags { ephemeral: true, ..Default::default() });
+        let input = concat!(
+            "{not json\n",
+            "\n",
+            "[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"},{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}]\n",
+            "[{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}]\n",
+            "[]\n",
+            "3\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":4}\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"ping\"}\n",
+        );
+        let mut out: Vec<u8> = Vec::new();
+        serving.serve(std::io::Cursor::new(input.as_bytes().to_vec()), &mut out);
+        let replies: Vec<Value> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies.len(), 6, "{replies:?}");
+        assert_eq!(replies[0]["error"]["code"], -32700);
+        assert_eq!(replies[0]["id"], Value::Null);
+        assert_eq!(replies[1].as_array().unwrap().iter().map(|r| r["id"].clone()).collect::<Vec<_>>(), vec![json!(1), json!(2)]);
+        assert_eq!(replies[2]["error"]["code"], -32600);
+        assert_eq!(replies[3]["error"]["code"], -32600);
+        assert_eq!(replies[4]["error"]["code"], -32600);
+        assert_eq!(replies[4]["id"], 4);
+        assert_eq!(replies[5], json!({"jsonrpc":"2.0","id":5,"result":{}}));
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A running await_changes stops at the client's notifications/cancelled (and the
+    // cancelled call gets no response) or at the end of input, even with
+    // timeout_seconds 0. Mirrors docs/frontends/mcp.md#the-work-loop.
+    #[cfg(unix)]
+    #[test]
+    fn await_changes_stops_on_cancellation_and_end_of_input() {
+        use std::io::Write as _;
+        let dir = bare_dir("await-cancel");
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let out_dir = project.out.clone();
+        let serving = std::sync::Arc::new(McpServer::new(project, out_dir, vec!["graph".into()], false));
+        let run = |script: Box<dyn FnOnce(std::os::unix::net::UnixStream) + Send>| -> (Vec<Value>, std::time::Duration) {
+            let (reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let started = std::time::Instant::now();
+            let feeder = std::thread::spawn(move || script(writer));
+            let mut out: Vec<u8> = Vec::new();
+            serving.serve(std::io::BufReader::new(reader), &mut out);
+            feeder.join().unwrap();
+            let replies = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+            (replies, started.elapsed())
+        };
+        let call = |id: u64, timeout: u64| format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"tools/call\",\"params\":{{\"name\":\"await_changes\",\"arguments\":{{\"timeout_seconds\":{timeout}}}}}}}\n");
+        let (replies, took) = run(Box::new(move |mut w| {
+            w.write_all(call(7, 60).as_bytes()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            w.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n").unwrap();
+            w.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5000));
+        }));
+        assert_eq!(replies, vec![json!({"jsonrpc":"2.0","id":8,"result":{}})], "the cancelled call answered");
+        assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+        let (replies, took) = run(Box::new(move |mut w| {
+            w.write_all(call(9, 0).as_bytes()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }));
+        assert!(took < std::time::Duration::from_secs(10), "end of input left the poll waiting: {took:?}");
+        assert!(replies.len() <= 1, "{replies:?}");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A serving with no open batch builds a session per call, but the repeated-call
+    // guard and the feedback cap carry across its calls.
+    // Mirrors docs/compiler/sessions.md#repeated-calls and docs/compiler/tools.md#feedback-tool.
+    #[test]
+    fn per_call_sessions_keep_the_guard_and_the_feedback_cap() {
+        let dir = bare_dir("call-memory");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe tool sorts lines.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut store = Store::load(&project.out);
+        store.sync_docs(&parsed);
+        store.save();
+        let serving = McpServer::new(project.clone(), project.out.clone(), vec!["graph".into()], false);
+        let call = |name: &str, args: Value| serving.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let first = call("search", json!({"query":"sorts"}));
+        assert_ne!(first["isError"], true, "{first}");
+        call("search", json!({"query":"sorts"}));
+        let third = call("search", json!({"query":"sorts"}));
+        assert_eq!(third["isError"], true, "{third}");
+        assert!(third["content"][0]["text"].as_str().unwrap().contains("repeated-call"), "{third}");
+        for n in 0..7 {
+            call("report_feedback", json!({"kind":"other","message":format!("note {n}")}));
+        }
+        let log = crate::vfs::read_to_string(project.out.join("feedback.jsonl")).unwrap_or_default();
+        assert_eq!(log.lines().count(), crate::tools::FEEDBACK_LIMIT, "{log}");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
 }

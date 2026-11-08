@@ -269,7 +269,9 @@ session spend its budget on it:
   name, re-sent after the test file was fixed, once landed marked "unchanged". A
   `load` is the exception: it repeats by target, below.
 
-Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
+Identity is the tool name plus its arguments verbatim, counted per open batch. An MCP
+serving with no open batch counts per ledger claim (from `begin_binding` or
+`begin_generation` to its record) and across its calls outside a claim. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
 see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
@@ -683,8 +685,11 @@ The event kinds:
   named it.
 - `llmRequest`, `llmResponse`, `llmRetry`: one model call, recorded by the
   [embedded agent's](../frontends/acp.md#the-embedded-agent) endpoint client. The
-  request carries the whole outgoing message list (the prompt and the conversation so
-  far) plus the tool names offered; the response carries the raw assistant message, the
+  request carries the outgoing messages after `prefix`, the count of leading messages
+  it repeats unchanged from the previous request of the same run, plus the tool names
+  offered. The first request of a run carries the whole list (the prompt and the
+  conversation so far), so a reader rebuilds every request from the run's earlier
+  ones. The response carries the raw assistant message, the
   elapsed milliseconds, and the completion tokens; a retry carries the attempt, the
   error, and how long the admitted host waits before trying again. Capability errors
   stop the session without switching tool formats. A session

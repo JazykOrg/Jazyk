@@ -172,7 +172,10 @@ order of calls, and that a tool error names its own repair. They also say that t
 [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd) is
 orientation and that these instructions and tool replies take precedence over it. A serving ends when its
 input ends: close stdin to tear it down. `shutdown` is answered with null for agents
-that send it out of LSP habit; it does nothing. The prompting lives in three places,
+that send it out of LSP habit; it does nothing. On stdio a line that is not JSON
+answers a parse error (`-32700`) with a null id, a message that is not a request
+object answers an invalid request error (`-32600`), and a batch array answers an
+array of the responses its requests produced (none for a batch of notifications). The prompting lives in three places,
 most specific wins: server instructions carry the loop, each `begin_*` reply carries
 the batch's own assembled prompt (or the package, for binding and generation), and
 each tool description names what to call next.
@@ -361,10 +364,12 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
   file in the deliverable changes, the ledger changes, or the
   [control plane](../compiler/control-plane.md) changes (a mode
   toggle or a release, so the user's click in the GUI is what wakes the agent), or
-  at the timeout (default 300 seconds). `timeout_seconds: 0` waits indefinitely. The
-  default returns because most MCP clients bound a tool call with their own timeout
-  and would report an indefinite block as an error; a client configured without that
-  bound passes 0 and holds the call open. The reply carries the changed documents,
+  at the timeout (default 300 seconds). The timeout is capped at 3600 seconds, and
+  `timeout_seconds: 0` waits for the cap. The default returns because most MCP
+  clients bound a tool call with their own timeout and would report a long block as
+  an error; a client configured without that bound passes 0 and polls again when the
+  call returns. A `notifications/cancelled` naming the call, or the end of input, ends
+  the wait at once, and a cancelled call gets no response. The reply carries the changed documents,
   whether the graph is stale (documents changed but not yet reconciled), the board
   counts (open, blocked, parked, failed, per class), the open diagnostic counts, the
   pending generation work, the pending verification work grouped by reason, and the

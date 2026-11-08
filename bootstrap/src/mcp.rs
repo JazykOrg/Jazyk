@@ -51,6 +51,35 @@ pub struct McpServer {
     finished: std::sync::Mutex<Option<String>>,
     // Ownership for optional file tools between a ledger begin and successful record.
     ledger_target: std::sync::Mutex<Option<String>>,
+    // What the transport saw while a call runs: cancelled request ids and end of
+    // input, so a long poll stops waiting. Mirrors docs/frontends/mcp.md#the-work-loop.
+    interrupts: std::sync::Arc<Interrupts>,
+}
+
+#[derive(Default)]
+struct Interrupts {
+    cancelled: std::sync::Mutex<BTreeSet<String>>,
+    current: std::sync::Mutex<Option<String>>,
+    eof: std::sync::atomic::AtomicBool,
+}
+
+impl Interrupts {
+    // Record a `notifications/cancelled` the reader saw, alone or inside a batch.
+    fn note(&self, message: &Value) {
+        match message {
+            Value::Array(items) => items.iter().for_each(|m| self.note(m)),
+            m if m["method"] == "notifications/cancelled" && !m["params"]["requestId"].is_null() => {
+                self.cancelled.lock().unwrap().insert(m["params"]["requestId"].to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // The running call should stop: the client cancelled it or went away.
+    fn stop_current(&self) -> bool {
+        self.eof.load(std::sync::atomic::Ordering::SeqCst)
+            || self.current.lock().unwrap().as_ref().is_some_and(|id| self.cancelled.lock().unwrap().contains(id))
+    }
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -345,6 +374,7 @@ impl McpServer {
             delivered: std::sync::Mutex::new(Delivered { generation_contract, ..Default::default() }),
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
+            interrupts: Default::default(),
         }
     }
 
@@ -406,7 +436,8 @@ impl McpServer {
             let mut restored = self.children.lock().map_err(|_| "MCP child state poisoned")?;
             for (id, state) in children {
                 let project = workspace.resolve(Some(id)).map_err(|e| e.1)?;
-                let child = Self::with_bridge(project.clone(), project.out.clone(), self.modes.clone(), self.write, self.bridge.clone());
+                let mut child = Self::with_bridge(project.clone(), project.out.clone(), self.modes.clone(), self.write, self.bridge.clone());
+                child.interrupts = self.interrupts.clone();
                 child.restore(state.clone())?;
                 restored.insert(id.clone(), child);
             }
@@ -416,7 +447,7 @@ impl McpServer {
 
     // The server's own long poll: returns when the graph's generation counter moves, a
     // documentation file changes on disk, or the ledger or a watched deliverable file
-    // changes, or at the timeout. timeout_seconds 0 waits indefinitely; the default
+    // changes, or at the timeout, capped at an hour (0 waits for the cap); the default
     // returns because most MCP clients bound a tool call with their own timeout.
     // Mirrors docs/frontends/mcp.md#the-work-loop.
     // Watch from the first request. Mirrors docs/frontends/mcp.md#watching-edits.
@@ -508,9 +539,11 @@ impl McpServer {
     }
 
     fn await_changes(&self, params: &Value) -> Value {
-        let timeout = params["arguments"]["timeout_seconds"]
-            .as_u64()
-            .unwrap_or(300);
+        // Capped, and 0 waits for the cap: a call the client forgot still ends.
+        let timeout = match params["arguments"]["timeout_seconds"].as_u64().unwrap_or(300) {
+            0 => AWAIT_CAP_SECS,
+            t => t.min(AWAIT_CAP_SECS),
+        };
         let gs = self.current_gen_settings();
         let fingerprint = |path: &std::path::Path| -> String {
             crate::vfs::entry_metadata(path)
@@ -539,9 +572,7 @@ impl McpServer {
             .map(|f| (f.clone(), fingerprint(&f)))
             .collect();
         let start_gen = Store::load(&self.out).status.generation;
-        let deadline = (timeout > 0).then(|| {
-            crate::sys::Instant::now() + std::time::Duration::from_secs(timeout.clamp(1, 3600))
-        });
+        let deadline = Some(crate::sys::Instant::now() + std::time::Duration::from_secs(timeout));
         let mut changed_docs: Vec<String> = Vec::new();
         let mut changed = false;
         // A tab has one thread and nothing else that could move the graph while it
@@ -552,7 +583,7 @@ impl McpServer {
         let edits = crate::edit_watch::for_root(&self.project.root);
         #[cfg(not(target_arch = "wasm32"))]
         let edit_cursor = edits.cursor();
-        while deadline.is_none_or(|d| crate::sys::Instant::now() < d) {
+        while deadline.is_none_or(|d| crate::sys::Instant::now() < d) && !self.interrupts.stop_current() {
             // A recorded edit wakes the poll at once; the 2 s tick still catches the
             // generation, ledger, and control surfaces.
             #[cfg(not(target_arch = "wasm32"))]
@@ -904,45 +935,92 @@ impl McpServer {
 
     // The stdio transport: line-delimited JSON-RPC until stdin ends.
     pub fn run(&self) {
-        let stdin = std::io::stdin();
-        let stdout = std::io::stdout();
-        let mut input = stdin.lock();
-        let mut bytes: Vec<u8> = Vec::new();
-        loop {
+        self.serve(std::io::BufReader::new(std::io::stdin()), std::io::stdout());
+        self.finish();
+    }
+
+    // The stdio loop over any reader and writer. A reader thread takes the lines so a
+    // cancellation or the end of input reaches a call that is still running.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    pub fn serve<R: BufRead + Send + 'static, W: Write>(&self, mut input: R, mut out: W) {
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let interrupts = self.interrupts.clone();
+        std::thread::spawn(move || loop {
             // Bytes, not `lines()`: one non-UTF-8 byte must not end the serving as if
             // the agent had hung up, and a line is decoded lossily instead.
-            bytes.clear();
+            let mut bytes: Vec<u8> = Vec::new();
             match input.read_until(b'\n', &mut bytes) {
-                Ok(0) | Err(_) => break,
+                Ok(0) | Err(_) => {
+                    interrupts.eof.store(true, std::sync::atomic::Ordering::SeqCst);
+                    break;
+                }
                 Ok(_) => {}
             }
+            if let Ok(message) = serde_json::from_slice::<Value>(&bytes) {
+                interrupts.note(&message);
+            }
+            if tx.send(bytes).is_err() {
+                break;
+            }
+        });
+        for bytes in rx {
             let line = String::from_utf8_lossy(&bytes);
             if line.trim().is_empty() {
                 continue;
             }
-            let Ok(req) = serde_json::from_str::<Value>(&line) else {
-                continue;
+            let resp = match serde_json::from_str::<Value>(&line) {
+                Ok(message) => self.dispatch_message(&message),
+                Err(e) => Some(json!({"jsonrpc": "2.0", "id": null,
+                    "error": {"code": -32700, "message": format!("parse error: {}", e)}})),
             };
-            let Some(resp) = self.dispatch(&req) else {
-                continue; // notification, no response
-            };
-            let mut out = stdout.lock();
-            writeln!(out, "{}", resp).ok();
-            out.flush().ok();
+            if let Some(resp) = resp {
+                writeln!(out, "{}", resp).ok();
+                out.flush().ok();
+            }
         }
-        self.finish();
+    }
+
+    // One parsed message, whatever the transport: a request answers its response, a
+    // notification nothing, a batch the array of its responses (None when it held
+    // notifications only), and anything else an invalid request.
+    pub fn dispatch_message(&self, message: &Value) -> Option<Value> {
+        let invalid = |what: &str| json!({"jsonrpc": "2.0", "id": null,
+            "error": {"code": -32600, "message": format!("invalid request: {}", what)}});
+        match message {
+            Value::Array(items) if items.is_empty() => Some(invalid("an empty batch")),
+            Value::Array(items) => {
+                let replies: Vec<Value> = items.iter().filter_map(|m| match m {
+                    Value::Object(_) => self.dispatch(m),
+                    _ => Some(invalid("a batch entry is not an object")),
+                }).collect();
+                (!replies.is_empty()).then_some(Value::Array(replies))
+            }
+            Value::Object(_) => self.dispatch(message),
+            _ => Some(invalid("not a JSON-RPC object")),
+        }
     }
 
     // One JSON-RPC message in, its response out, whatever the transport carried it
     // (the stdio loop above, or the HTTP serving in acp/http.rs). A notification (no
-    // id) gets no response. Mirrors docs/frontends/mcp.md#mcp-over-http.
+    // id) gets no response, and neither does a request the client cancelled while it
+    // ran. Mirrors docs/frontends/mcp.md#mcp-over-http.
     pub fn dispatch(&self, req: &Value) -> Option<Value> {
-        let method = req["method"].as_str().unwrap_or_default().to_string();
         let id = req["id"].clone();
         if id.is_null() {
             return None;
         }
-        Some(match self.handle(&method, &req["params"]) {
+        let Some(method) = req["method"].as_str() else {
+            return Some(json!({"jsonrpc": "2.0", "id": id,
+                "error": {"code": -32600, "message": "invalid request: method is required"}}));
+        };
+        let key = id.to_string();
+        *self.interrupts.current.lock().unwrap() = Some(key.clone());
+        let result = self.handle(method, &req["params"]);
+        *self.interrupts.current.lock().unwrap() = None;
+        if self.interrupts.cancelled.lock().unwrap().remove(&key) {
+            return None;
+        }
+        Some(match result {
             Ok(r) => json!({"jsonrpc": "2.0", "id": id, "result": r}),
             Err((code, msg)) => {
                 json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": msg}})
@@ -2224,7 +2302,7 @@ impl McpServer {
                 match sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text) {
                     Ok(()) => return Ok(result_value(json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true}))),
                     // Nothing listening: the direct write below, as for any serving.
-                    Err(SinkError::Unavailable(_)) => {}
+                    Err(SinkError::Unavailable(reason)) => self.note(&format!("edit sink unavailable ({reason}); writing {path} directly")),
                     Err(SinkError::Failed(m)) => return Ok(text_result(json!({"error":{"rule":"editor-refused","message":format!("the editor did not apply the edit: {m}")}}), true)),
                 }
             }
@@ -2343,13 +2421,15 @@ impl McpServer {
             }
             if !children.contains_key(&id) {
                 let p = w.resolve(Some(&id)).map_err(|e| (-32602, e.1))?;
-                let child = Self::with_bridge(
+                let mut child = Self::with_bridge(
                     p.clone(),
                     p.out.clone(),
                     self.modes.clone(),
                     self.write,
                     self.bridge.clone(),
                 );
+                // A set's call runs under the transport's request: one interrupt record.
+                child.interrupts = self.interrupts.clone();
                 child.handle_local("initialize",&json!({"clientInfo":{"name":self.client.lock().unwrap().clone().unwrap_or_else(||"agent".into())}}))?;
                 children.insert(id.clone(), child);
             }
@@ -2608,8 +2688,8 @@ impl McpServer {
                     tools.push(Self::recent_edits_tool());
                     tools.push(json!({
                         "name": "await_changes",
-                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s; 0 waits indefinitely, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
-                        "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged; 0 = wait indefinitely"}}, "additionalProperties": false}
+                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s, at most 3600s; 0 waits the full 3600s, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
+                        "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged, at most 3600; 0 = wait 3600"}}, "additionalProperties": false}
                     }));
                 }
                 // One name, one tool, whatever the modes: the union of servings must
@@ -3353,7 +3433,7 @@ impl McpServer {
             match sink_write(sink, &path, old_text, new_text, full) {
                 Ok(()) => return Ok(()),
                 // Nothing listening, or an IDE that cannot take edits: write directly.
-                Err(SinkError::Unavailable(_)) => {}
+                Err(SinkError::Unavailable(reason)) => self.note(&format!("edit sink unavailable ({reason}); writing {rel} directly")),
                 // A refusal or an unanswered edit is the call's failure; writing the
                 // disk behind the IDE could race or override its answer.
                 Err(SinkError::Failed(e)) => return Err(format!("the editor did not apply the edit to {}: {}", rel, e)),
@@ -4117,6 +4197,9 @@ fn compile_interruption(value: &Value) -> Option<String> {
         _ => None,
     }
 }
+
+// The longest await_changes waits, in seconds (docs/frontends/mcp.md#the-work-loop).
+const AWAIT_CAP_SECS: u64 = 3600;
 
 // The prefix of the JSON-RPC error for a tool the serving does not serve.
 const UNKNOWN_TOOL: &str = "unknown or disabled tool";
@@ -6348,6 +6431,78 @@ mod tests {
         }
         assert!(reader.handle("tools/call", &json!({"arguments":{}})).is_err());
         assert_eq!(reader.handle("no/such/method", &json!({})).unwrap_err().0, -32601);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // The stdio loop answers what it cannot dispatch instead of dropping it: a parse
+    // error, an invalid request, and a batch with the array of its responses.
+    // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+    #[test]
+    fn stdio_answers_parse_errors_invalid_requests_and_batches() {
+        let dir = bare_dir("stdio-shapes");
+        let serving = workspace_chat(&dir, BridgeFlags { ephemeral: true, ..Default::default() });
+        let input = concat!(
+            "{not json\n",
+            "\n",
+            "[{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"},{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"},{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"ping\"}]\n",
+            "[{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}]\n",
+            "[]\n",
+            "3\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":4}\n",
+            "{\"jsonrpc\":\"2.0\",\"id\":5,\"method\":\"ping\"}\n",
+        );
+        let mut out: Vec<u8> = Vec::new();
+        serving.serve(std::io::Cursor::new(input.as_bytes().to_vec()), &mut out);
+        let replies: Vec<Value> = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies.len(), 6, "{replies:?}");
+        assert_eq!(replies[0]["error"]["code"], -32700);
+        assert_eq!(replies[0]["id"], Value::Null);
+        assert_eq!(replies[1].as_array().unwrap().iter().map(|r| r["id"].clone()).collect::<Vec<_>>(), vec![json!(1), json!(2)]);
+        assert_eq!(replies[2]["error"]["code"], -32600);
+        assert_eq!(replies[3]["error"]["code"], -32600);
+        assert_eq!(replies[4]["error"]["code"], -32600);
+        assert_eq!(replies[4]["id"], 4);
+        assert_eq!(replies[5], json!({"jsonrpc":"2.0","id":5,"result":{}}));
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A running await_changes stops at the client's notifications/cancelled (and the
+    // cancelled call gets no response) or at the end of input, even with
+    // timeout_seconds 0. Mirrors docs/frontends/mcp.md#the-work-loop.
+    #[cfg(unix)]
+    #[test]
+    fn await_changes_stops_on_cancellation_and_end_of_input() {
+        use std::io::Write as _;
+        let dir = bare_dir("await-cancel");
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().files_project();
+        let out_dir = project.out.clone();
+        let serving = std::sync::Arc::new(McpServer::new(project, out_dir, vec!["graph".into()], false));
+        let run = |script: Box<dyn FnOnce(std::os::unix::net::UnixStream) + Send>| -> (Vec<Value>, std::time::Duration) {
+            let (reader, writer) = std::os::unix::net::UnixStream::pair().unwrap();
+            let started = std::time::Instant::now();
+            let feeder = std::thread::spawn(move || script(writer));
+            let mut out: Vec<u8> = Vec::new();
+            serving.serve(std::io::BufReader::new(reader), &mut out);
+            feeder.join().unwrap();
+            let replies = String::from_utf8(out).unwrap().lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+            (replies, started.elapsed())
+        };
+        let call = |id: u64, timeout: u64| format!("{{\"jsonrpc\":\"2.0\",\"id\":{id},\"method\":\"tools/call\",\"params\":{{\"name\":\"await_changes\",\"arguments\":{{\"timeout_seconds\":{timeout}}}}}}}\n");
+        let (replies, took) = run(Box::new(move |mut w| {
+            w.write_all(call(7, 60).as_bytes()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            w.write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}\n").unwrap();
+            w.write_all(b"{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"ping\"}\n").unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(5000));
+        }));
+        assert_eq!(replies, vec![json!({"jsonrpc":"2.0","id":8,"result":{}})], "the cancelled call answered");
+        assert!(took < std::time::Duration::from_secs(20), "{took:?}");
+        let (replies, took) = run(Box::new(move |mut w| {
+            w.write_all(call(9, 0).as_bytes()).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }));
+        assert!(took < std::time::Duration::from_secs(10), "end of input left the poll waiting: {took:?}");
+        assert!(replies.len() <= 1, "{replies:?}");
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

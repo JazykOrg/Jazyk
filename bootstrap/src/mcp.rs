@@ -4137,6 +4137,8 @@ pub fn try_toml_set(text: &str, section: &str, key: &str, value: &str) -> Result
 #[derive(Debug)]
 enum SinkError {
     Unavailable(String),
+    // A tab has no sink to fail.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Failed(String),
 }
 

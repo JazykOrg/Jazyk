@@ -42,8 +42,8 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
     ("actions on the project", &[
-        ("check [path...]", "compile, exit non-zero on error diagnostics (CI)"),
-        ("watch [path...]", "recompile on change, one line per goal"),
+        ("check", "compile, exit non-zero on error diagnostics (CI)"),
+        ("watch", "recompile on change, one line per goal"),
         ("gen [entity...]", "resolve the bind and generate goals into the deliverable (--force)"),
         ("test [target...]", "resolve the verify goals (--kind programmatic|llm, --list, --audit, --force)"),
         ("decompile [path...]", "draft docs describing what unclaimed code does"),
@@ -171,9 +171,10 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
-        "compile" => (None, &["--sessions", "--dirty"]),
+        "compile" => (None, &["--sessions"]),
         "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
-        "check" | "watch" | "decompile" => (None, &[]),
+        "check" | "watch" => (Some(0), &[]),
+        "decompile" => (None, &[]),
         "status" => (Some(0), &["--json", "--costs"]),
         "preview" | "explain" => (Some(1), &[]),
         "ripple" => (Some(1), &["--back"]),
@@ -265,13 +266,14 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--dirty] [--set ID] [--sessions N]\n\n\
-             Run one build. The reconciler derives the goal board from the documents\n\
+            "usage: jazyk compile [path...] [--set ID] [--sessions N]\n\n\
+             Run one build per document set: the set --set names, else every set\n\
+             claiming one of the paths (a path no set claims is a usage error), else\n\
+             every dirty set. The reconciler derives the goal board from the documents\n\
              and the graph; sessions resolve ready goals batch by batch until the\n\
              board converges. Prints the board summary first, a `gc burst:` line as\n\
              each burst starts, goal lines as goals resolve or fail, and the verdict\n\
-             with its counts last. Explicit paths skip project discovery and run ad\n\
-             hoc on those files.\n\n\
+             with its counts last.\n\n\
              options:\n  \
              --sessions N    run at most N sessions, then stop with an honest incomplete\n  \
              \x20               (0 derives the board and parks every goal without an LLM call)\n  \
@@ -282,7 +284,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "check" => format!(
-            "usage: jazyk check [path...]\n\n\
+            "usage: jazyk check [--set ID]\n\n\
              Compile, then exit non-zero if the build ends incomplete or open\n\
              diagnostics of severity error remain. The CI gate.\n\n\
              options:\n  \
@@ -293,7 +295,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             COMMON_LLM
         ),
         "watch" => format!(
-            "usage: jazyk watch [path...]\n\n\
+            "usage: jazyk watch [--set ID]\n\n\
              Recompile on file change. Event bursts debounce, and a fingerprint over the\n\
              matched documents decides whether a build runs. An incomplete build retries\n\
              on its own with backoff until a file change resets it. Per build: the board\n\
@@ -670,7 +672,6 @@ pub fn run() {
             "--help" | "-h" => want_help = true,
             "help" if cmd.is_empty() => want_help = true,
             "--back" => opts.back = true,
-            "--dirty" => opts.dirty = true,
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,

@@ -707,6 +707,8 @@ to push, merge, dispatch, or deploy. Call `project_context` to refresh it.
 
 Cloud supplies context from the authenticated project's current GitHub binding and
 workspace. Native clients connected to Cloud use that same project-scoped adapter.
-A local serving reads local Git metadata without contacting a remote. Browser-only
-projects report that no GitHub integration is attached. A metadata failure is
+A local serving reads local Git metadata without contacting a remote. Each Git
+query has a five-second limit, takes no optional locks, and never runs a
+configured filesystem monitor. A query past its limit leaves its value null.
+Browser-only projects report that no GitHub integration is attached. A metadata failure is
 reported as unavailable, never as proof that the project is unlinked.

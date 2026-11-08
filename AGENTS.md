@@ -49,8 +49,8 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   its `change` is its identity across re-derivations and its `cause` names the committed
   mutation that opened it. Compile goals bring the graph in line with the docs
   (`place-anchors`, `reconcile-section`, `rejudge-pair`, `review-entity`, `retrace`,
-  `conform-instance`, `bind`, `generate`, `verify`; `ratify` and `answer` block on a
-  human). GC goals restructure (`declare-edges`, `dedupe-candidates`, `curate-view`,
+  `conform-instance`, `derive-criteria`, `bind`, `generate`, `verify`; `ratify` and
+  `answer` block on a human). GC goals restructure (`declare-edges`, `dedupe-candidates`, `curate-view`,
   `split-view`, `abstract-entity`): optional at a soft limit, mandatory past the hard
   one, the limits in a registry built into the binary (`limits.rs`), never in
   `jazyk.toml`. Readiness tiers order compile goals (alignment, then ingest by document
@@ -129,10 +129,15 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 
 ## Repo layout
 
+- Top level: `docs/` and `bootstrap/` (the canonical trees), `site/` (jazyk.org),
+  `plans/` (working plans and reviews), `runtime-worker/` (the bounded Go task helper
+  local task runs use), `npm/jazyk/` (the `jazyk` npm package), `scripts/release/`
+  (release packaging, smoke, and publication scripts), and the `example-*` projects
+  (below).
 - `docs/main.md`: front door. `docs/compiler/`: compiler.md (division of labor,
   components, build lifecycle, outputs), parsing.md, alignment.md, model.md + `model/`
-  (entity, requirement, relationship, view, state-machine, section, diagnostic),
-  graph.md (storage layout, mutations, changesets, gates, derived data, change records,
+  (entity, requirement, criterion, relationship, view, state-machine, section,
+  diagnostic), graph.md (storage layout, mutations, changesets, gates, derived data, change records,
   journal, GC, the limits registry, concurrency), reconciler.md (dirty set, goal
   derivation, readiness, batching, bubbling, escalation, parked and failed, flip
   detection), compilation.md (a build, compile and GC, edit paths, checks, convergence,
@@ -142,29 +147,50 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   context.md (the loaded set, its tools, policy, axes, rendering), tools.md (the
   registry by group, toolsets), diagrams.md (rendering, the emitters, lifting and
   collapse, over-limit views, output layout, the renderer, diagrams as input),
-  control-plane.md (modes, releases, workers, leases), project-settings.md, `concepts/`
-  (statements, identity, scopes, judgment), schemas (draft-07 JSON Schema in YAML,
-  `$id` `https://jazyk.org/schemas/*.json`). `docs/site.md` specs jazyk.org;
-  `docs/TODO.md` is the live work list.
-- Payloads: `docs/compiler/goals/prompts/` (agent-contract.md, feedback-note.md,
-  worker-protocol.md, serving-protocol.md, open-batch-protocol.md, one contract paragraph per model-executed
-  goal kind, and the
-  generation payloads bind-contract.md, generate-contract.md,
-  decompile-contract.md) and `docs/compiler/skills/` (extraction,
-  judgment, criteria, flow-views, structural-views, abstraction, conformance). Both are embedded
-  into the binary at compile time (`include_str!`), so docs and code share the same
-  bytes by construction. Edit the files, never reintroduce string constants in code.
-  Both directories are excluded from the docs glob (they are instructions to a model,
-  not prose about jazyk). Placeholders: `{target}` (worker-protocol and serving-protocol: the batch id;
-  pointers), `{GROUP}` (generate-contract).
+  control-plane.md (modes, releases, workers, leases), project-settings.md,
+  document-sets.md (named sets, identity, path membership), workflows.md (selected
+  workflows), task-runtime.md (`[[tasks]]` and their runs), agent-runtime.md (the
+  embedded GDK agent), hosted-runtime.md (`hosted::Workspace`), live-preview.md,
+  binary-documents.md (DOCX and PDF input) and document-proof.md (its evaluation),
+  `concepts/` (statements, identity, scopes, levels, judgment), schemas
+  (graph.schema.yaml, tools.schema.yaml, project-settings.schema.yaml: draft-07 JSON
+  Schema in YAML, `$id` `https://jazyk.org/schemas/*.json`). `docs/site.md` specs
+  jazyk.org; `docs/TODO.md` is the live work list.
+- Payloads: `docs/compiler/goals/prompts/` holds every model-facing text
+  (`docs/compiler/sessions.md#payload-files`): agent-contract.md (its `{feedback}` slot
+  takes feedback-note.md), worker-protocol.md, serving-protocol.md,
+  open-batch-protocol.md, one contract paragraph per model-executed goal kind, the
+  generation and verification contracts (bind-contract.md, bind-criteria-note.md,
+  generate-contract.md, decompile-contract.md, the `verify-*-contract.md` files), the
+  chat, compaction, embedded-agent, and continuation texts, the conversational policy
+  (agent-main.mustache, agent-skill-tools.json), and the fragment files of many short
+  sections each opened by a `<!-- name -->` marker (gates.md, session-blocks.md,
+  agent-context.md, serving-instructions.md, generation-steps.md, judge-input.md,
+  decompile-worker.md, answer-handling.md; integration-context.md). `payload.rs` reads
+  the fragments and fills placeholders. `docs/compiler/skills/` holds the session
+  skills (extraction, edges, judgment, criteria, flow-views, structural-views,
+  abstraction, conformance) and `skills/agent/` the workflow skills an agent reads
+  with `read_jazyk_skill` (inspect-project, edit-documentation, change-code, compile,
+  generate, bind, verify, reverse-compile, execute-task, recover-workflow, publish).
+  Both are embedded into the binary at compile time (`include_str!`), so docs and code
+  share the same bytes by construction. Edit the files, never reintroduce string
+  constants in code; tool descriptions are the one exception and live in the tool
+  registry. Both directories are excluded from the docs glob (they are instructions to
+  a model, not prose about jazyk). Placeholders are `{name}` (lowercase, one pass, e.g.
+  `{target}` in worker-protocol and serving-protocol: the batch id), except
+  `{GROUP}` in generate-contract.
 - `docs/frontends/`: cli.md, acp.md, mcp.md, lsp.md, gui.md (local API and
   launcher), wasm.md (portable browser engine), protocol.md (editor/engine
-  compatibility), viewer.md. UI presentation specifications live in the private
+  compatibility), viewer.md, agent-context.md (instructions, MCP servers, and skills a
+  conversation picks up), agent-workflows.md (one conversational policy, the workflow
+  skills), distribution.md (GitHub Releases and npm). UI presentation specifications live in the private
   `../jazyk-cloud/docs/editor/` tree.
   `docs/consumers/`: gen.md (generation + verification ledger), bind.md, decompile.md,
   docsgen.md, pm.md. `docs/benchmark/`: benchmark.md, cases.md, case.schema.yaml,
   `cases/` (the case files are embedded into the binary at compile time; they are
-  fixtures, excluded from the docs glob), known-results.yaml (embedded too).
+  fixtures, excluded from the docs glob), known-results.yaml (embedded too),
+  replays.md and `replays/` (scripted tool-call scenarios run without a model, also
+  excluded from the docs glob).
 - `.jazyk/jazyk.toml`: the live project file with named document sets.
   The dogfood graph lands in `.jazyk/ds_main/` (this repository's root `.gitignore`
   keeps it out of git): `graph/<kind>/<file id>.yaml` node files (entities,
@@ -174,48 +200,78 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `trace/`, `sessions/`, the status (`status.yaml`, `changes/`, `parked/`, `failed/`,
   `alignment/`, `lookalikes/`), `build.yaml` (generation, verdict, costs, spend),
   `markers.yaml`.
-- `bootstrap/src/`: model.rs (node kinds, provenance, change records, journal entry,
-  status), store.rs (node files and file ids, the status split, natural keys, changesets, gates at commit, journal, GC
-  sweep, store version and archive), limits.rs (the limits registry and the session and
-  build budgets), derive.rs (relationships, state machines, default views, flow
-  clustering), goals.rs (the `GoalKind` registry trait, one implementation per kind,
-  hint computers, the static registry), board.rs (the derived board, cones, readiness
-  tiers, locality batching, GC gating, escalation, parked and failed, the MCP goal
-  list), reconcile.rs (the build loop, checks, flip detection, verdict, whole-build
-  report), session.rs (prompt assembly from payload files, skills, trace events,
-  transcript), context.rs (the loaded set: `load`, `expand`, `unload`, `graph_status`,
-  stubs, handles, high-water mark), tools.rs (the registry, gates at staging, bubbling
-  previews, goal tools, the repeated-call guard), render.rs (emitters, lifting,
-  collapse, the `render_svg` seam, `.puml`/`.svg`/`.png`), align.rs, md.rs,
-  project.rs, control.rs, llm.rs (configured model transport with public GDK wire
-  helpers), `harness/` (the shared public GDK runtime), session_recovery.rs (owned
-  execution capsules and parent progress), parallel.rs, jsonrpc.rs, `acp/` (the
-  bridge and the embedded agent), `gui/` (axum), mcp.rs,
-  lsp.rs (read-only), cli.rs, docsgen.rs, viewer.rs, gen.rs, bind.rs, verify.rs,
-  decompile.rs, feedback.rs, answer.rs, benchmark.rs. `bootstrap/editors/vscode`: LSP
-  client extension. Deps: serde, serde_json, serde_norway, ureq (catalog HTTP),
-  reqwest + eventsource-stream (native model HTTP/SSE), notify (file
-  events), regex, agent-client-protocol (ACP; futures + async-io driven by a `block_on`
-  on a dedicated thread), plantuml-little + graphviz-anywhere (the in-process
-  renderer; `bootstrap/.cargo/config.toml` opts into the prebuilt Graphviz archive
-  download), resvg (raster), tokio (native model/MCP I/O and GUI), axum + tower-http
-  (the GUI server and its CORS layer), goose-agent + goose-provider-types + the
-  documented portable goose-context-management source patch. Dependency policy
-  (owner decision, 2026-07-06): infrastructure comes from
-  crates; hand-roll only domain logic. Do not reimplement transports, parsers for
-  standard formats, or platform APIs.
-- Examples, each a project with its own `.jazyk/jazyk.toml`: `bootstrap/example/f1` (small)
-  and `f2` (planted traps, see its EXPECTED.md); at the repo root `example-sort` (a
-  sort utility stated near pseudo-code, with its code), `example-erp` (a multi-document
-  software system), `example-slides` (a slide deck, non-software), `example-org` (an
-  organization) and `example-novel` (a narrative), the last two created by the
-  landing's fixture workstream (`plans/implementation.md`). `bootstrap/VALIDATION.md`:
-  measured results, scorecard, known weaknesses.
+- `bootstrap/src/`: lib.rs (the crate root: core modules build for both targets,
+  native modules are gated off wasm32), main.rs and launcher.rs (the CLI entry and
+  command dispatch), start.rs and menu.rs (bare `jazyk` and its terminal menu),
+  model.rs (node kinds, provenance, change records, journal entry, status), ids.rs (id
+  slugs and hashes), store.rs (node files and file ids, the status split, natural keys,
+  changesets, gates at commit, journal, GC sweep, store version and archive), limits.rs
+  (the limits registry and the session and build budgets), derive.rs (relationships,
+  state machines, default views, flow clustering), goals.rs (the `GoalKind` registry
+  trait, one implementation per kind, hint computers, the static registry), board.rs
+  (the derived board, cones, readiness tiers, locality batching, GC gating, escalation,
+  parked and failed, the MCP goal list), reconcile.rs and `reconcile/` (the build loop,
+  checks, flip detection, verdict, whole-build report, build continuation, the e2e
+  tests), runner.rs (what runs one goal batch), session.rs (prompt assembly from
+  payload files, skills, trace events, transcript), payload.rs (fragment files and
+  placeholder fill), context.rs (the loaded set: `load`, `expand`, `unload`,
+  `graph_status`, stubs, handles, high-water mark), tools.rs (the registry, gates at
+  staging, bubbling previews, goal tools, the repeated-call guard), render.rs
+  (emitters, lifting, collapse, the `render_svg` seam, `.puml`/`.svg`/`.png`),
+  align.rs, md.rs, input.rs and documents.rs (input inventory and the DOCX/PDF readers),
+  project.rs, document_sets.rs (sets, identity, membership), workflow.rs (selected
+  workflows), control.rs, llm.rs and `llm/` (configured model transport with public GDK
+  wire helpers), model_api.rs (wire selection), `harness/` (the shared public GDK
+  runtime), session_recovery.rs (owned execution capsules and parent progress),
+  scoped_state.rs, task_runtime.rs, task_runtime_local.rs (Docker/Podman),
+  task_runtime_remote.rs (Cloud), hosted.rs (`hosted::Workspace`), portable.rs,
+  inprocess.rs (the in-page runner), conversation.rs and `conversation/` (a tab's
+  chat), live_preview.rs, vfs.rs and sys.rs (the filesystem and process seams),
+  jsonrpc.rs, `acp/` (the bridge, the IDE proxy, and the embedded agent), mcp.rs,
+  edit_watch.rs, local_socket.rs, `gui/` (axum), `webapi/` (the JSON API both
+  transports serve), `wasm/` (the browser backend), lsp.rs and editor_lsp.rs, protocol.rs,
+  setup.rs, agent_context.rs, agent_workflows.rs, agents_md.rs, project_context.rs,
+  cli.rs, docsgen.rs and card.rs, viewer.rs, gen.rs and `gen/`, bind.rs, verify.rs and
+  `verify/`, decompile.rs, feedback.rs, answer.rs, costs.rs, diagnostic_locations.rs,
+  benchmark.rs, replay.rs. `bootstrap/examples/` (distribution_smoke, document_proof,
+  gdk_profile), `bootstrap/tests/` (Python acceptance scripts), `bootstrap/vendor/`
+  (the patched goose-context-management). `bootstrap/editors/`: vscode (VS Code and
+  Cursor), zed, and jetbrains (through LSP4IJ), each launching `jazyk lsp`. Deps:
+  serde, serde_json, serde_norway, toml, toml_edit (comment-preserving config edits),
+  jsonc-parser, mustache, pulldown-cmark, regex, globset, deunicode, sha2, siphasher,
+  base64, quick-xml, ureq (catalog HTTP), reqwest + eventsource-stream (native model
+  HTTP/SSE), rmcp (MCP server and client), notify (file events), fs2, which (program
+  lookup), subtle (constant-time token compare), libc (process groups on unix),
+  crossterm (the launcher menu), open, agent-client-protocol (ACP; futures + async-io
+  driven by a `block_on` on a dedicated thread), plantuml-little (the in-process
+  renderer; it pulls graphviz-anywhere, and `bootstrap/.cargo/config.toml` opts into
+  the prebuilt Graphviz archive download), resvg (raster), tokio (native model/MCP I/O
+  and GUI), axum + tower + tower-http (the GUI server and its CORS layer), docx-rs,
+  pdfium-render, and zip (the optional native document readers), wasm-bindgen +
+  js-sys + gloo-timers (the browser backend), goose-agent + goose-provider-types + the
+  documented portable goose-context-management source patch. Dependency policy (owner
+  decision, 2026-07-06): infrastructure comes from crates; hand-roll only domain logic.
+  Do not reimplement transports, parsers for standard formats, or platform APIs.
+- Examples, each a project with its own `.jazyk/jazyk.toml`: `bootstrap/example/f1` (small),
+  `f2` (planted traps, see its EXPECTED.md), and `e2e-gc` (the GC end-to-end fixture);
+  at the repo root `example-sort` (a sort utility stated near pseudo-code, with its
+  code), `example-erp` (a multi-document software system), `example-slides` (a slide
+  deck, non-software), `example-org` (an organization), `example-novel` (a narrative),
+  `example-ledger` (the levels chain's bookkeeping fixture, see its README), and
+  `example-saas` (the level-shape fixture, see its EXPECTED.md).
+  `bootstrap/VALIDATION.md`: measured results, scorecard, known weaknesses.
 
 ## Build and commands
 
 - `cd bootstrap && cargo build --locked --release` (binary at
-  `bootstrap/target/release/jazyk`), `cargo test --locked`.
+  `bootstrap/target/release/jazyk`), `cargo test --locked`,
+  `cargo clippy --locked --all-targets -- -D warnings`.
+  `bootstrap/rust-toolchain.toml` pins Rust 1.99.1 with the `wasm32-unknown-unknown`
+  target, locally and in CI.
+- Worktrees that share one `CARGO_TARGET_DIR` can run each other's stale test
+  binaries. Give each its own crate artifacts with
+  `--config 'profile.dev.package.jazyk.codegen-units=<n>'` (a distinct `<n>` per
+  worktree) or use a private target directory.
 - The owner's `jazyk` command is a symlink to `bootstrap/target/release/jazyk`. After
   ANY change to the binary, finish with `cargo build --release`; a running `jazyk gui`
   needs a restart to pick up a new binary. The binary carries no page: `jazyk gui`
@@ -226,11 +282,16 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   `compiler.lock.json`; `JAZYK_SOURCE` permits a local override outside CI.
   Editor tests and jazyk.dev publication belong to that repository. Engine builds
   never require the editor checkout. The independent `site/` workflow owns jazyk.org.
-- `jazyk compile [path...]` (live trace; `--verbose` the cascade and full prompts,
-  `--quiet` summary), `check`, `watch`, `status`, `preview [goal|target]`,
+- `jazyk` (the launcher menu; every short name such as `claude` or `vscode` is also a
+  command), `setup`, `init`, `sets`, `compile [path...]` (live trace; `--verbose` the
+  cascade and full prompts, `--quiet` summary), `check`, `watch`, `monitor`,
+  `release`, `answer`, `status`, `spend`, `preview [goal|target]`,
   `explain [goal|target]`, `ripple <target|generation|doc> [--back]`,
-  `context <target>`, `query <text>`, `gen [entity...]`, `test [--audit]`, `docsgen`,
-  `viewer`, `mcp graph [--write]`, `lsp`, `benchmark`.
+  `context <target>`, `query <text>`, `gen [entity...]`, `test [--audit]`,
+  `decompile`, `docsgen`, `viewer`, `gui`, `mcp <graph|compile|generate|verify|decompile|chat|runtime|benchmark|all>`
+  (`mcp graph [--write]`), `acp`, `agent`, `lsp`, `replay`, `benchmark`, and the task
+  commands `tasks`, `runs`, `run`, `run-status`, `run-log`, `run-cancel`
+  (`docs/frontends/cli.md`).
 - A project is a directory with `.jazyk/jazyk.toml` (walk-up discovery). Run the
   dogfood from the repository root. Each set stores state directly in `.jazyk/<id>/`.
 - Always run `jazyk benchmark` before trusting a new model: it grades session capability
@@ -301,10 +362,13 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
   pull requests on GitHub.
 - Wait for the owner's explicit approval before merging into local `master`.
   After approval, merge locally and push only `master`. Never merge through GitHub.
-- Keep secrets out of tracked files. `.env`, `*.env`, `*/target/`, and generated state inside `.jazyk`
-  are gitignored. Commit `.jazyk/jazyk.toml` and `.jazyk/.gitignore`. In this
-  repository the root `.gitignore` also keeps every set's compiled state out, so the
-  dogfood and the examples commit only their configuration.
+- Keep secrets out of tracked files. `.env`, `*.env`, `/bootstrap/target/`, and every
+  `.jazyk/` directory are gitignored. In this repository the root `.gitignore` ignores
+  `**/.jazyk/` whole (a nested `.jazyk/.gitignore` would otherwise re-include set
+  state), so the dogfood and the examples commit only their tracked configuration
+  (`.jazyk/jazyk.toml`, `.jazyk/.gitignore`). Stage a change to a tracked `.jazyk/`
+  file with `git add -u` (a plain `git add` stages it but exits 1); add a new
+  project's configuration with `git add -f`.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. A push to `master` that changes
   `site/` or its deployment workflow publishes jazyk.org via GitHub Actions.
   Engine-only pushes do not deploy or start engine CI.

@@ -269,7 +269,9 @@ session spend its budget on it:
   name, re-sent after the test file was fixed, once landed marked "unchanged". A
   `load` is the exception: it repeats by target, below.
 
-Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
+Identity is the tool name plus its arguments verbatim, counted per open batch. An MCP
+serving with no open batch counts per ledger claim (from `begin_binding` or
+`begin_generation` to its record) and across its calls outside a claim. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
 see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its

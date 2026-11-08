@@ -822,7 +822,7 @@ impl SkillState {
             self.rendered.push(SkillEntry {
                 name: name.to_string(),
                 active: true,
-                chars: skill_payload(name).map(|p| p.len()).unwrap_or(0),
+                chars: skill_payload(name).map(crate::context::chars).unwrap_or(0),
             });
         }
     }
@@ -854,7 +854,7 @@ impl SkillState {
         self.rendered.push(SkillEntry {
             name: name.to_string(),
             active: true,
-            chars: payload.len(),
+            chars: crate::context::chars(payload),
         });
         Ok(SkillLoad::Rendered(payload))
     }

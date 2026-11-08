@@ -872,7 +872,7 @@ The loop continued onto the org corpus and onto generation:
   had set (the hint says it is the flat top level), and a 58k first reply spilled to a
   file (skills ship as `load_skill` pointers past 45k).
 
-- Acceptance criteria (2026-09-13, `plans/acceptance-criteria.md`): on example-sort the
+- Acceptance criteria (2026-09-13): on example-sort the
   first compile with the criterion tools served converged in 86 turns and $5.64 with
   14 requirements and 24 criteria, two quoted from the test-case sections and 22 derived
   by one `derive-criteria` session with a boundary or a negative for every conditional

@@ -1,0 +1,4 @@
+# The Rust toolchain every build of the engine uses, locally and in CI.
+[toolchain]
+channel = "1.99.1"
+targets = ["wasm32-unknown-unknown"]

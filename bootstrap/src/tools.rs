@@ -1520,7 +1520,7 @@ pub fn harness_owned_rule(rule: &str) -> bool {
 #[derive(Default, Clone)]
 pub struct CallMemory {
     repeats: std::collections::BTreeMap<String, u32>,
-    last_answers: std::collections::BTreeMap<String, String>,
+    last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     feedback_count: usize,
 }
 
@@ -1544,9 +1544,9 @@ pub struct ToolSession {
     // The repeated-call guard, keyed per open batch: the same call with the same
     // arguments has the same answer (docs/compiler/sessions.md#repeated-calls).
     repeats: std::collections::BTreeMap<String, u32>,
-    // The last answer per repeat key, with the staged-mutation count it was given
-    // under: a repeat whose answer changed is no repeat.
-    last_answers: std::collections::BTreeMap<String, (String, usize)>,
+    // The last answer per repeat key, with the generation and staged-mutation count it
+    // was given under: a repeat whose answer changed is no repeat.
+    last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     refusals: u32,
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
@@ -5684,14 +5684,14 @@ impl ToolSession {
             };
             if seen >= 3 {
                 // The state may have moved since the last answer: a pure read answers
-                // again and is compared, any other call compares the staged mutations
-                // it was answered under.
-                let staged = self.staged.len();
+                // again and is compared, any other call compares the generation and the
+                // staged mutations it was answered under.
+                let staged = self.state_mark();
                 let moved = if REANSWERABLE_TOOLS.contains(&name) {
                     let result = self.dispatch_gated(name, args);
                     let answer = Self::answer_text(&result);
                     if self.last_answers.get(&key).map(|(a, _)| a) != Some(&answer) {
-                        self.last_answers.insert(key.clone(), (answer, self.staged.len()));
+                        self.last_answers.insert(key.clone(), (answer, self.state_mark()));
                         self.repeats.insert(key, 1);
                         return result;
                     }
@@ -5703,7 +5703,7 @@ impl ToolSession {
                     self.repeats.insert(key.clone(), 1);
                     let result = self.dispatch_gated(name, args);
                     let answer = Self::answer_text(&result);
-                    self.last_answers.insert(key, (answer, self.staged.len()));
+                    self.last_answers.insert(key, (answer, self.state_mark()));
                     return result;
                 }
                 self.refusals += 1;
@@ -5728,7 +5728,7 @@ impl ToolSession {
             // A load of a loaded target is a repeat by target, whatever it answers.
             let same = name == "load"
                 || self.last_answers.get(&key).map(|(a, _)| a) == Some(&answer);
-            self.last_answers.insert(key.clone(), (answer, self.staged.len()));
+            self.last_answers.insert(key.clone(), (answer, self.state_mark()));
             if seen == 2 {
                 if !same {
                     self.repeats.insert(key, 1);
@@ -5760,6 +5760,12 @@ impl ToolSession {
             v["nextOffset"] = json!(next);
         }
         v
+    }
+
+    // The state a call is answered under, for the repeated-call guard: the committed
+    // generation (per-call servings commit between calls) and the staged mutations.
+    fn state_mark(&self) -> (u64, usize) {
+        (self.snapshot.status.generation, self.staged.len())
     }
 
     // The comparable text of an answer, for the repeated-call guard.
@@ -12592,6 +12598,12 @@ mod tests {
         t.dispatch("delete_entity", &args).unwrap_err();
         t.dispatch("delete_entity", &args).unwrap_err();
         assert_eq!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+        // A commit between per-call sessions moves the state as well.
+        let args = json!({"id": "ent:phantom", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.snapshot.status.generation += 1;
+        assert_ne!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
     }
 
     // A refused write stages nothing and leaves no lookup entry behind.

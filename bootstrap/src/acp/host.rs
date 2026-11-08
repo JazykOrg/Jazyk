@@ -6,7 +6,7 @@ use super::config::ResolvedAgent;
 use super::policy::{self, PermissionPolicy};
 use agent_client_protocol::schema::v1::{
     CancelNotification, ClientCapabilities, ContentBlock, FileSystemCapabilities, HttpHeader,
-    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest, PromptRequest,
+    InitializeRequest, McpServer, McpServerHttp, McpServerStdio, NewSessionRequest,
     ReadTextFileRequest, ReadTextFileResponse, RequestPermissionRequest, RequestPermissionResponse,
     SessionNotification, SessionUpdate, WriteTextFileRequest, WriteTextFileResponse,
 };
@@ -901,10 +901,6 @@ fn write_text_file(root: &std::path::Path, req: &WriteTextFileRequest) -> Result
     }
     crate::vfs::write(&path, &req.content).map_err(|e| format!("write {}: {}", path.display(), e))
 }
-
-// Suppress unused warnings for items later phases wire up.
-#[allow(dead_code)]
-fn _unused(_: &PromptRequest, _: &ContentBlock) {}
 
 #[cfg(test)]
 mod tests {

@@ -773,7 +773,9 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
   change is a count over a limit, growth alone is not a new subject: the failure stands
   until the count has grown by a fifth over the count at failure (or a human bumps or
   retries), since a novel lead's goal once re-fired on every chapter's new statements
-  and failed three times, at up to fifty calls each, with the same honest reason.
+  and failed three times, at up to fifty calls each, with the same honest reason. The
+  [fan-out](#fan-out) variant's count is its child count: its coupling candidates move
+  with every requirement on the level and reopen nothing on their own.
 - Resolving a parked or failed goal clears its entry with its record. A parked
   ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives drops too:
   the ledger judges what landed, so a verify goal parked mid-run whose row reads

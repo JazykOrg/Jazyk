@@ -625,11 +625,25 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
         return true;
     }
     if derived.kind == "abstract-entity" {
-        let count = |g: &Goal| g.change["limits"][0]["count"].as_u64();
-        if let (Some(then), Some(now)) = (count(failed), count(derived)) {
-            if now * 5 < then * 6 {
-                return true;
-            }
+        let within = |then: Option<u64>, now: Option<u64>| match (then, now) {
+            (Some(then), Some(now)) => Some(now * 5 < then * 6),
+            (None, None) => None,
+            _ => Some(false),
+        };
+        let bound = |g: &Goal| (g.change["limits"][0]["soft"].clone(), g.change["limits"][0]["hard"].clone());
+        let caps = within(
+            failed.change["limits"][0]["count"].as_u64(),
+            derived.change["limits"][0]["count"].as_u64(),
+        )
+        .map(|w| w && bound(failed) == bound(derived));
+        // The fan-out variant: the coupling candidates move with every requirement
+        // on the level, so only the child count and the limits in force (a bump)
+        // reopen it. A level declared flat stays failed until it changes.
+        let fan_out = within(failed.change["fan_out"].as_u64(), derived.change["fan_out"].as_u64())
+            .map(|w| w && failed.change["limit"] == derived.change["limit"]);
+        match (caps, fan_out) {
+            (Some(true), None | Some(true)) | (None, Some(true)) => return true,
+            _ => {}
         }
     }
     derived.cause.as_ref().map(|c| c.generation) <= failed.cause.as_ref().map(|c| c.generation)
@@ -2543,6 +2557,26 @@ pub(crate) mod tests {
         assert!(!failure_stands(&failed, &mk(99, 70)));
         let other = Goal { kind: "review-entity".into(), ..mk(82, 60) };
         assert!(!failure_stands(&other, &Goal { kind: "review-entity".into(), ..mk(83, 61) }));
+    }
+
+    // A declined fan-out goal stands while its candidates move: only the child count
+    // growing by a fifth, or a bump of the limits, reopens it.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    #[test]
+    fn failed_fan_out_stands_while_coupling_moves() {
+        let mk = |count: u64, soft: u64, candidates: Value, generation: u64| Goal {
+            id: "g:abstract-entity:ent:shop".into(),
+            kind: "abstract-entity".into(),
+            target: "ent:shop".into(),
+            change: json!({"fan_out": count, "limit": {"soft": soft, "hard": 15}, "candidates": candidates}),
+            cause: Some(crate::model::Cause { generation, mutation: 0, via: "limits".into() }),
+            ..Default::default()
+        };
+        let failed = mk(10, 9, json!([["ent:a", "ent:b"]]), 60);
+        assert!(failure_stands(&failed, &mk(10, 9, json!([["ent:a", "ent:c"]]), 70)));
+        assert!(failure_stands(&failed, &mk(11, 9, json!([]), 71)));
+        assert!(!failure_stands(&failed, &mk(12, 9, json!([]), 72)));
+        assert!(!failure_stands(&failed, &mk(10, 8, json!([["ent:a", "ent:b"]]), 73)));
     }
     use super::*;
     use crate::store::{self, RecordBatch};

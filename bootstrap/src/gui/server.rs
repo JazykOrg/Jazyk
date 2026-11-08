@@ -142,7 +142,13 @@ fn cors(gui_origin: &str) -> CorsLayer {
         .max_age(std::time::Duration::from_secs(600))
 }
 
+// The API routes, built once per process: a request only binds its scoped state.
 fn api_router(st: SharedState) -> Router {
+    static ROUTES: std::sync::OnceLock<Router<SharedState>> = std::sync::OnceLock::new();
+    ROUTES.get_or_init(api_routes).clone().with_state(st)
+}
+
+fn api_routes() -> Router<SharedState> {
     let api = Router::new()
         .route("/ping", get(api::ping))
         .route("/project", get(api::project))
@@ -239,7 +245,7 @@ fn api_router(st: SharedState) -> Router {
         .route("/release", post(api::release))
         .route("/events", get(events::sse))
         .route("/shutdown", post(api::shutdown));
-    Router::new().nest("/api", api).with_state(st)
+    Router::new().nest("/api", api)
 }
 
 // Resolve the context once per request. The existing native handlers retain their

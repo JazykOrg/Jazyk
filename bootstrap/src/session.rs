@@ -89,6 +89,17 @@ pub enum TraceEvent {
         goals: usize,
         kinds: Vec<(String, usize)>,
         blocked: usize,
+        // The items of a selected build (docs/compiler/compilation.md#selected-builds).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection: Option<serde_json::Value>,
+    },
+    // A selected build widened: the items added and the selection now in force
+    // (`null` for the whole set).
+    #[serde(rename = "selection")]
+    Selection {
+        label: String,
+        added: serde_json::Value,
+        selection: serde_json::Value,
     },
     #[serde(rename = "graphPreview")]
     GraphPreview {
@@ -258,10 +269,19 @@ fn render_stderr(ev: &TraceEvent) {
             goals,
             kinds,
             blocked,
+            selection,
             ..
         } => {
             let per_kind: Vec<String> = kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
-            let mut s = format!("compile: {} goals", goals);
+            let mut s = format!(
+                "compile{}: {} goals",
+                if selection.is_some() {
+                    " (selection)"
+                } else {
+                    ""
+                },
+                goals
+            );
             if !per_kind.is_empty() {
                 s.push_str(&format!(" ({})", per_kind.join(", ")));
             }
@@ -270,6 +290,19 @@ fn render_stderr(ev: &TraceEvent) {
             }
             eprintln!("{}", s)
         }
+        TraceEvent::Selection { added, .. } => match added.as_array() {
+            Some(items) => {
+                let names: Vec<String> = items
+                    .iter()
+                    .filter_map(|i| {
+                        serde_json::from_value::<crate::selection::Item>(i.clone()).ok()
+                    })
+                    .map(|i| i.label())
+                    .collect();
+                eprintln!("selection widened: {}", names.join(", "))
+            }
+            None => eprintln!("selection widened to the whole set"),
+        },
         TraceEvent::GcBurst {
             goal_kind,
             target,

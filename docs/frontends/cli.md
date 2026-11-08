@@ -251,6 +251,15 @@ LLM call. A value that is not a whole number is a usage error, never an unlimite
 [Executor overrides](../compiler/project-settings.md#executors) per goal kind or class
 send some sessions to a different agent.
 
+`--select <path>` runs a [selected build](../compiler/compilation.md#selected-builds):
+only the goals in the selection run. The flag repeats. A path is a document or a
+folder; `<path>:<first>-<last>` selects lines of a document (one-based, inclusive).
+E.g.: `jazyk compile --select docs/orders.md --select docs/billing.md:12-40`.
+Selected paths choose the set like positional paths. A selected path that is not a
+document of the set, or a malformed range, is a usage error. The board summary
+line names the selection (`compile (selection): 4 goals ...`), and goals outside it
+stay open.
+
 Terminal output, in order:
 
 - The board summary first, once the documents are parsed and the board is derived: the

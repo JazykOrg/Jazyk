@@ -45,6 +45,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
         "agent": agent,
         "chatInputs": agent != "none",
         "testPaths": true,
+        "selection": true,
         "model": model,
         "rendering": "server",
         "persistence": "disk",

@@ -38,7 +38,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
-        ("compile [path...] [--sessions N]", "run one build: sessions resolve goals until the board converges"),
+        ("compile [path...] [--sessions N] [--select PATH]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
     ("actions on the project", &[
@@ -166,6 +166,7 @@ const VALUE_OPTIONS: &[&str] = &[
     "--project",
     "--goal",
     "--sessions",
+    "--select",
     "--option",
     "--text",
     "--build-token",
@@ -182,7 +183,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
-        "compile" => (None, &["--sessions"]),
+        "compile" => (None, &["--sessions", "--select"]),
         "sets" => (
             Some(2),
             &["--docs", "--source", "--roots", "--name", "--json"],
@@ -290,7 +291,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--set ID] [--sessions N]\n\n\
+            "usage: jazyk compile [path...] [--set ID] [--sessions N] [--select PATH[:A-B]]...\n\n\
              Run one build per document set: the set --set names, else every set\n\
              claiming one of the paths (a path no set claims is a usage error), else\n\
              every dirty set. The reconciler derives the goal board from the documents\n\
@@ -705,6 +706,7 @@ pub fn run() {
                 "--project" => opts.project = Some(v),
                 "--goal" => opts.goal = Some(v),
                 "--sessions" => opts.sessions = number(arg, &v, &mut errors),
+                "--select" => opts.select.push(v),
                 "--option" => opts.option = number(arg, &v, &mut errors),
                 "--text" => opts.text = Some(v),
                 "--build-token" => opts.build_token = Some(v),

@@ -166,13 +166,21 @@ pub struct Job {
     pub cancel: Arc<AtomicBool>,
     // Stem of the persisted transcript under <out>/trace/.
     pub stem: String,
+    // The selection of a selected build, widened by later requests
+    // (docs/frontends/gui.md#selected-builds). Compile and workflow jobs only.
+    pub selection: Option<Arc<crate::selection::Handle>>,
+    pub started: Option<std::time::SystemTime>,
 }
 
 impl Job {
     fn summary(&self) -> Value {
+        let mut kind = self.kind.as_value();
+        if let Some(items) = self.selection.as_ref().and_then(|h| h.items()) {
+            kind["selection"] = json!(items);
+        }
         json!({
             "id": self.id,
-            "kind": self.kind.as_value(),
+            "kind": kind,
             "state": self.state,
             "cancelRequested": self.cancel.load(Ordering::Relaxed),
             "queuedAt": self.queued_at,
@@ -301,7 +309,7 @@ impl JobManager {
         } else {
             kind
         };
-        let mut inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap();
         let paths = Self::stop_paths(st, &kind);
         if automatic && paths.iter().any(|p| crate::vfs::exists(p)) {
             return None;
@@ -321,10 +329,25 @@ impl JobManager {
             }
         }
         for qid in &inner.queue {
-            if inner.jobs.get(qid).map(|j| j.kind == kind).unwrap_or(false) {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+                // A request for the whole set widens a queued selected build.
+                if let Some(h) = &j.selection {
+                    h.widen(None);
+                }
                 return Some(*qid);
             }
         }
+        let selection = selectable(&kind).then(|| crate::selection::Handle::new(None));
+        Some(self.enqueue(st, inner, kind, selection))
+    }
+
+    fn enqueue(
+        &self,
+        st: &SharedState,
+        mut inner: std::sync::MutexGuard<'_, Inner>,
+        kind: JobKind,
+        selection: Option<Arc<crate::selection::Handle>>,
+    ) -> u64 {
         inner.next_id += 1;
         let id = inner.next_id;
         let job = Job {
@@ -338,6 +361,8 @@ impl JobManager {
             events: VecDeque::new(),
             cancel: Arc::new(AtomicBool::new(false)),
             stem: String::new(),
+            selection,
+            started: None,
         };
         let summary = job.summary();
         inner.jobs.insert(id, job);
@@ -345,7 +370,56 @@ impl JobManager {
         drop(inner);
         st.events.emit("job.queued", json!({ "job": summary }));
         self.wake.notify_all();
-        Some(id)
+        id
+    }
+
+    // Submit a selected build: widen a queued or running job of the same kind when
+    // it can take the items, else queue a new one. Returns the job id and whether an
+    // existing job took the request. Mirrors docs/frontends/gui.md#selected-builds.
+    pub fn submit_selected(
+        &self,
+        st: &SharedState,
+        kind: JobKind,
+        items: Vec<crate::selection::Item>,
+    ) -> (u64, bool) {
+        let kind = match st.proj().set_id {
+            Some(id) => JobKind::Scoped {
+                set_id: id,
+                config_hash: st.proj().config_hash,
+                kind: Box::new(kind),
+            },
+            None => kind,
+        };
+        let inner = self.inner.lock().unwrap();
+        if matches!(&kind, JobKind::Scoped { kind, .. } if matches!(kind.as_ref(), JobKind::Compile))
+        {
+            for p in Self::stop_paths(st, &kind) {
+                let _ = crate::vfs::remove_file(p);
+            }
+        }
+        for qid in &inner.queue {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+                if let Some(h) = &j.selection {
+                    h.widen(Some(items.clone()));
+                }
+                return (*qid, true);
+            }
+        }
+        if let Some(j) = inner
+            .running
+            .and_then(|rid| inner.jobs.get(&rid))
+            .filter(|j| j.kind == kind && !j.cancel.load(Ordering::Relaxed))
+        {
+            if let (Some(h), Some(started)) = (&j.selection, j.started) {
+                if !saved_since(&st.proj(), &items, started)
+                    && h.widen(Some(items.clone())) != crate::selection::Widen::Sealed
+                {
+                    return (j.id, true);
+                }
+            }
+        }
+        let handle = crate::selection::Handle::new(Some(items));
+        (self.enqueue(st, inner, kind, Some(handle)), false)
     }
 
     pub fn list(&self) -> Vec<Value> {
@@ -505,7 +579,7 @@ impl JobManager {
 // cancelled job to discard its active session and release the store lock.
 pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || loop {
-        let (id, kind, cancel) = {
+        let (id, kind, cancel, selection) = {
             let jm = &st.jobs;
             let mut inner = jm.inner.lock().unwrap();
             loop {
@@ -517,7 +591,13 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
                     let job = inner.jobs.get_mut(&id).unwrap();
                     job.state = "running";
                     job.started_at = Some(crate::verify::now_iso());
-                    break (id, job.kind.clone(), job.cancel.clone());
+                    job.started = Some(std::time::SystemTime::now());
+                    break (
+                        id,
+                        job.kind.clone(),
+                        job.cancel.clone(),
+                        job.selection.clone(),
+                    );
                 }
                 inner = jm.wake.wait(inner).unwrap();
             }
@@ -579,6 +659,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         let fence = st.root.join(".jazyk/job-cancellation").join(id.to_string());
         let _ = crate::vfs::remove_file(&fence);
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(Some(&fence));
+        let _selection = selection.clone().map(crate::selection::enter);
         let result = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             execute(&st, &kind, &trace)
         })) {
@@ -601,6 +682,9 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             Ok(v) => ("done", Some(v)),
             Err(e) => ("failed", Some(json!({ "error": e }))),
         };
+        if let Some(h) = &selection {
+            h.seal();
+        }
         {
             let mut inner = st.jobs.inner.lock().unwrap();
             inner.running = None;
@@ -792,6 +876,34 @@ pub async fn post_job(State(st): State<SharedState>, Json(body): Json<Value>) ->
 }
 
 fn submit_sync(st: &SharedState, body: Value) -> Response {
+    let selection = match crate::selection::parse(&body["selection"]) {
+        Ok(s) => s,
+        Err(e) => return super::api::err(StatusCode::BAD_REQUEST, e),
+    };
+    if let Some(items) = &selection {
+        if body["kind"] != "compile" && body["kind"] != "workflow" {
+            return super::api::err(
+                StatusCode::BAD_REQUEST,
+                "a selection narrows compile and workflow jobs only",
+            );
+        }
+        if st.proj().set_id.is_none() {
+            return super::api::err(
+                StatusCode::BAD_REQUEST,
+                "a selection needs a document set: send setId",
+            );
+        }
+        if let Err(e) = crate::selection::validate(&st.proj(), items) {
+            return super::api::err(StatusCode::BAD_REQUEST, e);
+        }
+        let c = st.control();
+        if c.worker == "agent" {
+            return super::api::err(
+                StatusCode::CONFLICT,
+                "a selected build runs on the internal worker; set worker to any or internal",
+            );
+        }
+    }
     if body["kind"] == "compile" && st.proj().set_id.is_none() {
         let w = match crate::document_sets::Workspace::load(&st.root) {
             Ok(w) => w,
@@ -850,6 +962,7 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
     // records the release and the agent does the work. Mirrors
     // docs/compiler/control-plane.md#dispatch.
     if let Some(stage) = match body["kind"].as_str() {
+        _ if selection.is_some() => None,
         Some("compile") | Some("build") => Some("compile"),
         Some("gen") => Some("generate"),
         Some("decompile") => Some("decompile"),
@@ -937,8 +1050,48 @@ fn submit_sync(st: &SharedState, body: Value) -> Response {
             )
         }
     };
+    if let Some(items) = selection {
+        let (id, steered) = st.jobs.submit_selected(st, kind, items);
+        let mut reply = json!({ "jobId": id });
+        if steered {
+            reply["steered"] = json!(true);
+        }
+        return (StatusCode::ACCEPTED, Json(reply)).into_response();
+    }
     let id = st.jobs.submit(st, kind);
     (StatusCode::ACCEPTED, Json(json!({ "jobId": id }))).into_response()
+}
+
+// The kinds a selection narrows: compile and workflow, in a set.
+fn selectable(kind: &JobKind) -> bool {
+    match kind {
+        JobKind::Scoped { kind, .. } => {
+            matches!(kind.as_ref(), JobKind::Compile | JobKind::Workflow { .. })
+        }
+        _ => false,
+    }
+}
+
+// Whether a selected document was saved after a running build started: the build
+// reads the documents as they were then, so the request needs its own build.
+fn saved_since(
+    proj: &crate::project::Project,
+    items: &[crate::selection::Item],
+    started: std::time::SystemTime,
+) -> bool {
+    proj.doc_files().into_iter().any(|f| {
+        let rel = f
+            .strip_prefix(&proj.root)
+            .unwrap_or(&f)
+            .to_string_lossy()
+            .replace('\\', "/");
+        items
+            .iter()
+            .any(|i| rel == i.path || rel.starts_with(&format!("{}/", i.path)))
+            && std::fs::metadata(&f)
+                .and_then(|m| m.modified())
+                .is_ok_and(|m| m >= started)
+    })
 }
 
 fn str_list(v: &Value) -> Vec<String> {
@@ -1348,6 +1501,8 @@ mod tests {
             events: VecDeque::from([json!({"n": 1})]),
             cancel: Arc::new(AtomicBool::new(false)),
             stem: String::new(),
+            selection: None,
+            started: None,
         }
     }
 

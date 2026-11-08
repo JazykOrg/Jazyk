@@ -538,6 +538,15 @@ Link levels order tier 1: breadth-first over the document link graph from the
   every document in an earlier level has no open or parked tier 1 goal.
 - Documents unreachable by links run last, in path order.
 
+### Selection
+
+A [selected build](./compilation.md#selected-builds) computes readiness over its
+selected goals alone. Tier counts, link levels, alignment, and GC cones count only
+goals in the selection, so a dirty section outside it holds no selected goal. A goal
+outside the selection is never ready: its readiness reads `outside the selection` and
+it forms no batch. Its state does not change, so it is neither parked nor failed by the
+build. A session cap that parks the remaining work parks only selected goals.
+
 ### GC gating
 
 A GC goal is ready when no compile goal is open or parked in its target's

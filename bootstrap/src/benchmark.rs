@@ -1927,6 +1927,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
                         store.clear_changes(&ids);
                     }
                     store.status.parked.retain(|p| p.goal.id != goal_id);
+                    // A refusal is reported on stderr; the benchmark store is scratch.
                     store.write_status("parked goals").ok();
                 }
             }

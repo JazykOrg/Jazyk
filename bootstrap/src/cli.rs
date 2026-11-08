@@ -544,7 +544,7 @@ fn trace_for(opts: &Options) -> Trace {
 // The build's last line: the verdict with its counts, e.g. `converged, 2 blocked,
 // 1 optional advised`. Mirrors docs/frontends/cli.md#jazyk-compile.
 fn verdict_line(r: &reconcile::BuildReport) -> String {
-    r.verdict.clone()
+    r.verdict_line()
 }
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {

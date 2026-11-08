@@ -594,7 +594,9 @@ serving; what it claims is a batch:
   `generation` stays the counter in every reply. A verdict that counts blocked goals
   carries a `verdictNote` saying what they wait on (a `jazyk release` of the ledger
   work, a human answer) and that they do not hold the verdict, since a Codex session
-  read "converged, 15 blocked" as a contradiction.
+  read "converged, 15 blocked" as a contradiction. A refused status write (the
+  verdict, or the failed and parked goals a `done` recorded) carries `unsaved` with
+  the refusal ([concurrency](../compiler/graph.md#concurrency)).
 
 ## Generation and verification over MCP
 

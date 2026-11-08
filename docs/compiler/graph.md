@@ -1030,7 +1030,12 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   commits it has not seen. The caller reloads and restages.
 - A status write outside a changeset (a build's opening, the goals a derivation lapsed,
   parked and failed goals, the verdict) is a writer too: it takes the lock and is
-  refused the same way (`store-unreadable`, `store-version`, `store-moved`).
+  refused the same way (`store-unreadable`, `store-version`, `store-moved`). A refused
+  status write is reported on stderr with what it wrote and why. A refused verdict write
+  (the build's last status write, or a stopped build's) also lands in the build report
+  as `unsaved`: the verdict line names it and the build does not count as converged,
+  because `build.yaml` still holds the previous verdict and the goals the build parked
+  are not on disk ([convergence](./compilation.md#convergence)).
 - A writer puts down the commit marker `.committing` before its first file and removes
   it after `build.yaml`. A marker present while no writer holds `.lock` was left by a
   writer that stopped mid-commit; the next commit replaces it.

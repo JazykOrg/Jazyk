@@ -1523,6 +1523,9 @@ impl McpServer {
                 &quiet,
             );
             reply["verdict"] = json!(report.verdict);
+            if let Some(why) = &report.unsaved {
+                reply["unsaved"] = json!(why);
+            }
             if report.verdict.to_string().contains("blocked") {
                 // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
                 reply["verdictNote"] = json!(
@@ -1685,7 +1688,9 @@ impl McpServer {
         let parked_before = s.status.parked.len();
         s.status.parked.retain(|p| !batch_ids.contains(&p.goal.id));
         if !failed.is_empty() || parked_before != s.status.parked.len() {
-            s.write_status("failed and parked goals").ok();
+            if let Err(why) = s.write_status("failed and parked goals") {
+                reply["unsaved"] = json!(why);
+            }
         }
         // The board re-derives; the goals this commit opened land on its journal
         // entry. Mirrors docs/compiler/graph.md#journal.

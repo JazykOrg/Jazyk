@@ -1768,6 +1768,7 @@ pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
         }
     }
     if changed {
+        // A refusal is reported on stderr; the next derivation records them again.
         store.write_status("ledger-stale records").ok();
     }
 }

@@ -43,12 +43,34 @@ pub struct BuildReport {
     // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub retired_tasks: Vec<String>,
+    // Why the verdict write was refused: the verdict and the parked goals never reached
+    // disk. Mirrors docs/compiler/graph.md#concurrency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unsaved: Option<String>,
 }
 
 impl BuildReport {
+    // A build whose verdict was not saved never counts as converged.
+    // Mirrors docs/compiler/compilation.md#convergence.
     pub fn converged(&self) -> bool {
-        self.verdict.starts_with("converged")
+        self.unsaved.is_none() && self.verdict.starts_with("converged")
     }
+
+    // The printed verdict, naming a refused verdict write.
+    pub fn verdict_line(&self) -> String {
+        match &self.unsaved {
+            Some(why) => format!("{} (not saved: {})", self.verdict, why),
+            None => self.verdict.clone(),
+        }
+    }
+}
+
+// A status write the build loop makes, its refusal traced (the store already reports it
+// on stderr). Returns the refusal. Mirrors docs/compiler/graph.md#concurrency.
+fn write_status_traced(s: &Store, what: &str, trace: &Trace) -> Option<String> {
+    let why = s.write_status(what).err()?;
+    trace.line("build", &format!("{} not saved: {}", what, why));
+    Some(why)
 }
 
 // One deterministic finding: rule, subjects, severity, message, and the question the
@@ -2086,6 +2108,7 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
             .status
             .parked
             .retain(|p| !board.dropped_parked.contains(&p.goal.id));
+        // A refusal is reported on stderr; the next derivation lapses the same goals.
         store.write_status("absorb derivation").ok();
     }
 }
@@ -2223,7 +2246,7 @@ pub(crate) async fn compile_under(
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();
-        store.write_status("build opening").ok();
+        write_status_traced(&store, "build opening", trace);
     }
     let (parsed, _links) = parse_all(proj);
     if !resuming {
@@ -2239,7 +2262,7 @@ pub(crate) async fn compile_under(
             .filter(|d| proj.is_root_file(d))
             .cloned()
             .collect();
-        store.write_status("build roots").ok();
+        write_status_traced(&store, "build roots", trace);
         sweep(&mut store, trace);
     }
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):
@@ -2944,9 +2967,10 @@ pub fn finalize(
         s.status.verdict.state = "incomplete".into();
         s.status.costs = costs.clone();
         s.status.spent.tokens += crate::llm::take_tokens_delta();
-        s.write_status("stopped build").ok();
+        let unsaved = write_status_traced(s, "stopped build", trace);
         trace.line("build", "stopped; completed commits retained");
         return BuildReport {
+            unsaved,
             verdict: s.status.verdict.to_string(),
             tokens: costs.tokens,
             failed: s.status.verdict.failed as usize,
@@ -3052,7 +3076,7 @@ pub fn finalize(
     });
     wrote |= s.status.changes.len() != before;
     if wrote {
-        s.write_status("flow placement records").ok();
+        write_status_traced(s, "flow placement records", trace);
     }
 
     // The verdict: the board after the checks, blocked and optional riding as counts.
@@ -3101,7 +3125,7 @@ pub fn finalize(
     // assignment would clobber the spend of builds this process did not run.
     s.status.spent.tokens += crate::llm::take_tokens_delta();
     s.status.diagnostics = s.open_diag_counts();
-    s.write_status("verdict").ok();
+    let unsaved = write_status_traced(s, "verdict", trace);
     trace.line("build", &s.status.verdict.to_string());
 
     let (mut errors, mut warnings) = (0usize, 0usize);
@@ -3145,6 +3169,7 @@ pub fn finalize(
         tokens: s.status.costs.tokens,
         suspend_reason: None,
         retired_tasks: Vec::new(),
+        unsaved,
     }
 }
 
@@ -6090,6 +6115,45 @@ mod tests {
         assert!(store.status.parked.iter().any(|p| p.goal.id == goal.id), "{:?}", store.status.parked);
         let reloaded = Store::load(&out);
         assert!(reloaded.status.parked.iter().any(|p| p.goal.id == goal.id), "the entry is on disk");
+        crate::vfs::remove_dir_all(&out).ok();
+    }
+
+    // A verdict write refused because another writer landed first is reported: the
+    // report carries the refusal, the verdict line names it, and the build does not
+    // count as converged. Mirrors docs/compiler/graph.md#concurrency.
+    #[test]
+    fn a_refused_verdict_write_is_reported() {
+        use std::sync::{Arc, Mutex};
+        let out = std::env::temp_dir().join(format!("jazyk-refused-verdict-{}", crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&out).ok();
+        crate::vfs::create_dir_all(&out).unwrap();
+        let text = "# Main\n\nThe system accepts an order.\n";
+        let parsed: ParsedDocs = [("docs/main.md".into(), (hash_hex(text), crate::md::parse_sections(text)))].into();
+        let mut store = Store { out: out.clone(), ..Default::default() };
+        store.sync_docs(&parsed);
+        store.save_for_test();
+        // Another writer commits a generation this store has not seen.
+        let mut other = Store::load(&out);
+        other.status.generation = store.status.generation + 1;
+        other.save_for_test();
+        let project = crate::board::tests::project_for(&store);
+        let lines: Arc<Mutex<Vec<String>>> = Default::default();
+        let sink = lines.clone();
+        let trace = Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            Arc::new(move |e: &TraceEvent| sink.lock().unwrap().push(serde_json::to_string(e).unwrap())),
+            Default::default(),
+        );
+        let report = finalize(&mut store, &project, Vec::new(), &Costs::default(), &trace);
+        let why = report.unsaved.clone().expect("the refusal rides in the report");
+        assert!(why.starts_with("store-moved"), "{}", why);
+        assert!(!report.converged());
+        assert!(report.verdict_line().contains("(not saved: store-moved"), "{}", report.verdict_line());
+        assert!(
+            lines.lock().unwrap().iter().any(|l| l.contains("verdict not saved")),
+            "{:?}",
+            lines.lock().unwrap()
+        );
         crate::vfs::remove_dir_all(&out).ok();
     }
 

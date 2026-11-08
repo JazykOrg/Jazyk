@@ -313,6 +313,11 @@ The verdict in `build.yaml` is `verdict: {state, open, failed, blocked, optional
   (failed mandatory goals), `blocked`, and `optional`. Printed as
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
 
+A build whose verdict write is refused ([concurrency](./graph.md#concurrency)) reports
+`unsaved` with the reason and is not converged, whatever its verdict: the verdict and
+the goals it parked never reached `build.yaml` and `status.yaml`. Printed as
+`converged (not saved: store-moved: ...)`.
+
 A mandatory [fan-out](./reconciler.md#fan-out) goal
 ([`abstract-entity`](./goals/abstract-entity.md) on a node, or on `scope:<scope>` for
 the top level) open or failed blocks `converged`: it is a mandatory GC goal, and the rule

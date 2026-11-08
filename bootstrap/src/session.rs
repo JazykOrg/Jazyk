@@ -1657,6 +1657,19 @@ mod tests {
         assert_eq!(counted.elsewhere + counted.here + counted.blocked, derived.len());
     }
 
+    // Goal kinds pin their skills into a fresh session before anything else renders,
+    // so the cap can never drop a pinned skill while every skill fits under it.
+    // Mirrors docs/compiler/sessions.md#skills.
+    #[test]
+    fn every_pinned_skill_fits_under_the_session_cap() {
+        assert!(SKILLS.len() <= crate::limits::SKILLS_PER_SESSION);
+        let mut all = SkillState::new();
+        for (name, _) in SKILLS {
+            all.pin(name);
+        }
+        assert!(SKILLS.iter().all(|(name, _)| all.is_active(name)));
+    }
+
     #[test]
     fn initial_loaded_stays_under_the_high_water_mark() {
         let s = fixture();

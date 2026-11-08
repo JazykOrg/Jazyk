@@ -637,7 +637,7 @@ serving ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 too. Any agent that speaks MCP can be the generation worker; `jazyk gen` is one such
 worker in-process (the [`generate`](./goals/generate.md) goal; its session runs in
 the `generate` serving, see [toolsets](./sessions.md#toolsets)). These tools read the graph and the
-[ledger](../consumers/gen.md#the-ledger) (`gen/ledger.yaml`); they never mutate the
+[ledger](../consumers/gen.md#the-ledger) (`gen/`); they never mutate the
 graph. An agent may edit deliverable files with its own tools. When the profile sets
 [`serve_files`](./project-settings.md#acp), the serving adds `read_text_file`,
 `write_text_file`, and `list_files`, sandboxed to the deliverable

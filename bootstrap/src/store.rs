@@ -286,7 +286,15 @@ pub const JUDGED_RULES: [&str; 6] = [
 
 // The store version written to status.yaml. An out directory carrying another one is
 // archived whole and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
-pub const STORE_VERSION: u32 = 3;
+pub const STORE_VERSION: u32 = 4;
+
+// The one earlier version a load reads as it is: its next save writes the version 4
+// layout, ids kept. Mirrors docs/compiler/graph.md#store-version.
+pub const UPGRADABLE_VERSION: u32 = 3;
+
+pub fn readable_version(v: u32) -> bool {
+    v == STORE_VERSION || v == UPGRADABLE_VERSION
+}
 
 // Change record kinds. Mirrors docs/compiler/graph.md#change-records.
 pub const CHANGE_SECTION_DIRTY: &str = "section-dirty";
@@ -664,6 +672,9 @@ struct BuildFile {
     spent: Spent,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     diagnostics: BTreeMap<String, u64>,
+    // Document path to the content hash of the source file at last reconcile.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    docs: BTreeMap<String, String>,
 }
 
 // The highest generation the committed status names: change records and lookalike
@@ -679,12 +690,13 @@ pub fn generation_floor(status: &Status) -> u64 {
         .unwrap_or(0)
 }
 
-// The committed status.yaml: the status without its local fields.
+// The committed status.yaml: the status without its local fields and without the
+// records, which live one per file. Mirrors docs/compiler/graph.md#storage-layout.
 fn committed_status(status: &Status) -> serde_norway::Value {
     let mut v = serde_norway::to_value(status).unwrap_or(serde_norway::Value::Null);
     if let serde_norway::Value::Mapping(m) = &mut v {
-        for k in LOCAL_STATUS_KEYS {
-            m.remove(k);
+        for k in LOCAL_STATUS_KEYS.iter().chain(STATUS_DIRS.iter()) {
+            m.shift_remove(*k);
         }
     }
     v
@@ -695,7 +707,17 @@ fn committed_status(status: &Status) -> serde_norway::Value {
 // and does not parse.
 fn disk_generation(out: &Path) -> Result<Option<u64>, String> {
     let local = yaml_read::<BuildFile>(&out.join(BUILD_FILE))?.map(|b| b.generation);
-    let floor = yaml_read::<Status>(&out.join("status.yaml"))?.map(|s| generation_floor(&s));
+    let floor = match yaml_read::<Status>(&out.join("status.yaml"))? {
+        Some(_) => {
+            let mut errors = Vec::new();
+            let status = read_status(out, &mut errors);
+            if let Some(e) = errors.into_iter().next() {
+                return Err(e);
+            }
+            Some(generation_floor(&status))
+        }
+        None => None,
+    };
     Ok(match (local, floor) {
         (None, None) => None,
         (l, f) => Some(l.unwrap_or(0).max(f.unwrap_or(0))),
@@ -914,7 +936,7 @@ pub const COMMITTED_KINDS: [&str; 6] = [
 ];
 
 // The derived kinds: local, recomputed at load when missing and on every commit.
-pub const DERIVED_KINDS: [&str; 2] = ["relationships", "state-machines"];
+pub const DERIVED_KINDS: [&str; 3] = ["default-views", "relationships", "state-machines"];
 
 // The file id of a node id: `:` as `~`, `/` as `+`, lowercase ASCII letters, digits,
 // `-`, `_`, `.` kept, every other byte (and a leading `.`) as `%XX` in uppercase hex.
@@ -1049,31 +1071,36 @@ fn node_files(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, PathBuf)> {
 }
 
 // Every node of one kind directory. Missing reads as empty; a file that does not parse
-// is recorded in `errors` (the store then refuses to write).
+// is recorded in `errors` (the store then refuses to write). A file starts with the id
+// it is named by; one whose `id` names another node is an error too.
+// Mirrors docs/compiler/graph.md#node-files.
 fn load_nodes<T: serde::de::DeserializeOwned>(
     dir: &Path,
     errors: &mut Vec<String>,
 ) -> BTreeMap<String, T> {
     let mut nodes = BTreeMap::new();
     for (id, path) in node_files(dir, errors) {
-        if node_stem(&id).1 {
-            // A shortened file: the node is the content without its carried id.
-            let read = yaml_read::<serde_norway::Value>(&path).and_then(|v| {
-                let mut v = v.unwrap_or(serde_norway::Value::Null);
-                if let serde_norway::Value::Mapping(m) = &mut v {
-                    m.remove("id");
+        let read = yaml_read::<serde_norway::Value>(&path).and_then(|v| {
+            let Some(mut v) = v else {
+                return Ok(None);
+            };
+            if let serde_norway::Value::Mapping(m) = &mut v {
+                if let Some(carried) = m.remove("id") {
+                    if carried.as_str() != Some(id.as_str()) {
+                        return Err(format!(
+                            "{}: carries id {} but its file name spells {}",
+                            path.display(),
+                            carried.as_str().unwrap_or("?"),
+                            id
+                        ));
+                    }
                 }
-                serde_norway::from_value::<T>(v).map_err(|e| format!("{}: {}", path.display(), e))
-            });
-            match read {
-                Ok(v) => {
-                    nodes.insert(id, v);
-                }
-                Err(e) => errors.push(e),
             }
-            continue;
-        }
-        match yaml_read::<T>(&path) {
+            serde_norway::from_value::<T>(v)
+                .map(Some)
+                .map_err(|e| format!("{}: {}", path.display(), e))
+        });
+        match read {
             Ok(Some(v)) => {
                 nodes.insert(id, v);
             }
@@ -1093,29 +1120,325 @@ pub fn read_node_values(dir: &Path) -> serde_json::Map<String, serde_json::Value
         .collect()
 }
 
+// A node as its file holds it: `id` first, then its own fields, the generation markers
+// taken out into `markers`. Mirrors docs/compiler/graph.md#node-files.
+fn node_value<T: Serialize>(id: &str, node: &T, markers: &mut Markers) -> serde_norway::Value {
+    let mut m = serde_norway::Mapping::new();
+    m.insert("id".into(), id.into());
+    if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
+        let mut fields = fields;
+        let created = fields.shift_remove("created").and_then(|v| v.as_str().map(String::from));
+        let updated = fields.shift_remove("updated").and_then(|v| v.as_str().map(String::from));
+        if created.is_some() || updated.is_some() {
+            markers.insert(id.to_string(), (created, updated));
+        }
+        m.extend(fields);
+    }
+    serde_norway::Value::Mapping(m)
+}
+
 // Write every node of one kind whose bytes changed; return the files of nodes that
 // left the graph, for the caller to delete after every write landed.
-fn save_nodes<T: Serialize>(dir: &Path, nodes: &BTreeMap<String, T>) -> Vec<PathBuf> {
+fn save_values(dir: &Path, nodes: &BTreeMap<String, serde_norway::Value>) -> Vec<PathBuf> {
     for (id, node) in nodes {
-        let (stem, carries) = node_stem(id);
-        let path = dir.join(format!("{}.yaml", stem));
-        if carries {
-            // The full id first, then the node's own fields.
-            let mut m = serde_norway::Mapping::new();
-            m.insert("id".into(), id.as_str().into());
-            if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
-                m.extend(fields);
-            }
-            report_write(&path, write_yaml(&path, &m));
-        } else {
-            report_write(&path, write_yaml(&path, node));
-        }
+        let path = dir.join(format!("{}.yaml", node_stem(id).0));
+        report_write(&path, write_yaml(&path, node));
     }
     node_files(dir, &mut Vec::new())
         .into_iter()
         .filter(|(id, _)| !nodes.contains_key(id))
         .map(|(_, path)| path)
         .collect()
+}
+
+// Every node of one kind, as its files hold them.
+fn node_values<'a, T: Serialize + 'a>(
+    nodes: impl Iterator<Item = (&'a String, &'a T)>,
+    markers: &mut Markers,
+) -> BTreeMap<String, serde_norway::Value> {
+    nodes
+        .map(|(id, n)| (id.clone(), node_value(id, n, markers)))
+        .collect()
+}
+
+// The local generation markers: node id to `[created, updated]`.
+// Mirrors docs/compiler/graph.md#storage-layout.
+pub const MARKERS_FILE: &str = "markers.yaml";
+type Markers = BTreeMap<String, (Option<String>, Option<String>)>;
+
+// The local causes of the open change records: `<kind> <subject>` to the id,
+// generation, and mutation of each record in that file, in file order.
+// Mirrors docs/compiler/graph.md#storage-layout.
+pub const CAUSES_FILE: &str = "causes.yaml";
+type Causes = BTreeMap<String, Vec<(String, u64, usize)>>;
+
+fn cause_key(kind: &str, subject: &str) -> String {
+    format!("{} {}", kind, subject)
+}
+
+// A change record as its file holds it: no local cause fields.
+fn record_file_value(r: &ChangeRecord) -> serde_norway::Value {
+    let mut v = serde_norway::to_value(r).unwrap_or(serde_norway::Value::Null);
+    if let serde_norway::Value::Mapping(m) = &mut v {
+        for k in ["id", "generation", "mutation"] {
+            m.shift_remove(k);
+        }
+    }
+    v
+}
+
+// The status record directories, committed. Mirrors docs/compiler/graph.md#storage-layout.
+pub const STATUS_DIRS: [&str; 5] = ["changes", "parked", "failed", "alignment", "lookalikes"];
+
+// One record file: `id` first, then the record's fields.
+fn record_value<T: Serialize>(id: &str, record: &T) -> serde_norway::Value {
+    let mut m = serde_norway::Mapping::new();
+    m.insert("id".into(), id.into());
+    if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(record) {
+        for (k, v) in fields {
+            if k.as_str() != Some("id") {
+                m.insert(k, v);
+            }
+        }
+    }
+    serde_norway::Value::Mapping(m)
+}
+
+// Every YAML file under a directory, recursively, in path order.
+fn yaml_files(dir: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    collect_yaml(dir, &mut out);
+    out.retain(|p| {
+        !p.file_name()
+            .map(|n| n.to_string_lossy().starts_with('.'))
+            .unwrap_or(true)
+    });
+    out.sort();
+    out
+}
+
+// The status as the disk holds it: status.yaml, then every record file. A version 3
+// status.yaml carries the records inline; both forms read into one status.
+// Mirrors docs/compiler/graph.md#storage-layout and #store-version.
+fn read_status(out: &Path, errors: &mut Vec<String>) -> Status {
+    let mut status: Status = shard(&out.join("status.yaml"), errors);
+    let causes: Causes = shard(&out.join(CAUSES_FILE), errors);
+    let mut changes: Vec<ChangeRecord> = Vec::new();
+    for p in yaml_files(&out.join("changes")) {
+        let items = match yaml_read::<serde_norway::Value>(&p) {
+            Ok(Some(serde_norway::Value::Sequence(items))) => items,
+            Ok(Some(v)) => vec![v],
+            Ok(None) => Vec::new(),
+            Err(e) => {
+                errors.push(e);
+                continue;
+            }
+        };
+        let mut file: Vec<ChangeRecord> = Vec::new();
+        for item in items {
+            match serde_norway::from_value::<ChangeRecord>(item) {
+                Ok(r) => file.push(r),
+                Err(e) => errors.push(format!("{}: {}", p.display(), e)),
+            }
+        }
+        // The cause is local: a record another checkout wrote reads with generation 0.
+        let local = file
+            .first()
+            .and_then(|r| causes.get(&cause_key(&r.kind, &r.subject)))
+            .filter(|c| c.len() == file.len());
+        for (i, r) in file.iter_mut().enumerate() {
+            match local {
+                Some(c) => {
+                    r.id = c[i].0.clone();
+                    r.generation = c[i].1;
+                    r.mutation = c[i].2;
+                }
+                None => {
+                    r.id = format!("c0-{}", crate::ids::hash(&cause_key(&r.kind, &r.subject)));
+                    r.generation = 0;
+                    r.mutation = 0;
+                }
+            }
+        }
+        changes.extend(file);
+    }
+    // Records in the order they were written: by generation, then by file.
+    changes.sort_by_key(|r| r.generation);
+    status.changes.extend(changes);
+    fn records<T: serde::de::DeserializeOwned>(dir: &Path, errors: &mut Vec<String>) -> Vec<T> {
+        let mut out = Vec::new();
+        for p in yaml_files(dir) {
+            let read = yaml_read::<serde_norway::Value>(&p).and_then(|v| {
+                let Some(mut v) = v else { return Ok(None) };
+                if let serde_norway::Value::Mapping(m) = &mut v {
+                    // The parked form carries its own id; the others are named by it.
+                    if !dir.ends_with("parked") {
+                        m.remove("id");
+                    }
+                }
+                serde_norway::from_value::<T>(v)
+                    .map(Some)
+                    .map_err(|e| format!("{}: {}", p.display(), e))
+            });
+            match read {
+                Ok(Some(r)) => out.push(r),
+                Ok(None) => {}
+                Err(e) => errors.push(e),
+            }
+        }
+        out
+    }
+    status.parked.extend(records::<ParkedGoal>(&out.join("parked"), errors));
+    status.failed.extend(records::<FailedGoal>(&out.join("failed"), errors));
+    status.alignment.extend(records::<DocAlignment>(&out.join("alignment"), errors));
+    status.lookalikes.extend(records::<LookalikeVerdict>(&out.join("lookalikes"), errors));
+    status
+}
+
+// Write one file per status record and delete the files of records that cleared.
+// Mirrors docs/compiler/graph.md#storage-layout.
+fn save_status_records(out: &Path, status: &Status) {
+    let mut written: BTreeSet<PathBuf> = BTreeSet::new();
+    let mut put = |path: PathBuf, value: serde_norway::Value| {
+        report_write(&path, write_yaml(&path, &value));
+        written.insert(path);
+    };
+    let mut by_subject: BTreeMap<(String, String), Vec<&ChangeRecord>> = BTreeMap::new();
+    for r in &status.changes {
+        by_subject
+            .entry((r.kind.clone(), r.subject.clone()))
+            .or_default()
+            .push(r);
+    }
+    let mut causes = Causes::new();
+    for ((kind, subject), rs) in by_subject {
+        let path = out
+            .join("changes")
+            .join(file_id(&kind))
+            .join(format!("{}.yaml", node_stem(&subject).0));
+        let value = if rs.len() == 1 {
+            record_file_value(rs[0])
+        } else {
+            serde_norway::Value::Sequence(rs.iter().map(|r| record_file_value(r)).collect())
+        };
+        causes.insert(
+            cause_key(&kind, &subject),
+            rs.iter().map(|r| (r.id.clone(), r.generation, r.mutation)).collect(),
+        );
+        put(path, value);
+    }
+    let causes_path = out.join(CAUSES_FILE);
+    report_write(&causes_path, write_yaml(&causes_path, &causes));
+    let name = |dir: &str, id: &str| out.join(dir).join(format!("{}.yaml", node_stem(id).0));
+    for p in &status.parked {
+        put(
+            name("parked", &p.goal.id),
+            serde_norway::to_value(p).unwrap_or(serde_norway::Value::Null),
+        );
+    }
+    for f in &status.failed {
+        put(name("failed", &f.goal.id), record_value(&f.goal.id, f));
+    }
+    for a in &status.alignment {
+        put(name("alignment", &a.doc), record_value(&a.doc, a));
+    }
+    for l in &status.lookalikes {
+        put(name("lookalikes", &l.pair), record_value(&l.pair, l));
+    }
+    for dir in STATUS_DIRS {
+        for p in yaml_files(&out.join(dir)) {
+            if !written.contains(&p) {
+                if let Err(e) = crate::vfs::remove_file(&p) {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        eprintln!("[jazyk] error: cannot remove {}: {}", p.display(), e);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A document record as its file holds it: no whole-file hash, no line numbers.
+// Mirrors docs/compiler/graph.md#storage-layout.
+fn doc_record_value(rec: &DocRecord) -> serde_norway::Value {
+    let mut v = serde_norway::to_value(rec).unwrap_or(serde_norway::Value::Null);
+    if let serde_norway::Value::Mapping(m) = &mut v {
+        m.shift_remove("contentHash");
+        if let Some(serde_norway::Value::Mapping(sections)) = m.get_mut("sections") {
+            for (_, sec) in sections.iter_mut() {
+                if let serde_norway::Value::Mapping(sm) = sec {
+                    sm.shift_remove("lines");
+                }
+            }
+        }
+    }
+    v
+}
+
+// Recompute each section's line range from the raw texts in document order: the
+// heading kinds tile the document in tree order, a fenced block sits inside its holder.
+// A record that still carries its lines (version 3) keeps them.
+// Mirrors docs/compiler/graph.md#storage-layout and docs/compiler/parsing.md#section-tree.
+pub fn fill_section_lines(rec: &mut DocRecord) {
+    let holder = |k: &str| matches!(k, "preamble" | "root" | "heading");
+    if rec.sections.values().all(|s| s.lines[1] > 0) {
+        return;
+    }
+    let mut children: BTreeMap<Option<String>, Vec<(usize, bool, String)>> = BTreeMap::new();
+    for (r, s) in &rec.sections {
+        if holder(&s.kind) {
+            children
+                .entry(s.parent.clone())
+                .or_default()
+                .push((s.order, s.kind != "preamble", r.clone()));
+        }
+    }
+    for list in children.values_mut() {
+        list.sort_by(|a, b| (a.1, a.0).cmp(&(b.1, b.0)));
+    }
+    let mut order: Vec<String> = Vec::new();
+    let mut stack: Vec<String> = children
+        .get(&None)
+        .map(|l| l.iter().rev().map(|(_, _, r)| r.clone()).collect())
+        .unwrap_or_default();
+    while let Some(r) = stack.pop() {
+        if let Some(kids) = children.get(&Some(r.clone())) {
+            for (_, _, k) in kids.iter().rev() {
+                stack.push(k.clone());
+            }
+        }
+        order.push(r);
+    }
+    let mut line = 0usize;
+    let mut starts: BTreeMap<String, usize> = BTreeMap::new();
+    for r in &order {
+        if let Some(s) = rec.sections.get_mut(r) {
+            let n = s.raw.split('\n').count();
+            s.lines = [line, line + n];
+            starts.insert(r.clone(), line);
+            line += n;
+        }
+    }
+    let blocks: Vec<String> = rec
+        .sections
+        .iter()
+        .filter(|(_, s)| !holder(&s.kind))
+        .map(|(r, _)| r.clone())
+        .collect();
+    for r in blocks {
+        let (parent, raw) = {
+            let s = &rec.sections[&r];
+            (s.parent.clone(), s.raw.clone())
+        };
+        let Some(p) = parent.and_then(|p| rec.sections.get(&p).map(|ps| (ps.lines[0], ps.raw.clone()))) else {
+            continue;
+        };
+        let at = p.1.find(&raw).map(|i| p.1[..i].matches('\n').count()).unwrap_or(0);
+        let n = raw.split('\n').count();
+        if let Some(s) = rec.sections.get_mut(&r) {
+            s.lines = [p.0 + at, p.0 + at + n];
+        }
+    }
 }
 
 // Copy a directory tree, for snapshots.
@@ -1181,7 +1504,91 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 // The stored record of one document, as the last build left it; None when the
 // document never reconciled or its record does not read.
 pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
-    yaml_to(&out.join("docs").join(format!("{}.yaml", rel)))
+    let mut rec: DocRecord = yaml_to(&out.join("docs").join(format!("{}.yaml", rel)))?;
+    if let Ok(Some(build)) = yaml_read::<BuildFile>(&out.join(BUILD_FILE)) {
+        if let Some(h) = build.docs.get(rel) {
+            rec.content_hash = h.clone();
+        }
+    }
+    fill_section_lines(&mut rec);
+    Some(rec)
+}
+
+// The sources of the requirements naming each entity: the mentions a commit adds by
+// reference. Mirrors docs/compiler/graph.md#derived-data.
+fn reference_sources(graph: &Graph) -> BTreeMap<String, Vec<SourceRef>> {
+    let mut out: BTreeMap<String, Vec<SourceRef>> = BTreeMap::new();
+    for r in graph.requirements.values() {
+        let Some(src) = &r.source else { continue };
+        for e in &r.entities {
+            let list = out.entry(e.clone()).or_default();
+            if !list.contains(src) {
+                list.push(src.clone());
+            }
+        }
+    }
+    out
+}
+
+// The canonical order of an entity's mentions: the ones it states itself first, in
+// their stated order, then the ones requirements add by reference, in document order.
+// The same order holds in memory and after a load. With `add`, the by-reference
+// mentions an entity file leaves out come back; a source whose section is known and no
+// longer holds its quote is stale and stays out, as the sweep would prune it.
+// Mirrors docs/compiler/graph.md#node-files.
+fn normalize_mentions(graph: &mut Graph, docs: &BTreeMap<String, DocRecord>, add: bool) {
+    let stale = |m: &SourceRef| {
+        docs.get(&m.doc)
+            .and_then(|d| d.sections.get(&m.section))
+            .is_some_and(|s| !text_contains(&s.raw, &m.quote))
+    };
+    let place = |m: &SourceRef| -> (String, usize, usize, String) {
+        let sec = docs.get(&m.doc).and_then(|d| d.sections.get(&m.section));
+        let line = sec.map(|s| s.lines[0]).unwrap_or(usize::MAX);
+        let at = sec
+            .and_then(|s| {
+                let hay = s.raw.split_whitespace().collect::<Vec<_>>().join(" ");
+                let needle = m.quote.split_whitespace().collect::<Vec<_>>().join(" ");
+                hay.find(&needle)
+            })
+            .unwrap_or(usize::MAX);
+        (m.doc.clone(), line, at, m.quote.clone())
+    };
+    let by_reference = reference_sources(graph);
+    for (id, e) in graph.entities.iter_mut() {
+        let derived = by_reference.get(id).map(Vec::as_slice).unwrap_or(&[]);
+        let (own, mut by_ref): (Vec<SourceRef>, Vec<SourceRef>) =
+            std::mem::take(&mut e.mentions).into_iter().partition(|m| !derived.contains(m));
+        if add {
+            for src in derived {
+                if !by_ref.contains(src) && !stale(src) {
+                    by_ref.push(src.clone());
+                }
+            }
+        }
+        by_ref.sort_by_cached_key(|m| place(m));
+        e.mentions = own;
+        e.mentions.extend(by_ref);
+    }
+}
+
+// Set the local generation markers on every node that has an entry.
+fn apply_markers(graph: &mut Graph, markers: &Markers) {
+    macro_rules! mark {
+        ($map:expr) => {
+            for (id, n) in $map.iter_mut() {
+                if let Some((c, u)) = markers.get(id) {
+                    n.created = c.clone();
+                    n.updated = u.clone();
+                }
+            }
+        };
+    }
+    mark!(graph.entities);
+    mark!(graph.requirements);
+    mark!(graph.criteria);
+    mark!(graph.views);
+    mark!(graph.diagnostics);
 }
 
 // Drop repeated ids, keeping each first occurrence in place. A rewire or resolve can
@@ -1362,6 +1769,11 @@ pub fn snapshot_graph(out: &Path, label: &str) {
     }
     copy_tree(&g, &dir.join("graph"));
     crate::vfs::copy(out.join("status.yaml"), dir.join("status.yaml")).ok();
+    for d in STATUS_DIRS {
+        if out.join(d).vis_dir() {
+            copy_tree(&out.join(d), &dir.join(d));
+        }
+    }
     crate::vfs::copy(out.join(BUILD_FILE), dir.join(BUILD_FILE)).ok();
 }
 
@@ -1410,7 +1822,7 @@ impl Store {
         for e in &store.load_errors {
             eprintln!("[jazyk] error: {} did not load: {}", out.display(), e);
         }
-        if store.status.version != STORE_VERSION {
+        if !readable_version(store.status.version) {
             return Store {
                 out: out.to_path_buf(),
                 ..Default::default()
@@ -1425,10 +1837,22 @@ impl Store {
     pub fn open_for_build(out: &Path) -> Store {
         let status_path = out.join("status.yaml");
         if status_path.vexists() {
-            let version = yaml_to::<Status>(&status_path)
-                .map(|s| s.version)
-                .unwrap_or(0);
-            if version != STORE_VERSION {
+            // A status.yaml that does not parse is a broken file, not another version:
+            // the store is read-only and nothing is archived.
+            // Mirrors docs/compiler/graph.md#store-version.
+            let version = match yaml_read::<Status>(&status_path) {
+                Ok(Some(s)) => s.version,
+                Ok(None) => 0,
+                Err(e) => {
+                    eprintln!("[jazyk] error: {}; the store stays read-only", e);
+                    return Store {
+                        out: out.to_path_buf(),
+                        load_errors: vec![e],
+                        ..Default::default()
+                    };
+                }
+            };
+            if !readable_version(version) {
                 let name = out
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
@@ -1464,19 +1888,40 @@ impl Store {
                 };
             }
         }
-        Self::load(out)
+        let mut store = Self::load(out);
+        // A version 3 store is rewritten whole in the version 4 layout before the build
+        // begins, ids and facts kept, so even a build with nothing to do leaves no file
+        // in the old form. Mirrors docs/compiler/graph.md#store-version.
+        if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
+            let _flock = FileLock::acquire(out);
+            store.save();
+            let ledger = crate::gen::Ledger::load(out);
+            if ledger.unreadable.is_none() {
+                ledger.save(out);
+            }
+            store.status.version = STORE_VERSION;
+            eprintln!(
+                "[jazyk] upgraded {} from store version {} to {}",
+                out.display(),
+                UPGRADABLE_VERSION,
+                STORE_VERSION
+            );
+        }
+        store
     }
 
     fn load_once(out: &Path) -> Store {
         let g = out.join("graph");
         let mut errors: Vec<String> = Vec::new();
+        let mut views: BTreeMap<String, View> = load_nodes(&g.join("views"), &mut errors);
+        views.extend(load_nodes::<View>(&g.join("default-views"), &mut errors));
         let mut store = Store {
             out: out.to_path_buf(),
             graph: Graph {
                 entities: load_nodes(&g.join("entities"), &mut errors),
                 requirements: load_nodes(&g.join("requirements"), &mut errors),
                 criteria: load_nodes(&g.join("criteria"), &mut errors),
-                views: load_nodes(&g.join("views"), &mut errors),
+                views,
                 relationships: load_nodes(&g.join("relationships"), &mut errors),
                 state_machines: load_nodes(&g.join("state-machines"), &mut errors),
                 diagnostics: load_nodes(&g.join("diagnostics"), &mut errors),
@@ -1486,10 +1931,13 @@ impl Store {
                     .collect(),
             },
             docs: BTreeMap::new(),
-            status: shard(&out.join("status.yaml"), &mut errors),
+            status: read_status(out, &mut errors),
             align: Default::default(),
             load_errors: Vec::new(),
         };
+        // The local half of the status, raised to the committed floor.
+        // Mirrors docs/compiler/graph.md#the-generation.
+        let build: BuildFile = shard(&out.join(BUILD_FILE), &mut errors);
         let docs_dir = out.join("docs");
         let mut files = Vec::new();
         collect_yaml(&docs_dir, &mut files);
@@ -1498,7 +1946,12 @@ impl Store {
                 let doc = rel.to_string_lossy().replace('\\', "/");
                 let doc = doc.strip_suffix(".yaml").unwrap_or(&doc).to_string();
                 match yaml_read::<DocRecord>(&f) {
-                    Ok(Some(rec)) => {
+                    Ok(Some(mut rec)) => {
+                        // The content hash is local; a version 3 record still carries one.
+                        if let Some(h) = build.docs.get(&doc) {
+                            rec.content_hash = h.clone();
+                        }
+                        fill_section_lines(&mut rec);
                         store.docs.insert(doc, rec);
                     }
                     Ok(None) => {}
@@ -1506,20 +1959,25 @@ impl Store {
                 }
             }
         }
-        // The local half of the status, raised to the committed floor.
-        // Mirrors docs/compiler/graph.md#the-generation.
-        let build: BuildFile = shard(&out.join(BUILD_FILE), &mut errors);
         store.status.generation = build.generation.max(generation_floor(&store.status));
         store.status.verdict = build.verdict;
         store.status.costs = build.costs;
         store.status.spent = build.spent;
         store.status.diagnostics = build.diagnostics;
+        // The generation markers are local; a version 3 node file still carries its own.
+        // Mirrors docs/compiler/graph.md#storage-layout.
+        let markers: Markers = shard(&out.join(MARKERS_FILE), &mut errors);
+        apply_markers(&mut store.graph, &markers);
+        normalize_mentions(&mut store.graph, &store.docs, true);
         // The derived kinds are local: a checkout carries none, so a load that finds
-        // either directory missing recomputes both in memory and the next commit
-        // writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
+        // any of their directories missing recomputes them in memory and the next
+        // commit writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
         if DERIVED_KINDS.iter().any(|k| !g.join(k).vis_dir()) {
             crate::derive::recompute_relationships(&mut store);
             crate::derive::recompute_state_machines(&mut store);
+            let build = format!("g{}", store.status.generation);
+            let mut batch = RecordBatch::new(store.status.generation);
+            crate::derive::recompute_default_views(&mut store, &build, &mut batch);
         }
         store.load_errors = errors;
         store
@@ -1544,7 +2002,7 @@ impl Store {
             return Some(why);
         }
         match yaml_read::<Status>(&self.out.join("status.yaml")) {
-            Ok(Some(disk)) if disk.version != STORE_VERSION => Some(format!(
+            Ok(Some(disk)) if !readable_version(disk.version) => Some(format!(
                 "store-version: {} holds a version {} store and this is version {}; a build archives it",
                 self.out.display(),
                 disk.version,
@@ -1590,21 +2048,60 @@ impl Store {
             return;
         }
         let g = self.out.join("graph");
+        let mut markers = Markers::new();
         let redirects: BTreeMap<String, RedirectFile> = self
             .graph
             .redirects
             .iter()
             .map(|(from, to)| (from.clone(), RedirectFile { to: to.clone() }))
             .collect();
+        // An entity file holds only the mentions its own facts state: a mention that
+        // is the source of a requirement naming the entity is derived and comes back at
+        // load. Mirrors docs/compiler/graph.md#node-files.
+        let by_reference = reference_sources(&self.graph);
+        let entities: BTreeMap<String, serde_norway::Value> = self
+            .graph
+            .entities
+            .iter()
+            .map(|(id, e)| {
+                let derived = by_reference.get(id);
+                let mut own = e.clone();
+                if let Some(d) = derived {
+                    own.mentions.retain(|m| !d.contains(&m));
+                }
+                (id.clone(), node_value(id, &own, &mut markers))
+            })
+            .collect();
+        let curated = node_values(self.graph.views.iter().filter(|(_, v)| !v.default), &mut markers);
+        let defaults = node_values(self.graph.views.iter().filter(|(_, v)| v.default), &mut markers);
         let mut gone = Vec::new();
-        gone.extend(save_nodes(&g.join("entities"), &self.graph.entities));
-        gone.extend(save_nodes(&g.join("requirements"), &self.graph.requirements));
-        gone.extend(save_nodes(&g.join("criteria"), &self.graph.criteria));
-        gone.extend(save_nodes(&g.join("views"), &self.graph.views));
-        gone.extend(save_nodes(&g.join("diagnostics"), &self.graph.diagnostics));
-        gone.extend(save_nodes(&g.join("redirects"), &redirects));
-        gone.extend(save_nodes(&g.join("relationships"), &self.graph.relationships));
-        gone.extend(save_nodes(&g.join("state-machines"), &self.graph.state_machines));
+        gone.extend(save_values(&g.join("entities"), &entities));
+        gone.extend(save_values(
+            &g.join("requirements"),
+            &node_values(self.graph.requirements.iter(), &mut markers),
+        ));
+        gone.extend(save_values(
+            &g.join("criteria"),
+            &node_values(self.graph.criteria.iter(), &mut markers),
+        ));
+        gone.extend(save_values(&g.join("views"), &curated));
+        gone.extend(save_values(&g.join("default-views"), &defaults));
+        gone.extend(save_values(
+            &g.join("diagnostics"),
+            &node_values(self.graph.diagnostics.iter(), &mut markers),
+        ));
+        gone.extend(save_values(
+            &g.join("redirects"),
+            &node_values(redirects.iter(), &mut Markers::new()),
+        ));
+        gone.extend(save_values(
+            &g.join("relationships"),
+            &node_values(self.graph.relationships.iter(), &mut Markers::new()),
+        ));
+        gone.extend(save_values(
+            &g.join("state-machines"),
+            &node_values(self.graph.state_machines.iter(), &mut Markers::new()),
+        ));
         // A derived directory exists once saved, even empty, so a load recomputes the
         // derived kinds only on a checkout that lacks them.
         for kind in DERIVED_KINDS {
@@ -1612,7 +2109,7 @@ impl Store {
         }
         for (doc, rec) in &self.docs {
             let p = self.out.join("docs").join(format!("{}.yaml", doc));
-            report_write(&p, write_yaml(&p, rec));
+            report_write(&p, write_yaml(&p, &doc_record_value(rec)));
         }
         for p in gone {
             if let Err(e) = crate::vfs::remove_file(&p) {
@@ -1621,7 +2118,24 @@ impl Store {
                 }
             }
         }
+        let path = self.out.join(MARKERS_FILE);
+        report_write(&path, write_yaml(&path, &markers));
+        // A `.jazyk` folder never exists without its ignore file.
+        // Mirrors docs/compiler/document-sets.md#persistence-and-identity.
+        if let Some(jazyk) = self.out.parent().filter(|p| p.file_name().is_some_and(|n| n == ".jazyk")) {
+            if let Some(root) = jazyk.parent() {
+                if let Err(e) = crate::document_sets::ensure_ignore(root) {
+                    eprintln!("[jazyk] error: cannot write {}/.gitignore: {}", jazyk.display(), e);
+                }
+            }
+        }
         self.save_status();
+    }
+
+    // A commit's write: the mentions in their canonical order, then the files.
+    fn persist(&mut self) {
+        normalize_mentions(&mut self.graph, &self.docs, false);
+        self.save();
     }
 
     // Every status write stamps the store version.
@@ -1638,6 +2152,7 @@ impl Store {
         // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
         let mut status = self.status.clone();
         status.version = STORE_VERSION;
+        save_status_records(&self.out, &status);
         let path = self.out.join("status.yaml");
         report_write(&path, write_yaml(&path, &committed_status(&status)));
         let build = BuildFile {
@@ -1646,6 +2161,12 @@ impl Store {
             costs: status.costs,
             spent: status.spent,
             diagnostics: status.diagnostics,
+            docs: self
+                .docs
+                .iter()
+                .filter(|(_, r)| !r.content_hash.is_empty())
+                .map(|(d, r)| (d.clone(), r.content_hash.clone()))
+                .collect(),
         };
         let path = self.out.join(BUILD_FILE);
         report_write(&path, write_yaml(&path, &build));
@@ -2033,35 +2554,59 @@ impl Store {
 
     // ---- id minting ----
 
-    pub fn mint_entity_id(&self, name: &str, taken: &BTreeSet<String>) -> String {
-        let base = format!("ent:{}", md::slug(name));
-        let mut id = base.clone();
-        let mut n = 1;
-        while self.graph.entities.contains_key(&id)
-            || self.graph.redirects.contains_key(&id)
-            || taken.contains(&id)
-        {
-            n += 1;
-            id = format!("{}-{}", base, n);
-        }
-        id
+    // Ids carry no counter: a slug of the natural key and, where the kind needs one or
+    // the plain id is taken, a short hash of the key, so two branches never mint one id
+    // for two nodes. Mirrors docs/compiler/model.md#identifiers.
+    fn id_taken(&self, id: &str, taken: &BTreeSet<String>) -> bool {
+        self.graph.entities.contains_key(id)
+            || self.graph.requirements.contains_key(id)
+            || self.graph.criteria.contains_key(id)
+            || self.graph.views.contains_key(id)
+            || self.graph.diagnostics.contains_key(id)
+            || self.graph.redirects.contains_key(id)
+            || taken.contains(id)
     }
 
-    // `req:<doc-stem>-<n>`; `doc` is the source document path, or `x` for a derived or
-    // decreed requirement (docs/compiler/model.md#identifiers).
-    pub fn mint_req_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
-        let stem = doc.rsplit('/').next().unwrap_or(doc);
-        let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
-        let prefix = format!("req:{}-", stem);
-        let mut max = 0usize;
-        for id in self.graph.requirements.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
+    pub fn mint_entity_id(&self, name: &str, taken: &BTreeSet<String>) -> String {
+        let plain = format!("ent:{}", crate::ids::slug(name));
+        crate::ids::plain_or_unique(&plain, name, |id| self.id_taken(id, taken))
+    }
+
+    // The stem of a requirement id: the id slug of its document's file stem and the
+    // last segment of its section reference (dropped for a root or preamble section),
+    // `x` without a document. Mirrors docs/compiler/model.md#identifiers.
+    pub fn req_id_stem(source: Option<&crate::model::SourceRef>) -> String {
+        let Some(src) = source else {
+            return "x".to_string();
+        };
+        let file = src.doc.rsplit('/').next().unwrap_or(&src.doc);
+        let file = file.rsplit_once('.').map(|(s, _)| s).unwrap_or(file);
+        let segments: Vec<&str> = src.section.split('/').filter(|s| !s.is_empty()).collect();
+        let text = if segments.len() >= 2 {
+            format!("{} {}", file, segments[segments.len() - 1])
+        } else {
+            file.to_string()
+        };
+        crate::ids::slug(&text)
+    }
+
+    // `req:<stem>-<hash>`, the hash of the document, section, and statement, or of the
+    // sorted `from` ids and the statement for a derived or decreed requirement.
+    pub fn mint_req_id(&self, r: &Requirement, taken: &BTreeSet<String>) -> String {
+        let statement = normalize_statement(&r.statement);
+        let key = match &r.source {
+            Some(src) => format!("{}#{}\n{}", src.doc, src.section, statement),
+            None => {
+                let mut from: Vec<String> = match &r.provenance {
+                    Some(Provenance::Derived { from, .. }) => from.clone(),
+                    _ => Vec::new(),
+                };
+                from.sort();
+                format!("x\n{}\n{}", from.join(","), statement)
             }
-        }
-        format!("{}{}", prefix, max + 1)
+        };
+        let base = format!("req:{}", Self::req_id_stem(r.source.as_ref()));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // The id stem of a requirement: its source document, or `x` without a quote.
@@ -2069,21 +2614,27 @@ impl Store {
         r.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
     }
 
-    // `crit:<doc-stem>-<n>`, the document its quote sits in, or `x` for a derived or
-    // decreed criterion (docs/compiler/model/criterion.md#identity).
-    pub fn mint_crit_id(&self, doc: &str, taken: &BTreeSet<String>) -> String {
-        let stem = doc.rsplit('/').next().unwrap_or(doc);
-        let stem = md::slug(stem.strip_suffix(".md").unwrap_or(stem));
-        let prefix = format!("crit:{}-", stem);
-        let mut max = 0usize;
-        for id in self.graph.criteria.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
-            }
-        }
-        format!("{}{}", prefix, max + 1)
+    // `crit:<stem>-<hash>`: the stem of its requirement (else of its own quote, else
+    // `x`), the hash of the requirement id and the statement.
+    // Mirrors docs/compiler/model/criterion.md#identity.
+    // `req_source` is the source of a requirement staged beside the criterion, not yet
+    // in the graph.
+    pub fn mint_crit_id(
+        &self,
+        c: &Criterion,
+        req_source: Option<&crate::model::SourceRef>,
+        taken: &BTreeSet<String>,
+    ) -> String {
+        let source = self
+            .graph
+            .requirements
+            .get(&c.requirement)
+            .and_then(|r| r.source.as_ref())
+            .or(req_source)
+            .or(c.source.as_ref());
+        let key = format!("{}\n{}", c.requirement, normalize_statement(&c.statement));
+        let base = format!("crit:{}", Self::req_id_stem(source));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // The id stem of a criterion: its quote's document, else its requirement's, so a
@@ -2111,27 +2662,18 @@ impl Store {
     }
 
     pub fn mint_view_id(&self, kind: &str, title: &str, taken: &BTreeSet<String>) -> String {
-        let base = format!("view:{}/{}", view_kind_slug(kind), md::slug(title));
-        let mut id = base.clone();
-        let mut n = 1;
-        while self.graph.views.contains_key(&id) || taken.contains(&id) {
-            n += 1;
-            id = format!("{}-{}", base, n);
-        }
-        id
+        let plain = format!("view:{}/{}", view_kind_slug(kind), crate::ids::slug(title));
+        let key = format!("{}\n{}", kind, title);
+        crate::ids::plain_or_unique(&plain, &key, |id| self.id_taken(id, taken))
     }
 
-    pub fn mint_diag_id(&self, rule: &str, taken: &BTreeSet<String>) -> String {
-        let prefix = format!("diag:{}-", md::slug(rule));
-        let mut max = 0usize;
-        for id in self.graph.diagnostics.keys().chain(taken.iter()) {
-            if let Some(rest) = id.strip_prefix(&prefix) {
-                if let Ok(n) = rest.parse::<usize>() {
-                    max = max.max(n);
-                }
-            }
-        }
-        format!("{}{}", prefix, max + 1)
+    // `diag:<rule>-<hash>`, the hash of the rule and the sorted subjects.
+    pub fn mint_diag_id(&self, rule: &str, subjects: &[String], taken: &BTreeSet<String>) -> String {
+        let mut sorted: Vec<&str> = subjects.iter().map(String::as_str).collect();
+        sorted.sort();
+        let key = format!("{}\n{}", rule, sorted.join("\n"));
+        let base = format!("diag:{}", crate::ids::slug(rule));
+        crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // ---- lookups ----
@@ -3245,7 +3787,7 @@ impl Store {
         self.status.generation = generation;
         let entry = self.journal_entry(&build, &Commit::store("settle-diagnostics"), ops);
         self.write_journal(&entry);
-        self.save();
+        self.persist();
         actions
     }
 
@@ -3290,7 +3832,7 @@ impl Store {
                     .collect(),
             );
             self.write_journal(&entry);
-            self.save();
+            self.persist();
         }
         actions
     }
@@ -4354,7 +4896,7 @@ impl Store {
                     if !final_id.starts_with("req:")
                         || self.graph.requirements.contains_key(&final_id)
                     {
-                        final_id = self.mint_req_id(Self::req_stem(&requirement), &BTreeSet::new());
+                        final_id = self.mint_req_id(&requirement, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
@@ -4703,13 +5245,18 @@ impl Store {
                     criterion.updated = Some(build.clone());
                     // The store mints the id from the quote's document stem; a staged
                     // id under another stem (a provisional one) is re-minted.
-                    let stem = self.crit_stem(&criterion);
-                    let stem_slug = md::slug(stem.rsplit('/').next().unwrap_or(&stem).strip_suffix(".md").unwrap_or(stem.rsplit('/').next().unwrap_or(&stem)));
+                    let source = self
+                        .graph
+                        .requirements
+                        .get(&criterion.requirement)
+                        .and_then(|r| r.source.as_ref())
+                        .or(criterion.source.as_ref());
+                    let base = format!("crit:{}-", Self::req_id_stem(source));
                     let mut final_id = id.clone();
-                    if !final_id.starts_with(&format!("crit:{}-", stem_slug))
+                    if !final_id.starts_with(&base)
                         || self.graph.criteria.contains_key(&final_id)
                     {
-                        final_id = self.mint_crit_id(&stem, &BTreeSet::new());
+                        final_id = self.mint_crit_id(&criterion, None, &BTreeSet::new());
                     }
                     if final_id != id {
                         remap.insert(id, final_id.clone());
@@ -5482,7 +6029,7 @@ impl Store {
                             let mut final_id = id.clone();
                             if final_id.is_empty() || self.graph.diagnostics.contains_key(&final_id)
                             {
-                                final_id = self.mint_diag_id(&diagnostic.rule, &BTreeSet::new());
+                                final_id = self.mint_diag_id(&diagnostic.rule, &diagnostic.subjects, &BTreeSet::new());
                             }
                             if diagnostic.prompt.is_some() && diagnostic.answer.is_none() {
                                 dirt.prompt(&final_id, m, "report_diagnostic");
@@ -5778,7 +6325,7 @@ impl Store {
                 self.ratification_proposal(&id, &sentence, &prov, None, &entities, None);
             diagnostic.created = Some(build.clone());
             diagnostic.updated = Some(build.clone());
-            let did = self.mint_diag_id("ratification-pending", &BTreeSet::new());
+            let did = self.mint_diag_id("ratification-pending", &diagnostic.subjects, &BTreeSet::new());
             dirt.prompt(&did, m, "ratification");
             applied.push(Op::ReportDiagnostic {
                 id: did.clone(),
@@ -5888,7 +6435,7 @@ impl Store {
         }
         let entry = self.journal_entry(&build, commit, mutations);
         self.write_journal(&entry);
-        self.save();
+        self.persist();
         // The renderer redraws the views the commit touched; a view whose emitted
         // `.puml` matches the file on disk is skipped.
         // Mirrors docs/compiler/diagrams.md#rendering.
@@ -6395,7 +6942,7 @@ impl Store {
                 self.write_journal(entry);
             }
             // Persist the synced records so context reads see the new sections.
-            self.save();
+            self.persist();
         }
         self.reevaluate_items(out)
     }
@@ -6792,7 +7339,7 @@ impl Store {
                     .collect(),
             );
             self.write_journal(&entry);
-            self.save();
+            self.persist();
             // The sweep is a commit like any other: deleted nodes leave the derived
             // views, so the renderer redraws. Mirrors docs/compiler/diagrams.md#rendering.
             crate::render::render_all(self, &self.out);
@@ -6857,7 +7404,7 @@ impl Store {
                     }
                 }
                 None => {
-                    let id = self.mint_diag_id(&rule, &BTreeSet::new());
+                    let id = self.mint_diag_id(&rule, &subjects, &BTreeSet::new());
                     if prompt.is_some() {
                         batch.push(
                             mutations.len() + 1,
@@ -6910,7 +7457,7 @@ impl Store {
             self.commit_records(batch);
             let entry = self.journal_entry(&build, &Commit::store("checks"), mutations);
             self.write_journal(&entry);
-            self.save();
+            self.persist();
         }
     }
 }
@@ -7116,7 +7663,9 @@ mod tests {
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         let after = inodes(&out);
         assert!(after.contains_key(&out.join("graph/entities/ent~b.yaml")), "the new node is written");
-        assert_ne!(after[&out.join("status.yaml")], before[&out.join("status.yaml")]);
+        // The records live one per file: status.yaml stays, the commit point moves.
+        assert_eq!(after[&out.join("status.yaml")], before[&out.join("status.yaml")]);
+        assert_ne!(after[&out.join(BUILD_FILE)], before[&out.join(BUILD_FILE)]);
         let a = out.join("graph/entities/ent~a.yaml");
         assert_eq!(after[&a], before[&a], "an unchanged node file stays");
         assert_eq!(Store::load(&out).status.generation, 2);
@@ -7237,6 +7786,10 @@ mod tests {
         let mut r = seeded_req("orders.md", "An order holds a payment.");
         r.entities = vec!["ent:order".into(), "ent:payment".into()];
         r.source = Some(mention("orders.md", "/orders", "An order holds a payment."));
+        // As a commit leaves it: the requirement's source is a mention on its entities.
+        for e in ["ent:order", "ent:payment"] {
+            s.graph.entities.get_mut(e).unwrap().mentions.push(r.source.clone().unwrap());
+        }
         r.edges = vec![ReqEdge {
             a: "ent:order".into(),
             b: "ent:payment".into(),
@@ -7317,8 +7870,19 @@ mod tests {
         ] {
             assert!(files.contains_key(name), "{name} missing from {:?}", files.keys());
         }
-        assert_eq!(files["graph/redirects/ent~purchase.yaml"], b"to: ent:order\n");
+        assert_eq!(
+            files["graph/redirects/ent~purchase.yaml"],
+            b"id: ent:purchase\nto: ent:order\n"
+        );
         assert!(files.values().all(|b| b.ends_with(b"\n")));
+        // Every node file starts with its id and holds only the node's own facts: no
+        // generation markers, no mention a requirement adds by reference.
+        let order = String::from_utf8(files["graph/entities/ent~order.yaml"].clone()).unwrap();
+        assert!(order.starts_with("id: ent:order\n"), "{order}");
+        assert!(!order.contains("mentions") && !order.contains("created"), "{order}");
+        let req = String::from_utf8(files["graph/requirements/req~orders-1.yaml"].clone()).unwrap();
+        assert!(req.starts_with("id: req:orders-1\n") && !req.contains("updated:"), "{req}");
+        assert!(files.contains_key("markers.yaml"));
         let back = Store::load(&out);
         assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
         let json = |g: &Graph| serde_json::to_value(g).unwrap();
@@ -7402,18 +7966,30 @@ mod tests {
         let derived = serde_json::to_value((&s.graph.relationships, &s.graph.state_machines)).unwrap();
         assert!(!s.graph.relationships.is_empty() && !s.graph.state_machines.is_empty());
         // What a clone carries: the committed paths only.
-        for local in ["graph/relationships", "graph/state-machines", "journal", "diagrams", "trace"] {
+        for local in [
+            "graph/default-views",
+            "graph/relationships",
+            "graph/state-machines",
+            "journal",
+            "diagrams",
+            "trace",
+        ] {
             crate::vfs::remove_dir_all(out.join(local)).ok();
         }
         crate::vfs::remove_file(out.join(".lock")).ok();
         crate::vfs::remove_file(out.join(BUILD_FILE)).ok();
+        crate::vfs::remove_file(out.join(MARKERS_FILE)).ok();
+        crate::vfs::remove_file(out.join(CAUSES_FILE)).ok();
         let committed: Vec<String> = tree_bytes(&out).into_keys().collect();
         assert!(committed
             .iter()
             .all(|p| crate::document_sets::committed(&format!(".jazyk/ds_main/{p}"))), "{committed:?}");
         let mut opened = Store::load(&out);
         assert!(opened.load_errors.is_empty(), "{:?}", opened.load_errors);
-        assert_eq!(opened.status.generation, s.status.generation);
+        // The generation is local: a clone starts at the committed floor, and the
+        // records it carries name no generation of this checkout.
+        assert_eq!(opened.status.generation, generation_floor(&opened.status));
+        assert!(opened.status.changes.iter().all(|c| c.generation == 0));
         assert_eq!(
             serde_json::to_value((&opened.graph.relationships, &opened.graph.state_machines)).unwrap(),
             derived
@@ -7600,6 +8176,196 @@ mod tests {
         assert!(m.status.generation >= generation_floor(&m.status));
     }
 
+    // Two branches from one base each extract a requirement about the same entity from
+    // different sections and commit. Git merges the whole store with no conflict: the
+    // ids carry no counter, the entity file holds no by-reference mention, and every
+    // change record is a file of its own. Mirrors docs/compiler/graph.md#node-files.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn parallel_branches_merge_the_whole_store_through_git() {
+        let root = own_dir("git-merge");
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(&root)
+                .output()
+        };
+        if git(&["init", "-q", "-b", "base"]).map(|o| !o.status.success()).unwrap_or(true) {
+            eprintln!("no git binary; the merge was not exercised");
+            return;
+        }
+        let out = root.join(".jazyk/ds_main");
+        let text = "# Shop\nThe shop sells tea.\n\n## Orders\nAn order holds items.\n\n## Payments\nA payment settles an order.\n";
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        seed_doc(&mut s, "shop.md", text);
+        let r = s.apply(vec![create("ent:order", "Order")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        assert!(root.join(".jazyk/.gitignore").vexists(), "a save writes the ignore file");
+        let req = |section: &str, quote: &str| Op::CreateRequirement {
+            id: String::new(),
+            requirement: Requirement {
+                statement: quote.into(),
+                entities: vec!["ent:order".into()],
+                source: Some(mention("shop.md", section, quote)),
+                facets: vec![Facet {
+                    facet: "behavior".into(),
+                    reasoning: "stated".into(),
+                    measure: None,
+                }],
+                ..Default::default()
+            },
+        };
+        let commit = |msg: &str| {
+            let add = git(&["add", "-A"]).unwrap();
+            assert!(add.status.success(), "{}", String::from_utf8_lossy(&add.stderr));
+            let c = git(&["commit", "-q", "-m", msg]).unwrap();
+            assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
+        };
+        commit("base");
+        assert!(git(&["checkout", "-q", "-b", "a"]).unwrap().status.success());
+        let mut sa = Store::load(&out);
+        let r = sa.apply(vec![req("/shop/orders", "An order holds items.")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        commit("a");
+        assert!(git(&["checkout", "-q", "base"]).unwrap().status.success());
+        assert!(git(&["checkout", "-q", "-b", "b"]).unwrap().status.success());
+        let mut sb = Store::load(&out);
+        let r = sb.apply(vec![req("/shop/payments", "A payment settles an order.")], &session());
+        assert_eq!(r.applied, 1, "{:?}", r.skipped);
+        commit("b");
+        let merged = git(&["merge", "-q", "--no-ff", "--no-edit", "a"]).unwrap();
+        assert!(
+            merged.status.success(),
+            "the store conflicted:\n{}{}",
+            String::from_utf8_lossy(&merged.stdout),
+            String::from_utf8_lossy(&merged.stderr)
+        );
+        let m = Store::load(&out);
+        assert!(m.load_errors.is_empty(), "{:?}", m.load_errors);
+        assert_eq!(m.graph.requirements.len(), 2, "{:?}", m.graph.requirements.keys());
+        let ids: BTreeSet<&String> = m.graph.requirements.keys().collect();
+        assert!(ids.iter().any(|i| i.starts_with("req:shop-orders-")), "{ids:?}");
+        assert!(ids.iter().any(|i| i.starts_with("req:shop-payments-")), "{ids:?}");
+        // Both sources come back as mentions on the entity both branches named.
+        assert_eq!(m.graph.entities["ent:order"].mentions.len(), 2, "{:?}", m.graph.entities["ent:order"].mentions);
+        let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
+        assert!(!order.contains("mentions"), "{order}");
+        // Each branch's change records survive the merge.
+        for id in &ids {
+            assert!(m.status.has_change(CHANGE_REQ_CREATED, id), "{id}: {:?}", m.status.changes);
+        }
+        // Nothing local was committed.
+        let tracked = git(&["ls-files"]).unwrap();
+        let tracked = String::from_utf8_lossy(&tracked.stdout);
+        for local in ["build.yaml", "markers.yaml", "causes.yaml", "journal/", "relationships/", "default-views/"] {
+            assert!(!tracked.contains(local), "{local} tracked:\n{tracked}");
+        }
+        assert!(tracked.contains(".jazyk/ds_main/changes/"), "{tracked}");
+    }
+
+    // A version 3 store loads as it is, and its next save writes the version 4 layout
+    // with every id and fact kept. Mirrors docs/compiler/graph.md#store-version.
+    #[test]
+    fn a_version_3_store_upgrades_in_place_at_its_next_save() {
+        let out = own_dir("v3-upgrade");
+        let w = |rel: &str, text: &str| {
+            let p = out.join(rel);
+            crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
+            crate::vfs::write(p, text).unwrap();
+        };
+        w("status.yaml", "version: 3\nchanges:\n- id: c4-1\n  generation: 4\n  mutation: 1\n  kind: entity-changed\n  subject: ent:order\n  via: name\nlookalikes:\n- pair: ent:order~ent:purchase\n  verdict: separate\n  score: 0.6\n  generation: 3\nroots:\n- shop.md\n");
+        w("build.yaml", "generation: 4\n");
+        w("graph/entities/ent~order.yaml", "name: Order\nmentions:\n- doc: shop.md\n  section: /shop\n  quote: An order holds items.\ncreated: g1\nupdated: g4\n");
+        w("graph/requirements/req~shop-1.yaml", "statement: An order holds items.\nentities:\n- ent:order\nfacets:\n- facet: behavior\n  reasoning: stated\nsource:\n  doc: shop.md\n  section: /shop\n  quote: An order holds items.\ncreated: g2\nupdated: g2\n");
+        w("graph/views/view~class+shop.yaml", "kind: class\ntitle: Shop\nmembers:\n- ent:order\nprovenance:\n  derived:\n    from:\n    - ent:order\n    reasoning: 'default view: x'\ndefault: true\n");
+        w("graph/diagnostics/diag~lint-1.yaml", "rule: lint\nseverity: info\nsubjects:\n- req:shop-1\nmessage: m\nlifecycle: open\ncreated: g3\nupdated: g3\n");
+        w("docs/shop.md.yaml", "contentHash: abc\nsections:\n  /shop:\n    title: Shop\n    kind: root\n    order: 0\n    raw: |-\n      # Shop\n      An order holds items.\n    hash: h1\n    lines:\n    - 0\n    - 2\n");
+        w("gen/ledger.yaml", "entities:\n  order:\n    factHash: f\n    requirements:\n    - req:shop-1\n");
+        let s = Store::load(&out);
+        assert!(s.load_errors.is_empty(), "{:?}", s.load_errors);
+        assert_eq!(s.graph.entities["ent:order"].updated.as_deref(), Some("g4"));
+        assert_eq!(s.graph.entities["ent:order"].mentions.len(), 1);
+        assert!(s.status.has_change(CHANGE_ENTITY, "ent:order"));
+        assert_eq!(s.status.lookalikes.len(), 1);
+        assert_eq!(s.docs["shop.md"].content_hash, "abc");
+        assert_eq!(s.docs["shop.md"].sections["/shop"].lines, [0, 2]);
+        let ledger = crate::gen::Ledger::load(&out);
+        assert!(ledger.entities.contains_key("order"));
+        let before = serde_json::to_value((&s.graph, &s.status.changes, &s.status.lookalikes)).unwrap();
+        s.save();
+        ledger.save(&out);
+        let status = std::fs::read_to_string(out.join("status.yaml")).unwrap();
+        assert!(status.contains("version: 4") && !status.contains("changes") && !status.contains("lookalikes"), "{status}");
+        assert!(out.join("changes/entity-changed/ent~order.yaml").vexists());
+        assert!(out.join("lookalikes/ent~order%7Eent~purchase.yaml").vexists());
+        let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
+        assert_eq!(order, "id: ent:order\nname: Order\n");
+        // A default view is never committed: the recompute at load owns it.
+        assert!(!out.join("graph/views/view~class+shop.yaml").vexists());
+        let doc = std::fs::read_to_string(out.join("docs/shop.md.yaml")).unwrap();
+        assert!(!doc.contains("contentHash") && !doc.contains("lines"), "{doc}");
+        assert!(std::fs::read_to_string(out.join(BUILD_FILE)).unwrap().contains("shop.md: abc"));
+        let wide = std::fs::read_to_string(out.join("gen/ledger.yaml")).unwrap();
+        assert!(!wide.contains("factHash"), "{wide}");
+        assert!(std::fs::read_to_string(out.join("gen/entities/order.yaml")).unwrap().starts_with("id: order\n"));
+        // The upgraded store reads back the same graph, markers and all.
+        let back = Store::load(&out);
+        assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
+        assert_eq!(back.status.version, STORE_VERSION);
+        assert_eq!(
+            serde_json::to_value((&back.graph, &back.status.changes, &back.status.lookalikes)).unwrap(),
+            before
+        );
+        assert_eq!(back.docs["shop.md"].sections["/shop"].lines, [0, 2]);
+        assert_eq!(back.docs["shop.md"].content_hash, "abc");
+        assert_eq!(crate::gen::Ledger::load(&out).entities["order"].fact_hash, "f");
+        // A cleared record deletes its file.
+        let mut s = back;
+        s.status.changes.clear();
+        s.save_status();
+        assert!(!out.join("changes/entity-changed/ent~order.yaml").vexists());
+    }
+
+    // A status.yaml that does not parse is a broken file, not another version: a build
+    // leaves it in place and the store is read-only.
+    // Mirrors docs/compiler/graph.md#store-version.
+    #[test]
+    fn a_status_that_does_not_parse_is_never_archived() {
+        let out = own_dir("status-torn");
+        crate::vfs::create_dir_all(out.join("graph/entities")).unwrap();
+        crate::vfs::write(out.join("status.yaml"), "version: [4\n").unwrap();
+        crate::vfs::write(out.join("graph/entities/ent~order.yaml"), "id: ent:order\nname: Order\n").unwrap();
+        let s = Store::open_for_build(&out);
+        assert!(!s.load_errors.is_empty());
+        assert!(out.join("graph/entities/ent~order.yaml").vexists());
+        assert!(!out.with_file_name(format!("{}.bak", out.file_name().unwrap().to_string_lossy())).vexists());
+        s.save();
+        assert_eq!(std::fs::read_to_string(out.join("status.yaml")).unwrap(), "version: [4\n");
+    }
+
+    // Section line ranges recompute from the raw texts exactly as the parse gave them.
+    #[test]
+    fn section_lines_recompute_from_raw_texts() {
+        let text = "Intro line.\n\n# Top\nBody.\n\n```mermaid\na\n```\n\n## Child\nMore.\n\n# Second\nEnd.\n";
+        let parsed = crate::md::parse_sections(text);
+        let mut rec = DocRecord {
+            content_hash: String::new(),
+            sections: parsed.clone(),
+            coverage: BTreeMap::new(),
+        };
+        for s in rec.sections.values_mut() {
+            s.lines = [0, 0];
+        }
+        fill_section_lines(&mut rec);
+        for (r, s) in &parsed {
+            assert_eq!(rec.sections[r].lines, s.lines, "{r}");
+        }
+    }
+
     fn wi() -> WorkItem {
         WorkItem {
             task: "reconcile-doc".into(),
@@ -7695,10 +8461,26 @@ mod tests {
         let r = s.apply(ops, &wi().commit(3, Some(100)));
         assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
-        assert_eq!(ids, vec!["crit:t-1", "crit:t-2"], "{:?}", ids);
+        assert_eq!(ids.len(), 2, "{:?}", ids);
+        assert!(ids.iter().all(|id| id.starts_with("crit:t-")), "{:?}", ids);
+        // The quoted criterion and the derived one, by provenance, not by mint order.
+        let quoted_id = s
+            .graph
+            .criteria
+            .iter()
+            .find(|(_, c)| c.provenance.is_none())
+            .map(|(id, _)| id.clone())
+            .unwrap();
+        let derived_id = s
+            .graph
+            .criteria
+            .iter()
+            .find(|(_, c)| c.provenance.is_some())
+            .map(|(id, _)| id.clone())
+            .unwrap();
         assert_eq!(s.criteria_of("req:t-1").len(), 2);
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_CREATED, "crit:t-2"));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, &quoted_id));
+        assert!(s.status.has_change(CHANGE_CRIT_CREATED, &derived_id));
         // The requirement's statement changes: the derived criterion is revised, the
         // quoted one keeps its own quote.
         s.apply(
@@ -7714,8 +8496,8 @@ mod tests {
             }],
             &wi().commit(4, Some(100)),
         );
-        assert!(s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-2"));
-        assert!(!s.status.has_change(CHANGE_CRIT_REVISED, "crit:t-1"));
+        assert!(s.status.has_change(CHANGE_CRIT_REVISED, &derived_id));
+        assert!(!s.status.has_change(CHANGE_CRIT_REVISED, &quoted_id));
         // The requirement goes: its criteria go with it.
         s.apply(
             vec![Op::DeleteRequirement {
@@ -7725,8 +8507,8 @@ mod tests {
             &wi().commit(5, Some(100)),
         );
         assert!(s.graph.criteria.is_empty());
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-1"));
-        assert!(s.status.has_change(CHANGE_CRIT_DELETED, "crit:t-2"));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, &quoted_id));
+        assert!(s.status.has_change(CHANGE_CRIT_DELETED, &derived_id));
     }
 
     // A fixture entity the sweep keeps. The sweep runs behind every commit and deletes
@@ -9838,7 +10620,7 @@ mod tests {
                     diagnostic: Diagnostic {
                         rule: "ratification-pending".into(),
                         severity: "info".into(),
-                        subjects: vec!["req:x-1".into()],
+                        subjects: vec!["prov:new".into()],
                         message: "the docs should say so".into(),
                         reasoning: None,
                         lifecycle: "open".into(),
@@ -9855,13 +10637,24 @@ mod tests {
         assert_eq!(r.applied, 5, "{:?}", r.skipped);
         assert!(r.skipped[0].contains("no provenance"));
         // The commit filed the decreed fact's proposal, statement verbatim; the
-        // staged diagnostic on req:x-1 already stood, so no second one landed there.
+        // staged diagnostic on the derived one already stood, so no second one landed there.
+        let id_of = |s: &Store, statement: &str| {
+            s.graph
+                .requirements
+                .iter()
+                .find(|(_, r)| r.statement == statement)
+                .map(|(id, _)| id.clone())
+                .expect("the requirement landed")
+        };
+        let x1 = id_of(&s, "The cart is split by category.");
+        let x2 = id_of(&s, "The cart never exceeds ten categories.");
+        assert!(x1.starts_with("req:x-") && x2.starts_with("req:x-") && x1 != x2);
         let proposal_id = s
             .graph
             .diagnostics
             .iter()
             .find(|(_, d)| {
-                d.rule == "ratification-pending" && d.subjects == vec!["req:x-2".to_string()]
+                d.rule == "ratification-pending" && d.subjects == vec![x2.clone()]
             })
             .map(|(id, _)| id.clone())
             .expect("the commit files the proposal for the decreed fact");
@@ -9874,14 +10667,14 @@ mod tests {
                 .diagnostics
                 .values()
                 .filter(|d| d.rule == "ratification-pending"
-                    && d.subjects == vec!["req:x-1".to_string()])
+                    && d.subjects == vec![x1.clone()])
                 .count(),
             1
         );
-        assert!(s.graph.requirements.contains_key("req:x-1"));
-        assert!(s.graph.requirements.contains_key("req:x-2"));
-        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
-        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-2"));
+        assert!(s.graph.requirements.contains_key(&x1));
+        assert!(s.graph.requirements.contains_key(&x2));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
+        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, &x2));
         // The same derived statement from the same sources folds, never duplicates.
         s.apply(
             vec![Op::CreateRequirement {
@@ -9904,15 +10697,15 @@ mod tests {
         s.clear_changes(&setup);
         let r = s.apply(
             vec![Op::RatifyProvenance {
-                id: "req:x-1".into(),
+                id: x1.clone(),
                 source: mention("t.md", "/t", "The cart is split by category."),
             }],
             &Commit::store("ratify"),
         );
         assert_eq!(r.applied, 2, "{:?}", r.skipped);
-        let q = &s.graph.requirements["req:x-1"];
+        let q = &s.graph.requirements[&x1];
         assert!(q.source.is_some() && q.provenance.is_none());
-        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "req:x-1"));
+        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
         // An accepted proposal is a human edit: the mention the landed sentence adds
         // opens no review of the Cart. Mirrors docs/compiler/goals/ratify.md#accept.
         assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"), "{:?}", s.status.changes);
@@ -9920,7 +10713,7 @@ mod tests {
             .graph
             .diagnostics
             .values()
-            .filter(|d| d.subjects.contains(&"req:x-1".to_string()))
+            .filter(|d| d.subjects.contains(&x1))
             .all(|d| d.lifecycle == "resolved"));
         assert_eq!(s.graph.diagnostics[&proposal_id].lifecycle, "open");
         assert!(s.graph.entities["ent:cart"]
@@ -9931,19 +10724,19 @@ mod tests {
         let r = s.apply(
             vec![
                 Op::RetractDecree {
-                    id: "req:x-2".into(),
+                    id: x2.clone(),
                     reason: "withdrawn".into(),
                 },
                 Op::RetractDecree {
-                    id: "req:x-1".into(),
+                    id: x1.clone(),
                     reason: "withdrawn".into(),
                 },
             ],
             &Commit::store("decree"),
         );
         assert_eq!(r.applied, 2, "{:?}", r.skipped);
-        assert!(!s.graph.requirements.contains_key("req:x-2"));
-        assert!(s.status.has_change(CHANGE_REQ_DELETED, "req:x-2"));
+        assert!(!s.graph.requirements.contains_key(&x2));
+        assert!(s.status.has_change(CHANGE_REQ_DELETED, &x2));
         assert!(r.skipped[0].contains("not a decree"));
         assert!(s
             .graph

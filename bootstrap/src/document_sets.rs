@@ -18,6 +18,16 @@ pub const IGNORE: &str = "*
 !/ds_*/
 /ds_*.bak/
 !/ds_*/status.yaml
+!/ds_*/changes/
+!/ds_*/changes/**
+!/ds_*/parked/
+!/ds_*/parked/*.yaml
+!/ds_*/failed/
+!/ds_*/failed/*.yaml
+!/ds_*/alignment/
+!/ds_*/alignment/*.yaml
+!/ds_*/lookalikes/
+!/ds_*/lookalikes/*.yaml
 !/ds_*/docs/
 !/ds_*/docs/**
 !/ds_*/graph/
@@ -39,7 +49,34 @@ pub const IGNORE: &str = "*
 ";
 
 // Ignore files an earlier Jazyk generated: replaced by `IGNORE` on the next write.
-const EARLIER_IGNORES: [&str; 1] = ["*\n!jazyk.toml\n!.gitignore\n"];
+const EARLIER_IGNORES: [&str; 2] = ["*\n!jazyk.toml\n!.gitignore\n", IGNORE_V3];
+
+// The file store version 3 generated, before the status split into record files.
+const IGNORE_V3: &str = "*
+!/jazyk.toml
+!/.gitignore
+!/ds_*/
+/ds_*.bak/
+!/ds_*/status.yaml
+!/ds_*/docs/
+!/ds_*/docs/**
+!/ds_*/graph/
+!/ds_*/graph/entities/
+!/ds_*/graph/entities/*.yaml
+!/ds_*/graph/requirements/
+!/ds_*/graph/requirements/*.yaml
+!/ds_*/graph/criteria/
+!/ds_*/graph/criteria/*.yaml
+!/ds_*/graph/views/
+!/ds_*/graph/views/*.yaml
+!/ds_*/graph/diagnostics/
+!/ds_*/graph/diagnostics/*.yaml
+!/ds_*/graph/redirects/
+!/ds_*/graph/redirects/*.yaml
+!/ds_*/gen/
+!/ds_*/gen/**
+.*.tmp
+";
 
 // Write `.jazyk/.gitignore` when it is absent or still an earlier generated one. A
 // file with other content is the owner's and stays. Returns whether it wrote.
@@ -80,6 +117,8 @@ pub fn committed(path: &str) -> bool {
     }
     match inner.as_slice() {
         ["status.yaml"] => true,
+        ["changes", _, ..] => inner.last().is_some_and(|f| f.ends_with(".yaml")),
+        ["parked" | "failed" | "alignment" | "lookalikes", file] => file.ends_with(".yaml"),
         ["docs", _, ..] | ["gen", _, ..] => true,
         ["graph", kind, file] => {
             crate::store::COMMITTED_KINDS.contains(kind) && file.ends_with(".yaml")
@@ -1263,10 +1302,19 @@ mod tests {
         );
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 35] = [
+    const CHECKOUT_PATHS: [(&str, bool); 44] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/ds_main/status.yaml", true),
+        (".jazyk/ds_main/changes/section-dirty/docs+a.md%23+a.yaml", true),
+        (".jazyk/ds_main/parked/g~reconcile-section~docs+a.md%23+a.yaml", true),
+        (".jazyk/ds_main/failed/g~bind~req~a-1x2c.yaml", true),
+        (".jazyk/ds_main/alignment/docs+a.md.yaml", true),
+        (".jazyk/ds_main/lookalikes/ent~a%7Eent~b.yaml", true),
+        (".jazyk/ds_main/graph/default-views/view~class+shop.yaml", false),
+        (".jazyk/ds_main/markers.yaml", false),
+        (".jazyk/ds_main/gen/entities/order.yaml", true),
+        (".jazyk/ds_main/gen/requirements/req~main-1.yaml", true),
         (".jazyk/ds_main/docs/docs/main.md.yaml", true),
         (".jazyk/ds_main/docs/a/b/c.md.yaml", true),
         (".jazyk/ds_main/graph/entities/ent~order.yaml", true),

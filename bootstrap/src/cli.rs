@@ -802,7 +802,7 @@ pub fn run_monitor(opts: &Options) -> i32 {
     let fingerprint = |proj: &Project| -> String {
         let mut s = String::new();
         let mut files = proj.doc_files();
-        files.push(crate::gen::Ledger::path(&out));
+        files.extend(crate::gen::Ledger::files(&out));
         // A release or mode change is a state change: the notice fires on the click.
         files.push(crate::control::Control::path(&out));
         let ledger = crate::gen::Ledger::load(&out);

@@ -323,8 +323,7 @@ serves these:
   subdirectory with `path` to see more of it.
 - The [task tools](../tools.md#task-runtime-tools) execute saved commands in finite
   isolated runs. The session inspects status, logs, retained changes, and test reports,
-  then repairs its source and submits another run when needed. `run_command` is not
-  exposed to workers.
+  then repairs its source and submits another run when needed.
 - `run_tests({requirements?})` and `record_generation({...})`: the same tools the
   generation toolset serves over MCP.
 

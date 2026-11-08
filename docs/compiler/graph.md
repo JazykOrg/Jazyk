@@ -904,7 +904,7 @@ document quality thresholds (6000 characters per section, 40 sections per docume
 the alignment thresholds (move 0.5, split 0.6) and the alignment candidate cap
 (`alignment-candidates`, three per anchor) are registry constants too, not settings.
 See [budgets](./sessions.md#budgets). So is the command timeout: one shell command (a
-recorded build or test, a session's `run_command`) runs 1800 seconds at most before the
+recorded build or test) runs 1800 seconds at most before the
 harness kills it and records exit `124`; `JAZYK_COMMAND_TIMEOUT` overrides it per run
 ([runners](../consumers/gen.md#a-test-that-could-not-run-says-nothing)).
 

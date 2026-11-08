@@ -929,11 +929,10 @@ Compile goals:
   `update_requirement`, `report_diagnostic` (`nonconformant-instance`,
   `duplicate-entity`, `ambiguity`), `resolve_diagnostic`.
 - [`bind`](./goals/bind.md): the `generate` serving below.
-- [`generate`](./goals/generate.md): the `generate` serving below, plus the file and
-  command tools when the profile sets `serve_files`.
+- [`generate`](./goals/generate.md): the `generate` serving below, plus the file
+  tools when the profile sets `serve_files`.
 - [`verify`](./goals/verify.md): the `verify` serving below, plus the read-only file
-  tools (`read_text_file`, `list_files`, `run_command`) when the profile sets
-  `serve_files`.
+  tools (`read_text_file`, `list_files`) when the profile sets `serve_files`.
 - [`ratify`](./goals/ratify.md), [`answer`](./goals/answer.md): no session, no
   toolset. The human path runs through the [chat tools](#chat-tools), the LSP, and the
   GUI.

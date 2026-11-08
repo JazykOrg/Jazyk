@@ -343,7 +343,7 @@ served more than the graph tools and finish through the ledger:
 - The file tools are sandboxed to the deliverable directory: paths are relative to
   it, and a path that escapes it is rejected. The
   [task tools](./tools.md#task-runtime-tools) run saved commands in finite containers,
-  with project-relative paths and fixed timeouts. `run_command` is not advertised.
+  with project-relative paths and fixed timeouts.
 - The names and shapes follow the Agent Client Protocol's client-provided tools (its
   file-system and terminal methods), served through the injected MCP serving like every
   other jazyk tool ([MCP into sessions](../frontends/mcp.md#mcp-into-acp-sessions)).

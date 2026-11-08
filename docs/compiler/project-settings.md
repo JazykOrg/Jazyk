@@ -367,7 +367,7 @@ They bound the endpoint and the process; session and build budgets are
   Hosted and browser transports enforce their host's deadline. Session round
   budgets, the ACP idle watchdog and lease TTLs provide additional bounds.
 - `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 1800): a recorded
-  build or test under `jazyk test`, a session's `run_command`. Past it the harness kills
+  build or test under `jazyk test`. Past it the harness kills
   the command and records exit `124`
   ([a test that could not run says nothing](../consumers/gen.md#a-test-that-could-not-run-says-nothing)).
 - `JAZYK_VERBOSE`: when set to a non-empty value other than `0`, emit verbose

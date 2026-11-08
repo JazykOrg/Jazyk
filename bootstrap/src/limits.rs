@@ -171,8 +171,8 @@ pub const ALIGN_SPLIT_COVERAGE: f64 = 0.6;
 // place-anchors session sees (`alignment-candidates`).
 pub const ALIGN_CANDIDATES: usize = 3;
 
-// The most one shell command runs (a recorded build or test, a session's
-// `run_command`) before the harness kills it and records exit 124.
+// The most one shell command runs (a recorded build or test) before the harness
+// kills it and records exit 124.
 // `JAZYK_COMMAND_TIMEOUT` overrides, in seconds.
 // Mirrors docs/consumers/gen.md#a-test-that-could-not-run-says-nothing.
 pub const COMMAND_TIMEOUT_SECS: u64 = 1800;

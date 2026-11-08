@@ -654,11 +654,6 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}, "version": {"type": "string", "enum": ["changes", "input"]}}), &["run_id"]),
         },
         ToolDef {
-            name: "run_command",
-            description: "Execute a shell command under the deliverable directory (cwd is deliverable-relative, default .). Returns the exit code and output tail. Use it to run the build you wrote and read its failures; record the final commands in the manifest.",
-            parameters: obj(json!({"command": {"type": "string"}, "cwd": {"type": "string"}}), &["command"]),
-        },
-        ToolDef {
             name: "mark_goal_done",
             description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.",
             parameters: goal_claim_parameters(),
@@ -774,12 +769,11 @@ pub const VERIFY_TOOLS: [&str; 4] = [
     "run_tests",
     "record_verdict",
 ];
-// In-process only: a generation turn's file and command tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 4] = [
+// In-process only: a generation turn's file tools, never served over MCP.
+pub const FILE_TOOLS: [&str; 3] = [
     "read_text_file",
     "write_text_file",
     "list_files",
-    "run_command",
 ];
 // The view tools, served beside the write tools. See docs/compiler/tools.md#view-tools.
 pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
@@ -826,7 +820,7 @@ pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
         }
     }
     for t in GOAL_TOOLS {
-        if t != "run_command" && !v.contains(&t) {
+        if !v.contains(&t) {
             v.push(t);
         }
     }
@@ -850,10 +844,10 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         _ => None,
     } {
         let mut v = toolset_for_kinds(&[kind]);
-        // The in-process ledger workers get the file and command tools.
+        // The in-process ledger workers get the file tools.
         if matches!(task, "generate-entity" | "bind-requirement") {
             for t in FILE_TOOLS {
-                if t != "run_command" && !v.contains(&t) {
+                if !v.contains(&t) {
                     v.push(t);
                 }
             }
@@ -4633,38 +4627,6 @@ impl ToolSession {
                 }
                 Ok(reply)
             }
-            "run_command" => {
-                let command = Self::str_arg(args, "command")?;
-                let cwd_rel = Self::opt_str(args, "cwd").unwrap_or_else(|| ".".into());
-                let cwd_rel = match crate::gen::unroot(&self.gen.deliverable, &cwd_rel) {
-                    Some(under) if under.is_empty() => ".".to_string(),
-                    Some(under) => under,
-                    None => cwd_rel,
-                };
-                let cwd = if cwd_rel == "." {
-                    self.gen.deliverable.clone()
-                } else {
-                    self.deliverable_path(&cwd_rel)?
-                };
-                let out = crate::sys::run_shell(&command, &cwd)
-                    .map_err(|e| {
-                        ToolError::new(
-                            "io-error",
-                            format!("cannot run `{}` in {}: {}", command, cwd.display(), e),
-                        )
-                    })?;
-                let mut text = String::from_utf8_lossy(&out.stdout).to_string();
-                text.push_str(&String::from_utf8_lossy(&out.stderr));
-                let tail: String = {
-                    let lines: Vec<&str> = text.lines().collect();
-                    let start = lines.len().saturating_sub(60);
-                    lines[start..].join("\n")
-                };
-                Ok(json!({
-                    "exitCode": out.code,
-                    "output": crate::llm::truncate(&tail, 6000),
-                }))
-            }
             _ => unreachable!(),
         }
     }
@@ -8004,7 +7966,7 @@ impl ToolSession {
                 }
                 Ok(reply)
             }
-            "read_text_file" | "write_text_file" | "list_files" | "run_command" => {
+            "read_text_file" | "write_text_file" | "list_files" => {
                 self.file_tool(name, args)
             }
             // An external agent's own report of what its run billed for the open batch.
@@ -11845,6 +11807,7 @@ mod tests {
             let prompt = crate::goals::kind(kind).unwrap().prompt();
             assert!(!prompt.contains("run_command"), "{kind} advertises an unavailable command tool");
             assert!(!toolset(kind).contains(&"run_command"));
+            assert!(!catalog().iter().any(|t| t.name == "run_command"), "the catalog keeps an unserved command tool");
             for name in crate::task_runtime::TOOLS {
                 assert!(toolset(kind).contains(&name), "{kind} lacks {name}");
             }

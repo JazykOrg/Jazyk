@@ -4,6 +4,8 @@ mod asset_workflow_tests;
 pub(crate) mod assets;
 #[cfg(test)]
 mod matcher_recovery_tests;
+#[cfg(test)]
+mod concurrency_tests;
 mod pipeline;
 pub(crate) mod progress;
 // Generation: the shared contract between every generation worker, the built-in

@@ -678,6 +678,9 @@ pub fn task_leases(out: &Path) -> BTreeMap<String, Lease> {
 }
 
 #[cfg(test)]
+mod lease_race_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

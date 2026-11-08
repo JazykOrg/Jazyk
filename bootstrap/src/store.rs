@@ -7916,6 +7916,9 @@ impl Drop for FileLock {
 }
 
 #[cfg(test)]
+mod concurrency_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

@@ -1,7 +1,7 @@
 // The Inbox, served by both transports (docs/frontends/wasm.md#the-inbox): the
 // rollup the top bar, the navigator, and the Inbox's pages read, the standing
 // questions, the human triage decision, and an answer to a prompted diagnostic.
-// Mirrors docs/frontends/gui.md#inbox.
+// Mirrors docs/frontends/gui.md#api (`GET /api/inbox`, `GET /api/questions`).
 use crate::model::Diagnostic;
 use crate::project::Project;
 use crate::store::{Op, Store};

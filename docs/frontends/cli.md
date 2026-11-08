@@ -251,6 +251,15 @@ LLM call. A value that is not a whole number is a usage error, never an unlimite
 [Executor overrides](../compiler/project-settings.md#executors) per goal kind or class
 send some sessions to a different agent.
 
+`--select <path>` runs a [selected build](../compiler/compilation.md#selected-builds):
+only the goals in the selection run. The flag repeats. A path is a document or a
+folder; `<path>:<first>-<last>` selects lines of a document (one-based, inclusive).
+E.g.: `jazyk compile --select docs/orders.md --select docs/billing.md:12-40`.
+Selected paths choose the set like positional paths. A selected path that is not a
+document of the set, or a malformed range, is a usage error. The board summary
+line names the selection (`compile (selection): 4 goals ...`), and goals outside it
+stay open.
+
 Terminal output, in order:
 
 - The board summary first, once the documents are parsed and the board is derived: the
@@ -968,10 +977,11 @@ nothing ([snippets](../benchmark/benchmark.md#snippets-from-a-real-project));
 - `jazyk --help` (or `-h`, or `jazyk help`) prints the top-level usage: one line per
   command, in four groups in this order, plus the common options. The groups put what
   a person types most at the top and what programs spawn at the bottom:
-  - Start here: `init`, `gui`, `status`, `compile`, `benchmark`, and one line naming
-    the [launcher's](#jazyk) choices, each a command.
+  - Start here: `init`, `setup`, `gui`, `sets`, `status`, `compile`, `benchmark`, and
+    one line naming the [launcher's](#jazyk) choices, each a command.
   - Actions on the project: `check`, `watch`, `gen`, `test`, `decompile`, `docsgen`,
-    `release`, `answer`, `spend`.
+    `release`, `answer`, `spend`, `replay`, and the task commands `tasks`, `runs`,
+    `run`, `run-status`, `run-log`, `run-cancel`.
   - Inspect: `preview`, `explain`, `ripple`, `context`, `query`, `viewer`.
   - Run by IDEs and agents, not by hand: `mcp`, `acp`, `lsp`, `agent`, `monitor`.
 - `jazyk <command> --help` prints that command's usage: its arguments, the options it

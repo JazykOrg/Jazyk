@@ -22,7 +22,8 @@ pub struct AppState {
     // JAZYK_GUI_URL): the one origin the CORS layer admits
     // (docs/frontends/gui.md#serving).
     pub gui_origin: String,
-    // --dev: the app starts with the Developer toggle on (docs/frontends/gui.md#developer-toggle).
+    // --dev: the app opens its Debug mode (docs/frontends/gui.md#local-editor-api;
+    // the toggle is jazyk-cloud docs/editor/editor.md#debug-toggle).
     pub dev: bool,
     // Signals the server to stop (ctrl-c or POST /api/shutdown).
     pub shutdown: Arc<tokio::sync::Notify>,
@@ -34,7 +35,7 @@ pub struct AppState {
     // fresh one.
     pub last_pending: Arc<std::sync::Mutex<std::collections::BTreeMap<String, serde_json::Value>>>,
     pub jobs: Arc<super::jobs::JobManager>,
-    // The chat pane's sessions and their shared agent host (docs/frontends/gui.md#chat).
+    // The chat pane's sessions and their shared agent host (docs/frontends/acp.md#chat-sessions).
     pub chat: Arc<super::chat::ChatManager>,
     // Watch-mode retry backoff in seconds per set (30 doubling to 300, reset on
     // success), shared the same way (docs/frontends/gui.md#jobs).
@@ -107,7 +108,7 @@ impl AppState {
         self.gs.read().unwrap().clone()
     }
     // The workflow modes are control-plane state, not process memory: shared with
-    // every worker, surviving restarts. Mirrors docs/frontends/gui.md#workflow-modes.
+    // every worker, surviving restarts. Mirrors docs/compiler/control-plane.md#modes-and-releases.
     pub fn control(&self) -> crate::control::Control {
         crate::control::Control::load(&self.proj(), &self.out)
     }

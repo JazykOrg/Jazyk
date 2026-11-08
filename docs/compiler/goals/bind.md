@@ -128,10 +128,12 @@ The binding contract rides the tool reply, not the prompt, because the model mus
 interleave jazyk's package with its own file and shell work
 ([generation sessions](../sessions.md#generation-sessions)):
 
-An owned worker batch already carries the task execution contract in its opening
-prompt. Its `begin_binding` reply carries the full binding contract without repeating
-that execution contract. A standalone serving carries both contracts in the reply.
-The binding rules and package fields stay the same.
+A session whose batch holds a `bind` goal already carries the task execution
+contract in its opening prompt. Every session form assembles it the same way: an
+owned worker batch, a benchmark case, a snippet, a replay. Its `begin_binding` reply
+carries the full binding contract without repeating that execution contract. A
+standalone serving carries both contracts in the reply. The binding rules and package
+fields stay the same.
 
 1. `begin_binding({requirement})` answers with
    [`prompts/bind-contract.md`](./prompts/bind-contract.md) as `instructions`
@@ -158,8 +160,8 @@ context                            the requirement's neighborhood (../context.md
    when no falsifiable programmatic assertion exists, the kind is `llm` and the
    artifact is a [criteria file](../../consumers/gen.md#criteria-files-for-llm-tests).
 
-The packaged form (the contract plus the package rendered as text) is what the
-[benchmark](../../benchmark/benchmark.md) grades. [`jazyk gen`](../../consumers/gen.md#command)
+The [benchmark](../../benchmark/benchmark.md) grades this same prompt and these same
+replies: a case session assembles its prompt through the build's path. [`jazyk gen`](../../consumers/gen.md#command)
 runs the same goal outside a full build for the named entities' requirements, and an
 external agent on the `generate` serving claims the same package with `binding_tasks`
 and `begin_binding`

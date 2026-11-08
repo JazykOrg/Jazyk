@@ -825,9 +825,11 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     }
     // Near-identical statements on one entity: review debt made deterministic.
     {
+        // The natural key's normalization (docs/compiler/compilation.md#checks): a
+        // decimal or a signed number stays one token, so `1.5` and `2.5` differ.
         let toks = |s: &str| -> BTreeSet<String> {
-            s.to_lowercase()
-                .split(|c: char| !c.is_alphanumeric())
+            crate::store::normalize_statement(s)
+                .split(' ')
                 .filter(|t| t.len() > 2)
                 .map(String::from)
                 .collect()
@@ -1401,7 +1403,7 @@ pub fn levels(store: &Store) -> Vec<(String, Vec<String>)> {
 fn level_slug(target: &str) -> String {
     match crate::board::scope_target(target) {
         Some(scope) => md::slug(scope),
-        None => crate::derive::entity_slug(target).to_string(),
+        None => crate::ids::entity_slug(target).to_string(),
     }
 }
 
@@ -2162,6 +2164,17 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
     }
 }
 
+// The count per kind of the selected open goals, largest first.
+fn selected_kinds_line(board: &Board) -> Vec<(String, usize)> {
+    let mut by_kind: BTreeMap<String, usize> = BTreeMap::new();
+    for g in board.selected_open_goals() {
+        *by_kind.entry(g.kind.clone()).or_insert(0) += 1;
+    }
+    let mut kinds: Vec<(String, usize)> = by_kind.into_iter().collect();
+    kinds.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+    kinds
+}
+
 fn kinds_line(board: &Board) -> Vec<(String, usize)> {
     let c = board.counts();
     let mut kinds: Vec<(String, usize)> = c.by_kind.into_iter().collect();
@@ -2478,14 +2491,25 @@ pub(crate) async fn run_sessions(
     crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
     let mut board = Board::derive(store, proj, control);
     absorb_derivation(store, &board);
+    let selection = crate::selection::current();
     trace.event(TraceEvent::Board {
         label: "build".into(),
-        goals: board.open_goals().len(),
-        kinds: kinds_line(&board),
+        goals: board.selected_open_goals().len(),
+        kinds: if selection.is_some() {
+            selected_kinds_line(&board)
+        } else {
+            kinds_line(&board)
+        },
         blocked: board.counts().blocked,
+        selection: selection.as_ref().map(|items| json!(items)),
     });
     let mut derived_ids = std::mem::take(&mut saved.derived_ids);
-    derived_ids.extend(board.open_goals().iter().map(|goal| goal.id.clone()));
+    derived_ids.extend(
+        board
+            .selected_open_goals()
+            .iter()
+            .map(|goal| goal.id.clone()),
+    );
     let cap_for = |derived: usize| {
         max_sessions.unwrap_or(
             crate::limits::BUILD_SESSION_FACTOR * derived + crate::limits::BUILD_SESSION_FLOOR,
@@ -2545,7 +2569,25 @@ pub(crate) async fn run_sessions(
                 });
                 break;
             }
-            derived_ids.extend(board.open_goals().iter().map(|g| g.id.clone()));
+            // A selection widened since the last derivation applies from here on.
+            if let Some(handle) = crate::selection::handle() {
+                let widened = handle.take_widened();
+                if !widened.is_empty() {
+                    for added in &widened {
+                        trace.event(TraceEvent::Selection {
+                            label: "build".into(),
+                            added: if added.is_empty() {
+                                serde_json::Value::Null
+                            } else {
+                                json!(added)
+                            },
+                            selection: json!(handle.items()),
+                        });
+                    }
+                    board = Board::derive(store, proj, control);
+                }
+            }
+            derived_ids.extend(board.selected_open_goals().iter().map(|g| g.id.clone()));
             let cap = cap_for(derived_ids.len());
             // Goals parked this build take no batch; their neighbors still run.
             board.withhold(&parked_ids, store, proj);
@@ -2584,7 +2626,14 @@ pub(crate) async fn run_sessions(
                     }
                 })
             };
-            let Some(batch) = next else { break };
+            let Some(batch) = next else {
+                // A selection widened during the last batch runs before the build
+                // ends; otherwise the selection closes and later requests queue.
+                match crate::selection::handle() {
+                    Some(h) if !h.seal_unless_widened() => continue,
+                    _ => break,
+                }
+            };
             if trace.is_cancelled() {
                 break;
             }
@@ -2600,7 +2649,7 @@ pub(crate) async fn run_sessions(
                 } else {
                     format!("the build cap of {} sessions ran out", cap)
                 };
-                for g in board.open_goals() {
+                for g in board.selected_open_goals() {
                     if !parked_ids.contains(&g.id) {
                         parked_ids.insert(g.id.clone());
                         parked.push(ParkedGoal::new(g.clone(), reason.clone()));
@@ -2960,6 +3009,10 @@ pub(crate) async fn run_sessions(
         if let Err(reason) = persist!() {
             suspend_reason = Some(reason);
         }
+    }
+    // The sessions are over: a later selection needs its own build.
+    if let Some(h) = crate::selection::handle() {
+        h.seal();
     }
 
     SessionsRun {
@@ -4310,6 +4363,44 @@ mod tests {
             .filter(|d| d.rule == "broken-link")
             .all(|d| d.lifecycle == "resolved"));
         crate::vfs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn one_stemmer_in_two_stages() {
+        use crate::store::{content_stem, suffix_stem};
+        // Mirrors docs/compiler/reconciler.md#pairs.
+        for (word, suffix, content) in [
+            ("files", "file", "fil"),
+            ("filed", "fil", "fil"),
+            ("sorting", "sort", "sort"),
+            ("reverses", "reverse", "revers"),
+            ("price", "price", "pric"),
+            ("use", "use", "use"),
+            ("is", "is", "is"),
+        ] {
+            assert_eq!(suffix_stem(word), suffix, "{}", word);
+            assert_eq!(content_stem(word), content, "{}", word);
+        }
+    }
+
+    #[test]
+    fn duplicate_requirement_keeps_decimals_apart() {
+        // Split on the decimal point, `1.5` and `2.5` left only words two statements
+        // share; the natural key's normalization keeps each number one word
+        // (docs/compiler/compilation.md#checks).
+        let mut s = Store::default();
+        for (id, n, doc) in [("req:p-1", "1.5", "a.md"), ("req:p-2", "2.5", "b.md")] {
+            let statement = format!("The basket shall weigh {} kilograms at most.", n);
+            s.graph
+                .requirements
+                .insert(id.into(), req(&statement, "ent:one", doc, "/a", &statement));
+        }
+        let f = checks(&s, &Project::default());
+        assert!(
+            rules_for(&f, "duplicate-requirement").is_empty(),
+            "{:?}",
+            rules_for(&f, "duplicate-requirement")
+        );
     }
 
     #[test]

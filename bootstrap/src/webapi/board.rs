@@ -20,9 +20,42 @@ pub fn board_value(proj: &Project, out: &Path) -> Value {
     v
 }
 
+// The board of a selected build: only the goals in the selection, with readiness and
+// batches computed over them alone. Mirrors docs/frontends/gui.md#selected-builds.
+pub fn selected_board_value(proj: &Project, out: &Path, body: &Value) -> Result<Value, String> {
+    let Some(items) = crate::selection::parse(&body["selection"])? else {
+        return Err("send a selection".into());
+    };
+    crate::selection::validate(proj, &items)?;
+    crate::selection::with(items.clone(), || {
+        let mut store = crate::store::Store::load(out);
+        let (parsed, _) = crate::reconcile::parse_all(proj);
+        store.sync_docs_in_memory(&parsed);
+        let control = crate::control::Control::load(proj, out);
+        let board = crate::board::Board::derive(&store, proj, &control);
+        let mut v = board.answer();
+        if let Some(goals) = v["goals"].as_array_mut() {
+            goals.retain(|g| {
+                g["id"]
+                    .as_str()
+                    .is_some_and(|id| !board.outside.contains(id))
+            });
+            for g in goals {
+                let tier = g["kind"].as_str().and_then(crate::goals::tier);
+                g["tier"] = json!(tier);
+            }
+        }
+        v["outside"] = json!(board.outside.len());
+        v["selection"] = crate::selection::describe(&store, &items);
+        v["verdict"] = json!(board.verdict().to_string());
+        v["summary"] = json!(board.summary_line());
+        Ok(v)
+    })
+}
+
 // The next session's prompt exactly as the model receives it, plus the batch's
 // toolset and the executor it resolves to. With ?goal=, the batch that goal would
-// join. Mirrors docs/frontends/gui.md#preview and docs/compiler/sessions.md#preview.
+// join. Mirrors docs/frontends/gui.md#api (`GET /api/preview`) and docs/compiler/sessions.md#preview.
 pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
     let mut store = crate::store::Store::load(out);
     let (parsed, _) = crate::reconcile::parse_all(proj);
@@ -46,7 +79,7 @@ pub fn preview_value(proj: &Project, out: &Path, target: &str) -> Value {
     }
     // In compile: manual the pane opens before the release: a gated goal forms no
     // batch yet, so the batch a release would form is derived as if released and
-    // marked `gated` (docs/frontends/gui.md#preview).
+    // marked `gated` (docs/frontends/gui.md#api, `GET /api/preview`).
     let mut gated = false;
     let released_board;
     let (board, batch) = match find_batch(&board, target) {
@@ -232,7 +265,7 @@ mod tests {
     // In compile: manual, before any release, the goals a document opens are gated
     // and form no batch; the preview still shows the batch the release would form,
     // marked gated, so the compile click has a prompt to show
-    // (docs/frontends/gui.md#preview).
+    // (docs/frontends/gui.md#api, `GET /api/preview`).
     #[test]
     fn preview_value_shows_the_gated_batch_before_a_release() {
         let (proj, out) = temp_project("gated");

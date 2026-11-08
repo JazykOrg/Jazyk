@@ -24,7 +24,7 @@ use state::SharedState;
 
 // Auto-compile hook: with `compile: auto` in the control plane a document change
 // enqueues a build. Manual only surfaces the change (docs.changed already fired).
-// Mirrors docs/frontends/gui.md#workflow-modes.
+// Mirrors docs/compiler/control-plane.md#modes-and-releases.
 fn jobs_hook_on_docs_changed(st: &SharedState) {
     // A change resets the retry backoff, as it does for `jazyk watch`.
     st.backoff.lock().unwrap().remove(&st.set_key());
@@ -42,7 +42,7 @@ fn jobs_hook_on_job_finished(st: &SharedState, kind: &jobs::JobKind) {
     }
     // Auto generation: a finished compile with a non-empty worklist queues a gen job
     // behind it. Only compile jobs trigger it, so the chain never loops.
-    // Mirrors docs/frontends/gui.md#workflow-modes.
+    // Mirrors docs/compiler/control-plane.md#modes-and-releases.
     if st.control().generate == "auto" {
         let store = crate::store::Store::load(&st.out);
         if !crate::gen::pending(&store, &st.gs()).is_empty() {

@@ -2,6 +2,7 @@
 // (per-direction contributions), state machines, default views (with the flow
 // clustering), query membership, and the limit counts that write threshold-crossed
 // records. Mirrors docs/compiler/graph.md#derived-data.
+use crate::ids::entity_slug;
 use crate::limits;
 use crate::md;
 use crate::model::*;
@@ -88,12 +89,15 @@ pub fn recompute_relationships(store: &mut Store) {
     store.graph.relationships = rels;
 }
 
-pub fn entity_slug(id: &str) -> &str {
-    id.strip_prefix("ent:").unwrap_or(id)
-}
-
 // Instance -> type, from the instantiation groups.
 pub fn instance_types(store: &Store) -> BTreeMap<String, String> {
+    if let Some(ix) = crate::store::ScopeIndex::of(store) {
+        return ix.instance_types(|| scan_instance_types(store)).clone();
+    }
+    scan_instance_types(store)
+}
+
+fn scan_instance_types(store: &Store) -> BTreeMap<String, String> {
     let mut out = BTreeMap::new();
     for rel in store.graph.relationships.values() {
         for c in &rel.contributions {

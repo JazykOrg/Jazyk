@@ -89,6 +89,17 @@ pub enum TraceEvent {
         goals: usize,
         kinds: Vec<(String, usize)>,
         blocked: usize,
+        // The items of a selected build (docs/compiler/compilation.md#selected-builds).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        selection: Option<serde_json::Value>,
+    },
+    // A selected build widened: the items added and the selection now in force
+    // (`null` for the whole set).
+    #[serde(rename = "selection")]
+    Selection {
+        label: String,
+        added: serde_json::Value,
+        selection: serde_json::Value,
     },
     #[serde(rename = "graphPreview")]
     GraphPreview {
@@ -258,10 +269,19 @@ fn render_stderr(ev: &TraceEvent) {
             goals,
             kinds,
             blocked,
+            selection,
             ..
         } => {
             let per_kind: Vec<String> = kinds.iter().map(|(k, n)| format!("{} {}", n, k)).collect();
-            let mut s = format!("compile: {} goals", goals);
+            let mut s = format!(
+                "compile{}: {} goals",
+                if selection.is_some() {
+                    " (selection)"
+                } else {
+                    ""
+                },
+                goals
+            );
             if !per_kind.is_empty() {
                 s.push_str(&format!(" ({})", per_kind.join(", ")));
             }
@@ -270,6 +290,19 @@ fn render_stderr(ev: &TraceEvent) {
             }
             eprintln!("{}", s)
         }
+        TraceEvent::Selection { added, .. } => match added.as_array() {
+            Some(items) => {
+                let names: Vec<String> = items
+                    .iter()
+                    .filter_map(|i| {
+                        serde_json::from_value::<crate::selection::Item>(i.clone()).ok()
+                    })
+                    .map(|i| i.label())
+                    .collect();
+                eprintln!("selection widened: {}", names.join(", "))
+            }
+            None => eprintln!("selection widened to the whole set"),
+        },
         TraceEvent::GcBurst {
             goal_kind,
             target,
@@ -1483,7 +1516,7 @@ pub fn preview_with(store: &Store, batch: &[Goal], lint: &crate::project::Lintin
 pub fn open_batch_prompt(store: &Store, batch: &[Goal], lint: &crate::project::Linting) -> String {
     let (loaded, skills) = initial_loaded(store, batch);
     let pb = ProjectBlock::compute(store, batch, "auto").with_lint(lint);
-    session_prompt_elided(
+    let prompt = session_prompt_elided(
         store,
         batch,
         &loaded,
@@ -1492,7 +1525,20 @@ pub fn open_batch_prompt(store: &Store, batch: &[Goal], lint: &crate::project::L
         true,
         &BTreeSet::new(),
         Protocol::OpenBatch,
-    )
+    );
+    with_opening_contract(prompt, batch)
+}
+
+// A batch holding a generate goal opens with the one generation contract after the
+// assembled prompt, whichever session form runs it (an owned worker, a benchmark
+// case, a snippet, a replay); its begin_generation replies then omit it.
+// Mirrors docs/compiler/goals/generate.md#what-the-model-sees.
+pub fn with_opening_contract(mut prompt: String, batch: &[Goal]) -> String {
+    if batch.iter().any(|goal| goal.kind == "generate") {
+        prompt.push_str("\n\n");
+        prompt.push_str(&crate::gen::contract());
+    }
+    prompt
 }
 
 // One line naming a requirement's provenance, whichever kind it carries.

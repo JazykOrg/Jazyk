@@ -868,7 +868,6 @@ definitions:
       - severity
       - subjects
       - message
-      - reasoning
     properties:
       rule:
         $ref: '#/definitions/diagnosticRule'

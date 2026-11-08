@@ -133,8 +133,11 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
         for e in entries {
             let p = e.path();
             let name = e.file_name().to_string_lossy().to_string();
+            // A symlink is skipped like the code walk skips it: a link back up the
+            // tree would list every file again under each of its paths.
             if name.starts_with('.')
                 || matches!(name.as_str(), "target" | "node_modules" | "dist" | "build")
+                || crate::vfs::is_symlink(&p)
             {
                 continue;
             }
@@ -282,7 +285,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         .collect();
     let entity_files = ledger
         .entities
-        .get(&crate::gen::slug_of(&entity))
+        .get(crate::ids::entity_slug(&entity))
         .map(|e| e.files.clone())
         .unwrap_or_default();
     // The reason the row owes a bind; a current row begun anyway reads `current`,
@@ -965,6 +968,9 @@ pub async fn run_all(
     command.save().await?;
     Ok(result)
 }
+
+#[cfg(test)]
+mod symlink_tests;
 
 #[cfg(test)]
 mod tests {

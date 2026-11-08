@@ -468,6 +468,37 @@ fn unreadable_lease_lapsed(path: &Path) -> bool {
     now().saturating_sub(modified) > LEASE_TTL_SECS
 }
 
+// Claims and sweeps that may take a lease over run one at a time: `.leases.lock`
+// beside `leases/`, an advisory lock the operating system releases with its holder.
+// Without it a claimant that found the slot empty while another moved a fresh lease
+// aside could win beside the lease's owner. An in-memory tree belongs to one thread
+// and takes no lock. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+struct TakeoverLock {
+    #[cfg(not(target_arch = "wasm32"))]
+    _file: Option<std::fs::File>,
+}
+
+fn takeover_lock(out: &Path) -> TakeoverLock {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !crate::vfs::is_scoped() {
+        crate::vfs::create_dir_all(out).ok();
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(out.join(".leases.lock"))
+            .ok()
+            .filter(|f| fs2::FileExt::lock_exclusive(f).is_ok());
+        return TakeoverLock { _file: file };
+    }
+    let _ = out;
+    TakeoverLock {
+        #[cfg(not(target_arch = "wasm32"))]
+        _file: None,
+    }
+}
+
 // Claim a task. Create-new semantics decide the winner; an expired lease is
 // reclaimable. Err carries the live holder.
 pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
@@ -483,6 +514,7 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     let claim_id = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     crate::vfs::create_dir_all(leases_dir(out)).ok();
     let path = lease_file(out, task);
+    let _takeover = takeover_lock(out);
     if let Ok(text) = crate::vfs::read_to_string(&path) {
         match serde_norway::from_str::<Lease>(&text) {
             // Re-entrant for the same worker: a retry after its own failed attempt
@@ -566,11 +598,13 @@ pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
         };
         let Ok(l) = serde_norway::from_str::<Lease>(&text) else {
             if unreadable_lease_lapsed(&path) {
+                let _takeover = takeover_lock(out);
                 take_aside(&path, &text);
             }
             continue;
         };
         if l.expires_at <= now() {
+            let _takeover = takeover_lock(out);
             take_aside(&path, &text);
             continue;
         }
@@ -676,6 +710,9 @@ pub fn task_leases(out: &Path) -> BTreeMap<String, Lease> {
     m.remove(BUILD_LEASE);
     m
 }
+
+#[cfg(test)]
+mod lease_race_tests;
 
 #[cfg(test)]
 mod tests {

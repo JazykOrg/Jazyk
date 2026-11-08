@@ -317,6 +317,13 @@ pub(crate) async fn request_scoped(
             let p = project();
             ok(super::board::board_value(&p, &p.out))
         }
+        ("POST", "/board") => {
+            let p = project();
+            match super::board::selected_board_value(&p, &p.out, body) {
+                Ok(v) => ok(v),
+                Err(e) => err(400, e),
+            }
+        }
 
         ("GET", "/preview") => {
             let p = project();
@@ -483,6 +490,12 @@ pub(crate) async fn request_scoped(
                 return err(
                     501,
                     format!("the browser backend runs no {} job: it has no shell", kind),
+                );
+            }
+            if !body["selection"].is_null() {
+                return err(
+                    501,
+                    "the browser backend runs no selected build; build the whole set",
                 );
             }
             let p = project();
@@ -794,7 +807,7 @@ pub(crate) async fn request_scoped(
             )
         }
         ("GET", "/settings") => ok(crate::project::settings_read(root)),
-        // The setup wizard's write (docs/frontends/gui.md#the-setup-wizard): the
+        // The setup wizard's write (docs/frontends/gui.md#api, `PUT /api/settings`): the
         // file lands in the tree, and the page mirrors it the way any change goes.
         ("PUT", "/settings") => match crate::project::settings_write(root, body) {
             Ok(v) => ok(v),

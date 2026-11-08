@@ -42,7 +42,7 @@ pair; the model never computes or adjusts it.
   mention documents, taken together, span at least two documents. A pair confined to one
   document is [`review-entity`](./review-entity.md#hints)'s to judge.
 - `tokens`: the name and aliases of each entity, lowercased, punctuation stripped, stop
-  words dropped, reduced to crude stems (the normalization
+  words dropped, reduced to crude stems (the suffix stage of the stemmer
   [pair selection](../reconciler.md#pairs) uses), as one token set per entity. Each
   token carries a weight, its inverse document frequency over the entity names and
   aliases in the graph, so a token many names share (`service`, `store`) carries less

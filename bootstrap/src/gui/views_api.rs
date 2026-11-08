@@ -14,7 +14,7 @@ pub async fn views(State(st): State<SharedState>) -> Json<Value> {
 }
 #[derive(Deserialize)]
 pub struct ViewQ {
-    // Levels of detail beneath the members (docs/frontends/gui.md#explore).
+    // Levels of detail beneath the members (docs/frontends/gui.md#api, `?detail=N`).
     detail: Option<usize>,
 }
 pub async fn view(

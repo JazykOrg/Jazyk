@@ -272,6 +272,12 @@ The board and causality:
   takes before it starts. Counts by class, kind, and state ride beside the list, and
   the verdict when the board is empty. The same board `jazyk status` counts and
   `goals({})` lists [over MCP](./mcp.md#compilation-over-mcp).
+- `POST /api/board` with `{setId, selection}`: the board of a
+  [selected build](#selected-builds). Only goals in the selection are listed, with
+  readiness computed over them alone, and the batches are the ones the selected build
+  would form. `outside` counts the goals left out. `selection` echoes the items with
+  the documents and the number of sections each resolved to. A read: it starts
+  nothing and makes no model call.
 - `GET /api/preview?goal=`: the next session's prompt exactly as the model receives it
   ([preview](../compiler/sessions.md#preview)), plus the batch's toolset and the
   executor it resolves to. With `goal=`, the batch that goal would join. In
@@ -537,7 +543,9 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
   memory: `GET /api/jobs` no longer lists it, and `GET /api/jobs/{id}` answers from
   its transcript file, which holds every event already, so the job reads the same
   either way (state, result, and the numbered events, elided like the stream). A
-  job whose transcript was removed is `404`. The transcripts under `GET /api/trace`
+  job whose transcript was removed is `404`. The events in memory are bounded in
+  bytes across every retained job: past the bound the oldest finished job's events
+  leave memory first, and that job answers from its transcript the same way. The transcripts under `GET /api/trace`
   are the record of past runs; the job list is the record of this server's current
   work.
 - In the automatic compile mode a compile that ends `incomplete` (work parked, e.g.
@@ -565,6 +573,8 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
   kind contends on the store lock and the LLM budget, so serializing them is the
   point.
 - Submitting a `compile` while one is already queued returns the queued job's id.
+  A request with a selection can instead widen a queued or running job
+  ([selected builds](#selected-builds)).
 - A job whose run panics ends `failed` with the panic message as its result, and the
   worker goes on to the next job: nothing stays `running`.
 - Stop cancels the active session and discards its staged changes and model context.
@@ -655,6 +665,8 @@ renders against it:
     decorations from the graph's mentions and quotes on the client.
   - `jobs`: the job kinds the backend runs, from `compile`, `gen`, `verify`, `audit`,
     `decompile`, `benchmark`.
+  - `selection`: whether compile and workflow jobs take a
+    [selection](#selected-builds).
   - `agent`: `embedded`, `external`, or `none`. Without an agent the chat column
     shows build threads only and says why. In a tab, `embedded` is the
     [chat loop in the worker](./wasm.md#chat) on the page's model. It holds whether
@@ -819,6 +831,38 @@ The line is a navigation hint, not fresh verification evidence.
 The shared resolver serves native and browser transports and editor diagnostics.
 The global problem count opens all open, unsuppressed findings of visible severity,
 including questions, proposals, and drafts. Findings without locations remain visible.
+
+## Selected builds
+
+The capability descriptor advertises `selection: true` when compile and workflow jobs
+take a selection. `POST /api/jobs` with `kind: compile` or `kind: workflow` accepts
+`selection`, a nonempty list of items (`{path}` or `{path, lines: [first, last]}`,
+see [selected builds](../compiler/compilation.md#selected-builds)), with an explicit
+`setId`. Every path must be a document of that set or a folder holding one; lines are
+one-based and `first <= last`. A malformed list, an unknown path, or a selection
+without `setId` is refused with `400` and the reason. The job carries the selection
+in force as `kind.selection`. Older engines do not advertise the capability, so an
+editor must not send the field to them.
+
+A second selected request can steer an existing job instead of queuing another:
+
+- A queued job of the same kind, set, and steps takes the new items into its
+  selection. A request without a selection widens it to the whole set.
+- A running job of the same kind, set, and steps takes the new items while it is
+  still in its first action and none of the newly selected documents was saved after
+  it started. The next board derivation applies them, so they run in the same build,
+  after the batch in flight. The trace records a `selection` event. A running job
+  without a selection already covers the items.
+- Otherwise the request queues as a new job, as before. A running build reads the
+  documents as they were when it started, so a document saved later needs its own
+  build.
+
+The reply to a steered request is the existing job's id with `steered: true`. Stop
+cancels the job with every selection it took.
+
+The [browser backend](./wasm.md) serves the selected board. It runs no selected build:
+a compile request with a selection answers `501`, and its descriptor does not
+advertise `selection`.
 
 ## Scoped test artifacts
 

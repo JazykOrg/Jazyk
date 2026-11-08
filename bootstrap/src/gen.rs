@@ -3,6 +3,8 @@ use crate::vfs::VPathExt;
 mod asset_workflow_tests;
 pub(crate) mod assets;
 #[cfg(test)]
+mod concurrency_tests;
+#[cfg(test)]
 mod matcher_recovery_tests;
 mod pipeline;
 pub(crate) mod progress;
@@ -1435,10 +1437,6 @@ fn dedup_keep_order(files: Vec<String>) -> Vec<String> {
         .collect()
 }
 
-pub fn slug_of(id: &str) -> String {
-    id.strip_prefix("ent:").unwrap_or(id).to_string()
-}
-
 pub fn req_slug(id: &str) -> String {
     id.strip_prefix("req:").unwrap_or(id).to_string()
 }
@@ -1823,7 +1821,7 @@ pub fn pending(store: &Store, gs: &GenSettings) -> Vec<Value> {
         if rids.is_empty() {
             continue;
         }
-        let slug = slug_of(id);
+        let slug = crate::ids::entity_slug(id).to_string();
         let referenced_assets = assets::referenced_assets_in(&scan, store, id, rids);
         let hash = assets::fingerprint(&fact_hash_base(store, id, rids), &referenced_assets);
         let incomplete: Vec<&String> = rids
@@ -1917,7 +1915,7 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
         &reqs_of_sorted(store, &id),
     ))?;
     let ledger = Ledger::load(&store.out);
-    let Some(e) = ledger.entities.get(&slug_of(&id)) else {
+    let Some(e) = ledger.entities.get(crate::ids::entity_slug(&id)) else {
         return Err(format!(
             "no ledger entry for `{}`: record_generation has not landed; the gate is record_generation with the package's factHash, then run_tests",
             id
@@ -2028,7 +2026,7 @@ pub fn skip_reason(store: &Store, gs: &GenSettings, id: &str) -> String {
         );
     }
     let ledger = Ledger::load(&store.out);
-    if ledger.entities.contains_key(&slug_of(id)) {
+    if ledger.entities.contains_key(crate::ids::entity_slug(id)) {
         "unchanged".to_string()
     } else {
         "no ledger entry and all adopted rows are current: there is nothing to generate (`--force` generates it anyway)".to_string()
@@ -2095,7 +2093,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
     }
     let ledger = Ledger::load(&store.out);
     let e = &store.graph.entities[id];
-    let slug = slug_of(id);
+    let slug = crate::ids::entity_slug(id).to_string();
     let rids = reqs_of_sorted(store, id);
     let referenced_assets = assets::referenced_assets(store, id, &rids);
     let (_, changed) = change_diff(&ledger, &slug, &rids);
@@ -2329,7 +2327,7 @@ pub fn mark(
     if current_hash != base_hash && fact_hash_seen.is_some_and(|seen| seen != current_hash) {
         return Err("The facts or referenced input bytes moved since begin_generation. Reload the package, use the current exact inputs and record its current factHash.".into());
     }
-    let slug = slug_of(id);
+    let slug = crate::ids::entity_slug(id).to_string();
     // Every path the manifest names is confined before any side effect: a path that
     // escapes the deliverable is rejected naming it, and file lists are sets
     // (docs/consumers/gen.md#file-ownership-and-conventions).
@@ -3327,38 +3325,55 @@ pub fn group_members(store: &Store, root: &str) -> Vec<String> {
 // id; a cycle breaks at the entity with the fewest pending prerequisites.
 // Mirrors docs/consumers/gen.md#order-from-relationships.
 pub fn generation_order(store: &Store, targets: &[String]) -> Vec<String> {
-    let set: std::collections::BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
-    let prereqs = |id: &str, emitted: &std::collections::BTreeSet<String>| -> usize {
-        let mut n = 0;
-        for rel in store.graph.relationships.values() {
-            for c in &rel.contributions {
-                if c.a == id && c.b != id && set.contains(c.b.as_str()) && !emitted.contains(&c.b) {
-                    n += 1;
-                }
+    use std::collections::{BTreeMap, BTreeSet};
+    let set: BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
+    // Each target's pending prerequisites, and for each prerequisite the targets
+    // waiting on it, once per contribution or child, so emitting one decrements the
+    // count of every target it held back.
+    let mut pending: BTreeMap<&str, usize> = set.iter().map(|id| (*id, 0)).collect();
+    let mut waiting: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for rel in store.graph.relationships.values() {
+        for c in &rel.contributions {
+            if c.a != c.b && set.contains(c.a.as_str()) && set.contains(c.b.as_str()) {
+                *pending.get_mut(c.a.as_str()).unwrap() += 1;
+                waiting.entry(c.b.as_str()).or_default().push(c.a.as_str());
             }
         }
-        for (cid, e) in &store.graph.entities {
-            if e.parent.as_deref() == Some(id)
-                && set.contains(cid.as_str())
-                && !emitted.contains(cid)
-            {
-                n += 1;
-            }
+    }
+    for (cid, e) in &store.graph.entities {
+        let Some(parent) = e.parent.as_deref() else {
+            continue;
+        };
+        if set.contains(parent) && set.contains(cid.as_str()) {
+            *pending.get_mut(parent).unwrap() += 1;
+            waiting.entry(cid.as_str()).or_default().push(parent);
         }
-        n
-    };
-    let mut remaining: Vec<String> = targets.to_vec();
-    let mut emitted: std::collections::BTreeSet<String> = Default::default();
-    let mut out = Vec::new();
-    while !remaining.is_empty() {
-        let (i, _) = remaining
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, id)| (prereqs(id, &emitted), (*id).clone()))
-            .unwrap();
-        let id = remaining.remove(i);
-        emitted.insert(id.clone());
-        out.push(id);
+    }
+    // The remaining targets by (pending, id, position): the first is the next one.
+    let mut queue: BTreeSet<(usize, &str, usize)> = targets
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (pending[id.as_str()], id.as_str(), i))
+        .collect();
+    let mut emitted: BTreeSet<&str> = BTreeSet::new();
+    let mut out = Vec::with_capacity(targets.len());
+    while let Some((_, id, _)) = queue.pop_first() {
+        out.push(id.to_string());
+        if !emitted.insert(id) {
+            continue;
+        }
+        for &held in waiting.get(id).map(Vec::as_slice).unwrap_or_default() {
+            let n = pending[held];
+            let positions: Vec<usize> = queue
+                .range((n, held, 0)..=(n, held, usize::MAX))
+                .map(|k| k.2)
+                .collect();
+            for i in positions {
+                queue.remove(&(n, held, i));
+                queue.insert((n - 1, held, i));
+            }
+            *pending.get_mut(held).unwrap() = n - 1;
+        }
     }
     out
 }
@@ -6305,6 +6320,129 @@ mod tests {
         assert_eq!(of("ent:other"), vec!["ent:other".to_string()]);
     }
 
+    // The leaf-first order is the one the per-step minimum over pending prerequisites
+    // gives: ties by id, a cycle broken at the fewest pending, a duplicated target
+    // emitted twice, an edge or child outside the targets ignored.
+    // Mirrors docs/consumers/gen.md#order-from-relationships.
+    #[test]
+    fn generation_order_matches_the_stepwise_minimum() {
+        let mut s = Store::default();
+        for (id, parent) in [
+            ("ent:a", None),
+            ("ent:b", Some("ent:a")),
+            ("ent:c", Some("ent:a")),
+            ("ent:d", Some("ent:c")),
+            ("ent:e", None),
+            ("ent:f", Some("ent:outside")),
+            ("ent:g", Some("ent:g")),
+        ] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    parent: parent.map(String::from),
+                    ..Default::default()
+                },
+            );
+        }
+        let edge = |a: &str, b: &str| Contribution {
+            a: a.into(),
+            b: b.into(),
+            r#type: "dependency".into(),
+            cardinality: None,
+            requirements: vec![],
+        };
+        for (key, contributions) in [
+            (
+                "rel:a~e",
+                vec![edge("ent:e", "ent:a"), edge("ent:a", "ent:e")],
+            ),
+            (
+                "rel:b~d",
+                vec![edge("ent:b", "ent:d"), edge("ent:b", "ent:d")],
+            ),
+            (
+                "rel:d~f",
+                vec![edge("ent:d", "ent:f"), edge("ent:f", "ent:x")],
+            ),
+            ("rel:g", vec![edge("ent:g", "ent:g")]),
+        ] {
+            s.graph.relationships.insert(
+                key.into(),
+                Relationship {
+                    members: vec![],
+                    contributions,
+                },
+            );
+        }
+        let stepwise = |targets: &[String]| -> Vec<String> {
+            let set: std::collections::BTreeSet<&str> =
+                targets.iter().map(|t| t.as_str()).collect();
+            let prereqs = |id: &str, emitted: &std::collections::BTreeSet<String>| {
+                let mut n = 0;
+                for rel in s.graph.relationships.values() {
+                    for c in &rel.contributions {
+                        if c.a == id
+                            && c.b != id
+                            && set.contains(c.b.as_str())
+                            && !emitted.contains(&c.b)
+                        {
+                            n += 1;
+                        }
+                    }
+                }
+                for (cid, e) in &s.graph.entities {
+                    if e.parent.as_deref() == Some(id)
+                        && set.contains(cid.as_str())
+                        && !emitted.contains(cid)
+                    {
+                        n += 1;
+                    }
+                }
+                n
+            };
+            let mut remaining = targets.to_vec();
+            let mut emitted = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            while !remaining.is_empty() {
+                let (i, _) = remaining
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, id)| (prereqs(id, &emitted), (*id).clone()))
+                    .unwrap();
+                let id = remaining.remove(i);
+                emitted.insert(id.clone());
+                out.push(id);
+            }
+            out
+        };
+        let all: Vec<String> = [
+            "ent:g", "ent:f", "ent:e", "ent:d", "ent:c", "ent:b", "ent:a",
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+        for targets in [
+            all.clone(),
+            vec!["ent:a".into(), "ent:d".into(), "ent:b".into()],
+            vec![
+                "ent:c".into(),
+                "ent:c".into(),
+                "ent:a".into(),
+                "ent:d".into(),
+            ],
+            vec!["ent:e".into(), "ent:a".into()],
+            vec![],
+        ] {
+            assert_eq!(
+                generation_order(&s, &targets),
+                stepwise(&targets),
+                "{:?}",
+                targets
+            );
+        }
+    }
+
     // The fact hash covers everything the ledger documents: stereotype, attributes,
     // and a statement's edges flip it, so those changes become generation work.
     // Mirrors docs/consumers/gen.md#the-ledger.
@@ -7046,7 +7184,7 @@ async fn gen_session(
                 .map(|id| {
                     ledger
                         .entities
-                        .get(&slug_of(id))
+                        .get(crate::ids::entity_slug(id))
                         .and_then(|row| row.recorded_at.clone())
                 })
                 .collect(),
@@ -7055,7 +7193,7 @@ async fn gen_session(
                     .map(|id| {
                         ledger
                             .entities
-                            .get(&slug_of(id))
+                            .get(crate::ids::entity_slug(id))
                             .map(|row| row.record_sequence)
                     })
                     .collect(),
@@ -7096,7 +7234,10 @@ async fn gen_session(
             .zip(&saved.data.before)
             .enumerate()
             .map(|(index, (id, _))| {
-                let result = if !saved.data.recorded(index, after.entities.get(&slug_of(id))) {
+                let result = if !saved
+                    .data
+                    .recorded(index, after.entities.get(crate::ids::entity_slug(id)))
+                {
                     Err(report
                         .failed
                         .clone()
@@ -7133,7 +7274,7 @@ async fn gen_session(
                     let base = fact_hash_base(store, id, &rids);
                     after
                         .entities
-                        .get(&slug_of(id))
+                        .get(crate::ids::entity_slug(id))
                         .is_some_and(|row| row.fact_hash == base)
                         && assets::referenced_assets(store, id, &rids)
                             .iter()
@@ -7159,7 +7300,7 @@ async fn gen_session(
                     .map(|id| {
                         after
                             .entities
-                            .get(&slug_of(id))
+                            .get(crate::ids::entity_slug(id))
                             .and_then(|row| row.recorded_at.clone())
                     })
                     .collect();
@@ -7168,7 +7309,7 @@ async fn gen_session(
                         .map(|id| {
                             after
                                 .entities
-                                .get(&slug_of(id))
+                                .get(crate::ids::entity_slug(id))
                                 .map(|row| row.record_sequence)
                         })
                         .collect(),
@@ -8212,7 +8353,7 @@ async fn gen_one_inner(
     let choices = parse_choices(store, &manifest)?;
     let unattached = Ledger::load(&store.out)
         .entities
-        .get(&slug_of(id))
+        .get(crate::ids::entity_slug(id))
         .and_then(|e| e.unattached.clone());
     let mut ws = Store::load(&store.out);
     let ops = choice_ops(&ws, id, &choices, unattached.as_ref());

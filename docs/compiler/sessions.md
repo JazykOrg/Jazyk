@@ -190,12 +190,13 @@ The fragment files:
 - [`gates.md`](./goals/prompts/gates.md): the one-line gate per goal kind.
 - [`session-blocks.md`](./goals/prompts/session-blocks.md): the prompt's framing (the
   elided contract line, the skill and task headers, the `## Project` lines, the goal
-  block labels).
+  block labels, the `## Loaded` header and its deferred and unload lines).
 - [`agent-context.md`](./goals/prompts/agent-context.md): the framing around what a
-  conversation picks up ([agent context](../frontends/agent-context.md)).
+  conversation picks up and the warnings about what it skipped
+  ([agent context](../frontends/agent-context.md)).
 - [`serving-instructions.md`](./goals/prompts/serving-instructions.md): an MCP
-  serving's initialize instructions and the longer `next` guidance in its replies
-  ([MCP](../frontends/mcp.md)).
+  serving's initialize instructions and the `next` guidance and notes in its replies,
+  the benchmark case replies included ([MCP](../frontends/mcp.md)).
 - [`generation-steps.md`](./goals/prompts/generation-steps.md): the built-in
   generation worker's medium decision, its product, tests, and manifest steps, their
   corrective retries, and the criteria file for an `llm` test
@@ -693,6 +694,8 @@ The event kinds:
   count; the label is `build`. It renders as the summary line
   [`jazyk compile`](../frontends/cli.md#jazyk-compile) prints first
   (`compile: 21 goals (9 reconcile-section, ...), 3 blocked`).
+  In a [selected build](./compilation.md#selected-builds) the counts cover the
+  selected goals and the event carries `selection`.
 - `batchStart`: the scheduler formed a batch. Carries the batch id, the class and tier,
   the goals with their kinds and targets, and the resolved executor, so a reader sees
   what is about to run before any session starts.
@@ -720,6 +723,9 @@ The event kinds:
   ([parked and failed](./reconciler.md#parked-and-failed)). Resolved and failed events
   fire when the claim is accepted at staging; opened events fire at commit, one per
   entry in `opened_goals`.
+- `selection`: a [selected build](./compilation.md#selected-builds) widened. Carries
+  the items added and the whole selection now in force. The label is `build`. The
+  next board derivation applies it.
 - `gcBurst`: a GC burst starts on a settled cone. Carries the kind, the target, and the
   count against the limit (`gc burst: abstract-entity ent:order (54 > 50)` on the
   terminal).

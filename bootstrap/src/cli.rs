@@ -67,6 +67,9 @@ pub struct Options {
     pub goal: Option<String>,
     // `jazyk compile --sessions N`: at most N sessions this run.
     pub sessions: Option<usize>,
+    // `jazyk compile --select PATH[:A-B]`: a selected build
+    // (docs/compiler/compilation.md#selected-builds).
+    pub select: Vec<String>,
     // `jazyk answer <id> --option N | --text "..."`: the reply to a prompt
     // (docs/frontends/cli.md#jazyk-answer).
     pub option: Option<usize>,
@@ -611,6 +614,31 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
         eprintln!("jazyk: no document sets; use `jazyk sets add NAME --docs PATH`");
         return 2;
     }
+    // Selected paths are relative to the working directory, like positional ones;
+    // the selection holds them relative to the project root.
+    let mut selection: Vec<crate::selection::Item> = Vec::new();
+    for arg in &opts.select {
+        match crate::selection::parse_arg(arg) {
+            Ok(mut item) => {
+                let abs = cwd.join(&item.path);
+                let rel = abs.strip_prefix(&root).unwrap_or(&abs);
+                item.path = rel.to_string_lossy().replace('\\', "/");
+                selection.push(item);
+            }
+            Err(e) => {
+                eprintln!("jazyk: --select {}", e);
+                return 2;
+            }
+        }
+    }
+    let selection = (!selection.is_empty()).then(|| crate::selection::normalize(selection));
+    let select_paths: Vec<String> = opts
+        .select
+        .iter()
+        .filter_map(|a| crate::selection::parse_arg(a).ok().map(|i| i.path))
+        .collect();
+    let paths: Vec<String> = paths.iter().cloned().chain(select_paths).collect();
+    let paths = &paths[..];
     // A path selects the sets claiming it; one no set claims selects nothing and is
     // a usage error, never a silent no-op (docs/frontends/cli.md#jazyk-compile).
     if opts.set.is_none() {
@@ -664,6 +692,15 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
         if opts.verbose {
             llm::set_verbose(true);
         }
+        if let Some(items) = &selection {
+            if let Err(e) = crate::selection::validate(&proj, items) {
+                eprintln!("jazyk: --select {}", e);
+                return 2;
+            }
+        }
+        let _selection = selection
+            .clone()
+            .map(|items| crate::selection::enter(crate::selection::Handle::new(Some(items))));
         let trace = trace_for(opts).with_transcript(&out, "compile");
         let report = reconcile::compile_with(&proj, &llm, &out, &trace, opts.sessions);
         trace.finish_transcript("done", &serde_json::json!(report));

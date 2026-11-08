@@ -18,7 +18,7 @@ mod history_repair;
 struct Chat {
     id: String,
     title: String,
-    // The title becomes the first prompt line (docs/frontends/gui.md#chat).
+    // The title becomes the first prompt line (docs/frontends/acp.md#session-store).
     titled: bool,
     // idle | running | failed
     state: String,
@@ -381,7 +381,7 @@ pub fn get(id: &str) -> Option<Value> {
     })
 }
 
-// Remove a conversation (docs/frontends/gui.md#chat). A turn cannot be running: the
+// Remove a conversation (docs/frontends/acp.md#session-store). A turn cannot be running: the
 // worker answers nothing while it is inside one. Answers whether it existed.
 pub fn remove(id: &str) -> bool {
     let gone = BOOK.with(|b| b.borrow_mut().chats.remove(id).is_some());

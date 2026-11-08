@@ -806,18 +806,30 @@ fn resolve_role_edits(
 // a canonicalize per entry: call it when the files are needed, never per request.
 pub fn files_under(root: &Path) -> Vec<String> {
     let mut files = Vec::new();
-    walk(root, root, &mut BTreeSet::new(), &mut files);
+    let canonical_root = root.vcanonicalize().unwrap_or_else(|_| root.to_path_buf());
+    walk(
+        root,
+        &canonical_root,
+        root,
+        &mut BTreeSet::new(),
+        &mut files,
+    );
     files.sort();
     files.dedup();
     files
 }
 
-fn walk(root: &Path, dir: &Path, seen: &mut BTreeSet<PathBuf>, files: &mut Vec<String>) {
-    let canonical_root = root.vcanonicalize().unwrap_or_else(|_| root.to_path_buf());
+fn walk(
+    root: &Path,
+    canonical_root: &Path,
+    dir: &Path,
+    seen: &mut BTreeSet<PathBuf>,
+    files: &mut Vec<String>,
+) {
     let Ok(canonical) = dir.vcanonicalize() else {
         return;
     };
-    if !canonical.starts_with(&canonical_root) || !seen.insert(canonical) {
+    if !canonical.starts_with(canonical_root) || !seen.insert(canonical) {
         return;
     }
     if dir != root && dir.join(CONFIG).vexists() {
@@ -836,10 +848,10 @@ fn walk(root: &Path, dir: &Path, seen: &mut BTreeSet<PathBuf>, files: &mut Vec<S
             continue;
         }
         if path.vis_dir() {
-            walk(root, &path, seen, files);
+            walk(root, canonical_root, &path, seen, files);
         } else if path
             .vcanonicalize()
-            .is_ok_and(|p| p.starts_with(&canonical_root))
+            .is_ok_and(|p| p.starts_with(canonical_root))
         {
             files.push(relative);
         }
@@ -1308,6 +1320,9 @@ pub(crate) fn contained_relative_with_policy(
     }
     true
 }
+
+#[cfg(test)]
+mod symlink_tests;
 
 #[cfg(test)]
 mod tests {

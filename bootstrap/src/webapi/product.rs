@@ -1,8 +1,8 @@
 // What generation and verification owe and what they left: the trace matrix with
 // its export, pending verification and generation, and the per-entity generation
 // package. Derived from the ledger and the files on disk (or in the tab's tree),
-// never stored. Mirrors docs/frontends/gui.md#api (generation and verification),
-// docs/frontends/gui.md#trace-matrix, and docs/frontends/wasm.md#the-product.
+// never stored. Mirrors docs/frontends/gui.md#api (generation and verification,
+// the trace matrix export) and docs/frontends/wasm.md#the-product.
 use super::Refusal;
 use crate::gen::GenSettings;
 use crate::store::Store;

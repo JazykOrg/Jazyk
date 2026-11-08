@@ -435,7 +435,10 @@ pub fn servers(
                 project,
             }),
             Ok(None) => {}
-            Err(e) => warnings.push(format!("MCP server `{name}` ({source}) skipped: {e}")),
+            Err(e) => warnings.push(FRAMING.fill(
+                "warning-server-invalid",
+                &[("name", &name), ("source", &source), ("error", &e)],
+            )),
         }
     }
     (out, warnings)
@@ -527,9 +530,7 @@ fn folder_skills(
                     },
                 );
             }
-            _ => warnings.push(format!(
-                "skill {shown} skipped: its front matter needs `name` and `description`"
-            )),
+            _ => warnings.push(FRAMING.fill("warning-skill-invalid", &[("skill", &shown)])),
         }
     }
 }
@@ -582,8 +583,12 @@ fn files_in(dir: &Path, base: &Path, out: &mut Vec<String>) {
         if out.len() >= 200 {
             return;
         }
+        // A symlinked folder is not descended: a link back into the skill would
+        // list its files again under every path through the loop.
         if e.is_dir() {
-            files_in(&e.path(), base, out);
+            if !crate::vfs::is_symlink(&e.path()) {
+                files_in(&e.path(), base, out);
+            }
         } else if e.file_name() != "SKILL.md" {
             out.push(rel(base, &e.path()));
         }
@@ -803,9 +808,9 @@ pub fn native(cwd: &Path) -> SessionContext {
     servers.retain(|s| {
         let ok = !s.project || trust.servers.get(&s.name) == Some(&s.hash);
         if !ok {
-            warnings.push(format!(
-                "MCP server `{}` ({}) skipped: the project is not trusted for it; run `jazyk setup trust`",
-                s.name, s.source
+            warnings.push(FRAMING.fill(
+                "warning-server-untrusted",
+                &[("name", &s.name), ("source", &s.source)],
             ));
         }
         ok
@@ -816,10 +821,7 @@ pub fn native(cwd: &Path) -> SessionContext {
             .filter(|s| s.project)
             .map(|s| s.name.clone())
             .collect();
-        warnings.push(format!(
-            "project skills skipped ({}): the project is not trusted for them; run `jazyk setup trust`",
-            names.join(", ")
-        ));
+        warnings.push(FRAMING.fill("warning-skills-untrusted", &[("names", &names.join(", "))]));
         skills.retain(|s| !s.project);
     }
     SessionContext {
@@ -958,10 +960,7 @@ pub fn conversation(
     names.insert(READ_SKILL.into());
     for server in host.map(|h| h.mcp.as_slice()).unwrap_or_default() {
         if server.name == RESERVED {
-            warnings.push(format!(
-                "remote MCP server `{}` skipped: the name is reserved",
-                server.name
-            ));
+            warnings.push(FRAMING.fill("warning-remote-reserved", &[("name", &server.name)]));
             continue;
         }
         let clash: Vec<&str> = server
@@ -971,10 +970,9 @@ pub fn conversation(
             .filter(|n| names.contains(*n))
             .collect();
         if !clash.is_empty() {
-            warnings.push(format!(
-                "remote MCP server `{}` skipped: its tool names collide with tools already offered ({})",
-                server.name,
-                clash.join(", ")
+            warnings.push(FRAMING.fill(
+                "warning-remote-collision",
+                &[("name", &server.name), ("tools", &clash.join(", "))],
             ));
             continue;
         }
@@ -1113,6 +1111,9 @@ pub fn check_remote_url(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod symlink_tests;
 
 #[cfg(test)]
 mod tests {

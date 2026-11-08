@@ -8,7 +8,7 @@ re-decides. See [generation](../../consumers/gen.md).
 
 - Class: compile. Mandatory. Readiness tier 3.
 - Unit: one entity. Goal id `g:generate:ent:<slug>`.
-- Skill: none. The contract rides the generation package (below).
+- Skill: none. The contract rides the opening prompt, or the package on a standalone serving (below).
 
 ## Created when
 
@@ -172,10 +172,15 @@ the resolving calls: `begin_generation`, then `record_generation`, then
 `run_tests`. The loaded set holds the entity in full with
 its requirements, and its parent and children as stubs.
 
-1. `begin_generation({entity})` answers with
-   [`prompts/generate-contract.md`](./prompts/generate-contract.md) as
-   `instructions` (`{GROUP}` replaced by the part size, 20 requirements) and the
-   package:
+A session whose batch holds a `generate` goal opens with one generation contract,
+[`prompts/generate-contract.md`](./prompts/generate-contract.md) (`{GROUP}` replaced
+by the part size, 20 requirements), after the assembled prompt. Every session form
+assembles it the same way: an owned worker batch, a benchmark case, a snippet, a
+replay. Its `begin_generation` replies then omit `instructions`. A standalone serving
+holds no batch, so its reply carries the contract.
+
+1. `begin_generation({entity})` answers with the package (and the contract as
+   `instructions` on a standalone serving):
 
 ```text
 entity, name, deliverable          the target and where its files go
@@ -198,8 +203,8 @@ context                            the entity's neighborhood (../context.md#rend
 2. The model writes its files, extends and runs the build when there is one, reads
    failures, repairs its own work, records the manifest, runs the tests.
 
-The packaged form (the contract plus the package rendered as text) is what the
-[benchmark](../../benchmark/benchmark.md) grades.
+The [benchmark](../../benchmark/benchmark.md) grades this same opening prompt and
+these same replies: a case session assembles its prompt through the build's path.
 [`jazyk gen`](../../consumers/gen.md#command) runs the same goal outside a full
 build; an external agent on the `generate` serving claims the same package with
 `generation_tasks` and `begin_generation`

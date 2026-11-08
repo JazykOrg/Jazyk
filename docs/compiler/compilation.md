@@ -71,6 +71,51 @@ failed session and creates no cancellation diagnostic.
 Sessions are sequential: one build at a time under the build lease, one session at a
 time within it ([sequential builds](./control-plane.md#sequential-builds)).
 
+## Selected builds
+
+A build can carry a selection: the part of one document set it runs. A selection is a
+list of items, each a project-relative path with optional lines:
+
+- A document path selects every section of the document.
+- A folder path selects every document of the set under it, at path boundaries.
+- A document path with `lines` (`[first, last]`, one-based, inclusive) selects the
+  sections whose lines overlap the range. A heading section covers its heading line up
+  to the next heading. A range inside a fenced block selects the section that holds
+  the block. Selecting part of a section selects the whole section: the section is the
+  unit a session reconciles.
+
+E.g.:
+
+```json
+[{"path": "docs/orders.md"}, {"path": "docs/billing.md", "lines": [12, 40]}, {"path": "docs/api"}]
+```
+
+The whole set still parses and aligns, and the dirty set lands for every document
+([dirty set](./reconciler.md#dirty-set)). Only goal execution narrows. A goal is in the
+selection when its target lies in the selected sections or on a node anchored there:
+
+- `place-anchors` on a document with a selected section.
+- `reconcile-section` on a selected section.
+- A goal on a node anchored in a selected section: a requirement whose `source` points
+  into one, an entity with a mention in one, a criterion of such a requirement, and a
+  node derived (`from`) from any of these. A pair target is in the selection when
+  either member is. This covers `rejudge-pair`, `review-entity`, `retrace`,
+  `conform-instance`, `derive-criteria`, the GC kinds, and the ledger kinds.
+- Nothing else. A `scope:<scope>` target, a view, and a diagnostic stay outside.
+
+Membership is computed again at every board derivation, so the requirements and
+entities a session creates in a selected section join the selection, and the goals
+they open run in the same build. [Readiness](./reconciler.md#selection) is computed
+over the selected goals alone. Goals outside the selection keep their state and stay on
+the board with the readiness `outside the selection`. They count in the verdict as
+usual, so a selected build that empties its selection reports `incomplete` while other
+work stays open. Its report carries `selection` with the items and the counts of
+selected goals resolved and remaining.
+
+A selection takes effect in [`jazyk compile --select`](../frontends/cli.md#jazyk-compile),
+in compile and workflow jobs ([selected builds](../frontends/gui.md#selected-builds)), and
+in the selected board the editor reads before it runs one.
+
 ## Compile and garbage collection
 
 Goals come in two classes, and a build interleaves them in bursts.
@@ -215,7 +260,9 @@ Every check run journals a `checks` entry under its own generation.
 - `unstable-extraction`: a natural key deleted and recreated across recent builds
   ([flip detection](./reconciler.md#flip-detection)).
 - `duplicate-requirement`, the mechanical part: near-identical statements on one
-  entity, both quote-anchored. The same sentence extracted twice in one section is a
+  entity, both quote-anchored. Near-identical means the words of three or more
+  characters of the two [normalized statements](./graph.md#mutations) overlap by at
+  least 80% of their union, so `1.5` and `2.5` stay distinct words. The same sentence extracted twice in one section is a
   warning (keep one); the same fact restated across documents is an info (both kept).
   Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment, and a
   pair a session already judged is left to it: when an open `contradiction` or

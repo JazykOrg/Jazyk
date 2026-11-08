@@ -77,9 +77,11 @@ fn mandatory_graph_goal(goal: &crate::model::Goal) -> bool {
     goal.mandatory && !crate::board::LEDGER_KINDS.contains(&goal.kind.as_str())
 }
 
+// Outside a selection nothing holds the workflow (docs/compiler/workflows.md#execution).
 fn graph_complete(board: &crate::board::Board) -> Result<(), String> {
     if board.goals.iter().any(|goal| {
         mandatory_graph_goal(goal)
+            && !board.outside.contains(&goal.id)
             && matches!(
                 goal.state,
                 crate::model::GoalState::Open
@@ -94,11 +96,22 @@ fn graph_complete(board: &crate::board::Board) -> Result<(), String> {
 
 fn graph_ready(proj: &Project, store: &Store) -> Result<(), String> {
     let hashes = crate::control::current_doc_hashes(proj);
-    if hashes.len() != store.docs.len()
-        || hashes
-            .iter()
-            .any(|(name, hash)| store.docs.get(name).map(|d| &d.content_hash) != Some(hash))
-    {
+    let changed = match crate::selection::current() {
+        // Only the selected documents must be compiled.
+        Some(items) => hashes.iter().any(|(doc, hash)| {
+            items
+                .iter()
+                .any(|i| doc == &i.path || doc.starts_with(&format!("{}/", i.path)))
+                && store.docs.get(doc).map(|r| &r.content_hash) != Some(hash)
+        }),
+        None => {
+            hashes.len() != store.docs.len()
+                || hashes
+                    .iter()
+                    .any(|(name, hash)| store.docs.get(name).map(|d| &d.content_hash) != Some(hash))
+        }
+    };
+    if changed {
         return Err("Documents changed. Select Compile documents before generation.".into());
     }
     let control = crate::control::Control::load(proj, &proj.out);
@@ -106,6 +119,7 @@ fn graph_ready(proj: &Project, store: &Store) -> Result<(), String> {
     graph_complete(&board)?;
     if board.goals.iter().any(|goal| {
         mandatory_graph_goal(goal)
+            && !board.outside.contains(&goal.id)
             && matches!(&goal.state, crate::model::GoalState::Blocked { on } if !on.starts_with("human"))
     }) {
         return Err("Mandatory graph work is waiting on a release. Compile documents before continuing.".into());
@@ -284,6 +298,10 @@ pub async fn run(
             ),
         );
         let result = run_step(proj, llm, step, trace, &progress.selected_tasks).await;
+        // A selection steers only the first action (docs/frontends/gui.md#selected-builds).
+        if let Some(h) = crate::selection::handle() {
+            h.seal();
+        }
         let reason = match &result {
             Ok(value) => interruption(value),
             Err(error) if crate::session_recovery::is_interruption(error) => Some(error.clone()),
@@ -379,6 +397,23 @@ async fn run_step(
     if matches!(step, Step::Bind | Step::Generate) {
         graph_ready(proj, &store)?;
     }
+    // A selection narrows the ledger actions to what is anchored in it.
+    let selected = crate::selection::current().map(|items| {
+        let r = crate::selection::Resolved::new(&store, &items);
+        (r.entities(), r.requirements())
+    });
+    let (entities, requirements) = selected.clone().unwrap_or_default();
+    if let Some((e, r)) = &selected {
+        let empty = match step {
+            Step::Generate => e.is_empty(),
+            Step::Bind | Step::Test | Step::Review => r.is_empty(),
+            _ => false,
+        };
+        if empty {
+            trace.line("workflow", "Nothing in the selection");
+            return Ok(json!({"skipped": "Nothing in the selection"}));
+        }
+    }
     if matches!(step, Step::Build) {
         gen::run_build(&proj.out, &gs, trace, "workflow")?;
         return Ok(json!({"ok":true}));
@@ -390,8 +425,13 @@ async fn run_step(
         let targets = gen::Ledger::load(&proj.out)
             .requirements
             .keys()
+            .filter(|r| selected.is_none() || requirements.contains(r))
             .cloned()
             .collect::<Vec<_>>();
+        if targets.is_empty() && selected.is_some() {
+            trace.line("workflow", "Nothing in the selection");
+            return Ok(json!({"skipped": "Nothing in the selection"}));
+        }
         return crate::verify::run_selected_after_build(&store, &gs, &targets);
     }
     let stage = if matches!(step, Step::Review) {
@@ -418,16 +458,18 @@ async fn run_step(
     };
     runner.set_build_token(Some(_lease.token().to_owned()));
     match step {
-        Step::Bind => crate::bind::run_all(&store, runner.as_ref(), &gs, &[], trace).await,
+        Step::Bind => {
+            crate::bind::run_all(&store, runner.as_ref(), &gs, &requirements, trace).await
+        }
         Step::Generate => {
-            gen::run_selected(&store, runner.as_ref(), &gs, &[], false, trace, false).await
+            gen::run_selected(&store, runner.as_ref(), &gs, &entities, false, trace, false).await
         }
         Step::Review => {
             crate::verify::run_without_build(
                 &store,
                 runner.as_ref(),
                 &gs,
-                &[],
+                &requirements,
                 Some("llm"),
                 true,
                 trace,

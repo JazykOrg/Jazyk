@@ -1,7 +1,8 @@
 // The product surface's own endpoints: the capability descriptor the app renders
 // against, the projects this server has opened, the Inbox rollup, and the trace
 // matrix export. Mirrors docs/frontends/gui.md#backends-and-capabilities,
-// docs/frontends/gui.md#home, docs/frontends/gui.md#inbox.
+// docs/frontends/gui.md#api (`GET /api/projects`, `GET /api/inbox`), and
+// docs/frontends/wasm.md#the-inbox.
 use super::api::err;
 use super::state::SharedState;
 use crate::store::Store;
@@ -44,6 +45,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
         "agent": agent,
         "chatInputs": agent != "none",
         "testPaths": true,
+        "selection": true,
         "model": model,
         "rendering": "server",
         "persistence": "disk",
@@ -202,7 +204,7 @@ pub async fn inbox(State(st): State<SharedState>) -> Json<Value> {
 
 // ---------------------------------------------------------------------------
 // The trace matrix, as JSON or as a file: csv or md
-// (docs/frontends/gui.md#trace-matrix). The values live in crate::webapi::product.
+// (docs/frontends/gui.md#api, `GET /api/explain?format=`). The values live in crate::webapi::product.
 
 #[derive(Deserialize)]
 pub struct MatrixQ {

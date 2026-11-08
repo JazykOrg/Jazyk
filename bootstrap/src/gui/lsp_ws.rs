@@ -2,7 +2,7 @@
 // session with its own open-document overlay; the wire is one JSON-RPC message per
 // text frame, no Content-Length framing (what monaco-languageclient speaks).
 // A store.generation event republishes diagnostics on every session, the same refresh
-// the stdio server runs. Mirrors docs/frontends/gui.md#editor.
+// the stdio server runs. Mirrors docs/frontends/gui.md#serving and docs/frontends/lsp.md.
 use super::state::SharedState;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
@@ -65,6 +65,44 @@ impl std::io::Write for FrameSink {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+// What became of one client text frame.
+#[derive(Debug, PartialEq)]
+enum Admit {
+    Queued,
+    // Not JSON: no language server message, so nothing to queue.
+    Ignored,
+    // The queue was full.
+    Dropped,
+    // The language server thread ended.
+    Gone,
+}
+
+// Queue one client text frame for the language server thread. A frame arriving at a
+// full queue is dropped; the first drop of a connection is logged.
+fn admit(
+    in_tx: &std::sync::mpsc::SyncSender<SessionEvent>,
+    text: &str,
+    dropped_once: &mut bool,
+) -> Admit {
+    let Ok(v) = serde_json::from_str::<Value>(text) else {
+        return Admit::Ignored;
+    };
+    match in_tx.try_send(SessionEvent::Client(v)) {
+        Ok(()) => Admit::Queued,
+        Err(std::sync::mpsc::TrySendError::Full(_)) => {
+            if !*dropped_once {
+                *dropped_once = true;
+                eprintln!(
+                    "[jazyk] warning: the editor's language server is {} frames behind; dropping frames until it catches up",
+                    INBOUND_QUEUE
+                );
+            }
+            Admit::Dropped
+        }
+        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => Admit::Gone,
     }
 }
 
@@ -146,20 +184,8 @@ async fn session(st: SharedState, socket: WebSocket) {
     while let Some(Ok(msg)) = ws_rx.next().await {
         match msg {
             Message::Text(t) => {
-                if let Ok(v) = serde_json::from_str::<Value>(&t) {
-                    match in_tx.try_send(SessionEvent::Client(v)) {
-                        Ok(()) => {}
-                        Err(std::sync::mpsc::TrySendError::Full(_)) => {
-                            if !dropped_once {
-                                dropped_once = true;
-                                eprintln!(
-                                    "[jazyk] warning: the editor's language server is {} frames behind; dropping frames until it catches up",
-                                    INBOUND_QUEUE
-                                );
-                            }
-                        }
-                        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => break,
-                    }
+                if admit(&in_tx, &t, &mut dropped_once) == Admit::Gone {
+                    break;
                 }
             }
             Message::Close(_) => break,
@@ -175,3 +201,6 @@ async fn session(st: SharedState, socket: WebSocket) {
     let _ = session.await;
     writer.abort();
 }
+
+#[cfg(test)]
+mod tests;

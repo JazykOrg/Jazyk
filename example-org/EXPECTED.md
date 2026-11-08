@@ -8,6 +8,9 @@ This fixture is not software. The subject is a company; the deliverable is its e
 handbook (markdown pages under `handbook/`). Stereotypes are the model's judgment, so
 the labels below are the expected kind, not a required spelling.
 
+The `crit_*` files under `handbook/tests/` are generated evidence from an earlier
+`jazyk gen` run, kept as committed output; they are not hand-labeled expectations.
+
 ## Core entities (must exist)
 
 - Ridgeline Outfitters, stereotype company, the containment root, no parent.

@@ -2,7 +2,8 @@
 // product is its prose files in reading order, a built product the artifacts its
 // build produces, a program its README and run commands. Read-only and
 // target-neutral: every read goes through crate::vfs, so a tab answers from the tree
-// what the server answers from disk. Mirrors docs/frontends/gui.md#overview.
+// what the server answers from disk. Mirrors docs/frontends/gui.md#api
+// (`GET /api/product/overview`).
 use super::deliverable::walk;
 use crate::gen::{GenSettings, Ledger, TestRef};
 use crate::project::Project;
@@ -144,7 +145,7 @@ fn reading_order(prose: &[String]) -> (Vec<String>, Option<String>) {
 }
 
 // `GET /api/product/overview`: what the overview shows. Mirrors
-// docs/frontends/gui.md#overview.
+// docs/frontends/gui.md#api.
 pub fn overview_value(p: &Project, gs: &GenSettings) -> Value {
     let ledger = Ledger::load(&p.out);
     let mut files: Vec<(String, u64)> = Vec::new();

@@ -620,12 +620,30 @@ fn collect_files(dir: &Path, out_dir: &Path, out: &mut Vec<PathBuf>) {
 
 // Glob matcher supporting `**` (any number of path segments), `*` (within a segment),
 // and `?` (one non-slash char). Patterns and paths use `/` separators.
+// Each pattern compiles once per thread: inventories match every file against the
+// same few patterns. An invalid pattern matches nothing.
 pub fn glob_match(pattern: &str, path: &str) -> bool {
-    globset::GlobBuilder::new(pattern)
-        .literal_separator(true)
-        .build()
-        .map(|g| g.compile_matcher().is_match(path))
-        .unwrap_or(false)
+    thread_local! {
+        static COMPILED: std::cell::RefCell<std::collections::HashMap<String, Option<globset::GlobMatcher>>> =
+            std::cell::RefCell::new(std::collections::HashMap::new());
+    }
+    COMPILED.with(|c| {
+        let mut c = c.borrow_mut();
+        if !c.contains_key(pattern) {
+            // Patterns come from configuration: a bound keeps a long-lived process
+            // from accumulating every pattern it ever saw.
+            if c.len() >= 4096 {
+                c.clear();
+            }
+            let matcher = globset::GlobBuilder::new(pattern)
+                .literal_separator(true)
+                .build()
+                .ok()
+                .map(|g| g.compile_matcher());
+            c.insert(pattern.to_string(), matcher);
+        }
+        c[pattern].as_ref().is_some_and(|m| m.is_match(path))
+    })
 }
 
 // Flatten crate-parsed settings for the existing per-field resolution helpers.

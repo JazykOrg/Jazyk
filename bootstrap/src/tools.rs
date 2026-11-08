@@ -1491,6 +1491,16 @@ pub fn harness_owned_rule(rule: &str) -> bool {
         || rule.starts_with("unstable-")
 }
 
+// What the repeated-call guard and the feedback cap remember, carried between the
+// per-call sessions of a serving with no open batch
+// (docs/compiler/sessions.md#repeated-calls).
+#[derive(Default, Clone)]
+pub struct CallMemory {
+    repeats: std::collections::BTreeMap<String, u32>,
+    last_answers: std::collections::BTreeMap<String, String>,
+    feedback_count: usize,
+}
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct ToolSession {
     pub snapshot: Store,
@@ -1595,6 +1605,21 @@ impl ToolSession {
             last_condensed: Default::default(),
             implicit_done: false,
             lint: Default::default(),
+        }
+    }
+
+    // Continue the guard and the feedback cap of earlier calls in the same unit.
+    pub fn adopt_memory(&mut self, memory: CallMemory) {
+        self.repeats = memory.repeats;
+        self.last_answers = memory.last_answers;
+        self.feedback_count = memory.feedback_count;
+    }
+
+    pub fn memory(&self) -> CallMemory {
+        CallMemory {
+            repeats: self.repeats.clone(),
+            last_answers: self.last_answers.clone(),
+            feedback_count: self.feedback_count,
         }
     }
 

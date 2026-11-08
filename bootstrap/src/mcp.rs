@@ -54,6 +54,9 @@ pub struct McpServer {
     // What the transport saw while a call runs: cancelled request ids and end of
     // input, so a long poll stops waiting. Mirrors docs/frontends/mcp.md#the-work-loop.
     interrupts: std::sync::Arc<Interrupts>,
+    // The guard and feedback cap across per-call sessions outside a batch, keyed by
+    // the ledger claim they ran under. Mirrors docs/compiler/sessions.md#repeated-calls.
+    call_memory: std::sync::Mutex<(Option<String>, crate::tools::CallMemory)>,
 }
 
 #[derive(Default)]
@@ -375,6 +378,7 @@ impl McpServer {
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
             interrupts: Default::default(),
+            call_memory: Default::default(),
         }
     }
 
@@ -3350,13 +3354,25 @@ impl McpServer {
                     }
                     scope.target = target;
                 }
+                let unit = (!scope.target.is_empty()).then(|| scope.target.clone());
                 let mut session =
                     ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
                 session.gen = self.current_gen_settings();
                 session.lint = self.project.linting.clone();
                 session.caller =
                     self.caller(if self.write { "mcp-write" } else { "mcp-read" }, &name);
-                match session.dispatch(&name, &args) {
+                // One session per call, one guard per unit: the serving's ledger claim,
+                // or its calls outside any claim.
+                {
+                    let mut memory = self.call_memory.lock().unwrap();
+                    if memory.0 != unit {
+                        *memory = (unit.clone(), Default::default());
+                    }
+                    session.adopt_memory(memory.1.clone());
+                }
+                let reply = session.dispatch(&name, &args);
+                *self.call_memory.lock().unwrap() = (unit, session.memory());
+                match reply {
                     Ok(v) => {
                         if matches!(name.as_str(), "begin_generation" | "begin_binding") {
                             if let Some(target) = args[if name == "begin_generation" { "entity" } else { "requirement" }].as_str() {
@@ -6503,6 +6519,34 @@ mod tests {
         }));
         assert!(took < std::time::Duration::from_secs(10), "end of input left the poll waiting: {took:?}");
         assert!(replies.len() <= 1, "{replies:?}");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A serving with no open batch builds a session per call, but the repeated-call
+    // guard and the feedback cap carry across its calls.
+    // Mirrors docs/compiler/sessions.md#repeated-calls and docs/compiler/tools.md#feedback-tool.
+    #[test]
+    fn per_call_sessions_keep_the_guard_and_the_feedback_cap() {
+        let dir = bare_dir("call-memory");
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nThe tool sorts lines.\n").unwrap();
+        let project = crate::document_sets::Workspace::load(&dir).unwrap().resolve(Some("ds_main")).unwrap();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        let mut store = Store::load(&project.out);
+        store.sync_docs(&parsed);
+        store.save();
+        let serving = McpServer::new(project.clone(), project.out.clone(), vec!["graph".into()], false);
+        let call = |name: &str, args: Value| serving.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+        let first = call("search", json!({"query":"sorts"}));
+        assert_ne!(first["isError"], true, "{first}");
+        call("search", json!({"query":"sorts"}));
+        let third = call("search", json!({"query":"sorts"}));
+        assert_eq!(third["isError"], true, "{third}");
+        assert!(third["content"][0]["text"].as_str().unwrap().contains("repeated-call"), "{third}");
+        for n in 0..7 {
+            call("report_feedback", json!({"kind":"other","message":format!("note {n}")}));
+        }
+        let log = crate::vfs::read_to_string(project.out.join("feedback.jsonl")).unwrap_or_default();
+        assert_eq!(log.lines().count(), crate::tools::FEEDBACK_LIMIT, "{log}");
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

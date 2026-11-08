@@ -552,7 +552,8 @@ MCP call, the model, the codec, the store generation, the run's transcript name,
 MCP client name when one is known. The log is append-only and is never read back by the
 compiler. The [GUI](../frontends/gui.md#feedback) renders its history.
 
-A session records at most 5 feedback entries (an MCP serving, 5 per open batch). Beyond
+A session records at most 5 feedback entries (an MCP serving, 5 per open batch, per
+ledger claim, and across its calls outside both). Beyond
 that the call is acknowledged without a record, so a confused model cannot flood the
 log.
 

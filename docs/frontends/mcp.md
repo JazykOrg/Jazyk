@@ -83,6 +83,13 @@ mutating reply carries its condensed status block. A reply's text content is the
 object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in
 the client's tool call view the way the model does.
 
+A refusal is a tool result with `isError: true` whose text is `{error: {rule,
+message}}`, so the agent reads and repairs it like any reply. A gate, a missing or
+invalid argument, a read-only serving, a busy project, and a project file that does
+not load all refuse this way. A JSON-RPC error answers only what is not a call the
+serving can judge: an unknown method, a request without a tool name, a tool the
+serving does not serve, and a stopped or suspended run.
+
 Set-scoped Bind and Generate workers also receive `list_document_sets`,
 `preview_document_set` and `update_document_set`. They can repair the current
 set's `docs`, `source` and `roots` selections without leaving the worker. Updates
@@ -150,13 +157,25 @@ this spawning path and are not for standalone servings:
   process ([doc edit delegation](./acp.md#doc-edit-delegation)). Absent, or with
   nothing listening, writes land on disk directly.
 
+The `initialize` reply answers the client's requested `protocolVersion` when the
+serving supports it (`2024-11-05`, `2025-03-26`, `2025-06-18`, `2025-11-25`), and its
+latest supported version otherwise, so a client never reads support for a version the
+serving does not speak. A request without a version gets `2024-11-05`.
+
+A `jazyk.toml` that does not load leaves `initialize`, `ping`, and `tools/list`
+answering, so the agent can still connect and repair the file. The instructions name
+the error, and every tool call that needs the project is refused with it.
+
 The `initialize` reply carries server instructions describing the work loop for the
 toolsets served, so an agent that reads nothing else still knows the entry point, the
 order of calls, and that a tool error names its own repair. They also say that the
 [jazyk section of `AGENTS.md`](./agent-context.md#the-jazyk-section-of-agentsmd) is
 orientation and that these instructions and tool replies take precedence over it. A serving ends when its
 input ends: close stdin to tear it down. `shutdown` is answered with null for agents
-that send it out of LSP habit; it does nothing. The prompting lives in three places,
+that send it out of LSP habit; it does nothing. On stdio a line that is not JSON
+answers a parse error (`-32700`) with a null id, a message that is not a request
+object answers an invalid request error (`-32600`), and a batch array answers an
+array of the responses its requests produced (none for a batch of notifications). The prompting lives in three places,
 most specific wins: server instructions carry the loop, each `begin_*` reply carries
 the batch's own assembled prompt (or the package, for binding and generation), and
 each tool description names what to call next.
@@ -270,8 +289,8 @@ agent spawns nothing:
   transcript. Nothing else on the machine can call the serving, because nothing else
   holds the token.
 - It speaks JSON-RPC 2.0 over `POST` to the one endpoint, the MCP streamable HTTP
-  transport (protocol version `2025-03-26`; the `initialize` reply echoes the
-  client's requested version, as the stdio serving does). A request answers `200`
+  transport (protocol version `2025-03-26`; the `initialize` reply negotiates the
+  version as the stdio serving does). A request answers `200`
   with `application/json` carrying the one response object; a notification answers
   `202` with no body; a batch array answers an array. `GET` and `DELETE` on the
   endpoint answer `405`: the serving opens no server-initiated stream and issues no
@@ -345,10 +364,12 @@ notice it prints (`--once` for a single blocking wake-up), or call `await_change
   file in the deliverable changes, the ledger changes, or the
   [control plane](../compiler/control-plane.md) changes (a mode
   toggle or a release, so the user's click in the GUI is what wakes the agent), or
-  at the timeout (default 300 seconds). `timeout_seconds: 0` waits indefinitely. The
-  default returns because most MCP clients bound a tool call with their own timeout
-  and would report an indefinite block as an error; a client configured without that
-  bound passes 0 and holds the call open. The reply carries the changed documents,
+  at the timeout (default 300 seconds). The timeout is capped at 3600 seconds, and
+  `timeout_seconds: 0` waits for the cap. The default returns because most MCP
+  clients bound a tool call with their own timeout and would report a long block as
+  an error; a client configured without that bound passes 0 and polls again when the
+  call returns. A `notifications/cancelled` naming the call, or the end of input, ends
+  the wait at once, and a cancelled call gets no response. The reply carries the changed documents,
   whether the graph is stale (documents changed but not yet reconciled), the board
   counts (open, blocked, parked, failed, per class), the open diagnostic counts, the
   pending generation work, the pending verification work grouped by reason, and the

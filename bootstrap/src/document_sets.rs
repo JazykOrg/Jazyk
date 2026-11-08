@@ -163,7 +163,7 @@ impl Workspace {
         Self::parse(root, &text, exists)
     }
 
-    fn parse(root: &Path, text: &str, exists: bool) -> Result<Self> {
+    pub(crate) fn parse(root: &Path, text: &str, exists: bool) -> Result<Self> {
         let mut settings: toml::Table = toml::from_str(if exists { text } else { EMPTY_CONFIG })
             .map_err(|e| (400, format!("{}: {}", CONFIG, e)))?;
         if settings.remove("version").and_then(|v| v.as_integer()) != Some(1) {

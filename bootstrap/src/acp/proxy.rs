@@ -870,9 +870,12 @@ fn start_sink(state: &Arc<ProxyState>) {
                 let Ok(v) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
                     return;
                 };
+                // `unavailable` says the IDE cannot take edits at all, so the serving
+                // writes the disk itself; any other failure stays a failure.
                 let reply = match delegate_edit(&st, &v) {
                     Ok(()) => json!({"ok": true}),
-                    Err(e) => json!({"ok": false, "error": e}),
+                    Err(DelegateError::Unavailable(e)) => json!({"ok": false, "unavailable": true, "error": e}),
+                    Err(DelegateError::Failed(e)) => json!({"ok": false, "error": e}),
                 };
                 let mut w = &stream;
                 let _ = writeln!(w, "{}", reply);
@@ -881,19 +884,27 @@ fn start_sink(state: &Arc<ProxyState>) {
     });
 }
 
-fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), String> {
+enum DelegateError {
+    // The IDE cannot take the edit: no file system capability, connection, or session.
+    Unavailable(String),
+    // The IDE was asked and refused, or did not answer in time.
+    Failed(String),
+}
+
+fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), DelegateError> {
+    use DelegateError::{Failed, Unavailable};
     if !*st.client_fs_write.lock().unwrap() {
-        return Err("the client has no fs.writeTextFile capability".into());
+        return Err(Unavailable("the client has no fs.writeTextFile capability".into()));
     }
-    let up = st.up.get().ok_or("no upstream connection")?;
+    let up = st.up.get().ok_or(Unavailable("no upstream connection".into()))?;
     let sid = st
         .last_session
         .lock()
         .unwrap()
         .clone()
-        .ok_or("no open session")?;
-    let path = v["path"].as_str().ok_or("missing path")?;
-    let content = v["content"].as_str().ok_or("missing content")?;
+        .ok_or(Unavailable("no open session".into()))?;
+    let path = v["path"].as_str().ok_or(Failed("missing path".into()))?;
+    let content = v["content"].as_str().ok_or(Failed("missing content".into()))?;
     let (tx, rx) = std::sync::mpsc::channel::<Result<(), String>>();
     up.send_request(WriteTextFileRequest::new(
         sid_of(&sid),
@@ -904,9 +915,10 @@ fn delegate_edit(st: &Arc<ProxyState>, v: &serde_json::Value) -> Result<(), Stri
         let _ = tx.send(result.map(|_| ()).map_err(|e| format!("{}", e)));
         Ok(())
     })
-    .map_err(|e| format!("{}", e))?;
+    .map_err(|e| Failed(format!("{}", e)))?;
     rx.recv_timeout(std::time::Duration::from_secs(20))
-        .map_err(|_| "the client did not answer the write".to_string())?
+        .map_err(|_| Failed("the client did not answer the write".to_string()))?
+        .map_err(Failed)
 }
 
 // The intercepted commands: the real paths, their progress narrated into the open

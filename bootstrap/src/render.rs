@@ -909,6 +909,8 @@ fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn xml_attr(s: &str) -> String {
+    #[cfg(test)]
+    tests::XML_ATTR_CALLS.with(|c| c.set(c.get() + 1));
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
@@ -928,22 +930,30 @@ fn attr_value(tag: &str, name: &str) -> Option<String> {
 // participant's two boxes), keyed by its `data-qualified-name`, wrapped in `<a href>`:
 // the whole shape is the click target, as the official renderer draws it. An element
 // the crate did not draw under that key keeps no link; nothing else in the document
-// changes.
+// changes. The first link under a key wins. One scan collects the insertion points
+// and one pass writes the output, so a view of thousands of elements stays linear.
 #[cfg(not(target_arch = "wasm32"))]
 fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
     if links.is_empty() {
         return svg.to_string();
     }
-    let mut out = svg.to_string();
+    let mut hrefs: std::collections::HashMap<String, &str> =
+        std::collections::HashMap::with_capacity(links.len());
+    for (key, href) in links {
+        hrefs.entry(xml_attr(key)).or_insert(href.as_str());
+    }
+    // Opening anchors in document order; closing positions sorted below.
+    let mut opens: Vec<(usize, String)> = Vec::new();
+    let mut closes: Vec<usize> = Vec::new();
     let mut from = 0;
-    while let Some(rel) = out[from..].find("<g ") {
+    while let Some(rel) = svg[from..].find("<g ") {
         let start = from + rel;
         from = start + "<g ".len();
-        let Some(tag_len) = out[start..].find('>') else {
+        let Some(tag_len) = svg[start..].find('>') else {
             break;
         };
-        let tag = out[start..=start + tag_len].to_string();
-        let linked = match attr_value(&tag, "class").as_deref() {
+        let tag = &svg[start..=start + tag_len];
+        let linked = match attr_value(tag, "class").as_deref() {
             Some("entity") => true,
             Some(c) => c.starts_with("participant participant-"),
             None => false,
@@ -951,24 +961,40 @@ fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
         if !linked {
             continue;
         }
-        let Some(key) = attr_value(&tag, "data-qualified-name") else {
+        let Some(key) = attr_value(tag, "data-qualified-name") else {
             continue;
         };
-        let Some(href) = links
-            .iter()
-            .find(|(k, _)| xml_attr(k) == key)
-            .map(|(_, h)| h)
-        else {
+        let Some(href) = hrefs.get(key.as_str()) else {
             continue;
         };
-        let Some(end) = group_end(&out, start) else {
+        let Some(end) = group_end(svg, start) else {
             break;
         };
-        let anchor = format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href));
-        out.insert_str(end, "</a>");
-        out.insert_str(start, &anchor);
-        from = start + anchor.len() + "<g ".len();
+        opens.push((
+            start,
+            format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href)),
+        ));
+        closes.push(end);
     }
+    closes.sort_unstable();
+    let extra: usize = opens.iter().map(|(_, a)| a.len()).sum::<usize>() + 4 * closes.len();
+    let mut out = String::with_capacity(svg.len() + extra);
+    let (mut o, mut c, mut at) = (0, 0, 0);
+    // A group closing where the next opens: the `</a>` comes first.
+    while o < opens.len() || c < closes.len() {
+        let close_next = c < closes.len() && (o == opens.len() || closes[c] <= opens[o].0);
+        let pos = if close_next { closes[c] } else { opens[o].0 };
+        out.push_str(&svg[at..pos]);
+        at = pos;
+        if close_next {
+            out.push_str("</a>");
+            c += 1;
+        } else {
+            out.push_str(&opens[o].1);
+            o += 1;
+        }
+    }
+    out.push_str(&svg[at..]);
     out
 }
 
@@ -3190,6 +3216,220 @@ mod tests {
             "<svg><g><a href=\"../class/a.svg\" xlink:href=\"../class/a.svg\"><g class=\"entity\" data-qualified-name=\"a\" id=\"e1\"><g><text>A b</text></g></g></a><g class=\"entity\" data-qualified-name=\"b\"><text>B</text></g></g></svg>"
         );
         assert_eq!(anchor_entities(svg, &[]), svg);
+    }
+
+    thread_local! {
+        pub(super) static XML_ATTR_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    // The anchoring as it once was (a linear link search per group, two `insert_str`
+    // on the whole document per anchor), kept as the reference the single pass must
+    // match byte for byte.
+    fn anchor_entities_reference(svg: &str, links: &[(String, String)]) -> String {
+        if links.is_empty() {
+            return svg.to_string();
+        }
+        let mut out = svg.to_string();
+        let mut from = 0;
+        while let Some(rel) = out[from..].find("<g ") {
+            let start = from + rel;
+            from = start + "<g ".len();
+            let Some(tag_len) = out[start..].find('>') else {
+                break;
+            };
+            let tag = out[start..=start + tag_len].to_string();
+            let linked = match attr_value(&tag, "class").as_deref() {
+                Some("entity") => true,
+                Some(c) => c.starts_with("participant participant-"),
+                None => false,
+            };
+            if !linked {
+                continue;
+            }
+            let Some(key) = attr_value(&tag, "data-qualified-name") else {
+                continue;
+            };
+            let Some(href) = links
+                .iter()
+                .find(|(k, _)| xml_attr(k) == key)
+                .map(|(_, h)| h)
+            else {
+                continue;
+            };
+            let Some(end) = group_end(&out, start) else {
+                break;
+            };
+            let anchor = format!("<a href=\"{0}\" xlink:href=\"{0}\">", xml_attr(href));
+            out.insert_str(end, "</a>");
+            out.insert_str(start, &anchor);
+            from = start + anchor.len() + "<g ".len();
+        }
+        out
+    }
+
+    fn link(key: &str, href: &str) -> (String, String) {
+        (key.to_string(), href.to_string())
+    }
+
+    #[test]
+    fn anchoring_matches_the_reference_byte_for_byte() {
+        let links = vec![
+            link("a", "../class/a.svg"),
+            link("a", "../class/shadowed.svg"),
+            link("P q", "../class/p.svg"),
+            link("R & <D>", "../class/r&d.svg"),
+            link("say \"hi\"", "../class/hi.svg"),
+            link("Kunde", "../class/kunde.svg"),
+            link("Bob", "../sequence/bob.svg"),
+            link("nowhere", "../class/nowhere.svg"),
+        ];
+        let svg = concat!(
+            "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\">",
+            "<defs><g id=\"d\"></g></defs><g>",
+            // A package holding a linked class: nested anchors.
+            "<g class=\"entity\" data-qualified-name=\"P q\"><rect/>",
+            "<g class=\"entity\" data-qualified-name=\"a\" id=\"e1\"><g><text>A b</text></g></g>",
+            "</g>",
+            // Adjacent siblings: one closes where the next opens.
+            "<g class=\"entity\" data-qualified-name=\"R &amp; &lt;D&gt;\"><text>R</text></g>",
+            "<g class=\"entity\" data-qualified-name=\"say &quot;hi&quot;\"><text>hi</text></g>",
+            "<g class=\"entity\" data-qualified-name=\"Kunde\"><text>K\u{fc}nde \u{2192} \u{1f600}</text></g>",
+            // Unlinked, unnamed, unclassed, and other classes keep no anchor.
+            "<g class=\"entity\" data-qualified-name=\"b\"><text>B</text></g>",
+            "<g class=\"entity\"><text>anon</text></g>",
+            "<g data-qualified-name=\"a\"><text>plain</text></g>",
+            "<g class=\"link\" data-qualified-name=\"a\"><path/></g>",
+            "<g class=\"cluster\" data-qualified-name=\"P q\"><rect/></g>",
+            // A sequence participant's head and tail.
+            "<g class=\"participant participant-head\" data-qualified-name=\"Bob\"><rect/></g>",
+            "<g class=\"participant participant-tail\" data-qualified-name=\"Bob\"><rect/></g>",
+            "<g class=\"participant-lifeline\" data-qualified-name=\"Bob\"><line/></g>",
+            "</g></svg>"
+        );
+        let expected = anchor_entities_reference(svg, &links);
+        assert_eq!(anchor_entities(svg, &links), expected);
+        assert_eq!(expected.matches("<a ").count(), 7, "{}", expected);
+        assert!(
+            expected.contains("href=\"../class/r&amp;d.svg\""),
+            "{}",
+            expected
+        );
+        assert!(!expected.contains("shadowed"), "{}", expected);
+        // A truncated document: anchoring stops at the group that never closes.
+        for cut in [
+            svg.len() - 12,
+            svg.find("<g class=\"entity\" data-qualified-name=\"b\"")
+                .unwrap()
+                + 20,
+        ] {
+            let truncated = &svg[..cut];
+            assert_eq!(
+                anchor_entities(truncated, &links),
+                anchor_entities_reference(truncated, &links),
+                "cut at {}",
+                cut
+            );
+        }
+        let unclosed = "<svg><g class=\"entity\" data-qualified-name=\"a\"><g class=\"entity\" data-qualified-name=\"Kunde\"></g>";
+        assert_eq!(
+            anchor_entities(unclosed, &links),
+            anchor_entities_reference(unclosed, &links)
+        );
+        assert_eq!(anchor_entities("<svg><g ", &links), "<svg><g ");
+
+        // Generated nestings and sibling runs agree too.
+        let mut seed = 0x2545_f491_u64;
+        let mut next = |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        for _ in 0..200 {
+            let mut doc = String::from("<svg>");
+            let mut depth = 0;
+            for _ in 0..40 {
+                match next(5) {
+                    0 | 1 => {
+                        let class = [
+                            "entity",
+                            "participant participant-head",
+                            "cluster",
+                            "entity",
+                        ][next(4) as usize];
+                        let key = ["a", "P q", "Kunde", "b", "Bob"][next(5) as usize];
+                        doc.push_str(&format!(
+                            "<g class=\"{}\" data-qualified-name=\"{}\">",
+                            class, key
+                        ));
+                        depth += 1;
+                    }
+                    2 if depth > 0 => {
+                        doc.push_str("</g>");
+                        depth -= 1;
+                    }
+                    3 => doc.push_str("<g>"),
+                    _ => doc.push_str("<text>t</text>"),
+                }
+            }
+            for _ in 0..next(depth + 1) {
+                doc.push_str("</g>");
+            }
+            assert_eq!(
+                anchor_entities(&doc, &links),
+                anchor_entities_reference(&doc, &links),
+                "{}",
+                doc
+            );
+        }
+    }
+
+    #[test]
+    fn anchoring_stays_linear_in_elements_and_links() {
+        let n = 20_000;
+        let links: Vec<(String, String)> = (0..n)
+            .map(|i| link(&format!("e{}", i), &format!("../class/e{}.svg", i)))
+            .collect();
+        let doc = |n: usize| {
+            let mut svg = String::from("<svg><g>");
+            for i in 0..n {
+                svg.push_str(&format!(
+                    "<g class=\"entity\" data-qualified-name=\"e{}\"><rect/><text>E{}</text></g>",
+                    i, i
+                ));
+            }
+            svg.push_str("</g></svg>");
+            svg
+        };
+        // The old shape escaped every link key once per group: n * n / 2 calls.
+        let calls = |f: fn(&str, &[(String, String)]) -> String, svg: &str, links| {
+            XML_ATTR_CALLS.with(|c| c.set(0));
+            let out = f(svg, links);
+            (out, XML_ATTR_CALLS.with(|c| c.get()))
+        };
+        let small = 200;
+        let small_svg = doc(small);
+        let svg = doc(n);
+        let (old, old_calls) = calls(anchor_entities_reference, &small_svg, &links[..small]);
+        let (new, new_calls) = calls(anchor_entities, &small_svg, &links[..small]);
+        assert_eq!(new, old);
+        assert!(old_calls > small * small / 2, "{}", old_calls);
+        assert_eq!(new_calls, 2 * small);
+        let (out, big_calls) = calls(anchor_entities, &svg, &links);
+        assert_eq!(big_calls, 2 * n);
+        assert_eq!(out.matches("<a href=").count(), n);
+        assert_eq!(out.matches("</a>").count(), n);
+        assert_eq!(
+            out.len(),
+            svg.len()
+                + (0..n)
+                    .map(|i| format!(
+                        "<a href=\"../class/e{0}.svg\" xlink:href=\"../class/e{0}.svg\"></a>",
+                        i
+                    )
+                    .len())
+                    .sum::<usize>()
+        );
     }
 
     #[test]

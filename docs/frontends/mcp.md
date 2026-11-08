@@ -83,6 +83,13 @@ mutating reply carries its condensed status block. A reply's text content is the
 object pretty-printed ([tools](../compiler/tools.md)), so the agent's user reads it in
 the client's tool call view the way the model does.
 
+A refusal is a tool result with `isError: true` whose text is `{error: {rule,
+message}}`, so the agent reads and repairs it like any reply. A gate, a missing or
+invalid argument, a read-only serving, a busy project, and a project file that does
+not load all refuse this way. A JSON-RPC error answers only what is not a call the
+serving can judge: an unknown method, a request without a tool name, a tool the
+serving does not serve, and a stopped or suspended run.
+
 Set-scoped Bind and Generate workers also receive `list_document_sets`,
 `preview_document_set` and `update_document_set`. They can repair the current
 set's `docs`, `source` and `roots` selections without leaving the worker. Updates

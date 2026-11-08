@@ -780,7 +780,8 @@ impl McpServer {
     }
 
     fn scoped_matcher_call(&self, name: &str, args: &Value) -> Result<Value, (i64,String)> {
-        if !self.serves_matcher_repairs() { return Err((-32602,"matcher edits are unavailable in this worker".into())); }
+        // Not listed here, so not served: an unknown tool, like any other.
+        if !self.serves_matcher_repairs() { return Err((-32602,format!("{UNKNOWN_TOOL} `{}`", name))); }
         let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e|(-32602,e.1))?;
         if name == "list_document_sets" { return Ok(result_value(workspace.summary())); }
         if self.finished.lock().unwrap().is_some() { return Err((-32602,"this worker session is complete".into())); }
@@ -2035,11 +2036,10 @@ impl McpServer {
             return self.handle(method, params);
         }
         if self.cancelled() { return Err((-32602, "the build was stopped".into())); }
-        if !self.serves_project_writes() {
-            return Err((-32602, "this serving is read-only".into()));
-        }
-        if self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
-            return Err((-32602, "nested compilation is unavailable in a scoped worker".into()));
+        // Neither a read-only nor a scoped serving lists the tool, so neither serves it.
+        if !self.serves_project_writes()
+            || self.project.set_id.is_some() || self.bridge.only.is_some() || self.bridge.build_token.is_some() {
+            return Err((-32602, format!("{UNKNOWN_TOOL} `compile_document_sets`")));
         }
         let workspace = crate::document_sets::Workspace::load(&self.project.root).map_err(|e| (-32602, e.1))?;
         let response = crate::webapi::dispatch::request_at_async(&workspace.root, "POST", "/api/compile", &params["arguments"].to_string()).await;
@@ -2048,7 +2048,29 @@ impl McpServer {
         Ok(result_value(response))
     }
 
+    // A refusal inside a tool call is a tool result the agent can read and repair; a
+    // JSON-RPC error stays for an unknown method or tool, a call without a name, and a
+    // stopped or suspended run. Mirrors docs/frontends/mcp.md#toolsets.
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
+        let reply = self.route(method, params);
+        if method != "tools/call" || !params["name"].is_string() {
+            return reply;
+        }
+        match reply {
+            Err((code, message))
+                if code != -32601
+                    && !message.starts_with(UNKNOWN_TOOL)
+                    && !crate::session_recovery::is_interruption(&message)
+                    && message != "execution suspended"
+                    && !self.cancelled() =>
+            {
+                Ok(text_result(json!({"error": {"rule": "refused", "message": message}}), true))
+            }
+            other => other,
+        }
+    }
+
+    fn route(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(self.bridge.cancel_file.as_deref());
         if method == "tools/call" && crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
             if self.modes.len() == 1 && self.modes[0] == "runtime" {
@@ -2174,7 +2196,8 @@ impl McpServer {
         }
         if name == "write_document" {
             if !writable || !self.modes.iter().any(|m| m == "chat") {
-                return Err((-32602, "document edits require a writable chat serving".into()));
+                // Listed only on a writable chat serving: elsewhere it is not served.
+                return Err((-32602, format!("{UNKNOWN_TOOL} `write_document`")));
             }
             let args = &params["arguments"];
             let path = args["path"].as_str().ok_or((-32602, "path is required".into()))?;
@@ -2228,7 +2251,7 @@ impl McpServer {
         }
         if name == "compile_document_sets" {
             if !writable {
-                return Err((-32602, "this serving is read-only".into()));
+                return Err((-32602, format!("{UNKNOWN_TOOL} `{name}`")));
             }
             #[cfg(target_arch = "wasm32")]
             return Err((-32602, "compilation requires the asynchronous MCP entry point".into()));
@@ -2255,7 +2278,7 @@ impl McpServer {
                 | "remove_document_set"
         ) {
             if !writable {
-                return Err((-32602, "this serving is read-only".into()));
+                return Err((-32602, format!("{UNKNOWN_TOOL} `{name}`")));
             }
             if matches!(name, "preview_document_set" | "update_document_set") {
                 if let Some(id) = params["arguments"]["set"]["id"].as_str() {
@@ -2667,7 +2690,7 @@ impl McpServer {
             && !crate::tools::READ_TOOLS.contains(&name)
             && !matches!(name, "await_changes" | "recent_edits")
         {
-            return Err((-32602, format!("unknown or disabled tool `{}`", name)));
+            return Err((-32602, format!("{UNKNOWN_TOOL} `{}`", name)));
         }
         {
             {
@@ -2899,7 +2922,7 @@ impl McpServer {
                 let args = params["arguments"].clone();
                 let enabled = self.enabled_tools();
                 if !enabled.contains(&name.as_str()) {
-                    return Err((-32602, format!("unknown or disabled tool `{}`", name)));
+                    return Err((-32602, format!("{UNKNOWN_TOOL} `{}`", name)));
                 }
                 let is_write = !crate::tools::READ_TOOLS.contains(&name.as_str())
                     && name != crate::tools::FEEDBACK_TOOL;
@@ -4095,6 +4118,9 @@ fn compile_interruption(value: &Value) -> Option<String> {
     }
 }
 
+// The prefix of the JSON-RPC error for a tool the serving does not serve.
+const UNKNOWN_TOOL: &str = "unknown or disabled tool";
+
 // The MCP protocol versions the serving speaks, oldest first.
 const PROTOCOL_VERSIONS: [&str; 4] = ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"];
 
@@ -4260,7 +4286,7 @@ mod tests {
         let context = crate::task_runtime::call(&dir,"task_context",&json!({})).unwrap();
         call("update_tasks",json!({"expected_revision":context["revision"],"tasks":[]})).unwrap();
         let refused = call("write_text_file",json!({"setId":"ds_main","path":"generated/foreign.txt","content":"Changed"}));
-        assert!(refused.unwrap_err().1.contains("configuration changed"));
+        assert!(refusal(refused).contains("configuration changed"));
         assert!(!dir.join("generated/foreign.txt").vexists());
         drop(parent);
         crate::vfs::remove_dir_all(dir).unwrap();
@@ -4388,20 +4414,20 @@ mod tests {
         assert!(!current.doc_files().contains(&dir.join("generated/greeting.py")));
         assert_eq!(after.select("ds_other").unwrap().source,workspace.select("ds_other").unwrap().source);
         let call = |s:&McpServer,name:&str,args:Value|s.handle("tools/call",&json!({"name":name,"arguments":args}));
-        assert!(call(&server,"update_document_set",edit.clone()).unwrap_err().1.contains("configuration changed"));
+        assert!(refusal(call(&server,"update_document_set",edit.clone())).contains("configuration changed"));
         let mut cross = edit.clone(); cross["baseHash"]=json!(after.hash);cross["set"]["id"]=json!("ds_other");
-        assert!(call(&server,"update_document_set",cross).unwrap_err().1.contains("only its current"));
+        assert!(refusal(call(&server,"update_document_set",cross)).contains("only its current"));
         let other_config = crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap();
         let overlap = json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**","other/**"]},
             "roleIntents":[{"role":"source","patterns":["other/**"]}]});
         for name in ["preview_document_set","update_document_set"] {
-            assert!(call(&server,name,overlap.clone()).unwrap_err().1.contains("another document set"));
+            assert!(refusal(call(&server,name,overlap.clone())).contains("another document set"));
             assert_eq!(crate::vfs::read_to_string(dir.join(".jazyk/jazyk.toml")).unwrap(),other_config);
         }
         let mut foreign_flags = flags.clone();foreign_flags.build_token=Some("another-owner".into());
         let foreign=McpServer::with_bridge(project.clone(),out.clone(),vec!["generate".into()],true,foreign_flags);
         let current_edit=json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]}});
-        assert!(call(&foreign,"update_document_set",current_edit.clone()).unwrap_err().1.contains("does not own"));
+        assert!(refusal(call(&foreign,"update_document_set",current_edit.clone())).contains("does not own"));
         for (mode,reader) in [("verify",false),("compile",false),("graph",true),("runtime",false)] {
             let s=McpServer::with_bridge(project.clone(),out.clone(),vec![mode.into()],false,BridgeFlags{ephemeral:true,reader,..flags.clone()});
             let names=tool_names(&s);
@@ -4792,6 +4818,16 @@ mod tests {
         McpServer::with_bridge(project, out, vec!["chat".to_string()], false, flags)
     }
 
+    // A refused tool call's message, whether the serving answered it as an isError
+    // result or a JSON-RPC error; panics on a call that succeeded.
+    fn refusal(reply: Result<Value, (i64, String)>) -> String {
+        match reply {
+            Err((_, message)) => message,
+            Ok(v) if v["isError"] == true => v["content"][0]["text"].as_str().unwrap_or_default().to_string(),
+            Ok(v) => panic!("the call was not refused: {v}"),
+        }
+    }
+
     fn chat_server(dir: &std::path::Path) -> McpServer {
         let project = crate::project::Project::load(dir);
         let out = project.out.clone();
@@ -4980,7 +5016,7 @@ mod tests {
             assert!(value["projection"]["text"].as_str().unwrap().contains("The gateway shall return"));
             assert!(value.get("base64").is_none());
             assert_eq!(value["diagnostics"][0]["code"], "broken-link");
-            assert!(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}})).is_err());
+            assert!(!refusal(s.handle("tools/call", &json!({"name":"read_document", "arguments":{"path":"../outside.docx"}}))).is_empty());
         }
     }
 
@@ -5001,8 +5037,8 @@ mod tests {
         let stale=call("write_document",json!({"path":"docs/hosting.md","text":"must not land","baseHash":read["hash"]}));
         assert_eq!(stale["isError"],true);
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(),changed);
-        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"../outside.md","text":"x"}})).is_err());
-        assert!(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}})).is_err());
+        assert!(!refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"../outside.md","text":"x"}}))).is_empty());
+        assert!(!refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/a.pdf","text":"x"}}))).is_empty());
         assert!(Store::load(&dir.join(".jazyk/ds_main")).graph.entities.is_empty());
         assert!(crate::control::Control::load(&project,&project.out).released.compile.is_empty());
     }
@@ -5048,8 +5084,8 @@ mod tests {
         crate::vfs::write(dir.join("docs/invalid.md"),[0xff,0xfe]).unwrap();
         let project=crate::document_sets::Workspace::load(&dir).unwrap().files_project();
         let s=McpServer::with_bridge(project.clone(),project.out,vec!["chat".into()],false,BridgeFlags{ephemeral:true,edit_sink:Some("not-a-live-editor-sink".into()),..Default::default()});
-        let error=s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/invalid.md","text":"must not replace bytes"}})).unwrap_err();
-        assert!(error.1.contains("cannot read existing document"),"{error:?}");
+        let error=refusal(s.handle("tools/call",&json!({"name":"write_document","arguments":{"path":"docs/invalid.md","text":"must not replace bytes"}})));
+        assert!(error.contains("cannot read existing document"),"{error:?}");
         assert_eq!(crate::vfs::read(dir.join("docs/invalid.md")).unwrap(),vec![0xff,0xfe]);
     }
 
@@ -5104,7 +5140,7 @@ mod tests {
                 let reply: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
                 assert_eq!(reply["body"], skill.body);
             }
-            assert!(server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"../../secret"}})).is_err());
+            assert!(!refusal(server.handle("tools/call", &json!({"name":"read_jazyk_skill","arguments":{"name":"../../secret"}}))).is_empty());
         }
         crate::vfs::remove_file(config).unwrap();
         let uninitialized = chat_server(&dir);
@@ -6282,6 +6318,36 @@ mod tests {
         assert!(!serving.handle("tools/list", &json!({})).unwrap()["tools"].as_array().unwrap().is_empty());
         let call = serving.handle("tools/call", &json!({"name":"search","arguments":{"query":"x"}}));
         assert!(call.is_err() || call.unwrap()["isError"] == true);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    // A refusal inside tools/call is an isError result naming the refusal; JSON-RPC
+    // errors stay for unknown tools, calls without a name, and unknown methods.
+    // Mirrors docs/frontends/mcp.md#toolsets.
+    #[test]
+    fn refusals_are_tool_results_and_unknown_tools_are_protocol_errors() {
+        let dir = bare_dir("refusal-shape");
+        let reader = McpServer::with_bridge(crate::document_sets::Workspace::load(&dir).unwrap().files_project(),
+            dir.join(".jazyk/ds_main"), vec!["graph".into()], false, BridgeFlags::default());
+        for (name, args) in [
+            ("read_jazyk_skill", json!({})),
+            ("read_jazyk_skill", json!({"name":"../../secret"})),
+            ("read_document", json!({})),
+        ] {
+            let reply = reader.handle("tools/call", &json!({"name":name,"arguments":args})).unwrap();
+            assert_eq!(reply["isError"], true, "{name}: {reply}");
+            let body: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+            assert_eq!(body["error"]["rule"], "refused", "{name}: {body}");
+            assert!(body["error"]["message"].as_str().is_some_and(|m| !m.is_empty()));
+        }
+        // A tool the serving does not list is not served: a protocol error.
+        for name in ["no_such_tool", "write_document", "compile_document_sets", "update_document_set"] {
+            let unknown = reader.handle("tools/call", &json!({"name":name,"arguments":{}})).unwrap_err();
+            assert_eq!(unknown.0, -32602);
+            assert!(unknown.1.starts_with(UNKNOWN_TOOL), "{name}: {unknown:?}");
+        }
+        assert!(reader.handle("tools/call", &json!({"arguments":{}})).is_err());
+        assert_eq!(reader.handle("no/such/method", &json!({})).unwrap_err().0, -32601);
         crate::vfs::remove_dir_all(dir).ok();
     }
 }

@@ -14083,7 +14083,7 @@ mod tests {
         assert_eq!(
             r["relationships"],
             json!([
-                {"a": "ent:cache", "b": "ent:server", "type": "association"},
+                {"a": "ent:server", "b": "ent:cache", "type": "association", "cardinality": "1"},
                 {"a": "ent:server", "b": "ent:db", "type": "dependency"},
             ]),
             "{}",

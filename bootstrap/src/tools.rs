@@ -716,6 +716,20 @@ pub const READ_TOOLS: [&str; 9] = [
     "get_view",
     "diagnostics",
 ];
+// The calls without side effects whose answer the repeated-call guard recomputes before
+// it refuses a third identical call. Mirrors docs/compiler/sessions.md#repeated-calls.
+const REANSWERABLE_TOOLS: [&str; 10] = [
+    "graph_status",
+    "search",
+    "read_section",
+    "get_entity",
+    "get_view",
+    "diagnostics",
+    "read_text_file",
+    "list_files",
+    "generation_tasks",
+    "binding_tasks",
+];
 // The goal tools every session sees. Mirrors docs/compiler/tools.md#goal-tools.
 pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_skill", "done"];
 // The batch claim of a rejudge-pair session: a goal tool served in that kind's slice
@@ -1511,8 +1525,9 @@ pub struct ToolSession {
     // The repeated-call guard, keyed per open batch: the same call with the same
     // arguments has the same answer (docs/compiler/sessions.md#repeated-calls).
     repeats: std::collections::BTreeMap<String, u32>,
-    // The last answer per repeat key: a repeat whose answer changed is no repeat.
-    last_answers: std::collections::BTreeMap<String, String>,
+    // The last answer per repeat key, with the staged-mutation count it was given
+    // under: a repeat whose answer changed is no repeat.
+    last_answers: std::collections::BTreeMap<String, (String, usize)>,
     refusals: u32,
     // Feedback entries this session already recorded; capped so a confused model
     // cannot flood the log (docs/compiler/tools.md#feedback-tool).
@@ -5548,8 +5563,23 @@ impl ToolSession {
                 | "record_generation" | "record_binding" | PAIR_SETTLE_TOOL
         ) || crate::task_runtime::TOOLS.contains(&name);
         if !exempt {
+            // A load keys on the target it resolves to, so an alias and its id are one
+            // call, and counts only while that target is loaded: a refused load or an
+            // evicted target starts again.
             let key = if name == "load" {
-                format!("load|{}", args["target"].as_str().unwrap_or_default())
+                let raw = args["target"].as_str().unwrap_or_default();
+                let id = self.canon_entity_id(raw).unwrap_or_else(|| raw.to_string());
+                let id = self.snapshot.resolve_id(&id).to_string();
+                let loaded = self
+                    .loaded
+                    .items
+                    .iter()
+                    .any(|i| i.target == id && i.what != "stub");
+                let key = format!("load|{}", id);
+                if !loaded {
+                    self.repeats.remove(&key);
+                }
+                key
             } else {
                 format!("{}|{}", name, args)
             };
@@ -5559,6 +5589,29 @@ impl ToolSession {
                 *c
             };
             if seen >= 3 {
+                // The state may have moved since the last answer: a pure read answers
+                // again and is compared, any other call compares the staged mutations
+                // it was answered under.
+                let staged = self.staged.len();
+                let moved = if REANSWERABLE_TOOLS.contains(&name) {
+                    let result = self.dispatch_gated(name, args);
+                    let answer = Self::answer_text(&result);
+                    if self.last_answers.get(&key).map(|(a, _)| a) != Some(&answer) {
+                        self.last_answers.insert(key.clone(), (answer, self.staged.len()));
+                        self.repeats.insert(key, 1);
+                        return result;
+                    }
+                    false
+                } else {
+                    self.last_answers.get(&key).map(|(_, n)| *n) != Some(staged)
+                };
+                if moved {
+                    self.repeats.insert(key.clone(), 1);
+                    let result = self.dispatch_gated(name, args);
+                    let answer = Self::answer_text(&result);
+                    self.last_answers.insert(key, (answer, self.staged.len()));
+                    return result;
+                }
                 self.refusals += 1;
                 // Past eight refusals in one batch, the serving finishes the session
                 // implicitly: the staged work commits under the same gates the budget
@@ -5577,13 +5630,11 @@ impl ToolSession {
             // A repeat is marked only when its answer matches the previous one; a
             // changed answer means the state moved, and the count starts again.
             let result = self.dispatch_gated(name, args);
-            let answer = match &result {
-                Ok(v) => v.to_string(),
-                Err(e) => format!("{}: {}", e.rule, e.message),
-            };
+            let answer = Self::answer_text(&result);
             // A load of a loaded target is a repeat by target, whatever it answers.
-            let same = name == "load" || self.last_answers.get(&key) == Some(&answer);
-            self.last_answers.insert(key.clone(), answer);
+            let same = name == "load"
+                || self.last_answers.get(&key).map(|(a, _)| a) == Some(&answer);
+            self.last_answers.insert(key.clone(), (answer, self.staged.len()));
             if seen == 2 {
                 if !same {
                     self.repeats.insert(key, 1);
@@ -5600,6 +5651,14 @@ impl ToolSession {
             return result;
         }
         self.dispatch_gated(name, args)
+    }
+
+    // The comparable text of an answer, for the repeated-call guard.
+    fn answer_text(result: &Result<Value, ToolError>) -> String {
+        match result {
+            Ok(v) => v.to_string(),
+            Err(e) => format!("{}: {}", e.rule, e.message),
+        }
     }
 
     fn dispatch_gated(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
@@ -12207,6 +12266,41 @@ mod tests {
         t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
         assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+    }
+
+    // A refused load never counts, an alias and its id are one load, and a third
+    // identical call whose state moved answers instead of being refused.
+    // Mirrors docs/compiler/sessions.md#repeated-calls.
+    #[test]
+    fn repeated_call_guard_follows_state_not_raw_arguments() {
+        let mut t = session();
+        for _ in 0..4 {
+            let err = t.dispatch("load", &json!({"target": "ent:nope"})).unwrap_err();
+            assert_ne!(err.rule, "repeated-call");
+        }
+        t.dispatch("load", &json!({"target": "Customer"})).unwrap();
+        let v = t.dispatch("load", &json!({"target": "ent:customer"})).unwrap();
+        assert!(v["repeat"].is_string(), "{}", v);
+        // A read whose answer moved after its marked repeat answers on the third call.
+        let args = json!({"query": "gizmo"});
+        t.dispatch("search", &args).unwrap();
+        assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
+        t.snapshot.graph.entities.insert("ent:gizmo".into(), plain("Gizmo"));
+        let v = t.dispatch("search", &args).unwrap();
+        assert!(v.get("repeat").is_none(), "{}", v);
+        // A write refused twice answers again once the session staged a mutation.
+        let args = json!({"id": "ent:sprocket", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
+        t.dispatch("upsert_entity", &up).unwrap();
+        let third = t.dispatch("delete_entity", &args);
+        assert!(third.as_ref().err().map(|e| e.rule.as_str()) != Some("repeated-call"), "{:?}", third.err());
+        // With nothing moved, the third call is refused.
+        let args = json!({"id": "ent:ghost", "reason": "unused"});
+        t.dispatch("delete_entity", &args).unwrap_err();
+        t.dispatch("delete_entity", &args).unwrap_err();
+        assert_eq!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
     }
 
     #[test]

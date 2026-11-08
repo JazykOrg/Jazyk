@@ -262,7 +262,9 @@ session spend its budget on it:
 - The second identical call answers as usual, with a `repeat` field on the result saying
   the answer is unchanged and to act on it.
 - The third is refused with a `repeated-call` error naming the tool and the way forward:
-  act on the answer already given, or finish with `done`.
+  act on the answer already given, or finish with `done`. Before refusing, a read
+  without side effects answers again and any other call checks whether the session
+  staged a mutation since its last answer: a moved state is no repeat.
 - A repeat whose answer differs from the previous one is no repeat: the state moved
   between them (a file rewritten, a refusal repaired), so it carries no `repeat` field
   and the count starts again. A `record_binding` that was refused for a missing test
@@ -271,7 +273,9 @@ session spend its budget on it:
 
 Identity is the tool name plus its arguments verbatim, counted per open batch. A `load`
 of a target that is already loaded counts as a repeat whatever its `depth`: the way to
-see more of a loaded node is `expand` on its handles. An `unload` clears the `load`
+see more of a loaded node is `expand` on its handles. Its identity is the node the
+target resolves to, so an alias and its id are one call, and a refused `load` (the target
+never loaded) does not count. An `unload` clears the `load`
 count for its target: re-loading a node evicted for budget is legitimate, and its
 render is fresh. `done`, `mark_goal_done`, `mark_goal_failed`, `record_generation`,
 and `record_binding` are exempt. Repairing files after a rejected record legitimately

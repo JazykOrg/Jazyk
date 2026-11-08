@@ -60,7 +60,7 @@ pub async fn raw(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Respo
     }
 }
 
-// The Product lens's overview (docs/frontends/gui.md#overview).
+// The Product lens's overview (docs/frontends/gui.md#api, `GET /api/product/overview`).
 pub async fn overview(State(st): State<SharedState>) -> Json<serde_json::Value> {
     let (proj, gs) = (st.proj(), st.gs());
     let v = tokio::task::spawn_blocking(move || overview_value(&proj, &gs))

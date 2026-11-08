@@ -2027,7 +2027,8 @@ pub fn run_filtered(llm: &Llm, out: &std::path::Path, filter: &[String]) -> i32 
 }
 
 // The GUI's entry: per-case lines reach the job's trace as notes, so a running grade
-// shows progress instead of a spinner. Mirrors docs/frontends/gui.md#benchmarks.
+// shows progress instead of a spinner. Mirrors docs/frontends/gui.md#jobs (the
+// `benchmark` kind); the page is jazyk-cloud docs/editor/editor.md#benchmarks.
 pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
     run_traced_filtered(llm, out, progress, &[])
 }

@@ -1,7 +1,8 @@
 // The chat pane's backend: ACP chat sessions against the configured agent, with
 // permission requests forwarded to the browser. Follow sessions need no backend of
 // their own: automated jobs already stream their translated turns over `job.trace`,
-// and the pane renders those. Mirrors docs/frontends/gui.md#chat.
+// and the pane renders those. Mirrors docs/frontends/acp.md#chat-sessions; the pane
+// is jazyk-cloud docs/editor/editor.md#chat.
 use super::state::SharedState;
 use crate::acp::config::{self, EMBEDDED};
 use crate::acp::host::{AcpHost, HostEvent, McpSpec, SessionHandle};
@@ -350,7 +351,7 @@ pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) 
 
 // The prompt runs on a blocking thread; progress streams as chat.* events. Slash
 // commands are matched before the agent sees the text: the real job runs and the
-// pane follows it. Mirrors docs/frontends/gui.md#chat.
+// pane follows it. Mirrors docs/frontends/acp.md#slash-commands.
 pub async fn post_prompt(
     State(st): State<SharedState>,
     Path(id): Path<String>,
@@ -819,7 +820,7 @@ pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Re
 
 // Remove a conversation: an open prompt is cancelled, the agent session closed, and
 // the transcript deleted from the session store, so a restart does not bring it
-// back. Mirrors docs/frontends/gui.md#chat.
+// back. Mirrors docs/frontends/acp.md#session-store.
 pub async fn delete_session(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
     st.chat.restore(&st.out);
     let Some(sess) = st.chat.sessions.lock().unwrap().remove(&id) else {

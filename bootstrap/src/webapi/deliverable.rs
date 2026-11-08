@@ -95,7 +95,7 @@ fn no_owners() -> Value {
 }
 
 // `GET /api/deliverable`: every product file with its owners, and the recorded
-// medium and build, the product form page's source (docs/frontends/gui.md#product).
+// medium and build, the product form page's source (docs/frontends/gui.md#api).
 pub fn deliverable_value(out_dir: &Path, gs: &GenSettings) -> Value {
     let mut files: Vec<(String, u64)> = Vec::new();
     walk(&gs.deliverable, &gs.deliverable, &mut files);

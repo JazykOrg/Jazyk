@@ -123,7 +123,7 @@ pub async fn settings_put(State(st): State<SharedState>, Json(body): Json<Value>
 }
 
 // The standing questions: open, unsuppressed, prompted diagnostics. The value lives
-// in crate::webapi::inbox. Mirrors docs/frontends/gui.md#questions.
+// in crate::webapi::inbox. Mirrors docs/frontends/gui.md#api (`GET /api/questions`).
 pub async fn questions(State(st): State<SharedState>) -> Response {
     let store = load_store(&st).await;
     Json(crate::webapi::inbox::questions_value(&store)).into_response()
@@ -201,7 +201,7 @@ pub async fn triage(
 }
 
 // The workflow modes, the values the tab serves too
-// (docs/frontends/gui.md#workflow-modes).
+// (docs/compiler/control-plane.md#modes-and-releases).
 fn watch_state(st: &SharedState) -> Value {
     crate::webapi::workers::watch_value(&st.control())
 }
@@ -221,7 +221,7 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 }
 
 // The control plane snapshot the workers strip renders: modes, registered workers,
-// live leases, gated counts. Mirrors docs/frontends/gui.md#workers.
+// live leases, gated counts. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 
 pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
     let st2 = st.clone();
@@ -234,7 +234,8 @@ pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
 
 // Record a release without running anything: the workers strip's button. The wake
 // happens through the control file every watcher watches.
-// Mirrors docs/frontends/gui.md#workers.
+// Mirrors docs/compiler/control-plane.md#modes-and-releases; the strip is
+// jazyk-cloud docs/editor/editor.md#workers.
 pub async fn release(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
     let stage = body["stage"].as_str();
     if let Some(s) = stage {
@@ -607,7 +608,8 @@ pub async fn docsgen(State(st): State<SharedState>, UrlPath(slug): UrlPath<Strin
 }
 
 // ---- benchmarks ----
-// Mirrors docs/frontends/gui.md#benchmarks.
+// The merged results (docs/benchmark/benchmark.md#machine-wide-history); the page is
+// jazyk-cloud docs/editor/editor.md#benchmarks.
 
 pub async fn benchmarks(State(st): State<SharedState>) -> Json<Value> {
     Json(crate::benchmark::all_results(&st.out))

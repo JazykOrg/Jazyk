@@ -228,7 +228,8 @@ pub fn answer(
         s.dual_write(&project.root, &prose, ops, &commit, write)
             .map_err(|e| format!("commit skipped: {}", e))?;
         // The edit as it landed, so a frontend can mark the changed text in an open
-        // editor (docs/frontends/gui.md#questions).
+        // editor (docs/frontends/gui.md#api, `POST /api/questions/{id}/answer`;
+        // the marking is jazyk-cloud docs/editor/editor.md#questions).
         return Ok(json!({
             "status": "applied", "resolved": true, "doc": e.doc,
             "edit": {"doc": e.doc, "section": e.section, "newText": prose.new_text},

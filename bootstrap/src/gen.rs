@@ -3327,38 +3327,55 @@ pub fn group_members(store: &Store, root: &str) -> Vec<String> {
 // id; a cycle breaks at the entity with the fewest pending prerequisites.
 // Mirrors docs/consumers/gen.md#order-from-relationships.
 pub fn generation_order(store: &Store, targets: &[String]) -> Vec<String> {
-    let set: std::collections::BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
-    let prereqs = |id: &str, emitted: &std::collections::BTreeSet<String>| -> usize {
-        let mut n = 0;
-        for rel in store.graph.relationships.values() {
-            for c in &rel.contributions {
-                if c.a == id && c.b != id && set.contains(c.b.as_str()) && !emitted.contains(&c.b) {
-                    n += 1;
-                }
+    use std::collections::{BTreeMap, BTreeSet};
+    let set: BTreeSet<&str> = targets.iter().map(|s| s.as_str()).collect();
+    // Each target's pending prerequisites, and for each prerequisite the targets
+    // waiting on it, once per contribution or child, so emitting one decrements the
+    // count of every target it held back.
+    let mut pending: BTreeMap<&str, usize> = set.iter().map(|id| (*id, 0)).collect();
+    let mut waiting: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for rel in store.graph.relationships.values() {
+        for c in &rel.contributions {
+            if c.a != c.b && set.contains(c.a.as_str()) && set.contains(c.b.as_str()) {
+                *pending.get_mut(c.a.as_str()).unwrap() += 1;
+                waiting.entry(c.b.as_str()).or_default().push(c.a.as_str());
             }
         }
-        for (cid, e) in &store.graph.entities {
-            if e.parent.as_deref() == Some(id)
-                && set.contains(cid.as_str())
-                && !emitted.contains(cid)
-            {
-                n += 1;
-            }
+    }
+    for (cid, e) in &store.graph.entities {
+        let Some(parent) = e.parent.as_deref() else {
+            continue;
+        };
+        if set.contains(parent) && set.contains(cid.as_str()) {
+            *pending.get_mut(parent).unwrap() += 1;
+            waiting.entry(cid.as_str()).or_default().push(parent);
         }
-        n
-    };
-    let mut remaining: Vec<String> = targets.to_vec();
-    let mut emitted: std::collections::BTreeSet<String> = Default::default();
-    let mut out = Vec::new();
-    while !remaining.is_empty() {
-        let (i, _) = remaining
-            .iter()
-            .enumerate()
-            .min_by_key(|(_, id)| (prereqs(id, &emitted), (*id).clone()))
-            .unwrap();
-        let id = remaining.remove(i);
-        emitted.insert(id.clone());
-        out.push(id);
+    }
+    // The remaining targets by (pending, id, position): the first is the next one.
+    let mut queue: BTreeSet<(usize, &str, usize)> = targets
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (pending[id.as_str()], id.as_str(), i))
+        .collect();
+    let mut emitted: BTreeSet<&str> = BTreeSet::new();
+    let mut out = Vec::with_capacity(targets.len());
+    while let Some((_, id, _)) = queue.pop_first() {
+        out.push(id.to_string());
+        if !emitted.insert(id) {
+            continue;
+        }
+        for &held in waiting.get(id).map(Vec::as_slice).unwrap_or_default() {
+            let n = pending[held];
+            let positions: Vec<usize> = queue
+                .range((n, held, 0)..=(n, held, usize::MAX))
+                .map(|k| k.2)
+                .collect();
+            for i in positions {
+                queue.remove(&(n, held, i));
+                queue.insert((n - 1, held, i));
+            }
+            *pending.get_mut(held).unwrap() = n - 1;
+        }
     }
     out
 }
@@ -6303,6 +6320,129 @@ mod tests {
         assert!(of("ent:svc").contains(&"ent:svc-part".to_string()));
         assert_eq!(of("ent:sys"), vec!["ent:sys".to_string()]);
         assert_eq!(of("ent:other"), vec!["ent:other".to_string()]);
+    }
+
+    // The leaf-first order is the one the per-step minimum over pending prerequisites
+    // gives: ties by id, a cycle broken at the fewest pending, a duplicated target
+    // emitted twice, an edge or child outside the targets ignored.
+    // Mirrors docs/consumers/gen.md#order-from-relationships.
+    #[test]
+    fn generation_order_matches_the_stepwise_minimum() {
+        let mut s = Store::default();
+        for (id, parent) in [
+            ("ent:a", None),
+            ("ent:b", Some("ent:a")),
+            ("ent:c", Some("ent:a")),
+            ("ent:d", Some("ent:c")),
+            ("ent:e", None),
+            ("ent:f", Some("ent:outside")),
+            ("ent:g", Some("ent:g")),
+        ] {
+            s.graph.entities.insert(
+                id.into(),
+                Entity {
+                    name: id.into(),
+                    parent: parent.map(String::from),
+                    ..Default::default()
+                },
+            );
+        }
+        let edge = |a: &str, b: &str| Contribution {
+            a: a.into(),
+            b: b.into(),
+            r#type: "dependency".into(),
+            cardinality: None,
+            requirements: vec![],
+        };
+        for (key, contributions) in [
+            (
+                "rel:a~e",
+                vec![edge("ent:e", "ent:a"), edge("ent:a", "ent:e")],
+            ),
+            (
+                "rel:b~d",
+                vec![edge("ent:b", "ent:d"), edge("ent:b", "ent:d")],
+            ),
+            (
+                "rel:d~f",
+                vec![edge("ent:d", "ent:f"), edge("ent:f", "ent:x")],
+            ),
+            ("rel:g", vec![edge("ent:g", "ent:g")]),
+        ] {
+            s.graph.relationships.insert(
+                key.into(),
+                Relationship {
+                    members: vec![],
+                    contributions,
+                },
+            );
+        }
+        let stepwise = |targets: &[String]| -> Vec<String> {
+            let set: std::collections::BTreeSet<&str> =
+                targets.iter().map(|t| t.as_str()).collect();
+            let prereqs = |id: &str, emitted: &std::collections::BTreeSet<String>| {
+                let mut n = 0;
+                for rel in s.graph.relationships.values() {
+                    for c in &rel.contributions {
+                        if c.a == id
+                            && c.b != id
+                            && set.contains(c.b.as_str())
+                            && !emitted.contains(&c.b)
+                        {
+                            n += 1;
+                        }
+                    }
+                }
+                for (cid, e) in &s.graph.entities {
+                    if e.parent.as_deref() == Some(id)
+                        && set.contains(cid.as_str())
+                        && !emitted.contains(cid)
+                    {
+                        n += 1;
+                    }
+                }
+                n
+            };
+            let mut remaining = targets.to_vec();
+            let mut emitted = std::collections::BTreeSet::new();
+            let mut out = Vec::new();
+            while !remaining.is_empty() {
+                let (i, _) = remaining
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, id)| (prereqs(id, &emitted), (*id).clone()))
+                    .unwrap();
+                let id = remaining.remove(i);
+                emitted.insert(id.clone());
+                out.push(id);
+            }
+            out
+        };
+        let all: Vec<String> = [
+            "ent:g", "ent:f", "ent:e", "ent:d", "ent:c", "ent:b", "ent:a",
+        ]
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+        for targets in [
+            all.clone(),
+            vec!["ent:a".into(), "ent:d".into(), "ent:b".into()],
+            vec![
+                "ent:c".into(),
+                "ent:c".into(),
+                "ent:a".into(),
+                "ent:d".into(),
+            ],
+            vec!["ent:e".into(), "ent:a".into()],
+            vec![],
+        ] {
+            assert_eq!(
+                generation_order(&s, &targets),
+                stepwise(&targets),
+                "{:?}",
+                targets
+            );
+        }
     }
 
     // The fact hash covers everything the ledger documents: stereotype, attributes,

@@ -3549,6 +3549,31 @@ pub(crate) mod tests {
         }
     }
 
+    // A pending flip ruling holds its pair blocked on a human: the verdict converges
+    // with the pair in the blocked count. Mirrors docs/compiler/compilation.md#convergence.
+    #[test]
+    fn a_pending_flip_ruling_rides_as_blocked_in_the_verdict() {
+        let mut s = settled_store();
+        let before = derive(&s).verdict();
+        assert!(before.converged(), "{:?}", before);
+        let flip = Goal {
+            id: "g:review-entity:ent:customer".into(),
+            kind: "review-entity".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "ent:customer".into(),
+            unit: "entity".into(),
+            change: json!({"unstable": "customer", "subject": "ent:customer"}),
+            cause: Some(crate::model::Cause { generation: 2, mutation: 0, via: "flip-detection".into() }),
+            ..Default::default()
+        };
+        s.status.parked.push(flip.into());
+        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        let v = derive(&s).verdict();
+        assert!(v.converged(), "{:?}", v);
+        assert_eq!(v.blocked, before.blocked + 1, "{:?}", v);
+    }
+
     // A goal parked by flip detection stays parked when it derives again: its parked
     // change names the flip, never the goal's own records, so a change comparison
     // would drop it at once. Mirrors docs/compiler/reconciler.md#flip-detection.

@@ -1141,8 +1141,10 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             format!("{} is a decompiled draft nobody has ratified; review it by editing it, even a one-line change clears this", doc),
         ));
     }
-    // Goals parked when a budget ran out.
-    for p in &store.status.parked {
+    // Goals parked when a budget ran out. A pair parked by flip detection waits on
+    // its unstable-derivation ruling, which is its finding already.
+    // Mirrors docs/compiler/compilation.md#checks.
+    for p in store.status.parked.iter().filter(|p| crate::board::flip_subject(&p.goal).is_none()) {
         let why = p
             .reason
             .as_deref()
@@ -3049,11 +3051,10 @@ pub fn finalize(
     let control = Control::load(proj, &proj.out);
     let board = Board::derive(s, proj, &control);
     absorb_derivation(s, &board);
-    let mut verdict = board.verdict();
-    if verdict.converged() && !flip_pending(s) {
-        verdict.state = "converged".into();
-    }
-    s.status.verdict = verdict;
+    // A pending flip ruling holds its pair `blocked` on a human, so it rides in the
+    // blocked count and never keeps the build from converging.
+    // Mirrors docs/compiler/compilation.md#convergence.
+    s.status.verdict = board.verdict();
     for (k, line) in &costs.by_kind {
         let c = s.status.costs.by_kind.entry(k.clone()).or_default();
         c.sessions += line.sessions;
@@ -3136,14 +3137,6 @@ pub fn finalize(
         suspend_reason: None,
         retired_tasks: Vec::new(),
     }
-}
-
-// An unstable-derivation ruling still owed keeps the pair parked.
-fn flip_pending(s: &Store) -> bool {
-    s.graph
-        .diagnostics
-        .values()
-        .any(|d| d.lifecycle == "open" && d.rule == "unstable-derivation" && d.answer.is_none())
 }
 
 // ---- ripple: the causality DAG over the journal ----
@@ -3825,6 +3818,29 @@ mod tests {
         assert_eq!(hits.len(), 1, "{:?}", hits);
         assert_eq!(hits[0].1, ["ent:cart-2"]);
         assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
+    }
+
+    // `incomplete-build` names the goals a budget parked; a pair parked by flip
+    // detection carries its unstable-derivation finding instead.
+    // Mirrors docs/compiler/compilation.md#checks.
+    #[test]
+    fn incomplete_build_skips_flip_parked_goals() {
+        let mut s = Store::default();
+        let goal = |id: &str, via: &str| Goal {
+            id: id.into(),
+            kind: "review-entity".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: id.trim_start_matches("g:review-entity:").into(),
+            cause: Some(Cause { generation: 4, mutation: 0, via: via.into() }),
+            ..Default::default()
+        };
+        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:cart", "entities"), "the build cap of 64 sessions ran out"));
+        s.status.parked.push(ParkedGoal::new(goal("g:review-entity:ent:order", "flip-detection"), "cross-class flip: `order`"));
+        let f = checks(&s, &Project::default());
+        let hits = rules_for(&f, "incomplete-build");
+        assert_eq!(hits.len(), 1, "{:?}", hits);
+        assert_eq!(hits[0].1, ["ent:cart"]);
     }
 
     // A decompiled draft nobody has edited since the machine wrote it is unratified;

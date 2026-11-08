@@ -53,9 +53,12 @@ async fn auth(State(st): State<SharedState>, req: Request, next: Next) -> Respon
 // The allow header stops a page from reading an answer, not from sending a request:
 // a browser sends a cross-origin POST without reading the reply. So a request other
 // than GET, HEAD, or OPTIONS must name an admitted origin, or come from the same
-// site or no browser at all. Token or not (docs/frontends/gui.md#serving).
+// site or no browser at all. The `/lsp` upgrade is a GET, but a browser opens a
+// WebSocket to any origin without CORS, so it passes the same check. Token or not
+// (docs/frontends/gui.md#serving).
 fn origin_admitted(req: &Request, gui_origin: &str) -> bool {
-    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+    let upgrade = req.uri().path() == "/lsp";
+    if !upgrade && matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return true;
     }
     let text = |name: &str| {
@@ -885,6 +888,35 @@ pub(super) mod tests {
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
         let r = send(st.clone(), post(None, None)).await;
         assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
+        std::fs::remove_dir_all(&st.root).ok();
+    }
+
+    // A browser opens a WebSocket to any origin without CORS: the `/lsp` upgrade
+    // needs an admitted origin, or no browser at all, with or without a token
+    // (docs/frontends/gui.md#serving).
+    #[tokio::test]
+    async fn the_lsp_upgrade_from_a_foreign_origin_is_refused_even_without_a_token() {
+        let upgrade = |origin: Option<&str>| {
+            let mut b = Request::builder().uri("/lsp");
+            if let Some(o) = origin {
+                b = b.header("origin", o);
+            }
+            b.body(Body::empty()).unwrap()
+        };
+        for token in [None, Some("secret")] {
+            let st = state(token, "https://jazyk.dev");
+            let r = send(st.clone(), upgrade(Some("https://evil.example"))).await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+            let r = send(st.clone(), upgrade(Some("null"))).await;
+            assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        }
+        // The page and a local tool reach the route (a plain GET is no upgrade, so
+        // the WebSocket extractor refuses it past the origin check).
+        let st = state(None, "https://jazyk.dev");
+        for origin in [Some("https://jazyk.dev"), None] {
+            let r = send(st.clone(), upgrade(origin)).await;
+            assert_ne!(r.status(), StatusCode::FORBIDDEN, "{:?}", origin);
+        }
         std::fs::remove_dir_all(&st.root).ok();
     }
 

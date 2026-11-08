@@ -3991,8 +3991,9 @@ fn compile_interruption(value: &Value) -> Option<String> {
     }
 }
 
+// A project tool's reply, pretty-printed like every other reply (docs/frontends/mcp.md#toolsets).
 fn result_value(value: Value) -> Value {
-    json!({"content":[{"type":"text","text":value.to_string()}],"isError":false})
+    text_result(value, false)
 }
 
 #[cfg(test)]
@@ -4665,6 +4666,13 @@ mod tests {
         assert!(tool_names(&workspace).iter().any(|name| name == "upsert_entity"));
         drop(workspace);
         crate::vfs::remove_dir_all(dir).unwrap();
+    }
+
+    // The project-level chat serving, the one `jazyk mcp chat` builds at the root.
+    fn workspace_chat(dir: &std::path::Path, flags: BridgeFlags) -> McpServer {
+        let project = crate::document_sets::Workspace::load(dir).unwrap().files_project();
+        let out = project.out.clone();
+        McpServer::with_bridge(project, out, vec!["chat".to_string()], false, flags)
     }
 
     fn chat_server(dir: &std::path::Path) -> McpServer {
@@ -5920,4 +5928,17 @@ mod tests {
         crate::vfs::remove_dir_all(dir).unwrap();
     }
 
+    // Every reply's text is the JSON object pretty-printed, project tools included.
+    // Mirrors docs/frontends/mcp.md#toolsets.
+    #[test]
+    fn project_tool_replies_are_pretty_printed() {
+        let dir = bare_dir("pretty-project-tools");
+        let serving = workspace_chat(&dir, BridgeFlags::default());
+        let reply = serving.handle("tools/call", &json!({"name":"list_document_sets","arguments":{}})).unwrap();
+        let text = reply["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("\n  \""), "{text}");
+        let parsed: Value = serde_json::from_str(text).unwrap();
+        assert_eq!(parsed["sets"][0]["id"], "ds_main");
+        crate::vfs::remove_dir_all(dir).ok();
+    }
 }

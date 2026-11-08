@@ -5,7 +5,12 @@ on:
     paths:
       - 'bootstrap/**'
       - 'runtime-worker/**'
+      # Files the engine embeds at compile time (include_str!).
       - 'docs/benchmark/cases/**'
+      - 'docs/benchmark/known-results.yaml'
+      - 'docs/compiler/goals/**'
+      - 'docs/compiler/skills/**'
+      - 'docs/compiler/document-sets.md'
       - '.github/workflows/ci.yml'
   workflow_dispatch:
     inputs:

@@ -146,6 +146,91 @@ fn scope_name(scope: &str) -> String {
     }
 }
 
+// The name a level shows for its target: the node's name, or the scope's name.
+// Docsgen's level pages and the viewer's level sections share it.
+pub fn level_name(store: &Store, target: &str) -> String {
+    match crate::board::scope_target(target) {
+        Some(scope) => scope_name(scope),
+        None => store
+            .graph
+            .entities
+            .get(target)
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| target.to_string()),
+    }
+}
+
+// The kind part of a view id: `view:usecase/checkout` → `usecase`.
+pub fn view_kind(view_id: &str) -> &str {
+    view_id
+        .strip_prefix("view:")
+        .and_then(|r| r.split('/').next())
+        .unwrap_or("view")
+}
+
+// The step count of a flow view: its member requirements.
+pub fn step_count(store: &Store, view_id: &str) -> usize {
+    store
+        .graph
+        .views
+        .get(view_id)
+        .map(|v| v.members.len())
+        .unwrap_or(0)
+}
+
+// One flow cluster: the views sharing a slug, the use case first, then the sequence,
+// then any other kind, each with its label; the title of the first the store holds;
+// the most steps of any.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FlowCluster {
+    pub title: String,
+    pub views: Vec<(String, String)>,
+    pub steps: usize,
+}
+
+// The flow clusters of a list of view ids, in first-seen order: a cluster is one
+// line on a card, never one per kind. Mirrors docs/consumers/docsgen.md#entity-cards.
+pub fn flow_clusters(store: &Store, view_ids: &[String]) -> Vec<FlowCluster> {
+    let mut clusters: Vec<(String, Vec<String>)> = Vec::new();
+    for vid in view_ids {
+        let slug = vid.rsplit('/').next().unwrap_or(vid).to_string();
+        match clusters.iter_mut().find(|(s, _)| *s == slug) {
+            Some((_, ids)) => ids.push(vid.clone()),
+            None => clusters.push((slug, vec![vid.clone()])),
+        }
+    }
+    clusters
+        .into_iter()
+        .map(|(_, mut ids)| {
+            ids.sort_by_key(|v| match view_kind(v) {
+                "usecase" => 0,
+                "sequence" => 1,
+                _ => 2,
+            });
+            let title = ids
+                .iter()
+                .find_map(|v| store.graph.views.get(v).map(|x| x.title.clone()))
+                .unwrap_or_default();
+            let steps = ids.iter().map(|v| step_count(store, v)).max().unwrap_or(0);
+            let views = ids
+                .into_iter()
+                .map(|v| {
+                    let label = match view_kind(&v) {
+                        "usecase" => "use case".to_string(),
+                        k => k.replace('-', " "),
+                    };
+                    (v, label)
+                })
+                .collect();
+            FlowCluster {
+                title,
+                views,
+                steps,
+            }
+        })
+        .collect()
+}
+
 // The chain from the scope root down to `id` itself, last. Redirects followed.
 pub fn breadcrumb(store: &Store, id: &str) -> Vec<Crumb> {
     let mut chain: Vec<Crumb> = Vec::new();
@@ -428,6 +513,49 @@ mod tests {
         let mut batch = RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         s
+    }
+
+    // The helpers docsgen and the viewer share: a level's name, and one cluster per
+    // flow slug, the use case first, its title from the first held view, the most
+    // steps of any.
+    #[test]
+    fn level_names_and_flow_clusters_are_shared() {
+        let mut s = shop();
+        assert_eq!(level_name(&s, "scope:public"), "Public");
+        assert_eq!(level_name(&s, "ent:order-service"), "Order Service");
+        assert_eq!(level_name(&s, "ent:gone"), "ent:gone");
+        let view = |kind: &str, title: &str, n: usize| crate::model::View {
+            kind: kind.into(),
+            title: title.into(),
+            members: (0..n).map(|i| format!("req:r{}", i)).collect(),
+            ..Default::default()
+        };
+        s.graph
+            .views
+            .insert("view:sequence/pay".into(), view("sequence", "Pay seq", 4));
+        s.graph
+            .views
+            .insert("view:usecase/pay".into(), view("usecase", "Pay", 2));
+        let ids = vec![
+            "view:sequence/pay".to_string(),
+            "view:activity-flow/ship".to_string(),
+            "view:usecase/pay".to_string(),
+        ];
+        let c = flow_clusters(&s, &ids);
+        assert_eq!(c.len(), 2);
+        assert_eq!(c[0].title, "Pay");
+        assert_eq!(c[0].steps, 4);
+        assert_eq!(
+            c[0].views,
+            vec![
+                ("view:usecase/pay".to_string(), "use case".to_string()),
+                ("view:sequence/pay".to_string(), "sequence".to_string()),
+            ]
+        );
+        assert_eq!(c[1].title, "");
+        assert_eq!(c[1].views[0].1, "activity flow");
+        assert_eq!(view_kind("view:usecase/pay"), "usecase");
+        assert_eq!(view_kind("pay"), "view");
     }
 
     // Mirrors docs/consumers/docsgen.md#entity-cards: one level in every direction.

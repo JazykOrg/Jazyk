@@ -527,6 +527,13 @@ fn structure(store: &Store, members: &[String], collapse: &BTreeSet<String>) -> 
             // A cardinality belongs to the pair the sentence counted: a lifted arrow
             // speaks for a hidden pair and drops it.
             // Mirrors docs/compiler/diagrams.md#lifting-and-collapse.
+            // A lone association folded onto the sorted key keeps its own direction,
+            // so the cardinality stays at its `b` end.
+            let (a, b) = if cs.len() == 1 && cs[0].a == b && cs[0].b == a {
+                (b, a)
+            } else {
+                (a, b)
+            };
             let cardinality = if cs.len() == 1 && cs[0].a == a && cs[0].b == b {
                 cs[0].cardinality.clone()
             } else {
@@ -2804,6 +2811,36 @@ mod tests {
             svg
         );
         assert!(!svg.contains("[["), "{}", svg);
+    }
+
+    // An association whose ids sort reversed keeps its cardinality at its `b` end
+    // (docs/compiler/diagrams.md#the-emitters).
+    #[test]
+    fn reversed_association_keeps_its_cardinality() {
+        let mut s = tree_store();
+        s.graph.requirements.insert(
+            "req:t-1".into(),
+            Requirement {
+                statement: "B holds many A".into(),
+                entities: vec!["ent:b".into(), "ent:a".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:b".into(),
+                    b: "ent:a".into(),
+                    rel_type: Some("association".into()),
+                    cardinality: Some("0..*".into()),
+                }],
+                source: Some(SourceRef { doc: "t.md".into(), section: "/t".into(), quote: "q".into() }),
+                ..Default::default()
+            },
+        );
+        let mut batch = RecordBatch::new(1);
+        recompute(&mut s, "g1", &mut batch);
+        let members = vec!["ent:a".to_string(), "ent:b".to_string()];
+        let st = structure(&s, &members, &BTreeSet::new());
+        assert_eq!(st.arrows.len(), 1);
+        let arrow = &st.arrows[0];
+        assert_eq!((arrow.a.as_str(), arrow.b.as_str()), ("ent:b", "ent:a"));
+        assert_eq!(arrow.cardinality.as_deref(), Some("0..*"));
     }
 
     #[test]

@@ -246,7 +246,11 @@ impl Refs {
                 push_ref(&mut refs.requirements_naming, store.resolve_id(&e.b), rid);
             }
             if let Some(t) = &r.transition {
-                push_ref(&mut refs.requirements_naming, store.resolve_id(&t.subject), rid);
+                push_ref(
+                    &mut refs.requirements_naming,
+                    store.resolve_id(&t.subject),
+                    rid,
+                );
             }
             for f in from_of(&r.provenance) {
                 push_ref(&mut refs.requirement_from, &f, rid);
@@ -541,7 +545,9 @@ pub fn doc_levels(store: &Store, proj: &Project) -> BTreeMap<String, usize> {
     let mut levels = crate::derive::doc_levels_from(store, &roots);
     let last = levels.values().copied().max().unwrap_or(0) + 1;
     for (doc, rec) in &store.docs {
-        if rec.sections.values().any(|s| s.kind == "blob") { levels.insert(doc.clone(), last); }
+        if rec.sections.values().any(|s| s.kind == "blob") {
+            levels.insert(doc.clone(), last);
+        }
     }
     levels
 }
@@ -630,7 +636,12 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
             (None, None) => None,
             _ => Some(false),
         };
-        let bound = |g: &Goal| (g.change["limits"][0]["soft"].clone(), g.change["limits"][0]["hard"].clone());
+        let bound = |g: &Goal| {
+            (
+                g.change["limits"][0]["soft"].clone(),
+                g.change["limits"][0]["hard"].clone(),
+            )
+        };
         let caps = within(
             failed.change["limits"][0]["count"].as_u64(),
             derived.change["limits"][0]["count"].as_u64(),
@@ -639,8 +650,11 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
         // The fan-out variant: the coupling candidates move with every requirement
         // on the level, so only the child count and the limits in force (a bump)
         // reopen it. A level declared flat stays failed until it changes.
-        let fan_out = within(failed.change["fan_out"].as_u64(), derived.change["fan_out"].as_u64())
-            .map(|w| w && failed.change["limit"] == derived.change["limit"]);
+        let fan_out = within(
+            failed.change["fan_out"].as_u64(),
+            derived.change["fan_out"].as_u64(),
+        )
+        .map(|w| w && failed.change["limit"] == derived.change["limit"]);
         match (caps, fan_out) {
             (Some(true), None | Some(true)) | (None, Some(true)) => return true,
             _ => {}
@@ -689,9 +703,16 @@ fn ruling_owed(store: &Store, subject: &str) -> bool {
 
 // `b<generation>-<n>`, the id a batch lease is filed under.
 fn is_batch_id(s: &str) -> bool {
-    let Some(rest) = s.strip_prefix('b') else { return false };
-    let Some((g, n)) = rest.split_once('-') else { return false };
-    !g.is_empty() && !n.is_empty() && g.bytes().all(|c| c.is_ascii_digit()) && n.bytes().all(|c| c.is_ascii_digit())
+    let Some(rest) = s.strip_prefix('b') else {
+        return false;
+    };
+    let Some((g, n)) = rest.split_once('-') else {
+        return false;
+    };
+    !g.is_empty()
+        && !n.is_empty()
+        && g.bytes().all(|c| c.is_ascii_digit())
+        && n.bytes().all(|c| c.is_ascii_digit())
 }
 
 // What a board depends on besides the files: the project's resolved settings.
@@ -699,9 +720,20 @@ fn is_batch_id(s: &str) -> bool {
 fn memo_key(proj: &Project, out: &Path) -> String {
     format!(
         "{:?}|{:?}|{:?}|{}|{:?}|{:?}|{:?}|{:?}|{:?}|{}|{}|{}|{:?}|{:?}",
-        proj.root, out, proj.set_id, proj.config_hash, proj.config_error, proj.docs_glob, proj.roots,
-        proj.gen_deliverable, proj.gen_code, proj.workflow.compile, proj.workflow.generate, proj.workflow.worker,
-        proj.explicit_files, proj.set_docs,
+        proj.root,
+        out,
+        proj.set_id,
+        proj.config_hash,
+        proj.config_error,
+        proj.docs_glob,
+        proj.roots,
+        proj.gen_deliverable,
+        proj.gen_code,
+        proj.workflow.compile,
+        proj.workflow.generate,
+        proj.workflow.worker,
+        proj.explicit_files,
+        proj.set_docs,
     )
 }
 
@@ -821,7 +853,10 @@ impl Board {
                     // whose row reads verified has nothing left to resume (the slides
                     // example carried two such goals across every run).
                     let ledger_kind = matches!(p.kind.as_str(), "bind" | "generate" | "verify");
-                    if target_exists(store, &p.target) && !goals::blocked_on_human(&p.kind) && !ledger_kind {
+                    if target_exists(store, &p.target)
+                        && !goals::blocked_on_human(&p.kind)
+                        && !ledger_kind
+                    {
                         let mut g = p.clone();
                         g.state = parked_state(p);
                         goals.push(g);
@@ -909,7 +944,10 @@ impl Board {
         // are indexed by subject once; a goal's list keeps the records' own order.
         let mut by_subject: BTreeMap<&str, Vec<(usize, &ChangeRecord)>> = BTreeMap::new();
         for (i, c) in store.status.changes.iter().enumerate() {
-            by_subject.entry(c.subject.as_str()).or_default().push((i, c));
+            by_subject
+                .entry(c.subject.as_str())
+                .or_default()
+                .push((i, c));
         }
         let mut records: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for g in &goals {
@@ -926,7 +964,10 @@ impl Board {
                 .collect();
             hits.sort_unstable();
             hits.dedup();
-            records.insert(g.id.clone(), hits.into_iter().map(|(_, id)| id.to_string()).collect());
+            records.insert(
+                g.id.clone(),
+                hits.into_iter().map(|(_, id)| id.to_string()).collect(),
+            );
         }
         let standing: BTreeSet<&String> = records.values().flatten().collect();
         let lapsed: Vec<String> = store
@@ -1055,10 +1096,16 @@ impl Board {
             alignment_pending,
             tier_open,
             doc_levels: doc_levels(store, proj),
-            blob_inputs: store.docs.iter().filter_map(|(doc, rec)| {
-                rec.sections.values().find(|s| s.kind == "blob")
-                    .map(|s| (doc.clone(), crate::input::referring_documents(s)))
-            }).collect(),
+            blob_inputs: store
+                .docs
+                .iter()
+                .filter_map(|(doc, rec)| {
+                    rec.sections
+                        .values()
+                        .find(|s| s.kind == "blob")
+                        .map(|s| (doc.clone(), crate::input::referring_documents(s)))
+                })
+                .collect(),
             tier1_open_docs,
             bind_open_by_entity,
             cone_blockers,
@@ -1129,11 +1176,7 @@ impl Board {
                 );
             }
             board.claimed = claimed;
-            board.held_batches = leases
-                .keys()
-                .filter(|k| is_batch_id(k))
-                .cloned()
-                .collect();
+            board.held_batches = leases.keys().filter(|k| is_batch_id(k)).cloned().collect();
         }
         board.batches = board.form_batches(store, proj);
         board
@@ -1156,7 +1199,12 @@ impl Board {
             }
             let key = memo_key(proj, out);
             let now = crate::vfs::memory_generation();
-            if let Some(board) = LAST.with(|l| l.borrow().get(&key).filter(|(g, _)| *g == now).map(|(_, b)| b.clone())) {
+            if let Some(board) = LAST.with(|l| {
+                l.borrow()
+                    .get(&key)
+                    .filter(|(g, _)| *g == now)
+                    .map(|(_, b)| b.clone())
+            }) {
                 return board;
             }
             let board = Self::compute_uncached(proj, out);
@@ -1471,11 +1519,7 @@ impl Board {
             self.goal(id).is_some_and(|g| {
                 matches!(
                     g.kind.as_str(),
-                    "place-anchors"
-                        | "reconcile-section"
-                        | "bind"
-                        | "generate"
-                        | "verify"
+                    "place-anchors" | "reconcile-section" | "bind" | "generate" | "verify"
                 )
             })
         };
@@ -1573,7 +1617,11 @@ impl Board {
                                 .map(|r| 260 + r.statement.len() + 90 * r.entities.len())
                                 .unwrap_or(400)
                         };
-                        700 + sides.iter().filter(|x| !charged.contains(*x)).map(|x| side(x)).sum::<usize>()
+                        700 + sides
+                            .iter()
+                            .filter(|x| !charged.contains(*x))
+                            .map(|x| side(x))
+                            .sum::<usize>()
                     };
                     let is_section = g.kind == "reconcile-section";
                     let is_criteria = g.kind == "derive-criteria";
@@ -1792,7 +1840,11 @@ impl Board {
             v["parkedReason"] = json!(r);
         }
         if let Some(w) = self.claimed.get(&g.id) {
-            v["claimedBy"] = json!(if self.own.contains(&g.id) { "you" } else { w.as_str() });
+            v["claimedBy"] = json!(if self.own.contains(&g.id) {
+                "you"
+            } else {
+                w.as_str()
+            });
         }
         if let Some(b) = self.batches.iter().find(|b| b.goals.contains(&g.id)) {
             v["batch"] = json!(b.id);
@@ -1883,7 +1935,8 @@ impl Board {
             .into_iter()
             .map(|(reason, ids)| {
                 let v = if ids.len() > COMPACT_IDS {
-                    let mut shown: Vec<Value> = ids[..COMPACT_IDS].iter().map(|i| json!(i)).collect();
+                    let mut shown: Vec<Value> =
+                        ids[..COMPACT_IDS].iter().map(|i| json!(i)).collect();
                     shown.push(json!(format!("and {} more", ids.len() - COMPACT_IDS)));
                     json!(shown)
                 } else {
@@ -1895,7 +1948,10 @@ impl Board {
         full["notReady"] = json!({"byKind": by_kind, "byReason": waiting});
         full["countsNote"] = json!("open, ready, parked, and failed count mandatory goals; optional counts the rest; by_class and by_kind include both; blocked are the goals waiting on a release or a human answer, gated the subset a release opens");
         full["note"] = json!(match full.get("note").and_then(Value::as_str) {
-            Some(n) => format!("{}; goals {{full: true}} lists every goal with its hints", n),
+            Some(n) => format!(
+                "{}; goals {{full: true}} lists every goal with its hints",
+                n
+            ),
             None => "compact board; goals {full: true} lists every goal with its hints".to_string(),
         });
         full
@@ -1925,7 +1981,10 @@ impl Board {
                     self.batches.len(),
                     b.id
                 ));
-                v["next"] = json!(format!("optional: begin_goals claims {} or stop here", b.id));
+                v["next"] = json!(format!(
+                    "optional: begin_goals claims {} or stop here",
+                    b.id
+                ));
             } else {
                 v["note"] = json!("nothing to compile; the graph reflects the docs");
             }
@@ -2436,15 +2495,28 @@ pub(crate) mod tests {
             kind: "abstract-entity".into(),
             target: "ent:ines".into(),
             change: json!({"limits": [{"limit": "requirements-per-entity", "count": count, "soft": 50, "hard": 80, "level": "hard"}]}),
-            cause: Some(crate::model::Cause { generation, mutation: 0, via: "limits".into() }),
+            cause: Some(crate::model::Cause {
+                generation,
+                mutation: 0,
+                via: "limits".into(),
+            }),
             ..Default::default()
         };
         let failed = mk(82, 60);
         assert!(failure_stands(&failed, &mk(82, 61)));
         assert!(failure_stands(&failed, &mk(95, 70)));
         assert!(!failure_stands(&failed, &mk(99, 70)));
-        let other = Goal { kind: "review-entity".into(), ..mk(82, 60) };
-        assert!(!failure_stands(&other, &Goal { kind: "review-entity".into(), ..mk(83, 61) }));
+        let other = Goal {
+            kind: "review-entity".into(),
+            ..mk(82, 60)
+        };
+        assert!(!failure_stands(
+            &other,
+            &Goal {
+                kind: "review-entity".into(),
+                ..mk(83, 61)
+            }
+        ));
     }
 
     // A declined fan-out goal stands while its candidates move: only the child count
@@ -2457,14 +2529,24 @@ pub(crate) mod tests {
             kind: "abstract-entity".into(),
             target: "ent:shop".into(),
             change: json!({"fan_out": count, "limit": {"soft": soft, "hard": 15}, "candidates": candidates}),
-            cause: Some(crate::model::Cause { generation, mutation: 0, via: "limits".into() }),
+            cause: Some(crate::model::Cause {
+                generation,
+                mutation: 0,
+                via: "limits".into(),
+            }),
             ..Default::default()
         };
         let failed = mk(10, 9, json!([["ent:a", "ent:b"]]), 60);
-        assert!(failure_stands(&failed, &mk(10, 9, json!([["ent:a", "ent:c"]]), 70)));
+        assert!(failure_stands(
+            &failed,
+            &mk(10, 9, json!([["ent:a", "ent:c"]]), 70)
+        ));
         assert!(failure_stands(&failed, &mk(11, 9, json!([]), 71)));
         assert!(!failure_stands(&failed, &mk(12, 9, json!([]), 72)));
-        assert!(!failure_stands(&failed, &mk(10, 8, json!([["ent:a", "ent:b"]]), 73)));
+        assert!(!failure_stands(
+            &failed,
+            &mk(10, 8, json!([["ent:a", "ent:b"]]), 73)
+        ));
     }
     use super::*;
     use crate::store::{self, RecordBatch};
@@ -2674,14 +2756,23 @@ pub(crate) mod tests {
         assert_eq!(a.records_of(&ga.id), b.records_of(&gb.id));
         assert_eq!(a.records_of(&ga.id).len(), 1);
         // A parked entry with the same change keeps the goal parked and first in line.
-        s.status.parked.push(ParkedGoal::new(ga.clone(), "left open after its retry in session b7-1"));
+        s.status.parked.push(ParkedGoal::new(
+            ga.clone(),
+            "left open after its retry in session b7-1",
+        ));
         let c = derive(&s);
         assert_eq!(
             c.parked_reasons.get(&ga.id).map(String::as_str),
             Some("left open after its retry in session b7-1")
         );
-        assert!(c.explain(&s, &ga.id).unwrap().contains("parked: left open after its retry"));
-        assert_eq!(c.goal_json(c.goal(&ga.id).unwrap())["parkedReason"], "left open after its retry in session b7-1");
+        assert!(c
+            .explain(&s, &ga.id)
+            .unwrap()
+            .contains("parked: left open after its retry"));
+        assert_eq!(
+            c.goal_json(c.goal(&ga.id).unwrap())["parkedReason"],
+            "left open after its retry in session b7-1"
+        );
         assert_eq!(c.goal(&ga.id).unwrap().state, GoalState::Parked);
         assert!(c.dropped_parked.is_empty());
         assert_eq!(c.counts().parked, 1);
@@ -2855,7 +2946,12 @@ pub(crate) mod tests {
         let scope = format!("{}public", SCOPE_TARGET_PREFIX);
         let lv = crate::derive::level_view_id(&s, &scope).expect("the top level has a view");
         if !s.graph.views.contains_key(&lv) {
-            let kind = lv.trim_start_matches("view:").split('/').next().unwrap().to_string();
+            let kind = lv
+                .trim_start_matches("view:")
+                .split('/')
+                .next()
+                .unwrap()
+                .to_string();
             s.graph.views.insert(
                 lv.clone(),
                 View {
@@ -2893,7 +2989,10 @@ pub(crate) mod tests {
             "{}",
             reason
         );
-        let theirs = b.readiness[&fan_out].reason().unwrap_or_default().to_string();
+        let theirs = b.readiness[&fan_out]
+            .reason()
+            .unwrap_or_default()
+            .to_string();
         assert!(!theirs.contains("split-view"), "{}", theirs);
         // The fan-out resolved (its record cleared): the split falls back to the cone.
         s.status
@@ -2937,7 +3036,12 @@ pub(crate) mod tests {
             section: "/t".into(),
             quote: q.into(),
         };
-        for (id, name) in [("ent:x", "X"), ("ent:y", "Y"), ("ent:p", "P"), ("ent:q", "Q")] {
+        for (id, name) in [
+            ("ent:x", "X"),
+            ("ent:y", "Y"),
+            ("ent:p", "P"),
+            ("ent:q", "Q"),
+        ] {
             s.graph.entities.insert(
                 id.into(),
                 Entity {
@@ -2955,19 +3059,35 @@ pub(crate) mod tests {
         };
         s.graph.requirements.insert(
             "req:t-1".into(),
-            req("The X serves the Y nightly.", &["ent:x", "ent:y"], "The X serves the Y nightly."),
+            req(
+                "The X serves the Y nightly.",
+                &["ent:x", "ent:y"],
+                "The X serves the Y nightly.",
+            ),
         );
         s.graph.requirements.insert(
             "req:t-2".into(),
-            req("The X also names the Y nightly.", &["ent:x", "ent:y"], "The X also names the Y nightly."),
+            req(
+                "The X also names the Y nightly.",
+                &["ent:x", "ent:y"],
+                "The X also names the Y nightly.",
+            ),
         );
         s.graph.requirements.insert(
             "req:t-3".into(),
-            req("The P serves the Q nightly.", &["ent:p", "ent:q"], "The P serves the Q nightly."),
+            req(
+                "The P serves the Q nightly.",
+                &["ent:p", "ent:q"],
+                "The P serves the Q nightly.",
+            ),
         );
         s.graph.requirements.insert(
             "req:t-4".into(),
-            req("The P also names the Q nightly.", &["ent:p", "ent:q"], "The P also names the Q nightly."),
+            req(
+                "The P also names the Q nightly.",
+                &["ent:p", "ent:q"],
+                "The P also names the Q nightly.",
+            ),
         );
         s.status.generation = 5;
         for rid in ["req:t-1", "req:t-3"] {
@@ -2986,7 +3106,12 @@ pub(crate) mod tests {
             .iter()
             .filter(|g| g.kind == "rejudge-pair")
             .collect();
-        assert_eq!(pairs.len(), 2, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        assert_eq!(
+            pairs.len(),
+            2,
+            "{:?}",
+            pairs.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         for g in &pairs {
             assert!(b.is_ready(&g.id), "{:?}", b.readiness.get(&g.id));
         }
@@ -3004,7 +3129,13 @@ pub(crate) mod tests {
         let mut s = Store::default();
         for i in 0..6 {
             let eid = format!("ent:e{}", i);
-            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.entities.insert(
+                eid.clone(),
+                Entity {
+                    name: format!("E{}", i),
+                    ..Default::default()
+                },
+            );
             s.graph.requirements.insert(
                 format!("req:r-{}", i),
                 Requirement {
@@ -3020,17 +3151,41 @@ pub(crate) mod tests {
             ..Default::default()
         };
         let b = Board::derive(&s, &proj, &control_auto());
-        let criteria: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "derive-criteria").collect();
-        assert_eq!(criteria.len(), 6, "{:?}", b.goals.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let criteria: Vec<&Goal> = b
+            .goals
+            .iter()
+            .filter(|g| g.kind == "derive-criteria")
+            .collect();
+        assert_eq!(
+            criteria.len(),
+            6,
+            "{:?}",
+            b.goals.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         let per_batch: Vec<usize> = b
             .batches
             .iter()
-            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .map(|bt| {
+                bt.goals
+                    .iter()
+                    .filter(|id| id.starts_with("g:derive-criteria:"))
+                    .count()
+            })
             .filter(|n| *n > 0)
             .collect();
         assert_eq!(per_batch.iter().sum::<usize>(), 6, "{:?}", b.batches);
-        assert!(per_batch.iter().all(|n| *n <= limits::CRITERIA_GOALS_PER_BATCH), "{:?}", per_batch);
-        assert!(per_batch.iter().any(|n| *n > 1), "criteria goals never shared a batch: {:?}", per_batch);
+        assert!(
+            per_batch
+                .iter()
+                .all(|n| *n <= limits::CRITERIA_GOALS_PER_BATCH),
+            "{:?}",
+            per_batch
+        );
+        assert!(
+            per_batch.iter().any(|n| *n > 1),
+            "criteria goals never shared a batch: {:?}",
+            per_batch
+        );
     }
 
     // A pair batch charges each requirement once: one long statement paired with six
@@ -3039,29 +3194,70 @@ pub(crate) mod tests {
     #[test]
     fn a_shared_side_is_charged_once_per_pair_batch() {
         let mut s = Store::default();
-        let pad = " It holds under the nightly settlement rules for gold keys and silver locks.".repeat(6);
-        s.graph.entities.insert("ent:x".into(), Entity { name: "X".into(), ..Default::default() });
+        let pad = " It holds under the nightly settlement rules for gold keys and silver locks."
+            .repeat(6);
+        s.graph.entities.insert(
+            "ent:x".into(),
+            Entity {
+                name: "X".into(),
+                ..Default::default()
+            },
+        );
         let req = |statement: String| Requirement {
             statement,
             entities: vec!["ent:x".into()],
             ..Default::default()
         };
         // Each pair shares two words no other statement carries, so no filter drops it.
-        let words = [("amber", "basil"), ("cedar", "dahlia"), ("elder", "fennel"), ("ginger", "hazel"), ("iris", "juniper"), ("kelp", "lotus")];
+        let words = [
+            ("amber", "basil"),
+            ("cedar", "dahlia"),
+            ("elder", "fennel"),
+            ("ginger", "hazel"),
+            ("iris", "juniper"),
+            ("kelp", "lotus"),
+        ];
         let hub: Vec<String> = words.iter().map(|(a, b)| format!("{} {}", a, b)).collect();
-        s.graph.requirements.insert("req:t-0".into(), req(format!("The ledger weighs {}.{}", hub.join(", "), pad)));
+        s.graph.requirements.insert(
+            "req:t-0".into(),
+            req(format!("The ledger weighs {}.{}", hub.join(", "), pad)),
+        );
         for (i, (a, b)) in words.iter().enumerate() {
-            s.graph.requirements.insert(format!("req:t-{}", i + 1), req(format!("The ledger weighs {} {} apart.{}", a, b, pad)));
+            s.graph.requirements.insert(
+                format!("req:t-{}", i + 1),
+                req(format!("The ledger weighs {} {} apart.{}", a, b, pad)),
+            );
         }
         s.status.generation = 5;
-        record(&mut s, 5, store::CHANGE_REQ_REVISED, "req:t-0", "fields", json!({}));
+        record(
+            &mut s,
+            5,
+            store::CHANGE_REQ_REVISED,
+            "req:t-0",
+            "fields",
+            json!({}),
+        );
         let b = derive(&s);
-        let pairs: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "rejudge-pair").collect();
-        assert_eq!(pairs.len(), 6, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let pairs: Vec<&Goal> = b
+            .goals
+            .iter()
+            .filter(|g| g.kind == "rejudge-pair")
+            .collect();
+        assert_eq!(
+            pairs.len(),
+            6,
+            "{:?}",
+            pairs.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         let with_pairs: Vec<usize> = b
             .batches
             .iter()
-            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:rejudge-pair:")).count())
+            .map(|bt| {
+                bt.goals
+                    .iter()
+                    .filter(|id| id.starts_with("g:rejudge-pair:"))
+                    .count()
+            })
             .filter(|n| *n > 0)
             .collect();
         // Per pair both sides would be about 2.9k each, six pairs about 17k, past the
@@ -3077,7 +3273,13 @@ pub(crate) mod tests {
         let mut s = Store::default();
         for i in 0..6 {
             let eid = format!("ent:e{}", i);
-            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.entities.insert(
+                eid.clone(),
+                Entity {
+                    name: format!("E{}", i),
+                    ..Default::default()
+                },
+            );
             s.graph.requirements.insert(
                 format!("req:r-{}", i),
                 Requirement {
@@ -3096,14 +3298,29 @@ pub(crate) mod tests {
         let per_batch: Vec<usize> = b
             .batches
             .iter()
-            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .map(|bt| {
+                bt.goals
+                    .iter()
+                    .filter(|id| id.starts_with("g:derive-criteria:"))
+                    .count()
+            })
             .filter(|n| *n > 0)
             .collect();
         assert_eq!(limits::CRITERIA_GOALS_PER_BATCH, 4);
         assert_eq!(per_batch, vec![4, 2], "{:?}", b.batches);
         // A batch of criteria goals holds nothing else.
-        for bt in b.batches.iter().filter(|bt| bt.goals.iter().any(|id| id.starts_with("g:derive-criteria:"))) {
-            assert!(bt.goals.iter().all(|id| id.starts_with("g:derive-criteria:")), "{:?}", bt);
+        for bt in b.batches.iter().filter(|bt| {
+            bt.goals
+                .iter()
+                .any(|id| id.starts_with("g:derive-criteria:"))
+        }) {
+            assert!(
+                bt.goals
+                    .iter()
+                    .all(|id| id.starts_with("g:derive-criteria:")),
+                "{:?}",
+                bt
+            );
         }
     }
 
@@ -3113,15 +3330,33 @@ pub(crate) mod tests {
     #[test]
     fn generate_batches_run_leaf_first() {
         let mut s = Store::default();
-        for (eid, rid, crit) in [("ent:a-order", "req:r-a", "crit:a-1"), ("ent:z-line", "req:r-z", "crit:z-1")] {
-            s.graph.entities.insert(eid.into(), Entity { name: eid.into(), ..Default::default() });
+        for (eid, rid, crit) in [
+            ("ent:a-order", "req:r-a", "crit:a-1"),
+            ("ent:z-line", "req:r-z", "crit:z-1"),
+        ] {
+            s.graph.entities.insert(
+                eid.into(),
+                Entity {
+                    name: eid.into(),
+                    ..Default::default()
+                },
+            );
             s.graph.requirements.insert(
                 rid.into(),
-                Requirement { statement: format!("The {} answers.", eid), entities: vec![eid.into()], ..Default::default() },
+                Requirement {
+                    statement: format!("The {} answers.", eid),
+                    entities: vec![eid.into()],
+                    ..Default::default()
+                },
             );
             s.graph.criteria.insert(
                 crit.into(),
-                Criterion { requirement: rid.into(), statement: format!("Asked once, the {} answers.", eid), kind: "positive".into(), ..Default::default() },
+                Criterion {
+                    requirement: rid.into(),
+                    statement: format!("Asked once, the {} answers.", eid),
+                    kind: "positive".into(),
+                    ..Default::default()
+                },
             );
         }
         s.graph.relationships.insert(
@@ -3137,8 +3372,15 @@ pub(crate) mod tests {
                 }],
             },
         );
-        let proj = Project { out: s.out.clone(), gen_deliverable: Some("product".into()), ..Default::default() };
-        let control = Control { generate: "auto".into(), ..control_auto() };
+        let proj = Project {
+            out: s.out.clone(),
+            gen_deliverable: Some("product".into()),
+            ..Default::default()
+        };
+        let control = Control {
+            generate: "auto".into(),
+            ..control_auto()
+        };
         let b = Board::derive(&s, &proj, &control);
         let pos = |id: &str| {
             b.batches
@@ -3146,7 +3388,11 @@ pub(crate) mod tests {
                 .position(|bt| bt.goals.iter().any(|g| g == id))
                 .unwrap_or_else(|| panic!("{} unbatched: {:?}", id, b.batches))
         };
-        assert!(pos("g:generate:ent:z-line") < pos("g:generate:ent:a-order"), "{:?}", b.batches);
+        assert!(
+            pos("g:generate:ent:z-line") < pos("g:generate:ent:a-order"),
+            "{:?}",
+            b.batches
+        );
     }
 
     // A ledger locality is a wall: the batch flushes before and after it, and its
@@ -3161,7 +3407,13 @@ pub(crate) mod tests {
         let mut s = Store::default();
         // One requirement already carrying a criterion owes development and a bind,
         // but no criteria. Development starts first within its component locality.
-        s.graph.entities.insert("ent:g".into(), Entity { name: "G".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:g".into(),
+            Entity {
+                name: "G".into(),
+                ..Default::default()
+            },
+        );
         s.graph.requirements.insert(
             "req:r-g".into(),
             Requirement {
@@ -3181,7 +3433,13 @@ pub(crate) mod tests {
         );
         for i in 0..6 {
             let eid = format!("ent:e{}", i);
-            s.graph.entities.insert(eid.clone(), Entity { name: format!("E{}", i), ..Default::default() });
+            s.graph.entities.insert(
+                eid.clone(),
+                Entity {
+                    name: format!("E{}", i),
+                    ..Default::default()
+                },
+            );
             s.graph.requirements.insert(
                 format!("req:r-{}", i),
                 Requirement {
@@ -3196,23 +3454,56 @@ pub(crate) mod tests {
             gen_deliverable: Some("product".into()),
             ..Default::default()
         };
-        let control = Control { generate: "auto".into(), ..control_auto() };
+        let control = Control {
+            generate: "auto".into(),
+            ..control_auto()
+        };
         let b = Board::derive(&s, &proj, &control);
-        assert!(b.is_ready("g:generate:ent:g"), "{:?}", b.readiness.get("g:generate:ent:g"));
-        assert!(b.is_ready("g:bind:req:r-g"), "{:?}", b.readiness.get("g:bind:req:r-g"));
+        assert!(
+            b.is_ready("g:generate:ent:g"),
+            "{:?}",
+            b.readiness.get("g:generate:ent:g")
+        );
+        assert!(
+            b.is_ready("g:bind:req:r-g"),
+            "{:?}",
+            b.readiness.get("g:bind:req:r-g")
+        );
         let bind = b
             .batches
             .iter()
             .find(|bt| bt.goals.iter().any(|id| id == "g:bind:req:r-g"))
             .unwrap_or_else(|| panic!("{:?}", b.batches));
-        assert_eq!(bind.goals, vec!["g:generate:ent:g".to_string(), "g:bind:req:r-g".to_string()], "{:?}", bind);
-        for batch in b.batches.iter().filter(|batch| batch.goals.iter().any(|id| id.starts_with("g:derive-criteria:"))) {
-            assert!(batch.goals.iter().all(|id| id.starts_with("g:derive-criteria:")), "{:?}", batch);
+        assert_eq!(
+            bind.goals,
+            vec!["g:generate:ent:g".to_string(), "g:bind:req:r-g".to_string()],
+            "{:?}",
+            bind
+        );
+        for batch in b.batches.iter().filter(|batch| {
+            batch
+                .goals
+                .iter()
+                .any(|id| id.starts_with("g:derive-criteria:"))
+        }) {
+            assert!(
+                batch
+                    .goals
+                    .iter()
+                    .all(|id| id.starts_with("g:derive-criteria:")),
+                "{:?}",
+                batch
+            );
         }
         let per_batch: Vec<usize> = b
             .batches
             .iter()
-            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:derive-criteria:")).count())
+            .map(|bt| {
+                bt.goals
+                    .iter()
+                    .filter(|id| id.starts_with("g:derive-criteria:"))
+                    .count()
+            })
             .filter(|n| *n > 0)
             .collect();
         assert_eq!(per_batch, vec![4, 2], "{:?}", b.batches);
@@ -3247,34 +3538,77 @@ pub(crate) mod tests {
             s
         };
         let mut s = Store::default();
-        s.graph.entities.insert("ent:x".into(), Entity { name: "X".into(), ..Default::default() });
+        s.graph.entities.insert(
+            "ent:x".into(),
+            Entity {
+                name: "X".into(),
+                ..Default::default()
+            },
+        );
         let req = |statement: String| Requirement {
             statement,
             entities: vec!["ent:x".into()],
             ..Default::default()
         };
         // Each pair shares two words no other statement carries, so no filter drops it.
-        let words = [("amber", "basil"), ("cedar", "dahlia"), ("elder", "fennel"), ("ginger", "hazel"), ("iris", "juniper"), ("kelp", "lotus")];
+        let words = [
+            ("amber", "basil"),
+            ("cedar", "dahlia"),
+            ("elder", "fennel"),
+            ("ginger", "hazel"),
+            ("iris", "juniper"),
+            ("kelp", "lotus"),
+        ];
         let hub: Vec<String> = words.iter().map(|(a, b)| format!("{} {}", a, b)).collect();
-        s.graph.requirements.insert("req:t-0".into(), req(fill(format!("The ledger weighs {}.", hub.join(", ")), hub_len)));
+        s.graph.requirements.insert(
+            "req:t-0".into(),
+            req(fill(
+                format!("The ledger weighs {}.", hub.join(", ")),
+                hub_len,
+            )),
+        );
         for (i, (a, b)) in words.iter().enumerate() {
             s.graph.requirements.insert(
                 format!("req:t-{}", i + 1),
-                req(fill(format!("The ledger weighs {} {} apart.", a, b), spoke_len)),
+                req(fill(
+                    format!("The ledger weighs {} {} apart.", a, b),
+                    spoke_len,
+                )),
             );
         }
         s.status.generation = 5;
-        record(&mut s, 5, store::CHANGE_REQ_REVISED, "req:t-0", "fields", json!({}));
+        record(
+            &mut s,
+            5,
+            store::CHANGE_REQ_REVISED,
+            "req:t-0",
+            "fields",
+            json!({}),
+        );
         let b = derive(&s);
-        let pairs: Vec<&Goal> = b.goals.iter().filter(|g| g.kind == "rejudge-pair").collect();
-        assert_eq!(pairs.len(), 6, "{:?}", pairs.iter().map(|g| &g.id).collect::<Vec<_>>());
+        let pairs: Vec<&Goal> = b
+            .goals
+            .iter()
+            .filter(|g| g.kind == "rejudge-pair")
+            .collect();
+        assert_eq!(
+            pairs.len(),
+            6,
+            "{:?}",
+            pairs.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         for g in &pairs {
             assert_eq!(estimate(&s, g), 700 + (budget - 6250) + 1800, "{}", g.id);
         }
         let with_pairs: Vec<usize> = b
             .batches
             .iter()
-            .map(|bt| bt.goals.iter().filter(|id| id.starts_with("g:rejudge-pair:")).count())
+            .map(|bt| {
+                bt.goals
+                    .iter()
+                    .filter(|id| id.starts_with("g:rejudge-pair:"))
+                    .count()
+            })
             .filter(|n| *n > 0)
             .collect();
         assert_eq!(with_pairs, vec![2, 2, 2], "{:?}", with_pairs);
@@ -3377,28 +3711,47 @@ pub(crate) mod tests {
     fn a_node_reached_upward_still_walks_downward_from_the_other_seed() {
         use crate::model::{Entity, Provenance, Requirement};
         let mut s = Store::default();
-        s.graph.entities.insert("ent:pricing".into(), Entity {
-            name: "Pricing".into(),
-            provenance: Some(Provenance::Derived { from: vec!["req:b".into()], reasoning: "split".into() }),
-            ..Default::default()
-        });
-        s.graph.entities.insert("ent:discount".into(), Entity {
-            name: "Discount".into(),
-            parent: Some("ent:pricing".into()),
-            ..Default::default()
-        });
-        s.graph.requirements.insert("req:a".into(), Requirement {
-            statement: "Pricing applies to every order.".into(),
-            entities: vec!["ent:pricing".into()],
-            ..Default::default()
-        });
-        s.graph.requirements.insert("req:b".into(), Requirement {
-            statement: "Orders are priced.".into(),
-            ..Default::default()
-        });
+        s.graph.entities.insert(
+            "ent:pricing".into(),
+            Entity {
+                name: "Pricing".into(),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["req:b".into()],
+                    reasoning: "split".into(),
+                }),
+                ..Default::default()
+            },
+        );
+        s.graph.entities.insert(
+            "ent:discount".into(),
+            Entity {
+                name: "Discount".into(),
+                parent: Some("ent:pricing".into()),
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "Pricing applies to every order.".into(),
+                entities: vec!["ent:pricing".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.requirements.insert(
+            "req:b".into(),
+            Requirement {
+                statement: "Orders are priced.".into(),
+                ..Default::default()
+            },
+        );
         let c = cone(&s, "req:a~req:b");
         assert!(c.nodes.contains("ent:pricing"));
-        assert!(c.nodes.contains("ent:discount"), "req:b's downward walk reaches the child: {:?}", c.nodes);
+        assert!(
+            c.nodes.contains("ent:discount"),
+            "req:b's downward walk reaches the child: {:?}",
+            c.nodes
+        );
     }
 
     #[test]
@@ -3559,7 +3912,13 @@ pub(crate) mod tests {
         // A parked ledger goal the ledger no longer derives (its row verified since)
         // has nothing to resume: it drops even though its target stands.
         let mut verified = settled_store();
-        let req = verified.graph.requirements.keys().next().cloned().expect("a requirement");
+        let req = verified
+            .graph
+            .requirements
+            .keys()
+            .next()
+            .cloned()
+            .expect("a requirement");
         let mut done = goal.clone();
         done.id = format!("g:verify:{}", req);
         done.kind = "verify".into();
@@ -3570,32 +3929,69 @@ pub(crate) mod tests {
         assert!(b.dropped_parked.contains(&done.id));
         // A failed ledger goal the ledger no longer derives drops the same way.
         verified.status.parked.clear();
-        verified.status.failed.push(crate::model::FailedGoal { goal: done.clone(), reason: "the test cannot run".into() });
+        verified.status.failed.push(crate::model::FailedGoal {
+            goal: done.clone(),
+            reason: "the test cannot run".into(),
+        });
         let b = derive(&verified);
         assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
-        assert!(b.dropped_failed.contains(&done.id), "{:?}", b.dropped_failed);
+        assert!(
+            b.dropped_failed.contains(&done.id),
+            "{:?}",
+            b.dropped_failed
+        );
         // An entry parked by flip detection resumes blocked on the ruling, whatever
         // state it was written with, so no batch takes it.
         let mut ruled = settled_store();
-        let ent = ruled.graph.entities.keys().next().cloned().expect("an entity");
+        let ent = ruled
+            .graph
+            .entities
+            .keys()
+            .next()
+            .cloned()
+            .expect("an entity");
         let mut flip = goal.clone();
         flip.id = format!("g:conform-instance:{}", ent);
         flip.kind = "conform-instance".into();
         flip.target = ent.clone();
         flip.change = json!({"reparent": "ent:row-of-shops", "between": ["ent:a", "ent:b"]});
-        flip.cause = Some(crate::model::Cause { generation: 95, mutation: 0, via: "flip-detection".into() });
+        flip.cause = Some(crate::model::Cause {
+            generation: 95,
+            mutation: 0,
+            via: "flip-detection".into(),
+        });
         ruled.status.parked.push(flip.clone().into());
-        ruled.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:row-of-shops"));
+        ruled.graph.diagnostics.insert(
+            "diag:unstable-derivation-1".into(),
+            unstable_ruling("ent:row-of-shops"),
+        );
         let b = derive(&ruled);
         let g = b.goal(&flip.id).expect("the flip entry stands");
-        assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")), "{:?}", g.state);
+        assert!(
+            matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")),
+            "{:?}",
+            g.state
+        );
         assert!(!b.is_ready(&flip.id));
         assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
         // Answering the ruling clears the entry.
-        ruled.graph.diagnostics.get_mut("diag:unstable-derivation-1").unwrap().answer =
-            Some(crate::model::DiagnosticAnswer { choice: Some(0), text: "keep".into(), status: "applied".into(), error: None });
+        ruled
+            .graph
+            .diagnostics
+            .get_mut("diag:unstable-derivation-1")
+            .unwrap()
+            .answer = Some(crate::model::DiagnosticAnswer {
+            choice: Some(0),
+            text: "keep".into(),
+            status: "applied".into(),
+            error: None,
+        });
         let b = derive(&ruled);
-        assert!(b.dropped_parked.contains(&flip.id), "{:?}", b.dropped_parked);
+        assert!(
+            b.dropped_parked.contains(&flip.id),
+            "{:?}",
+            b.dropped_parked
+        );
     }
 
     fn unstable_ruling(subject: &str) -> crate::model::Diagnostic {
@@ -3620,11 +4016,35 @@ pub(crate) mod tests {
     #[test]
     fn a_failed_place_anchors_goal_blocks_its_own_sections_only() {
         let mut s = settled_store();
-        record(&mut s, 10, store::CHANGE_ALIGNMENT_PENDING, "shop.md", "alignment", json!({"proposals": 1}));
-        record(&mut s, 10, store::CHANGE_SECTION_DIRTY, "shop.md#/shop/orders", "section", json!({"added": 1}));
-        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        record(
+            &mut s,
+            10,
+            store::CHANGE_ALIGNMENT_PENDING,
+            "shop.md",
+            "alignment",
+            json!({"proposals": 1}),
+        );
+        record(
+            &mut s,
+            10,
+            store::CHANGE_SECTION_DIRTY,
+            "shop.md#/shop/orders",
+            "section",
+            json!({"added": 1}),
+        );
+        record(
+            &mut s,
+            10,
+            store::CHANGE_ENTITY,
+            "ent:customer",
+            "entities",
+            json!({"requirement": "req:shop-1"}),
+        );
         let b = derive(&s);
-        assert!(!b.is_ready("g:review-entity:ent:customer"), "tier 0 and 1 run first");
+        assert!(
+            !b.is_ready("g:review-entity:ent:customer"),
+            "tier 0 and 1 run first"
+        );
         let anchors = Goal {
             id: "g:place-anchors:shop.md".into(),
             kind: "place-anchors".into(),
@@ -3635,11 +4055,25 @@ pub(crate) mod tests {
             change: json!({"proposals": 1}),
             ..Default::default()
         };
-        s.status.failed.push(crate::model::FailedGoal { goal: anchors, reason: "no candidate fits".into() });
+        s.status.failed.push(crate::model::FailedGoal {
+            goal: anchors,
+            reason: "no candidate fits".into(),
+        });
         let b = derive(&s);
-        assert!(matches!(b.goal("g:place-anchors:shop.md").map(|g| &g.state), Some(GoalState::Failed { .. })));
-        assert!(!b.is_ready("g:reconcile-section:shop.md#/shop/orders"), "{:?}", b.readiness.get("g:reconcile-section:shop.md#/shop/orders"));
-        assert!(b.is_ready("g:review-entity:ent:customer"), "{:?}", b.readiness.get("g:review-entity:ent:customer"));
+        assert!(matches!(
+            b.goal("g:place-anchors:shop.md").map(|g| &g.state),
+            Some(GoalState::Failed { .. })
+        ));
+        assert!(
+            !b.is_ready("g:reconcile-section:shop.md#/shop/orders"),
+            "{:?}",
+            b.readiness.get("g:reconcile-section:shop.md#/shop/orders")
+        );
+        assert!(
+            b.is_ready("g:review-entity:ent:customer"),
+            "{:?}",
+            b.readiness.get("g:review-entity:ent:customer")
+        );
         assert!(!b.verdict().converged());
     }
 
@@ -3648,12 +4082,37 @@ pub(crate) mod tests {
     #[test]
     fn withholding_a_parked_goal_keeps_its_batch_neighbors() {
         let mut s = settled_store();
-        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
-        record(&mut s, 10, store::CHANGE_ENTITY, "ent:order", "entities", json!({"requirement": "req:shop-2"}));
+        record(
+            &mut s,
+            10,
+            store::CHANGE_ENTITY,
+            "ent:customer",
+            "entities",
+            json!({"requirement": "req:shop-1"}),
+        );
+        record(
+            &mut s,
+            10,
+            store::CHANGE_ENTITY,
+            "ent:order",
+            "entities",
+            json!({"requirement": "req:shop-2"}),
+        );
         let mut b = derive(&s);
-        let (a, o) = ("g:review-entity:ent:customer".to_string(), "g:review-entity:ent:order".to_string());
-        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == a), "{:?}", b.batches);
-        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == o), "{:?}", b.batches);
+        let (a, o) = (
+            "g:review-entity:ent:customer".to_string(),
+            "g:review-entity:ent:order".to_string(),
+        );
+        assert!(
+            b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == a),
+            "{:?}",
+            b.batches
+        );
+        assert!(
+            b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == o),
+            "{:?}",
+            b.batches
+        );
         b.withhold(&BTreeSet::from([a.clone()]), &s, &project_for(&s));
         let batched: Vec<&String> = b.batches.iter().flat_map(|bt| &bt.goals).collect();
         assert!(!batched.contains(&&a), "{:?}", b.batches);
@@ -3676,11 +4135,18 @@ pub(crate) mod tests {
             target: "ent:customer".into(),
             unit: "entity".into(),
             change: json!({"unstable": "customer", "subject": "ent:customer"}),
-            cause: Some(crate::model::Cause { generation: 2, mutation: 0, via: "flip-detection".into() }),
+            cause: Some(crate::model::Cause {
+                generation: 2,
+                mutation: 0,
+                via: "flip-detection".into(),
+            }),
             ..Default::default()
         };
         s.status.parked.push(flip.into());
-        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        s.graph.diagnostics.insert(
+            "diag:unstable-derivation-1".into(),
+            unstable_ruling("ent:customer"),
+        );
         let v = derive(&s).verdict();
         assert!(v.converged(), "{:?}", v);
         assert_eq!(v.blocked, before.blocked + 1, "{:?}", v);
@@ -3692,20 +4158,41 @@ pub(crate) mod tests {
     #[test]
     fn a_flip_parked_goal_stays_parked_when_it_derives_again() {
         let mut s = settled_store();
-        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        record(
+            &mut s,
+            10,
+            store::CHANGE_ENTITY,
+            "ent:customer",
+            "entities",
+            json!({"requirement": "req:shop-1"}),
+        );
         let derived = derive(&s)
             .goal("g:review-entity:ent:customer")
             .cloned()
             .expect("the entity change derives a review");
         let mut flip = derived.clone();
         flip.change = json!({"unstable": "customer", "subject": "ent:customer"});
-        flip.cause = Some(crate::model::Cause { generation: 40, mutation: 0, via: "flip-detection".into() });
+        flip.cause = Some(crate::model::Cause {
+            generation: 40,
+            mutation: 0,
+            via: "flip-detection".into(),
+        });
         s.status.parked.push(flip.clone().into());
-        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        s.graph.diagnostics.insert(
+            "diag:unstable-derivation-1".into(),
+            unstable_ruling("ent:customer"),
+        );
         let b = derive(&s);
         let g = b.goal(&flip.id).expect("the flip entry stands");
-        assert_eq!(g.change, derived.change, "the goal keeps its derived change");
-        assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:customer")), "{:?}", g.state);
+        assert_eq!(
+            g.change, derived.change,
+            "the goal keeps its derived change"
+        );
+        assert!(
+            matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:customer")),
+            "{:?}",
+            g.state
+        );
         assert!(!b.dropped_parked.contains(&flip.id));
         assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
     }
@@ -3780,7 +4267,14 @@ pub(crate) mod tests {
             "section",
             json!({"added": 1}),
         );
-        record(&mut settled, 10, store::CHANGE_ENTITY, "ent:order", "entities", json!({}));
+        record(
+            &mut settled,
+            10,
+            store::CHANGE_ENTITY,
+            "ent:order",
+            "entities",
+            json!({}),
+        );
         let mut cones = 0;
         for s in [synthetic, settled] {
             let b = derive(&s);
@@ -3790,7 +4284,9 @@ pub(crate) mod tests {
                 assert!(std::ptr::eq(b.goal(&g.id).unwrap(), g));
                 assert_eq!(
                     b.open_kind_on(&g.kind, &g.target),
-                    b.open_goals().iter().any(|o| o.kind == g.kind && o.target == g.target)
+                    b.open_goals()
+                        .iter()
+                        .any(|o| o.kind == g.kind && o.target == g.target)
                 );
                 let kinds = goals::record_kinds(&g.kind);
                 let subjects: Vec<&str> = match goals::pair_members(&g.target) {
@@ -3801,7 +4297,9 @@ pub(crate) mod tests {
                     .status
                     .changes
                     .iter()
-                    .filter(|c| kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str()))
+                    .filter(|c| {
+                        kinds.contains(&c.kind.as_str()) && subjects.contains(&c.subject.as_str())
+                    })
                     .map(|c| c.id.clone())
                     .collect();
                 assert_eq!(b.records_of(&g.id), scanned, "{}", g.id);
@@ -3810,7 +4308,9 @@ pub(crate) mod tests {
                     let scanned: Vec<String> = b
                         .goals
                         .iter()
-                        .filter(|o| o.class == "compile" && is_open(o) && cone.holds_target(&o.target))
+                        .filter(|o| {
+                            o.class == "compile" && is_open(o) && cone.holds_target(&o.target)
+                        })
                         .map(|o| o.id.clone())
                         .collect();
                     assert_eq!(b.cone_blockers(&g.id), scanned, "{}", g.id);
@@ -3837,7 +4337,10 @@ pub(crate) mod tests {
         let derived = started.elapsed() - recomputed;
         let f = crate::reconcile::checks(&s, &project_for(&s));
         let checked = started.elapsed() - recomputed - derived;
-        assert!(b.goals.iter().any(|g| g.class == "gc"), "a GC goal walks a cone");
+        assert!(
+            b.goals.iter().any(|g| g.class == "gc"),
+            "a GC goal walks a cone"
+        );
         assert!(!f.is_empty());
         eprintln!(
             "large store: recompute {:?}, derive {:?} ({} goals, {} batches), checks {:?}",

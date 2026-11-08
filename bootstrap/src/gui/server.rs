@@ -448,17 +448,19 @@ pub fn router_on(st: SharedState, port: Option<u16>) -> Router {
         .route("/lsp", get(lsp_ws::ws))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
-        .layer(middleware::from_fn(move |req: Request, next: Next| async move {
-            let host = req
-                .headers()
-                .get(header::HOST)
-                .map(|v| v.to_str().unwrap_or("\u{0}"));
-            if host_admitted(host, port) {
-                next.run(req).await
-            } else {
-                (StatusCode::FORBIDDEN, "host not admitted").into_response()
-            }
-        }))
+        .layer(middleware::from_fn(
+            move |req: Request, next: Next| async move {
+                let host = req
+                    .headers()
+                    .get(header::HOST)
+                    .map(|v| v.to_str().unwrap_or("\u{0}"));
+                if host_admitted(host, port) {
+                    next.run(req).await
+                } else {
+                    (StatusCode::FORBIDDEN, "host not admitted").into_response()
+                }
+            },
+        ))
         .layer(SetResponseHeaderLayer::overriding(
             HeaderName::from_static("cross-origin-resource-policy"),
             HeaderValue::from_static("cross-origin"),
@@ -627,7 +629,9 @@ pub(super) mod tests {
         Arc::new(AppState {
             root,
             proj: std::sync::RwLock::new(proj),
-            llm: std::sync::RwLock::new(crate::llm::Llm { api: "chat_completions".into(), reasoning_summary: None,
+            llm: std::sync::RwLock::new(crate::llm::Llm {
+                api: "chat_completions".into(),
+                reasoning_summary: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: String::new(),
@@ -891,7 +895,11 @@ pub(super) mod tests {
         // Every file served as its bytes is sandboxed and typed exactly: an SVG with
         // a script opened in a tab runs nothing with the API's origin
         // (docs/frontends/gui.md#serving).
-        std::fs::write(st.root.join("dist/pic.svg"), "<svg><script>alert(1)</script></svg>").unwrap();
+        std::fs::write(
+            st.root.join("dist/pic.svg"),
+            "<svg><script>alert(1)</script></svg>",
+        )
+        .unwrap();
         for path in [
             "/api/project/raw?path=dist/pic.svg&token=secret",
             "/api/project/file?path=dist/pic.svg&token=secret",
@@ -900,16 +908,33 @@ pub(super) mod tests {
             let r = send(st.clone(), get_from(path, "https://raw.test")).await;
             assert_eq!(r.status(), StatusCode::OK, "{}", path);
             assert_eq!(hdr(&r, "content-type"), Some("image/svg+xml"), "{}", path);
-            assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"), "{}", path);
-            assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"), "{}", path);
+            assert_eq!(
+                hdr(&r, "content-security-policy"),
+                Some("sandbox"),
+                "{}",
+                path
+            );
+            assert_eq!(
+                hdr(&r, "x-content-type-options"),
+                Some("nosniff"),
+                "{}",
+                path
+            );
         }
-        let set = crate::document_sets::Workspace::load(&st.root).unwrap().sets[0].id.clone();
+        let set = crate::document_sets::Workspace::load(&st.root)
+            .unwrap()
+            .sets[0]
+            .id
+            .clone();
         let diagrams = st.root.join(".jazyk").join(&set).join("diagrams");
         std::fs::create_dir_all(&diagrams).unwrap();
         std::fs::write(diagrams.join("v.svg"), "<svg/>").unwrap();
         let r = send(
             st.clone(),
-            get_from("/api/out/file?path=diagrams/v.svg&token=secret", "https://raw.test"),
+            get_from(
+                "/api/out/file?path=diagrams/v.svg&token=secret",
+                "https://raw.test",
+            ),
         )
         .await;
         assert_eq!(r.status(), StatusCode::OK);
@@ -983,7 +1008,10 @@ pub(super) mod tests {
         assert!(!host_admitted(Some("127.0.0.1:4681"), Some(4680)));
         assert!(!host_admitted(Some("127.0.0.1"), Some(4680)));
         assert!(!host_admitted(Some("evil.example:4680"), Some(4680)));
-        assert!(!host_admitted(Some("127.0.0.1.evil.example:4680"), Some(4680)));
+        assert!(!host_admitted(
+            Some("127.0.0.1.evil.example:4680"),
+            Some(4680)
+        ));
         assert!(!host_admitted(Some("localhost@evil.example"), None));
         let st = state(None, "https://jazyk.dev");
         let get = |host: &str| {
@@ -994,11 +1022,20 @@ pub(super) mod tests {
                 .unwrap()
         };
         let app = |st: SharedState| router_on(st, Some(4680));
-        let r = app(st.clone()).oneshot(get("evil.example:4680")).await.unwrap();
+        let r = app(st.clone())
+            .oneshot(get("evil.example:4680"))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::FORBIDDEN);
-        let r = app(st.clone()).oneshot(get("127.0.0.1:4680")).await.unwrap();
+        let r = app(st.clone())
+            .oneshot(get("127.0.0.1:4680"))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
-        let r = app(st.clone()).oneshot(get("localhost:4680")).await.unwrap();
+        let r = app(st.clone())
+            .oneshot(get("localhost:4680"))
+            .await
+            .unwrap();
         assert_eq!(r.status(), StatusCode::OK);
         std::fs::remove_dir_all(&st.root).ok();
     }

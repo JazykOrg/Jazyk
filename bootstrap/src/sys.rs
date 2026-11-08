@@ -61,7 +61,12 @@ mod imp {
         cwd: &Path,
         timeout: Duration,
     ) -> std::io::Result<ShellOutput> {
-        if crate::vfs::is_scoped() { return Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "hosted workspaces run commands through delivery CI")); }
+        if crate::vfs::is_scoped() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "hosted workspaces run commands through delivery CI",
+            ));
+        }
         use std::io::Read;
         use std::process::{Command, Stdio};
         use std::sync::{Arc, Mutex};
@@ -174,7 +179,11 @@ mod imp {
     }
 
     pub fn process_id() -> u32 {
-        if crate::vfs::is_scoped() { 1 } else { std::process::id() }
+        if crate::vfs::is_scoped() {
+            1
+        } else {
+            std::process::id()
+        }
     }
 
     // Seconds since the epoch.
@@ -197,7 +206,7 @@ mod imp {
         if crate::vfs::is_scoped() {
             let started = std::time::Instant::now();
             while started.elapsed() < d && !crate::hosted::cancelled() {
-                std::thread::sleep((d-started.elapsed().min(d)).min(Duration::from_millis(100)));
+                std::thread::sleep((d - started.elapsed().min(d)).min(Duration::from_millis(100)));
             }
             return;
         }
@@ -296,7 +305,11 @@ pub use imp::*;
 
 /// Hosted requests never inherit owner or service environment configuration.
 pub fn env_var(key: &str) -> Result<String, std::env::VarError> {
-    if crate::vfs::is_scoped() { Err(std::env::VarError::NotPresent) } else { std::env::var(key) }
+    if crate::vfs::is_scoped() {
+        Err(std::env::VarError::NotPresent)
+    } else {
+        std::env::var(key)
+    }
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
@@ -335,16 +348,27 @@ mod tests {
         let started = std::time::Instant::now();
         let out = run_shell_within(&script, dir.path(), Duration::from_millis(300)).unwrap();
         assert!(out.timed_out);
-        assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            started.elapsed()
+        );
         std::thread::sleep(Duration::from_secs(3));
-        assert!(!marker.exists(), "a child of the script outlived the timeout");
+        assert!(
+            !marker.exists(),
+            "a child of the script outlived the timeout"
+        );
     }
 
     #[test]
     fn a_finished_command_reports_its_code_and_both_streams() {
         let cwd = std::env::temp_dir();
-        let out = run_shell_within("echo out; echo err 1>&2; exit 3", &cwd, Duration::from_secs(30))
-            .unwrap();
+        let out = run_shell_within(
+            "echo out; echo err 1>&2; exit 3",
+            &cwd,
+            Duration::from_secs(30),
+        )
+        .unwrap();
         assert!(!out.timed_out);
         assert_eq!(out.code, 3);
         assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "out");
@@ -361,7 +385,13 @@ mod tests {
         );
         let out = run_shell_within(&script, &cwd, Duration::from_secs(60)).unwrap();
         assert!(out.success);
-        assert!(out.stdout.len() <= SHELL_CAPTURE_BYTES + 64, "{}", out.stdout.len());
-        assert!(String::from_utf8_lossy(&out.stdout).trim_end().ends_with("last-line"));
+        assert!(
+            out.stdout.len() <= SHELL_CAPTURE_BYTES + 64,
+            "{}",
+            out.stdout.len()
+        );
+        assert!(String::from_utf8_lossy(&out.stdout)
+            .trim_end()
+            .ends_with("last-line"));
     }
 }

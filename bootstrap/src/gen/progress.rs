@@ -17,11 +17,19 @@ pub(crate) struct Progress<T> {
 // Source repair changes live authorization, not the identity of an admitted run.
 // This slot uses the existing protected command state and checkpoint format.
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
-pub(crate) async fn admitted_settings(kind: &str, out: &Path, arguments: Value, current: &super::GenSettings) -> Result<super::GenSettings, String> {
-    if !enabled() { return Ok(current.clone()); }
+pub(crate) async fn admitted_settings(
+    kind: &str,
+    out: &Path,
+    arguments: Value,
+    current: &super::GenSettings,
+) -> Result<super::GenSettings, String> {
+    if !enabled() {
+        return Ok(current.clone());
+    }
     let key = command_key(&format!("{kind}-admission"), out, &arguments);
     let admission = Progress::load(key, arguments, || current.clone())?;
-    if admission.data.deliverable != current.deliverable || admission.data.worker != current.worker {
+    if admission.data.deliverable != current.deliverable || admission.data.worker != current.worker
+    {
         return Err("checkpoint-incompatible: ledger execution directory or worker changed".into());
     }
     admission.save().await?;

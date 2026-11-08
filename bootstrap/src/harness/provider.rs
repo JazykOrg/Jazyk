@@ -69,8 +69,9 @@ impl Provider for ChannelProvider {
             },
         )
         .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
-        body["_jazykResponsesRequest"] = crate::model_api::companion(config, system, messages, tools)
-            .map_err(ProviderError::RequestFailed)?;
+        body["_jazykResponsesRequest"] =
+            crate::model_api::companion(config, system, messages, tools)
+                .map_err(ProviderError::RequestFailed)?;
         let (reply, response) = oneshot::channel();
         self.tx
             .send(HostAction::Model {
@@ -96,24 +97,24 @@ pub(crate) fn response_message(
     model_name: &str,
 ) -> Result<(Message, ProviderUsage), ProviderError> {
     if value["object"] == "response" {
-        let binding = value["_jazykResponseRoute"].as_str().unwrap_or_default().to_owned();
-        value = crate::model_api::completion(&value, &binding).map_err(ProviderError::RequestFailed)?;
+        let binding = value["_jazykResponseRoute"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        value =
+            crate::model_api::completion(&value, &binding).map_err(ProviderError::RequestFailed)?;
     }
     let (mut message, usage) = if let Some(native) = value.get("_jazykGdkResponse") {
-        let message: Message =
-            serde_json::from_value(native["message"].clone()).map_err(|e| {
-                ProviderError::RequestFailed(format!("Invalid native GDK response: {e}"))
-            })?;
-        let usage: ProviderUsage =
-            serde_json::from_value(native["usage"].clone()).map_err(|e| {
-                ProviderError::RequestFailed(format!("Invalid native GDK usage: {e}"))
-            })?;
+        let message: Message = serde_json::from_value(native["message"].clone()).map_err(|e| {
+            ProviderError::RequestFailed(format!("Invalid native GDK response: {e}"))
+        })?;
+        let usage: ProviderUsage = serde_json::from_value(native["usage"].clone())
+            .map_err(|e| ProviderError::RequestFailed(format!("Invalid native GDK usage: {e}")))?;
         (message, usage)
     } else {
         let message = openai::response_to_message(&value)
             .map_err(|e| ProviderError::RequestFailed(e.to_string()))?;
-        let mut usage =
-            ProviderUsage::new(model_name.to_owned(), openai::get_usage(&value));
+        let mut usage = ProviderUsage::new(model_name.to_owned(), openai::get_usage(&value));
         openai::record_response_metadata(&mut usage, &value);
         (message, usage)
     };
@@ -124,19 +125,20 @@ pub(crate) fn response_message(
     let mut ids = std::collections::HashSet::new();
     let mut original_ids = serde_json::Map::new();
     for content in &mut message.content {
-        if let goose_provider_types::conversation::message::MessageContent::ToolRequest(
-            request,
-        ) = content
+        if let goose_provider_types::conversation::message::MessageContent::ToolRequest(request) =
+            content
         {
             if let Err(error) = &mut request.tool_call {
                 if error.code == rmcp::model::ErrorCode::INVALID_PARAMS {
-                    let raw = value["choices"][0]["message"]["tool_calls"].as_array()
+                    let raw = value["choices"][0]["message"]["tool_calls"]
+                        .as_array()
                         .and_then(|calls| calls.iter().find(|call| call["id"] == request.id));
                     if let Some(raw) = raw {
                         if let Some(arguments) = raw["function"]["arguments"].as_str() {
                             if let Some(feedback) = super::tool_arguments::json_error_feedback(
                                 raw["function"]["name"].as_str().unwrap_or("unknown"),
-                                arguments, value["choices"][0]["finish_reason"].as_str(),
+                                arguments,
+                                value["choices"][0]["finish_reason"].as_str(),
                             ) {
                                 error.message = feedback.into();
                             }
@@ -145,7 +147,10 @@ pub(crate) fn response_message(
                 }
             }
             if !ids.insert(request.id.clone()) {
-                return Err(ProviderError::RequestFailed("Model returned a duplicate tool-call id in one response; no tools executed".into()));
+                return Err(ProviderError::RequestFailed(
+                    "Model returned a duplicate tool-call id in one response; no tools executed"
+                        .into(),
+                ));
             }
             let original = request.id.clone();
             request.id = format!("{}:{}", &scope[..16], request.id);
@@ -153,7 +158,11 @@ pub(crate) fn response_message(
         }
     }
     crate::model_api::retain_output(&mut message, &value, Value::Object(original_ids));
-    message.metadata.set_operation_note("jazyk.runtime", "inferenceId", serde_json::json!(attempt_id));
+    message.metadata.set_operation_note(
+        "jazyk.runtime",
+        "inferenceId",
+        serde_json::json!(attempt_id),
+    );
     Ok((message, usage))
 }
 

@@ -51,7 +51,11 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
     let (plain, links) = strip_element_links(puml);
     let plain = adapt_component_for_crate(&plain);
     match std::panic::catch_unwind(|| {
-        if crate::vfs::is_scoped() { hosted_svg(&plain) } else { pure_svg(&plain) }
+        if crate::vfs::is_scoped() {
+            hosted_svg(&plain)
+        } else {
+            pure_svg(&plain)
+        }
     }) {
         Ok(Ok(svg)) => Ok(anchor_entities(&svg, &links)),
         Ok(Err(e)) => Err(RenderError(e.to_string())),
@@ -73,8 +77,14 @@ fn in_process_svg(puml: &str) -> Result<String, RenderError> {
 // invoke the dependency's image loader.
 #[cfg(not(target_arch = "wasm32"))]
 fn hosted_svg(source: &str) -> plantuml_little::Result<String> {
-    if source.to_ascii_lowercase().contains("<img") || source.lines().any(|line| line.trim_start().starts_with('!')) {
-        return Err(plantuml_little::Error::Render("hosted diagrams do not load external images or preprocessor directives".into()));
+    if source.to_ascii_lowercase().contains("<img")
+        || source
+            .lines()
+            .any(|line| line.trim_start().starts_with('!'))
+    {
+        return Err(plantuml_little::Error::Render(
+            "hosted diagrams do not load external images or preprocessor directives".into(),
+        ));
     }
     pure_svg(source)
 }
@@ -82,14 +92,18 @@ fn hosted_svg(source: &str) -> plantuml_little::Result<String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn pure_svg(source: &str) -> plantuml_little::Result<String> {
     struct Sprites;
-    impl Drop for Sprites { fn drop(&mut self) { plantuml_little::render::svg_richtext::clear_sprites(); } }
+    impl Drop for Sprites {
+        fn drop(&mut self) {
+            plantuml_little::render::svg_richtext::clear_sprites();
+        }
+    }
     plantuml_little::render::svg_richtext::clear_sprites();
     let _sprites = Sprites;
     let diagram = plantuml_little::parser::parse(source)?;
     let skin = plantuml_little::style::parse_skinparams(source);
-    let layout = plantuml_little::layout::layout(&diagram,&skin)?;
+    let layout = plantuml_little::layout::layout(&diagram, &skin)?;
     let meta = plantuml_little::parser::common::parse_meta(source);
-    plantuml_little::render::svg::render(&diagram,&layout,&skin,&meta)
+    plantuml_little::render::svg::render(&diagram, &layout, &skin, &meta)
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -117,7 +131,11 @@ fn native_svg(bin: &str, puml: &str) -> Result<String, RenderError> {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn native_svg_within(bin: &str, puml: &str, timeout: std::time::Duration) -> Result<String, RenderError> {
+fn native_svg_within(
+    bin: &str,
+    puml: &str,
+    timeout: std::time::Duration,
+) -> Result<String, RenderError> {
     use std::io::{Read, Write};
     use std::process::{Command, Stdio};
     use std::sync::mpsc;
@@ -169,7 +187,8 @@ fn native_svg_within(bin: &str, puml: &str, timeout: std::time::Duration) -> Res
         std::thread::sleep(Duration::from_millis(20));
     };
     // A grandchild holding a pipe open past the exit costs its output, never the build.
-    let take = |rx: mpsc::Receiver<Vec<u8>>| rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
+    let take =
+        |rx: mpsc::Receiver<Vec<u8>>| rx.recv_timeout(Duration::from_secs(2)).unwrap_or_default();
     let out = take(stdout);
     let err = take(stderr);
     if let Some(Ok(Err(e))) = input.map(|h| h.join()) {
@@ -206,7 +225,11 @@ const PNG_MAX_SIDE: f32 = 8192.0;
 // SVG to PNG bytes through resvg.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
-    if crate::vfs::is_scoped() { return Err(RenderError("hosted PNG export is unavailable; use SVG".into())); }
+    if crate::vfs::is_scoped() {
+        return Err(RenderError(
+            "hosted PNG export is unavailable; use SVG".into(),
+        ));
+    }
     let opt = resvg::usvg::Options {
         fontdb: fonts(),
         ..Default::default()
@@ -216,7 +239,11 @@ pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
     // of asking for a gigabyte of pixels. Mirrors docs/compiler/diagrams.md#rendering.
     let size = tree.size();
     let longer = size.width().max(size.height());
-    let scale = if longer > PNG_MAX_SIDE { PNG_MAX_SIDE / longer } else { 1.0 };
+    let scale = if longer > PNG_MAX_SIDE {
+        PNG_MAX_SIDE / longer
+    } else {
+        1.0
+    };
     let width = (size.width() * scale).ceil().max(1.0) as u32;
     let height = (size.height() * scale).ceil().max(1.0) as u32;
     let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
@@ -338,13 +365,19 @@ fn identifier(base: &str, prefix: &str) -> String {
 fn alias_of(id: &str) -> String {
     let slug = entity_slug(id);
     let plain = !slug.is_empty()
-        && slug.split('-').all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
+        && slug
+            .split('-')
+            .all(|w| !w.is_empty() && w.chars().all(char::is_alphanumeric))
         && !slug.starts_with(|c: char| c.is_ascii_digit())
         && !PLANTUML_WORDS.contains(&slug.replace('-', "_").as_str());
     if plain {
         slug.replace('-', "_")
     } else {
-        format!("{}__{}", identifier(slug, "n_"), &crate::model::hash_hex(id)[..8])
+        format!(
+            "{}__{}",
+            identifier(slug, "n_"),
+            &crate::model::hash_hex(id)[..8]
+        )
     }
 }
 
@@ -392,7 +425,11 @@ fn inert(line: &str) -> String {
         if c == '<' && lower[i + 1..].starts_with("img") {
             out.push(INERT);
         }
-        if c == '%' && bytes.get(i + 1).is_some_and(|b| b.is_ascii_alphabetic() || *b == b'$') {
+        if c == '%'
+            && bytes
+                .get(i + 1)
+                .is_some_and(|b| b.is_ascii_alphabetic() || *b == b'$')
+        {
             out.push(INERT);
         }
     }
@@ -800,11 +837,15 @@ fn link_suffix(id: &str) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn adapt_component_for_crate(puml: &str) -> String {
     let lines: Vec<&str> = puml.lines().collect();
-    let is_component = lines.iter().any(|l| l.trim_start().starts_with("component "));
+    let is_component = lines
+        .iter()
+        .any(|l| l.trim_start().starts_with("component "));
     if !is_component {
         return puml.to_string();
     }
-    let has_interface = lines.iter().any(|l| l.trim_start().starts_with("interface "));
+    let has_interface = lines
+        .iter()
+        .any(|l| l.trim_start().starts_with("interface "));
     let mut out = String::with_capacity(puml.len());
     for line in lines {
         let t = line.trim_start();
@@ -819,7 +860,9 @@ fn adapt_component_for_crate(puml: &str) -> String {
         } else if !has_interface {
             let parts: Vec<&str> = t.splitn(3, ' ').collect();
             match parts.as_slice() {
-                [a, op, rest] if ["--", "*--", "o--", "--|>"].contains(op) => format!("{} --> {}", a, rest),
+                [a, op, rest] if ["--", "*--", "o--", "--|>"].contains(op) => {
+                    format!("{} --> {}", a, rest)
+                }
                 [a, op, rest] if ["..", "..|>"].contains(op) => format!("{} ..> {}", a, rest),
                 _ => line.to_string(),
             }
@@ -1313,10 +1356,7 @@ fn provider(store: &Store, id: &str) -> String {
 // listed entity (its subject) first, then dependencies, then the rest, each group in
 // listed order. Mirrors docs/compiler/model/view.md#fields.
 fn ordered_edges<'a>(store: &Store, r: &'a Requirement) -> Vec<&'a ReqEdge> {
-    let subject = r
-        .entities
-        .first()
-        .map(|e| store.resolve_id(e).to_string());
+    let subject = r.entities.first().map(|e| store.resolve_id(e).to_string());
     let rank = |e: &ReqEdge| -> u8 {
         if subject.as_deref() == Some(store.resolve_id(&e.a)) {
             0
@@ -1669,7 +1709,11 @@ fn emit_sequence(scene: &Scene) -> String {
                 .and_then(|t| {
                     let mut c = t.trigger.clone().unwrap_or_default();
                     if let Some(g) = &t.guard {
-                        c = if c.is_empty() { format!("[{}]", g) } else { format!("{} [{}]", c, g) };
+                        c = if c.is_empty() {
+                            format!("[{}]", g)
+                        } else {
+                            format!("{} [{}]", c, g)
+                        };
                     }
                     (!c.is_empty()).then_some(c)
                 })
@@ -2108,14 +2152,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("jazyk-ondisk-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("diagrams/class")).unwrap();
-        std::fs::write(dir.join("diagrams/class/shop.puml"), "@startuml\nA\n@enduml\n").unwrap();
+        std::fs::write(
+            dir.join("diagrams/class/shop.puml"),
+            "@startuml\nA\n@enduml\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("diagrams/class/shop.svg"), "<svg>seeded</svg>").unwrap();
         assert_eq!(
             rendered_on_disk(&dir, "view:class/shop", "@startuml\nA\n@enduml\n").as_deref(),
             Some("<svg>seeded</svg>")
         );
-        assert_eq!(rendered_on_disk(&dir, "view:class/shop", "@startuml\nB\n@enduml\n"), None);
-        assert_eq!(rendered_on_disk(&dir, "view:class/other", "@startuml\nA\n@enduml\n"), None);
+        assert_eq!(
+            rendered_on_disk(&dir, "view:class/shop", "@startuml\nB\n@enduml\n"),
+            None
+        );
+        assert_eq!(
+            rendered_on_disk(&dir, "view:class/other", "@startuml\nA\n@enduml\n"),
+            None
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
     use crate::store::RecordBatch;
@@ -2133,15 +2187,22 @@ mod tests {
             parent: parent.map(String::from),
             ..Default::default()
         };
-        s.graph.entities.insert("ent:checkout".into(), ent("Checkout", None));
-        s.graph.entities.insert("ent:cart".into(), ent("Cart", Some("ent:checkout")));
-        s.graph.entities.insert("ent:funds".into(), ent("Funds", Some("ent:checkout")));
+        s.graph
+            .entities
+            .insert("ent:checkout".into(), ent("Checkout", None));
+        s.graph
+            .entities
+            .insert("ent:cart".into(), ent("Cart", Some("ent:checkout")));
+        s.graph
+            .entities
+            .insert("ent:funds".into(), ent("Funds", Some("ent:checkout")));
         s.graph
             .entities
             .insert("ent:gift-card".into(), ent("Gift Card", Some("ent:funds")));
-        s.graph
-            .entities
-            .insert("ent:loyalty-point".into(), ent("Loyalty Point", Some("ent:funds")));
+        s.graph.entities.insert(
+            "ent:loyalty-point".into(),
+            ent("Loyalty Point", Some("ent:funds")),
+        );
         let req = |text: &str, a: &str, b: &str| Requirement {
             statement: text.into(),
             entities: vec![a.into(), b.into()],
@@ -2169,11 +2230,19 @@ mod tests {
         );
         s.graph.requirements.insert(
             "req:c-2".into(),
-            req("A Loyalty Point discounts a Cart.", "ent:loyalty-point", "ent:cart"),
+            req(
+                "A Loyalty Point discounts a Cart.",
+                "ent:loyalty-point",
+                "ent:cart",
+            ),
         );
         s.graph.requirements.insert(
             "req:c-3".into(),
-            req("The Checkout charges a Gift Card.", "ent:checkout", "ent:gift-card"),
+            req(
+                "The Checkout charges a Gift Card.",
+                "ent:checkout",
+                "ent:gift-card",
+            ),
         );
         // Internal to the funds: the funds level's flow, never a self-message above.
         s.graph.requirements.insert(
@@ -2186,7 +2255,11 @@ mod tests {
         );
         // The first edge collapses inside the funds; the message follows the next
         // edge, whose lifted ends differ.
-        let mut c6 = req("A Gift Card earns a Loyalty Point toward a Cart.", "ent:gift-card", "ent:loyalty-point");
+        let mut c6 = req(
+            "A Gift Card earns a Loyalty Point toward a Cart.",
+            "ent:gift-card",
+            "ent:loyalty-point",
+        );
         c6.entities.push("ent:cart".into());
         c6.edges.push(ReqEdge {
             a: "ent:loyalty-point".into(),
@@ -2211,16 +2284,24 @@ mod tests {
             "{:?}",
             s.graph.views.keys().collect::<Vec<_>>()
         );
-        let view = s.graph.views.get(id).unwrap_or_else(|| {
-            panic!("views: {:?}", s.graph.views.keys().collect::<Vec<_>>())
-        });
+        let view = s
+            .graph
+            .views
+            .get(id)
+            .unwrap_or_else(|| panic!("views: {:?}", s.graph.views.keys().collect::<Vec<_>>()));
         let puml = emit(&s, id, view);
         assert!(puml.contains("participant \"Funds\""), "{}", puml);
         assert!(puml.contains("participant \"Cart\""), "{}", puml);
         assert!(!puml.contains("participant \"Gift Card\""), "{}", puml);
-        assert!(puml.contains("participant \"Checkout\""), "the frame draws as itself: {}", puml);
         assert!(
-            puml.contains("funds -> cart : A Gift Card earns a Loyalty Point toward a Cart. (req:c-6)"),
+            puml.contains("participant \"Checkout\""),
+            "the frame draws as itself: {}",
+            puml
+        );
+        assert!(
+            puml.contains(
+                "funds -> cart : A Gift Card earns a Loyalty Point toward a Cart. (req:c-6)"
+            ),
             "{}",
             puml
         );
@@ -2386,12 +2467,17 @@ mod tests {
             name: name.into(),
             r#type: ty.map(String::from),
             value: None,
-            provenance: Provenance::Decree { author: "owner".into(), at: "g1".into(), note: None },
+            provenance: Provenance::Decree {
+                author: "owner".into(),
+                at: "g1".into(),
+                note: None,
+            },
         };
         let cart = s.graph.entities.get_mut("ent:shopping-cart").unwrap();
         cart.attributes.push(attr("!include /etc/hosts", None));
         cart.attributes.push(attr("@enduml", None));
-        cart.attributes.push(attr("home", Some("%getenv(\"HOME\")")));
+        cart.attributes
+            .push(attr("home", Some("%getenv(\"HOME\")")));
         cart.attributes.push(attr("<img:/etc/hosts>", None));
         // A line that opens with a non-ASCII letter once panicked the crate's
         // preprocessor; the pure stages draw it.
@@ -2409,7 +2495,11 @@ mod tests {
         assert!(puml.contains("include /etc/hosts"), "{}", puml);
         // The in-process renderer draws it, and the hosted path accepts it too.
         render_svg(&puml).unwrap();
-        assert!(hosted_svg(&strip_element_links(&puml).0).is_ok(), "{}", puml);
+        assert!(
+            hosted_svg(&strip_element_links(&puml).0).is_ok(),
+            "{}",
+            puml
+        );
         // A timing view's time lines keep their `@`.
         assert_eq!(inert("@0"), "@0");
         assert_eq!(inert("@.5"), "@.5");
@@ -2420,7 +2510,15 @@ mod tests {
     #[test]
     fn aliases_stay_distinct_for_distinct_ids() {
         assert_eq!(alias_of("ent:order-item"), "order_item");
-        let ids = ["ent:a-b", "ent:a_b", "ent:a--b", "ent:class", "ent:n-class", "ent:2fa", "ent:n-2fa"];
+        let ids = [
+            "ent:a-b",
+            "ent:a_b",
+            "ent:a--b",
+            "ent:class",
+            "ent:n-class",
+            "ent:2fa",
+            "ent:n-2fa",
+        ];
         let aliases: BTreeSet<String> = ids.iter().map(|id| alias_of(id)).collect();
         assert_eq!(aliases.len(), ids.len(), "{aliases:?}");
         for a in &aliases {
@@ -2505,12 +2603,26 @@ mod tests {
     fn a_component_view_without_interfaces_draws_its_links_and_actor() {
         let puml = "@startuml\ncomponent \"Frontend\" as frontend [[../../docsgen/entities/frontend.md]]\ncomponent \"Backend\" as backend [[../../docsgen/entities/backend.md]]\ncomponent \"Product\" as product <<entity>> [[../../docsgen/entities/product.md]]\nactor \"Warehouse Staff\" as warehouse_staff [[../../docsgen/entities/warehouse-staff.md]]\nbackend -- frontend\nbackend -- product\nbackend -- warehouse_staff\n@enduml\n";
         let adapted = adapt_component_for_crate(&strip_element_links(puml).0);
-        assert!(adapted.contains("component \"Warehouse Staff\" as warehouse_staff <<actor>>"), "{}", adapted);
+        assert!(
+            adapted.contains("component \"Warehouse Staff\" as warehouse_staff <<actor>>"),
+            "{}",
+            adapted
+        );
         assert!(adapted.contains("backend --> frontend\n"), "{}", adapted);
         let svg = render_svg(puml).unwrap();
-        assert!(svg.contains(">Warehouse Staff<"), "the actor is drawn with its name");
-        assert!(svg.matches("<path").count() >= 3, "three links drawn: {}", svg.matches("<path").count());
-        assert!(svg.contains("warehouse-staff.md"), "the actor keeps its link");
+        assert!(
+            svg.contains(">Warehouse Staff<"),
+            "the actor is drawn with its name"
+        );
+        assert!(
+            svg.matches("<path").count() >= 3,
+            "three links drawn: {}",
+            svg.matches("<path").count()
+        );
+        assert!(
+            svg.contains("warehouse-staff.md"),
+            "the actor keeps its link"
+        );
         // A class or use case diagram passes through untouched.
         let uc = "@startuml\nactor \"A\" as a\nusecase \"U\" as u\na -- u\n@enduml\n";
         assert_eq!(adapt_component_for_crate(uc), uc);
@@ -2639,7 +2751,8 @@ mod tests {
         // (docs/compiler/diagrams.md#the-emitters).
         let puml = emit_kind(&s, "use-case", &["req:shop-2", "req:shop-4"]);
         assert!(
-            puml.contains("note bottom of") && puml.contains("no actor: none of the 2 member statement(s)"),
+            puml.contains("note bottom of")
+                && puml.contains("no actor: none of the 2 member statement(s)"),
             "{}",
             puml
         );
@@ -2841,7 +2954,11 @@ mod tests {
                     rel_type: Some("association".into()),
                     cardinality: Some("0..*".into()),
                 }],
-                source: Some(SourceRef { doc: "t.md".into(), section: "/t".into(), quote: "q".into() }),
+                source: Some(SourceRef {
+                    doc: "t.md".into(),
+                    section: "/t".into(),
+                    quote: "q".into(),
+                }),
                 ..Default::default()
             },
         );
@@ -3285,7 +3402,9 @@ mod tests {
             members
         );
         assert!(
-            puml.contains("actor \"Customer\" as customer [[../../docsgen/entities/customer.md]]\n"),
+            puml.contains(
+                "actor \"Customer\" as customer [[../../docsgen/entities/customer.md]]\n"
+            ),
             "{}",
             puml
         );
@@ -3346,7 +3465,12 @@ mod tests {
         // Larger than a pipe buffer: a child that never reads stdin cannot stall the write.
         let puml = format!("@startuml\n{}@enduml\n", "class A\n".repeat(40_000));
         let started = std::time::Instant::now();
-        let err = native_svg_within(stub.to_str().unwrap(), &puml, std::time::Duration::from_secs(1)).unwrap_err();
+        let err = native_svg_within(
+            stub.to_str().unwrap(),
+            &puml,
+            std::time::Duration::from_secs(1),
+        )
+        .unwrap_err();
         assert!(err.0.contains("killed after"), "{}", err);
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
         let _ = crate::vfs::remove_dir_all(&dir);
@@ -3361,8 +3485,11 @@ mod tests {
     }
 
     fn tmp(label: &str) -> PathBuf {
-        let dir =
-            std::env::temp_dir().join(format!("jazyk-render-{}-{}", label, crate::sys::process_id()));
+        let dir = std::env::temp_dir().join(format!(
+            "jazyk-render-{}-{}",
+            label,
+            crate::sys::process_id()
+        ));
         let _ = crate::vfs::remove_dir_all(&dir);
         crate::vfs::create_dir_all(&dir).unwrap();
         dir
@@ -3448,4 +3575,3 @@ mod tests {
         let _ = crate::vfs::remove_dir_all(&out);
     }
 }
-

@@ -1,7 +1,7 @@
 // The axum transport for the view values. Every handler is a thin wrapper around
 // `crate::webapi::views`; the browser backend wraps the same functions its own way.
 use super::state::SharedState;
-use crate::webapi::views::{view_value, views_value, tree_value};
+use crate::webapi::views::{tree_value, view_value, views_value};
 use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};

@@ -1,16 +1,15 @@
 use crate::vfs::VPathExt;
 // CLI command implementations. Mirrors docs/frontends/cli.md.
+use crate::acp::config::BUILTIN_AGENTS as ACP_AGENTS;
 use crate::context;
 use crate::llm::{self, Llm};
 use crate::project::{self, Project};
 use crate::reconcile;
 use crate::session::{Trace, TraceLevel};
 use crate::store::Store;
-use crate::acp::config::BUILTIN_AGENTS as ACP_AGENTS;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone)]
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct Options {
     pub set: Option<String>,
     pub docs: Vec<String>,
@@ -74,7 +73,6 @@ pub struct Options {
     pub text: Option<String>,
 }
 
-
 // Initialize the current directory as a project root: a minimal jazyk.toml plus
 // optional MCP integration for a coding agent. Warns instead of overwriting.
 // Mirrors docs/frontends/cli.md#jazyk-init.
@@ -104,7 +102,9 @@ pub fn run_init(opts: &Options) -> i32 {
         wrote_something |= !outcome.items.is_empty();
     } else {
         let previous = project::find_root(&cwd);
-        if let Err((_, e)) = crate::document_sets::atomic_config(&cwd, INIT_TOML, &crate::model::hash_hex("")) {
+        if let Err((_, e)) =
+            crate::document_sets::atomic_config(&cwd, INIT_TOML, &crate::model::hash_hex(""))
+        {
             eprintln!("jazyk: cannot write {}: {}", path.display(), e);
             return 1;
         }
@@ -149,14 +149,25 @@ pub fn run_init(opts: &Options) -> i32 {
 // Mirrors docs/frontends/cli.md#jazyk-init.
 fn init_flags_known(opts: &Options) -> Result<(), String> {
     if let Some(m) = opts.mcp.as_deref() {
-        list_known(m, &crate::setup::AGENTS.iter().map(|a| a.name).collect::<Vec<_>>(), "agent")?;
+        list_known(
+            m,
+            &crate::setup::AGENTS
+                .iter()
+                .map(|a| a.name)
+                .collect::<Vec<_>>(),
+            "agent",
+        )?;
     }
     if let Some(a) = opts.agent.as_deref() {
         if a != "none" && !ACP_AGENTS.iter().any(|x| x.0 == a) {
             return Err(format!(
                 "unknown agent `{}`; one of {}, none",
                 a,
-                ACP_AGENTS.iter().map(|x| x.0).collect::<Vec<_>>().join(", ")
+                ACP_AGENTS
+                    .iter()
+                    .map(|x| x.0)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ));
         }
     }
@@ -173,7 +184,12 @@ fn list_known(value: &str, known: &[&str], what: &str) -> Result<(), String> {
     }
     for name in value.split(',').map(str::trim) {
         if !known.contains(&name) {
-            return Err(format!("unknown {} `{}`; one of {}, all, none", what, name, known.join(", ")));
+            return Err(format!(
+                "unknown {} `{}`; one of {}, all, none",
+                what,
+                name,
+                known.join(", ")
+            ));
         }
     }
     Ok(())
@@ -212,11 +228,19 @@ fn init_setup(cwd: &std::path::Path, mcp: Option<&str>, acp: Option<&str>) -> bo
     // (row, named by a flag: naming it is the consent)
     let mut chosen: Vec<(Item, bool)> = Vec::new();
     let mut snippets: Vec<String> = Vec::new();
-    let names = |v: &str| v.split(',').map(|n| n.trim().to_string()).collect::<Vec<_>>();
+    let names = |v: &str| {
+        v.split(',')
+            .map(|n| n.trim().to_string())
+            .collect::<Vec<_>>()
+    };
     match mcp {
         None => {}
         Some("none") => {}
-        Some("all") => chosen.extend(all.iter().filter(|i| matches!(i, Item::Agent(_))).map(|i| (i.clone(), false))),
+        Some("all") => chosen.extend(
+            all.iter()
+                .filter(|i| matches!(i, Item::Agent(_)))
+                .map(|i| (i.clone(), false)),
+        ),
         Some(v) => {
             for n in names(v) {
                 if let Some(a) = crate::setup::agent_by_name(&n) {
@@ -228,7 +252,11 @@ fn init_setup(cwd: &std::path::Path, mcp: Option<&str>, acp: Option<&str>) -> bo
     match acp {
         None => {}
         Some("none") => {}
-        Some("all") => chosen.extend(all.iter().filter(|i| matches!(i, Item::Jazyk(_))).map(|i| (i.clone(), true))),
+        Some("all") => chosen.extend(
+            all.iter()
+                .filter(|i| matches!(i, Item::Jazyk(_)))
+                .map(|i| (i.clone(), true)),
+        ),
         Some(v) => {
             for n in names(v) {
                 match crate::setup::ACP_HOSTS.iter().find(|h| **h == n) {
@@ -302,9 +330,15 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
     let mut proj = if let Some(set) = opts.set.as_deref() {
-        Project::load_set(&root, set).unwrap_or_else(|(_, error)| Project { root: root.clone(),
-            config_error: Some(error), docs_glob: vec![], ..Project::default() })
-    } else { Project::load(&root) };
+        Project::load_set(&root, set).unwrap_or_else(|(_, error)| Project {
+            root: root.clone(),
+            config_error: Some(error),
+            docs_glob: vec![],
+            ..Project::default()
+        })
+    } else {
+        Project::load(&root)
+    };
     let _ = paths; // Path filters choose sets in run_compile; never truncate a graph's input.
 
     let global = project::load_global_llm();
@@ -322,8 +356,12 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
             }
         })
         .unwrap_or_else(|| proj.out.clone());
-    if opts.out.is_some() && (opts.set.is_none() || (out.starts_with(root.join(".jazyk")) && out!=proj.out)) {
-        proj.config_error=Some("--out requires --set and cannot target project metadata or another set's store".into());
+    if opts.out.is_some()
+        && (opts.set.is_none() || (out.starts_with(root.join(".jazyk")) && out != proj.out))
+    {
+        proj.config_error = Some(
+            "--out requires --set and cannot target project metadata or another set's store".into(),
+        );
     }
     // The out directory is never doc input; doc_files skips it by path.
     proj.out = out.clone();
@@ -374,8 +412,19 @@ pub(crate) fn resolve_llm(
         .filter(|t| *t >= 0.0);
     // The trace is attached per run by whoever starts the work (`with_trace`).
     Llm {
-        api: opts.llm_api.clone().or_else(|| env("JAZYK_LLM_API")).or_else(|| proj.api.clone()).or_else(|| global.api.clone()).unwrap_or_else(|| "chat_completions".into()),
-        reasoning_summary: opts.reasoning_summary.clone().or_else(|| env("JAZYK_REASONING_SUMMARY")).or_else(|| proj.reasoning_summary.clone()).or_else(|| global.reasoning_summary.clone()),
+        api: opts
+            .llm_api
+            .clone()
+            .or_else(|| env("JAZYK_LLM_API"))
+            .or_else(|| proj.api.clone())
+            .or_else(|| global.api.clone())
+            .unwrap_or_else(|| "chat_completions".into()),
+        reasoning_summary: opts
+            .reasoning_summary
+            .clone()
+            .or_else(|| env("JAZYK_REASONING_SUMMARY"))
+            .or_else(|| proj.reasoning_summary.clone())
+            .or_else(|| global.reasoning_summary.clone()),
         base_url,
         model,
         api_key,
@@ -549,78 +598,158 @@ fn verdict_line(r: &reconcile::BuildReport) -> String {
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
     use crate::document_sets::Workspace;
-    let cwd=std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root=project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
-    let workspace=match Workspace::load(&root) { Ok(w)=>w, Err((_,e))=>{eprintln!("jazyk: {}",e);return 2;} };
-    if workspace.sets.is_empty() { eprintln!("jazyk: no document sets; use `jazyk sets add NAME --docs PATH`"); return 2; }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
+    let workspace = match Workspace::load(&root) {
+        Ok(w) => w,
+        Err((_, e)) => {
+            eprintln!("jazyk: {}", e);
+            return 2;
+        }
+    };
+    if workspace.sets.is_empty() {
+        eprintln!("jazyk: no document sets; use `jazyk sets add NAME --docs PATH`");
+        return 2;
+    }
     // A path selects the sets claiming it; one no set claims selects nothing and is
     // a usage error, never a silent no-op (docs/frontends/cli.md#jazyk-compile).
     if opts.set.is_none() {
-        if let Some(path)=paths.iter().find(|p| !workspace.sets.iter().any(|set| set_claims(&workspace,set,&cwd,p))) {
+        if let Some(path) = paths.iter().find(|p| {
+            !workspace
+                .sets
+                .iter()
+                .any(|set| set_claims(&workspace, set, &cwd, p))
+        }) {
             eprintln!("jazyk: no document set claims `{}`; `jazyk sets list` shows what each set compiles",path);
             return 2;
         }
     }
-    let summary=workspace.summary();
-    let mut code=0;
-    let mut selected=0;
+    let summary = workspace.summary();
+    let mut code = 0;
+    let mut selected = 0;
     for set in &workspace.sets {
-        if let Some(selector)=opts.set.as_deref() {
-            match workspace.select(selector) { Ok(s) if s.id == set.id => {}, Ok(_) => continue,
-                Err((_,e)) => {eprintln!("jazyk: {}",e);return 2;} }
+        if let Some(selector) = opts.set.as_deref() {
+            match workspace.select(selector) {
+                Ok(s) if s.id == set.id => {}
+                Ok(_) => continue,
+                Err((_, e)) => {
+                    eprintln!("jazyk: {}", e);
+                    return 2;
+                }
+            }
         } else if !paths.is_empty() {
-            if !paths.iter().any(|path| set_claims(&workspace, set, &cwd, path)) {continue;}
-        } else if !summary["sets"].as_array().unwrap().iter().any(|s| s["id"]==set.id && s["dirty"]==true && s["state"]!="empty") {continue;}
-        selected+=1;
-        let mut options=opts.clone(); options.set=Some(set.id.clone());
-        let (proj,llm,out)=resolve(&[],&options);
-        if let Some(error)=proj.config_error.as_deref() { eprintln!("jazyk: {}",error);return 2; }
-        println!("{}",set.name);
-        if opts.verbose {llm::set_verbose(true);}
-        let trace=trace_for(opts).with_transcript(&out,"compile");
-        let report=reconcile::compile_with(&proj,&llm,&out,&trace,opts.sessions);
-        trace.finish_transcript("done",&serde_json::json!(report));
-        println!("{}: {}",set.name,verdict_line(&report));
-        if !report.converged() {code=1;}
+            if !paths
+                .iter()
+                .any(|path| set_claims(&workspace, set, &cwd, path))
+            {
+                continue;
+            }
+        } else if !summary["sets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == set.id && s["dirty"] == true && s["state"] != "empty")
+        {
+            continue;
+        }
+        selected += 1;
+        let mut options = opts.clone();
+        options.set = Some(set.id.clone());
+        let (proj, llm, out) = resolve(&[], &options);
+        if let Some(error) = proj.config_error.as_deref() {
+            eprintln!("jazyk: {}", error);
+            return 2;
+        }
+        println!("{}", set.name);
+        if opts.verbose {
+            llm::set_verbose(true);
+        }
+        let trace = trace_for(opts).with_transcript(&out, "compile");
+        let report = reconcile::compile_with(&proj, &llm, &out, &trace, opts.sessions);
+        trace.finish_transcript("done", &serde_json::json!(report));
+        println!("{}: {}", set.name, verdict_line(&report));
+        if !report.converged() {
+            code = 1;
+        }
     }
-    if selected==0 { println!("No dirty document sets."); }
+    if selected == 0 {
+        println!("No dirty document sets.");
+    }
     code
 }
 
 // Whether a set's documents include `path` (relative to `cwd`), or a file under it
 // when it names a directory.
-pub(crate) fn set_claims(workspace: &crate::document_sets::Workspace, set: &crate::document_sets::DocumentSet, cwd: &std::path::Path, path: &str) -> bool {
+pub(crate) fn set_claims(
+    workspace: &crate::document_sets::Workspace,
+    set: &crate::document_sets::DocumentSet,
+    cwd: &std::path::Path,
+    path: &str,
+) -> bool {
     use crate::document_sets::included;
-    cwd.join(path).strip_prefix(&workspace.root).ok().is_some_and(|rel| {
-        let rel = rel.to_string_lossy().replace('\\', "/");
-        included(&set.docs, &rel)
-            || workspace.files().iter().any(|f| f.starts_with(&format!("{}/", rel)) && included(&set.docs, f))
-    })
+    cwd.join(path)
+        .strip_prefix(&workspace.root)
+        .ok()
+        .is_some_and(|rel| {
+            let rel = rel.to_string_lossy().replace('\\', "/");
+            included(&set.docs, &rel)
+                || workspace
+                    .files()
+                    .iter()
+                    .any(|f| f.starts_with(&format!("{}/", rel)) && included(&set.docs, f))
+        })
 }
 
 pub fn run_sets(args: &[String], opts: &Options) -> i32 {
-    let cwd=std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let root=project::find_root(&cwd).unwrap_or(cwd);
-    let result=(|| -> crate::document_sets::Result<serde_json::Value> {
-        let workspace=crate::document_sets::Workspace::load(&root)?;
-        let action=args.first().map(String::as_str).unwrap_or("list");
-        if action=="list" { return Ok(workspace.summary()); }
-        let name=args.get(1).ok_or_else(|| (400,"a set name or ID is required".into()))?;
-        let mut set=serde_json::json!({});
-        if action=="add" { set=serde_json::json!({"name":name,"docs":opts.docs,"roots":opts.roots,"source":opts.source}); }
-        else {
-            set["id"]=serde_json::json!(workspace.select(name)?.id);
-            if let Some(name)=&opts.name {set["name"]=serde_json::json!(name);}
-            if !opts.docs.is_empty() {set["docs"]=serde_json::json!(opts.docs);}
-            if !opts.source.is_empty() {set["source"]=serde_json::json!(opts.source);}
-            if !opts.roots.is_empty() {set["roots"]=serde_json::json!(opts.roots);}
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let root = project::find_root(&cwd).unwrap_or(cwd);
+    let result = (|| -> crate::document_sets::Result<serde_json::Value> {
+        let workspace = crate::document_sets::Workspace::load(&root)?;
+        let action = args.first().map(String::as_str).unwrap_or("list");
+        if action == "list" {
+            return Ok(workspace.summary());
         }
-        if !["add","update","remove","preview"].contains(&action) {return Err((400,"use sets list|add|update|remove|preview".into()));}
-        let body=if action=="remove" {serde_json::json!({"baseHash":workspace.hash,"remove":set["id"]})}
-            else {serde_json::json!({"baseHash":workspace.hash,"set":set})};
-        crate::document_sets::edit(&root,&body,action=="preview")
+        let name = args
+            .get(1)
+            .ok_or_else(|| (400, "a set name or ID is required".into()))?;
+        let mut set = serde_json::json!({});
+        if action == "add" {
+            set = serde_json::json!({"name":name,"docs":opts.docs,"roots":opts.roots,"source":opts.source});
+        } else {
+            set["id"] = serde_json::json!(workspace.select(name)?.id);
+            if let Some(name) = &opts.name {
+                set["name"] = serde_json::json!(name);
+            }
+            if !opts.docs.is_empty() {
+                set["docs"] = serde_json::json!(opts.docs);
+            }
+            if !opts.source.is_empty() {
+                set["source"] = serde_json::json!(opts.source);
+            }
+            if !opts.roots.is_empty() {
+                set["roots"] = serde_json::json!(opts.roots);
+            }
+        }
+        if !["add", "update", "remove", "preview"].contains(&action) {
+            return Err((400, "use sets list|add|update|remove|preview".into()));
+        }
+        let body = if action == "remove" {
+            serde_json::json!({"baseHash":workspace.hash,"remove":set["id"]})
+        } else {
+            serde_json::json!({"baseHash":workspace.hash,"set":set})
+        };
+        crate::document_sets::edit(&root, &body, action == "preview")
     })();
-    match result {Ok(v)=>{println!("{}",serde_json::to_string_pretty(&v).unwrap());0},Err((_,e))=>{eprintln!("jazyk: {}",e);2}}
+    match result {
+        Ok(v) => {
+            println!("{}", serde_json::to_string_pretty(&v).unwrap());
+            0
+        }
+        Err((_, e)) => {
+            eprintln!("jazyk: {}", e);
+            2
+        }
+    }
 }
 
 pub fn run_check(paths: &[String], opts: &Options) -> i32 {
@@ -684,7 +813,9 @@ pub fn run_release(paths: &[String], opts: &Options) -> i32 {
         println!("jazyk: nothing was gated; in auto mode a release changes nothing");
     }
     if ready_compile > 0 {
-        println!("next: `jazyk compile` runs the compile goals (or an attached worker claims them)");
+        println!(
+            "next: `jazyk compile` runs the compile goals (or an attached worker claims them)"
+        );
     }
     if ready_bind + ready_generate > 0 {
         println!("next: `jazyk gen` runs the bind and generate goals");
@@ -780,7 +911,12 @@ pub fn run_answer(args: &[String], opts: &Options) -> i32 {
             // The fact changes that rode with the prose, and the transitions left to
             // review. Mirrors docs/compiler/model/diagnostic.md#answers.
             for f in v["facts"].as_array().into_iter().flatten() {
-                println!("  fact: {} {} = {}", f["id"].as_str().unwrap_or_default(), f["field"].as_str().unwrap_or_default(), f["value"]);
+                println!(
+                    "  fact: {} {} = {}",
+                    f["id"].as_str().unwrap_or_default(),
+                    f["field"].as_str().unwrap_or_default(),
+                    f["value"]
+                );
             }
             for f in v["followed"].as_array().into_iter().flatten() {
                 let t = &f["transition"];
@@ -994,7 +1130,9 @@ fn watch_build(paths: &[String], opts: &Options) -> i32 {
     if opts.verbose {
         return run_compile(paths, opts);
     }
-    if opts.set.is_none() {return run_compile(paths,opts);}
+    if opts.set.is_none() {
+        return run_compile(paths, opts);
+    }
     let (proj, llm, out) = resolve(paths, opts);
     let level = if opts.quiet {
         TraceLevel::Quiet
@@ -1075,9 +1213,16 @@ fn goal_line(ev: &crate::session::TraceEvent) {
 pub fn run_watch(paths: &[String], opts: &Options) -> i32 {
     let (proj, _llm, out) = resolve(paths, opts);
     let fingerprint = |proj: &Project| -> String {
-        let Ok(w)=crate::document_sets::Workspace::load(&proj.root) else {return String::new();};
+        let Ok(w) = crate::document_sets::Workspace::load(&proj.root) else {
+            return String::new();
+        };
         let mut s = w.hash.clone();
-        for f in w.files().iter().filter(|f|!w.memberships(f).is_empty()).map(|f|w.root.join(f)) {
+        for f in w
+            .files()
+            .iter()
+            .filter(|f| !w.memberships(f).is_empty())
+            .map(|f| w.root.join(f))
+        {
             if let Ok(md) = std::fs::metadata(&f) {
                 s.push_str(&format!(
                     "{}:{}:{:?};",
@@ -1213,14 +1358,20 @@ pub fn run_spend(args: &[String], opts: &Options) -> i32 {
     let generation = match generation.trim_start_matches('g').parse::<u64>() {
         Ok(g) => g,
         Err(_) => {
-            eprintln!("jazyk spend: `{}` is not a generation (g42 or 42)", generation);
+            eprintln!(
+                "jazyk spend: `{}` is not a generation (g42 or 42)",
+                generation
+            );
             return 2;
         }
     };
     let tokens = match tokens.parse::<u64>() {
         Ok(t) if t > 0 => t,
         _ => {
-            eprintln!("jazyk spend: tokens takes a whole number above zero, got `{}`", tokens);
+            eprintln!(
+                "jazyk spend: tokens takes a whole number above zero, got `{}`",
+                tokens
+            );
             return 2;
         }
     };
@@ -1238,7 +1389,12 @@ pub fn run_spend(args: &[String], opts: &Options) -> i32 {
 }
 
 // The stamp and its one-line report, over an out directory.
-fn spend_at(out: &Path, generation: u64, tokens: u64, cached: Option<u64>) -> Result<String, String> {
+fn spend_at(
+    out: &Path,
+    generation: u64,
+    tokens: u64,
+    cached: Option<u64>,
+) -> Result<String, String> {
     let entry = Store::stamp_reported(out, generation, tokens, cached)?;
     Ok(format!(
         "g{}: {} tokens{}, reported by the agent",
@@ -1286,7 +1442,10 @@ pub fn run_status(opts: &Options) -> i32 {
     if opts.costs {
         let report = crate::costs::report_at(&out);
         if opts.json {
-            println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&report).unwrap_or_default()
+            );
         } else {
             print!("{}", crate::costs::render(&report));
         }
@@ -1298,7 +1457,10 @@ pub fn run_status(opts: &Options) -> i32 {
     let board = crate::board::Board::compute(&proj, &out);
     let report = status_report(&proj, &store, &board);
     if opts.json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&report).unwrap_or_default()
+        );
     } else {
         print!("{}", render_status(&report));
     }
@@ -1315,7 +1477,10 @@ pub(crate) fn render_sets_overview(summary: &serde_json::Value) -> String {
     let mut out = String::new();
     for set in &sets {
         let n = |k: &str| set["counts"][k].as_u64().unwrap_or(0);
-        let verdict = set["verdict"]["state"].as_str().filter(|v| !v.is_empty()).unwrap_or("none");
+        let verdict = set["verdict"]["state"]
+            .as_str()
+            .filter(|v| !v.is_empty())
+            .unwrap_or("none");
         out.push_str(&format!(
             "{}: {}, generation {}, verdict {}; {} open, {} ready, {} blocked, {} parked, {} failed\n",
             set["name"].as_str().unwrap_or("?"),
@@ -1537,7 +1702,10 @@ pub(crate) fn render_status(r: &serde_json::Value) -> String {
         "store: version {}, generation {}\n",
         r["version"], r["generation"]
     ));
-    s.push_str(&format!("verdict: {}\n", r["verdict"].as_str().unwrap_or("")));
+    s.push_str(&format!(
+        "verdict: {}\n",
+        r["verdict"].as_str().unwrap_or("")
+    ));
     let b = &r["board"];
     s.push_str(&format!(
         "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional{}\n",
@@ -2324,11 +2492,16 @@ pub fn run_viewer(opts: &Options) -> i32 {
 // one JSON object per line under --json. Mirrors docs/frontends/cli.md#jazyk-query.
 pub fn run_query(opts: &Options, query: &str) -> i32 {
     if opts.set.is_none() {
-        let (project,_,_)=resolve(&[],opts);
-        if let Ok(w)=crate::document_sets::Workspace::load(&project.root) {
-            if w.sets.len()!=1 {
-                let mut code=0;
-                for set in w.sets {let mut local=opts.clone();local.set=Some(set.id);println!("{}",set.name);code=code.max(run_query(&local,query));}
+        let (project, _, _) = resolve(&[], opts);
+        if let Ok(w) = crate::document_sets::Workspace::load(&project.root) {
+            if w.sets.len() != 1 {
+                let mut code = 0;
+                for set in w.sets {
+                    let mut local = opts.clone();
+                    local.set = Some(set.id);
+                    println!("{}", set.name);
+                    code = code.max(run_query(&local, query));
+                }
                 return code;
             }
         }
@@ -2361,16 +2534,32 @@ mod tests {
     // arity, and unknown options are the launcher's (docs/frontends/cli.md#help).
     #[test]
     fn task_commands_have_shapes_and_help() {
-        for (cmd, arity) in [("tasks", 0), ("runs", 0), ("run", 1), ("run-status", 1), ("run-log", 1), ("run-cancel", 1)] {
-            let (n, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for {}", cmd));
+        for (cmd, arity) in [
+            ("tasks", 0),
+            ("runs", 0),
+            ("run", 1),
+            ("run-status", 1),
+            ("run-log", 1),
+            ("run-cancel", 1),
+        ] {
+            let (n, extra) = crate::launcher::command_shape(cmd)
+                .unwrap_or_else(|| panic!("no shape for {}", cmd));
             assert_eq!(n, Some(arity), "{}", cmd);
             assert!(extra.is_empty(), "{}", cmd);
-            let usage = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for {}", cmd));
-            assert!(usage.starts_with(&format!("usage: jazyk {}", cmd)), "{}", usage);
+            let usage =
+                crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for {}", cmd));
+            assert!(
+                usage.starts_with(&format!("usage: jazyk {}", cmd)),
+                "{}",
+                usage
+            );
             assert!(usage.contains("2 on a usage error"), "{}", usage);
         }
         let main = include_str!("main.rs");
-        assert!(!main.contains("task_runtime::cli"), "main.rs must not bypass the launcher");
+        assert!(
+            !main.contains("task_runtime::cli"),
+            "main.rs must not bypass the launcher"
+        );
     }
 
     // `check` and `watch` take no paths, `compile` drops the inert `--dirty`, and a
@@ -2380,30 +2569,56 @@ mod tests {
     fn compile_paths_select_claiming_sets_and_other_builds_take_none() {
         use serde_json::json;
         for cmd in ["check", "watch"] {
-            assert_eq!(crate::launcher::command_shape(cmd).unwrap().0, Some(0), "{}", cmd);
-            assert!(!crate::launcher::cmd_usage(cmd).unwrap().contains("path..."), "{}", cmd);
+            assert_eq!(
+                crate::launcher::command_shape(cmd).unwrap().0,
+                Some(0),
+                "{}",
+                cmd
+            );
+            assert!(
+                !crate::launcher::cmd_usage(cmd).unwrap().contains("path..."),
+                "{}",
+                cmd
+            );
         }
         let (_, extra) = crate::launcher::command_shape("compile").unwrap();
         assert!(!extra.contains(&"--dirty"));
-        assert!(!crate::launcher::cmd_usage("compile").unwrap().contains("--dirty"));
+        assert!(!crate::launcher::cmd_usage("compile")
+            .unwrap()
+            .contains("--dirty"));
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         std::fs::create_dir_all(root.join("docs/orders")).unwrap();
         std::fs::write(root.join("docs/orders/a.md"), "# A").unwrap();
         std::fs::write(root.join("docs/billing.md"), "# B").unwrap();
-        for (id, docs) in [("ds_orders", "docs/orders/**/*.md"), ("ds_billing", "docs/billing.md")] {
+        for (id, docs) in [
+            ("ds_orders", "docs/orders/**/*.md"),
+            ("ds_billing", "docs/billing.md"),
+        ] {
             let w = crate::document_sets::Workspace::load(root).unwrap();
-            crate::document_sets::edit(root, &json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [docs]}}), false).unwrap();
+            crate::document_sets::edit(
+                root,
+                &json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [docs]}}),
+                false,
+            )
+            .unwrap();
         }
         let w = crate::document_sets::Workspace::load(root).unwrap();
         let claims = |path: &str| -> Vec<String> {
-            w.sets.iter().filter(|s| super::set_claims(&w, s, root, path)).map(|s| s.id.clone()).collect()
+            w.sets
+                .iter()
+                .filter(|s| super::set_claims(&w, s, root, path))
+                .map(|s| s.id.clone())
+                .collect()
         };
         assert_eq!(claims("docs/orders/a.md"), vec!["ds_orders"]);
         assert_eq!(claims("docs/orders"), vec!["ds_orders"]);
         assert_eq!(claims("docs/billing.md"), vec!["ds_billing"]);
         assert!(claims("README.md").is_empty());
-        assert_eq!(super::set_claims(&w, &w.sets[0], &root.join("docs"), "orders/a.md"), w.sets[0].id == "ds_orders");
+        assert_eq!(
+            super::set_claims(&w, &w.sets[0], &root.join("docs"), "orders/a.md"),
+            w.sets[0].id == "ds_orders"
+        );
     }
     use super::*;
     use crate::project::{GlobalLlm, LlmSettings};
@@ -2459,7 +2674,9 @@ mod tests {
     #[test]
     fn help_lists_the_goal_commands() {
         let usage = crate::launcher::top_usage();
-        for cmd in ["preview", "explain", "ripple", "acp", "monitor", "release", "answer"] {
+        for cmd in [
+            "preview", "explain", "ripple", "acp", "monitor", "release", "answer",
+        ] {
             assert!(usage.contains(cmd), "`{}` missing from the top usage", cmd);
         }
         assert!(usage.contains("goal-based"), "{}", usage);
@@ -2469,19 +2686,28 @@ mod tests {
         let start = usage.find("start here:").expect("start here group");
         let ides = usage.find("run by IDEs and agents").expect("IDE group");
         assert!(start < ides, "{}", usage);
-        for (line, _) in crate::launcher::COMMAND_GROUPS.iter().flat_map(|(_, cs)| cs.iter()) {
+        for (line, _) in crate::launcher::COMMAND_GROUPS
+            .iter()
+            .flat_map(|(_, cs)| cs.iter())
+        {
             let Some(cmd) = line.split_whitespace().next() else {
                 continue; // bare `jazyk`, the launcher
             };
             if cmd == "<choice>" {
                 // One line for every launcher choice; each is its own command.
                 for c in crate::start::CHOICES.iter().filter(|c| c.id != "gui") {
-                    assert!(crate::launcher::cmd_usage(c.id).is_some(), "no help for `{}`", c.id);
+                    assert!(
+                        crate::launcher::cmd_usage(c.id).is_some(),
+                        "no help for `{}`",
+                        c.id
+                    );
                 }
                 continue;
             }
-            let (_, extra) = crate::launcher::command_shape(cmd).unwrap_or_else(|| panic!("no shape for `{}`", cmd));
-            let u = crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
+            let (_, extra) = crate::launcher::command_shape(cmd)
+                .unwrap_or_else(|| panic!("no shape for `{}`", cmd));
+            let u =
+                crate::launcher::cmd_usage(cmd).unwrap_or_else(|| panic!("no help for `{}`", cmd));
             assert!(!u.contains('\u{2014}'), "em dash in `{}` usage", cmd);
             for opt in extra.iter() {
                 assert!(
@@ -2518,7 +2744,8 @@ mod tests {
     // Mirrors docs/frontends/cli.md#jazyk-spend.
     #[test]
     fn spend_stamps_an_unmeasured_session_and_refuses_a_measured_one() {
-        let out = std::env::temp_dir().join(format!("jazyk-cli-spend-{}", crate::sys::process_id()));
+        let out =
+            std::env::temp_dir().join(format!("jazyk-cli-spend-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
         crate::vfs::create_dir_all(out.join("journal")).unwrap();
         for (g, tokens) in [(7u64, None), (8, Some(9800u64))] {
@@ -2541,12 +2768,22 @@ mod tests {
         );
         let r = crate::costs::report_at(&out);
         assert_eq!(
-            (r["measured"].clone(), r["reported"].clone(), r["tokens"].clone()),
-            (serde_json::json!(1), serde_json::json!(1), serde_json::json!(28200))
+            (
+                r["measured"].clone(),
+                r["reported"].clone(),
+                r["tokens"].clone()
+            ),
+            (
+                serde_json::json!(1),
+                serde_json::json!(1),
+                serde_json::json!(28200)
+            )
         );
         let err = spend_at(&out, 8, 100, None).unwrap_err();
         assert!(err.contains("already carries 9800 tokens"), "{}", err);
-        assert!(spend_at(&out, 7, 100, None).unwrap_err().contains("reported by the agent"));
+        assert!(spend_at(&out, 7, 100, None)
+            .unwrap_err()
+            .contains("reported by the agent"));
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -2559,7 +2796,10 @@ mod tests {
         std::fs::create_dir_all(root.join("docs/orders")).unwrap();
         std::fs::write(root.join("docs/orders/a.md"), "# A").unwrap();
         std::fs::write(root.join("docs/billing.md"), "# B").unwrap();
-        for (id, docs) in [("ds_orders", "docs/orders/**/*.md"), ("ds_billing", "docs/billing.md")] {
+        for (id, docs) in [
+            ("ds_orders", "docs/orders/**/*.md"),
+            ("ds_billing", "docs/billing.md"),
+        ] {
             let w = crate::document_sets::Workspace::load(root).unwrap();
             crate::document_sets::edit(root, &serde_json::json!({"baseHash": w.hash, "set": {"id": id, "name": id, "docs": [docs]}}), false).unwrap();
         }
@@ -2578,13 +2818,20 @@ mod tests {
         let orders_only = watch_stores(root, root, &["docs/orders".to_string()], &opts, &shared);
         assert_eq!(orders_only, vec![root.join(".jazyk/ds_orders")]);
         assert!(!watch_incomplete(&orders_only));
-        let named = Options { set: Some("ds_orders".into()), ..Default::default() };
-        assert_eq!(watch_stores(root, root, &[], &named, &billing), vec![billing.clone()]);
+        let named = Options {
+            set: Some("ds_orders".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            watch_stores(root, root, &[], &named, &billing),
+            vec![billing.clone()]
+        );
     }
 
     // A one-document project in a temp dir: the smallest board with a ready batch.
     fn temp_project(name: &str) -> (Project, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-cli-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("docs")).unwrap();
         crate::vfs::write(
@@ -2613,7 +2860,11 @@ mod tests {
         let (proj, out) = temp_project("preview");
         let (store, control, board) = board_from_disk(&proj, &out);
         let batch = board.batches.first().expect("a ready batch").clone();
-        assert!(!batch.id.ends_with("-0"), "batches number from 1: {}", batch.id);
+        assert!(
+            !batch.id.ends_with("-0"),
+            "batches number from 1: {}",
+            batch.id
+        );
 
         let lint = crate::project::Linting::default();
         let text = preview_text(&store, &control, &board, "", &lint).unwrap();
@@ -2622,7 +2873,11 @@ mod tests {
             .find(|l| l.starts_with("PROTOCOL"))
             .expect("a protocol line");
         assert!(proto.contains(&batch.id), "{}", proto);
-        assert!(!proto.contains(&format!("b{}-0", store.status.generation)), "{}", proto);
+        assert!(
+            !proto.contains(&format!("b{}-0", store.status.generation)),
+            "{}",
+            proto
+        );
         // The mode is the control plane's, never a constant.
         assert!(text.contains("auto mode"), "{}", text);
 
@@ -2651,8 +2906,18 @@ mod tests {
             .iter()
             .filter_map(|v| v.as_str())
             .collect();
-        assert!(next.iter().any(|n| n.contains("`jazyk compile` runs the first build")), "{:?}", next);
-        assert!(next.iter().any(|n| n.contains("ready: `jazyk compile` runs them")), "{:?}", next);
+        assert!(
+            next.iter()
+                .any(|n| n.contains("`jazyk compile` runs the first build")),
+            "{:?}",
+            next
+        );
+        assert!(
+            next.iter()
+                .any(|n| n.contains("ready: `jazyk compile` runs them")),
+            "{:?}",
+            next
+        );
         let text = render_status(&report);
         assert!(text.starts_with("store: version"), "{}", text);
         assert!(text.contains("\nnext: "), "{}", text);
@@ -2700,7 +2965,8 @@ mod tests {
     #[test]
     fn ripple_renders_a_three_generation_cascade() {
         use crate::model::{Cause, JournalEntry, OpenedGoal, Resolved};
-        let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-ripple-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(dir.join("journal")).unwrap();
         let sec = "g:reconcile-section:docs/orders.md#/orders/holds";

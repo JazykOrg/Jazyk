@@ -1,5 +1,5 @@
-use crate::{acp, benchmark, cli, docsgen, gen, lsp, mcp, render, replay, store};
 use crate::vfs::VPathExt;
+use crate::{acp, benchmark, cli, docsgen, gen, lsp, mcp, render, replay, store};
 // Load a .env file by walking up from the current directory. Does not override existing env vars.
 fn load_dotenv() {
     let mut dir = std::env::current_dir().ok();
@@ -82,7 +82,12 @@ pub(crate) fn top_usage() -> String {
     for (group, commands) in COMMAND_GROUPS {
         s.push_str(&format!("\n{}:\n", group));
         for (usage, what) in *commands {
-            s.push_str(&format!("  jazyk {:<width$} {}\n", usage, what, width = width));
+            s.push_str(&format!(
+                "  jazyk {:<width$} {}\n",
+                usage,
+                what,
+                width = width
+            ));
         }
     }
     s.push_str("\noptions: --agent NAME  --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR\n");
@@ -91,7 +96,9 @@ pub(crate) fn top_usage() -> String {
     );
     s.push_str("         --quiet, -q     only the board summary, gc bursts, and the verdict\n");
     s.push_str("         --help, -h      print help and exit\n");
-    s.push_str("\n`jazyk <command> --help` prints that command's arguments, options, and exit codes.\n");
+    s.push_str(
+        "\n`jazyk <command> --help` prints that command's arguments, options, and exit codes.\n",
+    );
     s
 }
 
@@ -134,7 +141,11 @@ const COMMON_OPTIONS: &[&str] = &[
 
 // Options that take a value; a bare one at the end of the line is a usage error.
 const VALUE_OPTIONS: &[&str] = &[
-    "--set", "--docs", "--source", "--roots", "--name",
+    "--set",
+    "--docs",
+    "--source",
+    "--roots",
+    "--name",
     "--llm-base-url",
     "--model",
     "--api-key",
@@ -172,7 +183,10 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
         "compile" => (None, &["--sessions"]),
-        "sets" => (Some(2), &["--docs", "--source", "--roots", "--name", "--json"]),
+        "sets" => (
+            Some(2),
+            &["--docs", "--source", "--roots", "--name", "--json"],
+        ),
         "check" | "watch" => (Some(0), &[]),
         "decompile" => (None, &[]),
         "status" => (Some(0), &["--json", "--costs"]),
@@ -189,7 +203,14 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "viewer" => (Some(0), &[]),
         "gui" => (
             Some(0),
-            &["--port", "--no-open", "--watch", "--gui-url", "--no-token", "--dev"],
+            &[
+                "--port",
+                "--no-open",
+                "--watch",
+                "--gui-url",
+                "--no-token",
+                "--dev",
+            ],
         ),
         "mcp" => (
             Some(1),
@@ -218,7 +239,8 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
 }
 
 const COMMON_LLM: &str = "common: --llm-base-url URL  --model M  --api-key K  --llm-api API  --reasoning-summary MODE  --out DIR";
-const COMMON_OUT: &str = "common: --out DIR   the out directory (default <root>/.jazyk/<set-id>/; requires --set)";
+const COMMON_OUT: &str =
+    "common: --out DIR   the out directory (default <root>/.jazyk/<set-id>/; requires --set)";
 
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
@@ -614,11 +636,16 @@ pub fn run() {
     let args: Vec<String> = std::env::args().collect();
     #[cfg(feature = "native-documents")]
     if args.get(1).is_some_and(|s| s == "document-read") {
-        let result = args.get(2).ok_or_else(|| "usage: jazyk document-read FILE".to_string())
+        let result = args
+            .get(2)
+            .ok_or_else(|| "usage: jazyk document-read FILE".to_string())
             .and_then(|p| crate::documents::read(std::path::Path::new(p)));
         match result {
             Ok(p) => println!("{}", serde_json::to_string_pretty(&p).unwrap()),
-            Err(e) => { eprintln!("jazyk: {e}"); std::process::exit(1); }
+            Err(e) => {
+                eprintln!("jazyk: {e}");
+                std::process::exit(1);
+            }
         }
         return;
     }
@@ -790,14 +817,46 @@ pub fn run() {
         }
     }
 
-    if !["watch","query","init","setup","sets","gui","lsp","acp","agent","mcp","benchmark","compile","status","replay","tasks","runs","run","run-status","run-log","run-cancel"].contains(&cmd.as_str()) && crate::start::choice(&cmd).is_none() {
-        let (proj,_,_)=cli::resolve(&[],&opts);
-        if let Some(error)=proj.config_error { usage_error(&cmd,&error); }
-        if proj.set_id.is_none() { usage_error(&cmd,"choose a document set with --set NAME"); }
+    if ![
+        "watch",
+        "query",
+        "init",
+        "setup",
+        "sets",
+        "gui",
+        "lsp",
+        "acp",
+        "agent",
+        "mcp",
+        "benchmark",
+        "compile",
+        "status",
+        "replay",
+        "tasks",
+        "runs",
+        "run",
+        "run-status",
+        "run-log",
+        "run-cancel",
+    ]
+    .contains(&cmd.as_str())
+        && crate::start::choice(&cmd).is_none()
+    {
+        let (proj, _, _) = cli::resolve(&[], &opts);
+        if let Some(error) = proj.config_error {
+            usage_error(&cmd, &error);
+        }
+        if proj.set_id.is_none() {
+            usage_error(&cmd, "choose a document set with --set NAME");
+        }
     }
     // Commands that open a project to work on it keep its AGENTS.md section current.
     // Mirrors docs/frontends/agent-context.md#when-it-is-written.
-    if ["compile", "watch", "gen", "test", "gui", "acp", "agent", "mcp", "setup"].contains(&cmd.as_str()) {
+    if [
+        "compile", "watch", "gen", "test", "gui", "acp", "agent", "mcp", "setup",
+    ]
+    .contains(&cmd.as_str())
+    {
         if let Ok(cwd) = std::env::current_dir() {
             crate::agents_md::refresh(&cwd);
         }

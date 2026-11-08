@@ -2,8 +2,8 @@
 // of `jazyk gui` on a machine, and the dispatch of the browser backend in a tab.
 // A handler in either transport is a thin wrapper around a function here.
 // See docs/frontends/wasm.md#one-api-two-transports.
-pub mod board;
 pub mod binary_documents;
+pub mod board;
 pub mod card;
 pub mod deliverable;
 pub mod docs;

@@ -438,22 +438,35 @@ mod tests {
         let c = entity_card(&s, &walk, "ent:order-service").unwrap();
         assert_eq!(c.name, "Order Service");
         assert_eq!(
-            c.breadcrumb.iter().map(|x| x.id.as_str()).collect::<Vec<_>>(),
+            c.breadcrumb
+                .iter()
+                .map(|x| x.id.as_str())
+                .collect::<Vec<_>>(),
             vec!["scope:public", "ent:shop", "ent:order-service"]
         );
         assert_eq!(c.context.as_deref(), Some("view:component/shop"));
         assert_eq!(c.inside.as_deref(), Some("view:component/order-service"));
-        assert!(c.children.iter().any(|k| k.id == "ent:order"), "{:?}", c.children);
+        assert!(
+            c.children.iter().any(|k| k.id == "ent:order"),
+            "{:?}",
+            c.children
+        );
         assert!(c.siblings.iter().any(|k| k.id == "ent:inventory-service"));
         assert!(
             // The stock API sits under the inventory service: lifted to it.
             c.relationships
                 .iter()
-                .any(|r| r.other == "ent:inventory-service" && r.r#type == "dependency" && r.direction == "a"),
+                .any(|r| r.other == "ent:inventory-service"
+                    && r.r#type == "dependency"
+                    && r.direction == "a"),
             "{:?}",
             c.relationships
         );
-        assert!(c.flows.iter().any(|f| f == "view:usecase/shop-shop"), "{:?}", c.flows);
+        assert!(
+            c.flows.iter().any(|f| f == "view:usecase/shop-shop"),
+            "{:?}",
+            c.flows
+        );
         assert_eq!(c.provenance, "quote");
         // A node's card lifts its subtree's relationships to the parent level: the
         // shop, whose children carry every edge, is never `none`.
@@ -467,7 +480,10 @@ mod tests {
         let leaf = entity_card(&s, &walk, "ent:order-item").unwrap();
         assert_eq!(leaf.inside, None);
         assert!(leaf.children.is_empty());
-        assert_eq!(leaf.context.as_deref(), Some("view:component/order-service"));
+        assert_eq!(
+            leaf.context.as_deref(),
+            Some("view:component/order-service")
+        );
         assert_eq!(leaf.breadcrumb.last().unwrap().id, "ent:order-item");
         assert!(entity_card(&s, &walk, "ent:nobody").is_none());
     }
@@ -483,7 +499,10 @@ mod tests {
         assert!(p.drawn.iter().any(|d| d.id == "ent:order-service"
             && d.level_view.as_deref() == Some("view:component/order-service")));
         assert!(p.steps.is_empty());
-        assert!(p.around.below.contains(&"view:component/order-service".to_string()));
+        assert!(p
+            .around
+            .below
+            .contains(&"view:component/order-service".to_string()));
         assert!(p
             .around
             .same_level
@@ -493,6 +512,9 @@ mod tests {
         assert_eq!(f.level.as_ref().unwrap().target, "ent:shop");
         assert!(!f.steps.is_empty());
         assert_eq!(f.steps[0].requirement, "req:shop-1");
-        assert!(f.around.same_level.contains(&"view:component/shop".to_string()));
+        assert!(f
+            .around
+            .same_level
+            .contains(&"view:component/shop".to_string()));
     }
 }

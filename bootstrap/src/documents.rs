@@ -65,7 +65,11 @@ pub fn from_bytes(path: &Path, bytes: &[u8]) -> Result<Projection, String> {
             let value = serde_json::to_value(&doc.document).map_err(|e| e.to_string())?;
             let styles = serde_json::to_value(&doc.styles).map_err(|e| e.to_string())?;
             let cx = Docx {
-                links: doc.hyperlinks.iter().map(|(id, target, _)| (id.clone(), target.clone())).collect(),
+                links: doc
+                    .hyperlinks
+                    .iter()
+                    .map(|(id, target, _)| (id.clone(), target.clone()))
+                    .collect(),
                 levels: heading_styles(&styles),
             };
             docx_blocks(&value, "body", &cx, &mut p)?;
@@ -256,7 +260,9 @@ fn named_level(name: &str) -> Option<usize> {
 fn heading_styles(styles: &Value) -> std::collections::HashMap<String, usize> {
     let mut out = std::collections::HashMap::new();
     for s in styles["styles"].as_array().into_iter().flatten() {
-        let Some(id) = s["styleId"].as_str() else { continue };
+        let Some(id) = s["styleId"].as_str() else {
+            continue;
+        };
         let level = outline_level(&s["paragraphProperty"]["outlineLvl"])
             .or_else(|| s["name"].as_str().and_then(named_level))
             .or_else(|| named_level(id));
@@ -321,7 +327,9 @@ fn inline(v: &Value, cx: &Docx, out: &mut String) -> Result<(), String> {
             inline(&link["children"], cx, &mut text)?;
             let target = match link["type"].as_str() {
                 Some("anchor") => link["anchor"].as_str().map(|a| format!("#{a}")),
-                _ => link["rid"].as_str().and_then(|id| cx.links.get(id).cloned()),
+                _ => link["rid"]
+                    .as_str()
+                    .and_then(|id| cx.links.get(id).cloned()),
             };
             match target.filter(|t| !t.is_empty() && !text.trim().is_empty()) {
                 Some(t) => out.push_str(&format!("[{text}]({})", t.replace(' ', "%20"))),
@@ -379,8 +387,16 @@ mod tests {
         use docx_rs::{Hyperlink, HyperlinkType, Paragraph, Run};
         let mut bytes = std::io::Cursor::new(Vec::new());
         docx_rs::Docx::new()
-            .add_paragraph(Paragraph::new().style("Heading1").add_run(Run::new().add_text("Gateway")))
-            .add_paragraph(Paragraph::new().style("Heading2").add_run(Run::new().add_text("Timeouts")))
+            .add_paragraph(
+                Paragraph::new()
+                    .style("Heading1")
+                    .add_run(Run::new().add_text("Gateway")),
+            )
+            .add_paragraph(
+                Paragraph::new()
+                    .style("Heading2")
+                    .add_run(Run::new().add_text("Timeouts")),
+            )
             .add_paragraph(
                 Paragraph::new()
                     .add_run(Run::new().add_text("See the "))
@@ -411,7 +427,9 @@ mod tests {
         let p = from_bytes(Path::new("gateway.docx"), docx).unwrap();
         assert!(p.text.starts_with("# Gateway contract\n\n"));
         assert!(p.text.contains("\n\n## Timeouts\n\n"));
-        assert!(p.text.contains("Operators follow the [operator notes](notes.md)."));
+        assert!(p
+            .text
+            .contains("Operators follow the [operator notes](notes.md)."));
         assert!(p.text.contains("[payment reference](reference.pdf)"));
         assert!(p.text.contains("[jazyk.org](https://jazyk.org)"));
     }
@@ -427,10 +445,7 @@ mod tests {
         assert_eq!(workspace.summary()["sets"][0]["dirty"], true);
         let project = workspace.resolve(Some("ds_proof")).unwrap();
         let hashes = crate::control::current_doc_hashes(&project);
-        assert_eq!(
-            hashes["contract.docx"],
-            crate::task_runtime::digest(DOCX)
-        );
+        assert_eq!(hashes["contract.docx"], crate::task_runtime::digest(DOCX));
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -443,7 +458,11 @@ mod tests {
         files.insert("present.pdf".to_string(), PDF.to_vec());
         let _scope = crate::vfs::Scope::enter(&files);
         let err = pdf_quote(Path::new("/project/missing.pdf"), "contract").unwrap_err();
-        assert!(!err.contains("PDFium") && !err.to_lowercase().contains("pdfium"), "{}", err);
+        assert!(
+            !err.contains("PDFium") && !err.to_lowercase().contains("pdfium"),
+            "{}",
+            err
+        );
         assert!(crate::vfs::read(Path::new("/project/present.pdf")).is_ok());
     }
 

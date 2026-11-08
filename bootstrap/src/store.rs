@@ -304,7 +304,10 @@ pub const SECTION_DIFF_LINES: usize = 20;
 
 // A line that counts in a section diff: not blank. Lines compare trimmed.
 fn diff_lines(raw: &str) -> Vec<&str> {
-    raw.lines().map(str::trim).filter(|l| !l.is_empty()).collect()
+    raw.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect()
 }
 
 // The diff a `section-dirty` record carries: the previous hash, the counts, and the
@@ -327,7 +330,12 @@ pub fn section_diff_detail(prev: &crate::model::Section, cur: &str) -> serde_jso
     };
     let added = one_side(cur, &prev.raw);
     let removed = one_side(&prev.raw, cur);
-    let cap = |v: &[String]| v.iter().take(SECTION_DIFF_LINES).cloned().collect::<Vec<_>>();
+    let cap = |v: &[String]| {
+        v.iter()
+            .take(SECTION_DIFF_LINES)
+            .cloned()
+            .collect::<Vec<_>>()
+    };
     serde_json::json!({
         "previous": prev.hash,
         "added": added.len(),
@@ -749,18 +757,17 @@ pub(crate) fn normalize(name: &str) -> String {
 // auxiliaries, quantifiers. Shared by the store's scoring and the hints' word lists.
 // Mirrors docs/compiler/reconciler.md#pairs.
 pub(crate) const CONTENT_STOP: [&str; 113] = [
-            "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or",
-            "and", "if", "with", "by", "it", "its", "when", "then", "that", "which", "this",
-            "system", "not", "no", "only", "all", "each", "at", "as", "from", "into", "than",
-            "has", "have", "had", "having", "their", "they", "them", "there", "these", "those",
-            "once", "need", "needs", "must", "may", "can", "will", "would", "should", "could",
-            "do", "does", "did", "done", "any", "some", "one", "two", "per", "before", "after",
-            "within", "without", "every", "more", "less", "so", "up", "down", "out", "over",
-            "under", "about", "also", "both", "either", "other", "such", "own", "same", "here",
-            "where", "how", "what", "while", "until", "since", "because", "but", "however",
-            "yet", "who", "whose", "whom", "was", "were", "been", "being", "get", "gets", "got",
-            "make", "makes", "made", "use", "uses", "used", "via",
-        ];
+    "the", "a", "an", "shall", "to", "of", "in", "on", "for", "is", "are", "be", "or", "and", "if",
+    "with", "by", "it", "its", "when", "then", "that", "which", "this", "system", "not", "no",
+    "only", "all", "each", "at", "as", "from", "into", "than", "has", "have", "had", "having",
+    "their", "they", "them", "there", "these", "those", "once", "need", "needs", "must", "may",
+    "can", "will", "would", "should", "could", "do", "does", "did", "done", "any", "some", "one",
+    "two", "per", "before", "after", "within", "without", "every", "more", "less", "so", "up",
+    "down", "out", "over", "under", "about", "also", "both", "either", "other", "such", "own",
+    "same", "here", "where", "how", "what", "while", "until", "since", "because", "but", "however",
+    "yet", "who", "whose", "whom", "was", "were", "been", "being", "get", "gets", "got", "make",
+    "makes", "made", "use", "uses", "used", "via",
+];
 
 // A content token: not a stop word, and three letters or more unless it is a number.
 // A token is an entity's boilerplate from this many statements naming the entity
@@ -849,9 +856,19 @@ pub(crate) fn statement_subsumes(a: &str, b: &str) -> bool {
 // restates "shall empty"; `can`, `should`, and `may` change what is required and count.
 pub(crate) fn statement_rewords(a: &str, b: &str) -> bool {
     const NEGATIONS: [&str; 12] = [
-        "not", "never", "no", "unless", "except", "otherwise", "cannot",
+        "not",
+        "never",
+        "no",
+        "unless",
+        "except",
+        "otherwise",
+        "cannot",
         // A permission or a recommendation is not the obligation.
-        "can", "may", "should", "might", "could",
+        "can",
+        "may",
+        "should",
+        "might",
+        "could",
     ];
     let toks = |s: &str| -> std::collections::BTreeSet<String> {
         normalize_statement(s)
@@ -872,7 +889,11 @@ pub(crate) fn statement_rewords(a: &str, b: &str) -> bool {
     if ta.is_empty() || tb.is_empty() {
         return false;
     }
-    let (small, large) = if ta.len() <= tb.len() { (&ta, &tb) } else { (&tb, &ta) };
+    let (small, large) = if ta.len() <= tb.len() {
+        (&ta, &tb)
+    } else {
+        (&tb, &ta)
+    };
     small.is_subset(large)
         && large.len() - small.len() <= 2
         && !large
@@ -966,7 +987,10 @@ pub fn id_from_file(stem: &str) -> Option<String> {
             b'+' => out.push(b'/'),
             b'%' => {
                 let hex = stem.get(i + 1..i + 3)?;
-                if !hex.bytes().all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c)) {
+                if !hex
+                    .bytes()
+                    .all(|c| c.is_ascii_digit() || (b'A'..=b'F').contains(&c))
+                {
                     return None;
                 }
                 out.push(u8::from_str_radix(hex, 16).ok()?);
@@ -1011,7 +1035,10 @@ pub fn node_stem(id: &str) -> (String, bool) {
     } else if b[cut - 2] == b'%' {
         cut -= 2;
     }
-    (format!("{}%~{:016x}", &full[..cut], fnv1a64(id.as_bytes())), true)
+    (
+        format!("{}%~{:016x}", &full[..cut], fnv1a64(id.as_bytes())),
+        true,
+    )
 }
 
 // The content of one redirect file.
@@ -1022,7 +1049,8 @@ struct RedirectFile {
 
 // The id a shortened file carries, read from its content.
 fn carried_id(path: &Path) -> Result<String, String> {
-    let v: serde_norway::Value = yaml_read(path)?.ok_or_else(|| format!("{}: missing", path.display()))?;
+    let v: serde_norway::Value =
+        yaml_read(path)?.ok_or_else(|| format!("{}: missing", path.display()))?;
     v.get("id")
         .and_then(|i| i.as_str())
         .map(String::from)
@@ -1127,8 +1155,12 @@ fn node_value<T: Serialize>(id: &str, node: &T, markers: &mut Markers) -> serde_
     m.insert("id".into(), id.into());
     if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
         let mut fields = fields;
-        let created = fields.shift_remove("created").and_then(|v| v.as_str().map(String::from));
-        let updated = fields.shift_remove("updated").and_then(|v| v.as_str().map(String::from));
+        let created = fields
+            .shift_remove("created")
+            .and_then(|v| v.as_str().map(String::from));
+        let updated = fields
+            .shift_remove("updated")
+            .and_then(|v| v.as_str().map(String::from));
         if created.is_some() || updated.is_some() {
             markers.insert(id.to_string(), (created, updated));
         }
@@ -1288,10 +1320,18 @@ fn read_status(out: &Path, errors: &mut Vec<String>) -> Status {
         }
         out
     }
-    status.parked.extend(records::<ParkedGoal>(&out.join("parked"), errors));
-    status.failed.extend(records::<FailedGoal>(&out.join("failed"), errors));
-    status.alignment.extend(records::<DocAlignment>(&out.join("alignment"), errors));
-    status.lookalikes.extend(records::<LookalikeVerdict>(&out.join("lookalikes"), errors));
+    status
+        .parked
+        .extend(records::<ParkedGoal>(&out.join("parked"), errors));
+    status
+        .failed
+        .extend(records::<FailedGoal>(&out.join("failed"), errors));
+    status
+        .alignment
+        .extend(records::<DocAlignment>(&out.join("alignment"), errors));
+    status
+        .lookalikes
+        .extend(records::<LookalikeVerdict>(&out.join("lookalikes"), errors));
     status
 }
 
@@ -1323,7 +1363,9 @@ fn save_status_records(out: &Path, status: &Status) {
         };
         causes.insert(
             cause_key(&kind, &subject),
-            rs.iter().map(|r| (r.id.clone(), r.generation, r.mutation)).collect(),
+            rs.iter()
+                .map(|r| (r.id.clone(), r.generation, r.mutation))
+                .collect(),
         );
         put(path, value);
     }
@@ -1387,10 +1429,11 @@ pub fn fill_section_lines(rec: &mut DocRecord) {
     let mut children: BTreeMap<Option<String>, Vec<(usize, bool, String)>> = BTreeMap::new();
     for (r, s) in &rec.sections {
         if holder(&s.kind) {
-            children
-                .entry(s.parent.clone())
-                .or_default()
-                .push((s.order, s.kind != "preamble", r.clone()));
+            children.entry(s.parent.clone()).or_default().push((
+                s.order,
+                s.kind != "preamble",
+                r.clone(),
+            ));
         }
     }
     for list in children.values_mut() {
@@ -1430,10 +1473,15 @@ pub fn fill_section_lines(rec: &mut DocRecord) {
             let s = &rec.sections[&r];
             (s.parent.clone(), s.raw.clone())
         };
-        let Some(p) = parent.and_then(|p| rec.sections.get(&p).map(|ps| (ps.lines[0], ps.raw.clone()))) else {
+        let Some(p) =
+            parent.and_then(|p| rec.sections.get(&p).map(|ps| (ps.lines[0], ps.raw.clone())))
+        else {
             continue;
         };
-        let at = p.1.find(&raw).map(|i| p.1[..i].matches('\n').count()).unwrap_or(0);
+        let at =
+            p.1.find(&raw)
+                .map(|i| p.1[..i].matches('\n').count())
+                .unwrap_or(0);
         let n = raw.split('\n').count();
         if let Some(s) = rec.sections.get_mut(&r) {
             s.lines = [p.0 + at, p.0 + at + n];
@@ -1443,7 +1491,9 @@ pub fn fill_section_lines(rec: &mut DocRecord) {
 
 // Copy a directory tree, for snapshots.
 fn copy_tree(from: &Path, to: &Path) {
-    let Ok(rd) = crate::vfs::read_dir(from) else { return };
+    let Ok(rd) = crate::vfs::read_dir(from) else {
+        return;
+    };
     if crate::vfs::create_dir_all(to).is_err() {
         return;
     }
@@ -1619,8 +1669,9 @@ fn normalize_mentions(graph: &mut Graph, docs: &BTreeMap<String, DocRecord>, add
     let by_reference = reference_sources(graph);
     for (id, e) in graph.entities.iter_mut() {
         let derived = by_reference.get(id).map(Vec::as_slice).unwrap_or(&[]);
-        let (own, mut by_ref): (Vec<SourceRef>, Vec<SourceRef>) =
-            std::mem::take(&mut e.mentions).into_iter().partition(|m| !derived.contains(m));
+        let (own, mut by_ref): (Vec<SourceRef>, Vec<SourceRef>) = std::mem::take(&mut e.mentions)
+            .into_iter()
+            .partition(|m| !derived.contains(m));
         if add {
             for src in derived {
                 if !by_ref.contains(src) && !stale(src) {
@@ -1722,7 +1773,11 @@ pub fn parent_moves_in(entries: &[JournalEntry]) -> Vec<ParentMove> {
                     generation: entry.generation,
                     child: id.to_string(),
                     from: id_or_none(&mv["prior"]["parent"]),
-                    to: if cleared { None } else { id_or_none(&mv["parent"]) },
+                    to: if cleared {
+                        None
+                    } else {
+                        id_or_none(&mv["parent"])
+                    },
                 });
             }
         }
@@ -1850,7 +1905,12 @@ impl Store {
                     const { std::cell::RefCell::new(std::collections::BTreeMap::new()) };
             }
             let now = crate::vfs::memory_generation();
-            if let Some(store) = LAST.with(|l| l.borrow().get(out).filter(|(g, _)| *g == now).map(|(_, s)| s.clone())) {
+            if let Some(store) = LAST.with(|l| {
+                l.borrow()
+                    .get(out)
+                    .filter(|(g, _)| *g == now)
+                    .map(|(_, s)| s.clone())
+            }) {
                 return store;
             }
             let store = Self::load_uncached(out);
@@ -1898,7 +1958,9 @@ impl Store {
                 );
                 break store;
             }
-            crate::sys::sleep(std::time::Duration::from_millis(u64::from(attempts.min(10)) * 10));
+            crate::sys::sleep(std::time::Duration::from_millis(
+                u64::from(attempts.min(10)) * 10,
+            ));
         };
         for e in &store.load_errors {
             eprintln!("[jazyk] error: {} did not load: {}", out.display(), e);
@@ -2172,8 +2234,14 @@ impl Store {
                 (id.clone(), node_value(id, &own, &mut markers))
             })
             .collect();
-        let curated = node_values(self.graph.views.iter().filter(|(_, v)| !v.default), &mut markers);
-        let defaults = node_values(self.graph.views.iter().filter(|(_, v)| v.default), &mut markers);
+        let curated = node_values(
+            self.graph.views.iter().filter(|(_, v)| !v.default),
+            &mut markers,
+        );
+        let defaults = node_values(
+            self.graph.views.iter().filter(|(_, v)| v.default),
+            &mut markers,
+        );
         let mut gone = Vec::new();
         gone.extend(save_values(&g.join("entities"), &entities));
         gone.extend(save_values(
@@ -2222,10 +2290,18 @@ impl Store {
         report_write(&path, write_yaml(&path, &markers));
         // A `.jazyk` folder never exists without its ignore file.
         // Mirrors docs/compiler/document-sets.md#persistence-and-identity.
-        if let Some(jazyk) = self.out.parent().filter(|p| p.file_name().is_some_and(|n| n == ".jazyk")) {
+        if let Some(jazyk) = self
+            .out
+            .parent()
+            .filter(|p| p.file_name().is_some_and(|n| n == ".jazyk"))
+        {
             if let Some(root) = jazyk.parent() {
                 if let Err(e) = crate::document_sets::ensure_ignore(root) {
-                    eprintln!("[jazyk] error: cannot write {}/.gitignore: {}", jazyk.display(), e);
+                    eprintln!(
+                        "[jazyk] error: cannot write {}/.gitignore: {}",
+                        jazyk.display(),
+                        e
+                    );
                 }
             }
         }
@@ -2345,7 +2421,11 @@ impl Store {
         // The remainder rides on the last entry.
         let split = |total: u64, i: usize| {
             let share = total / n;
-            if i as u64 + 1 == n { total - share * (n - 1) } else { share }
+            if i as u64 + 1 == n {
+                total - share * (n - 1)
+            } else {
+                share
+            }
         };
         for (i, (p, mut entry)) in entries.into_iter().enumerate() {
             entry.tokens = Some(split(tokens, i));
@@ -2377,7 +2457,11 @@ impl Store {
         }
         let p = out.join("journal").join(format!("g{}.yaml", generation));
         if !p.vis_file() {
-            return Err(format!("no journal entry g{} under {}", generation, out.display()));
+            return Err(format!(
+                "no journal entry g{} under {}",
+                generation,
+                out.display()
+            ));
         }
         // The read, the check, and the write hold the lock, so two stamps never both
         // pass the no-figure check. Mirrors docs/compiler/graph.md#concurrency.
@@ -2502,7 +2586,10 @@ impl Store {
     pub fn parent_history(
         &self,
         moves: &[(String, Option<String>, Option<String>, usize)],
-    ) -> (BTreeMap<String, ParentMove>, BTreeMap<String, (String, String)>) {
+    ) -> (
+        BTreeMap<String, ParentMove>,
+        BTreeMap<String, (String, String)>,
+    ) {
         let mut pending: BTreeSet<String> = moves.iter().map(|(c, _, _, _)| c.clone()).collect();
         let mut last: BTreeMap<String, ParentMove> = BTreeMap::new();
         let mut names: BTreeMap<String, (String, String)> = BTreeMap::new();
@@ -2789,7 +2876,12 @@ impl Store {
     }
 
     // `diag:<rule>-<hash>`, the hash of the rule and the sorted subjects.
-    pub fn mint_diag_id(&self, rule: &str, subjects: &[String], taken: &BTreeSet<String>) -> String {
+    pub fn mint_diag_id(
+        &self,
+        rule: &str,
+        subjects: &[String],
+        taken: &BTreeSet<String>,
+    ) -> String {
         let mut sorted: Vec<&str> = subjects.iter().map(String::as_str).collect();
         sorted.sort();
         let key = format!("{}\n{}", rule, sorted.join("\n"));
@@ -2939,7 +3031,9 @@ impl Store {
                 }
             }
         }
-        self.graph.redirects.insert(from.to_string(), to.to_string());
+        self.graph
+            .redirects
+            .insert(from.to_string(), to.to_string());
     }
 
     // Whether a node id names an existing entity or requirement.
@@ -3055,7 +3149,10 @@ impl Store {
                 for t in &toks {
                     *e.1.entry(t.clone()).or_default() += 1;
                 }
-                by_entity.entry(id.to_string()).or_default().push(rid.clone());
+                by_entity
+                    .entry(id.to_string())
+                    .or_default()
+                    .push(rid.clone());
             }
             tokens.insert(rid.clone(), toks);
         }
@@ -3574,8 +3671,15 @@ impl Store {
     // standing verdict takes a `lookalike` record, a remembered pair whose score moved
     // drops its entry and takes one too, and a record whose pair is no longer pending
     // clears. Mirrors docs/compiler/goals/dedupe-candidates.md#verdicts-are-remembered.
-    fn settle_lookalikes(&mut self, resolved: &[Resolved], generation: u64, batch: &mut RecordBatch) {
-        use crate::goals::{lookalike_pair_score, pair_members, pair_target, pending_lookalikes, CHANGE_LOOKALIKE};
+    fn settle_lookalikes(
+        &mut self,
+        resolved: &[Resolved],
+        generation: u64,
+        batch: &mut RecordBatch,
+    ) {
+        use crate::goals::{
+            lookalike_pair_score, pair_members, pair_target, pending_lookalikes, CHANGE_LOOKALIKE,
+        };
         let is_separate = |v: &serde_json::Value| {
             v.as_str().or_else(|| v["verdict"].as_str()) == Some(LOOKALIKE_SEPARATE)
         };
@@ -3598,8 +3702,14 @@ impl Store {
             }
         }
         for (a, b) in kept {
-            let (a, b) = (self.resolve_id(&a).to_string(), self.resolve_id(&b).to_string());
-            if a == b || !self.graph.entities.contains_key(&a) || !self.graph.entities.contains_key(&b) {
+            let (a, b) = (
+                self.resolve_id(&a).to_string(),
+                self.resolve_id(&b).to_string(),
+            );
+            if a == b
+                || !self.graph.entities.contains_key(&a)
+                || !self.graph.entities.contains_key(&b)
+            {
                 continue;
             }
             let pair = pair_target(&a, &b);
@@ -3615,7 +3725,8 @@ impl Store {
         }
         let entities = &self.graph.entities;
         self.status.lookalikes.retain(|l| {
-            pair_members(&l.pair).is_some_and(|(a, b)| entities.contains_key(a) && entities.contains_key(b))
+            pair_members(&l.pair)
+                .is_some_and(|(a, b)| entities.contains_key(a) && entities.contains_key(b))
         });
         self.status.lookalikes.sort_by(|x, y| x.pair.cmp(&y.pair));
         let pending = pending_lookalikes(self);
@@ -3792,8 +3903,11 @@ impl Store {
                 })
                 .unwrap_or(false),
             // Both ids live; the name index settles the rest at every commit.
-            crate::goals::CHANGE_LOOKALIKE => crate::goals::pair_members(&c.subject)
-                .is_some_and(|(a, b)| self.graph.entities.contains_key(a) && self.graph.entities.contains_key(b)),
+            crate::goals::CHANGE_LOOKALIKE => {
+                crate::goals::pair_members(&c.subject).is_some_and(|(a, b)| {
+                    self.graph.entities.contains_key(a) && self.graph.entities.contains_key(b)
+                })
+            }
             CHANGE_VIEW_MEMBER_GONE => self.graph.views.get(&c.subject).is_some_and(|v| {
                 v.members
                     .iter()
@@ -4973,7 +5087,9 @@ impl Store {
                             // Case and punctuation refresh in place; only a change in
                             // substance reopens the requirement's pairs
                             // (docs/compiler/graph.md#change-records).
-                            if normalize_statement(&r.statement) != normalize_statement(&requirement.statement) {
+                            if normalize_statement(&r.statement)
+                                != normalize_statement(&requirement.statement)
+                            {
                                 dirt.revised(&existing, m, "fields");
                             }
                             r.statement = requirement.statement.clone();
@@ -5212,9 +5328,9 @@ impl Store {
                         }
                         for e in r.edges.iter().filter(|e| {
                             e.rel_type.as_deref() == Some("composition")
-                                && !edges_before.iter().any(|x| {
-                                    x.a == e.a && x.b == e.b && x.rel_type == e.rel_type
-                                })
+                                && !edges_before
+                                    .iter()
+                                    .any(|x| x.a == e.a && x.b == e.b && x.rel_type == e.rel_type)
                         }) {
                             dirt.entity(&e.a, m, "edges");
                             dirt.entity(&e.b, m, "edges");
@@ -5376,9 +5492,7 @@ impl Store {
                         .or(criterion.source.as_ref());
                     let base = format!("crit:{}-", Self::req_id_stem(source));
                     let mut final_id = id.clone();
-                    if !final_id.starts_with(&base)
-                        || self.graph.criteria.contains_key(&final_id)
-                    {
+                    if !final_id.starts_with(&base) || self.graph.criteria.contains_key(&final_id) {
                         final_id = self.mint_crit_id(&criterion, None, &BTreeSet::new());
                     }
                     if final_id != id {
@@ -5423,11 +5537,13 @@ impl Store {
                         }
                     }
                     if let Some(st) = &statement {
-                        let restates = self
-                            .graph
-                            .requirements
-                            .get(&c.requirement)
-                            .is_some_and(|r| normalize_statement(&r.statement) == normalize_statement(st));
+                        let restates =
+                            self.graph
+                                .requirements
+                                .get(&c.requirement)
+                                .is_some_and(|r| {
+                                    normalize_statement(&r.statement) == normalize_statement(st)
+                                });
                         if restates {
                             skipped.push(format!(
                                 "update_criterion {}: criterion-restates {}",
@@ -5925,9 +6041,8 @@ impl Store {
                                     parent,
                                     children,
                                 });
-                                applied.extend(self.resolve_ratification_diags(
-                                    &rid, &build, &reason,
-                                ));
+                                applied
+                                    .extend(self.resolve_ratification_diags(&rid, &build, &reason));
                                 continue;
                             }
                         }
@@ -6030,8 +6145,8 @@ impl Store {
                         {
                             dirt.revised(&rid, m, "quote");
                         }
-                        let old_source = r.source.replace(to.clone())
-                            .unwrap_or_else(|| from.clone());
+                        let old_source =
+                            r.source.replace(to.clone()).unwrap_or_else(|| from.clone());
                         r.provenance = None;
                         r.updated = Some(build.clone());
                         let ents = r.entities.clone();
@@ -6152,7 +6267,11 @@ impl Store {
                             let mut final_id = id.clone();
                             if final_id.is_empty() || self.graph.diagnostics.contains_key(&final_id)
                             {
-                                final_id = self.mint_diag_id(&diagnostic.rule, &diagnostic.subjects, &BTreeSet::new());
+                                final_id = self.mint_diag_id(
+                                    &diagnostic.rule,
+                                    &diagnostic.subjects,
+                                    &BTreeSet::new(),
+                                );
                             }
                             if diagnostic.prompt.is_some() && diagnostic.answer.is_none() {
                                 dirt.prompt(&final_id, m, "report_diagnostic");
@@ -6324,7 +6443,13 @@ impl Store {
                     serde_json::Value::Null,
                 );
             } else if self.graph.criteria.contains_key(id) {
-                batch.push(*m, CHANGE_CRIT_CREATED, id, "requirement", serde_json::Value::Null);
+                batch.push(
+                    *m,
+                    CHANGE_CRIT_CREATED,
+                    id,
+                    "requirement",
+                    serde_json::Value::Null,
+                );
             }
         }
         for (id, (m, via)) in &dirt.revised {
@@ -6448,7 +6573,11 @@ impl Store {
                 self.ratification_proposal(&id, &sentence, &prov, None, &entities, None);
             diagnostic.created = Some(build.clone());
             diagnostic.updated = Some(build.clone());
-            let did = self.mint_diag_id("ratification-pending", &diagnostic.subjects, &BTreeSet::new());
+            let did = self.mint_diag_id(
+                "ratification-pending",
+                &diagnostic.subjects,
+                &BTreeSet::new(),
+            );
             dirt.prompt(&did, m, "ratification");
             applied.push(Op::ReportDiagnostic {
                 id: did.clone(),
@@ -6686,10 +6815,7 @@ impl Store {
     // that dirtied sections journals an `edit` entry of its own; the moves and proposals
     // journal an `align` entry. Both write their change records.
     // Mirrors docs/compiler/reconciler.md#dirty-set.
-    pub fn sync_docs(
-        &mut self,
-        parsed: &crate::reconcile::ParsedDocs,
-    ) -> Vec<DirtyDoc> {
+    pub fn sync_docs(&mut self, parsed: &crate::reconcile::ParsedDocs) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, true)
     }
 
@@ -6700,10 +6826,7 @@ impl Store {
     // stand while the entries stay a build's to write (the generate release writes
     // them, since it approves a generation number: control.rs).
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
-    pub fn sync_docs_in_memory(
-        &mut self,
-        parsed: &crate::reconcile::ParsedDocs,
-    ) -> Vec<DirtyDoc> {
+    pub fn sync_docs_in_memory(&mut self, parsed: &crate::reconcile::ParsedDocs) -> Vec<DirtyDoc> {
         self.sync_docs_inner(parsed, false)
     }
 
@@ -7018,8 +7141,7 @@ impl Store {
 
         // Mechanical moves and renames, and the proposals left pending: one align entry
         // per build.
-        if !plan.exact_moves.is_empty() || !plan.renames.is_empty() || !plan.proposals.is_empty()
-        {
+        if !plan.exact_moves.is_empty() || !plan.renames.is_empty() || !plan.proposals.is_empty() {
             self.status.generation += 1;
             let build = format!("g{}", self.status.generation);
             let mut mutations: Vec<serde_json::Value> = plan
@@ -7027,9 +7149,9 @@ impl Store {
                 .iter()
                 .map(|(f, t)| serde_json::json!({"op": "move", "from": f.render(), "to": t.render()}))
                 .collect();
-            mutations.extend(plan.renames.iter().map(|(f, t)| {
-                serde_json::json!({"op": "rename", "from": f.render(), "to": t.render()})
-            }));
+            mutations.extend(plan.renames.iter().map(
+                |(f, t)| serde_json::json!({"op": "rename", "from": f.render(), "to": t.render()}),
+            ));
             mutations.extend(plan.proposals.iter().map(|p| {
                 serde_json::json!({"op": "propose", "anchor": p.anchor, "from": p.from,
                     "candidates": p.candidates.iter().map(|c| c.section.clone()).collect::<Vec<_>>()})
@@ -7477,10 +7599,7 @@ impl Store {
     // Reconcile the deterministic findings: new ones are reported, existing ones updated,
     // vanished ones resolved. Keyed by rule plus subjects, like the sticky rule in apply().
     // A run that changed anything is a `checks` generation of its own.
-    pub fn reconcile_check_diags(
-        &mut self,
-        findings: Vec<crate::reconcile::Finding>,
-    ) {
+    pub fn reconcile_check_diags(&mut self, findings: Vec<crate::reconcile::Finding>) {
         let _flock = FileLock::acquire(&self.out);
         if self.refuse("checks").is_some() {
             return;
@@ -7645,10 +7764,7 @@ impl FileLock {
                     };
                 }
                 if !warned && started.elapsed() >= std::time::Duration::from_secs(10) {
-                    eprintln!(
-                        "[jazyk] waiting for the writer holding {}",
-                        path.display()
-                    );
+                    eprintln!("[jazyk] waiting for the writer holding {}", path.display());
                     warned = true;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -7805,11 +7921,26 @@ mod tests {
 
     #[test]
     fn normalize_statement_keeps_operators_signs_and_decimals() {
-        assert_eq!(normalize_statement("The reply arrives, under 30 s."), "the reply arrives under 30 s");
-        assert_ne!(normalize_statement("latency > 30 s"), normalize_statement("latency < 30 s"));
-        assert_ne!(normalize_statement("under 30 s"), normalize_statement("under 3.0 s"));
-        assert_ne!(normalize_statement("an offset of -1"), normalize_statement("an offset of 1"));
-        assert_eq!(normalize_statement("Read-only mode."), normalize_statement("read only mode"));
+        assert_eq!(
+            normalize_statement("The reply arrives, under 30 s."),
+            "the reply arrives under 30 s"
+        );
+        assert_ne!(
+            normalize_statement("latency > 30 s"),
+            normalize_statement("latency < 30 s")
+        );
+        assert_ne!(
+            normalize_statement("under 30 s"),
+            normalize_statement("under 3.0 s")
+        );
+        assert_ne!(
+            normalize_statement("an offset of -1"),
+            normalize_statement("an offset of 1")
+        );
+        assert_eq!(
+            normalize_statement("Read-only mode."),
+            normalize_statement("read only mode")
+        );
         assert_eq!(normalize_statement("on 2024-09-27"), "on 2024 09 27");
         assert_eq!(normalize_statement("x >= 5"), "x > = 5");
     }
@@ -7832,7 +7963,8 @@ mod tests {
     // A directory of its own for a test that reloads from disk (the shared tmp dir is
     // stomped by parallel tests).
     fn own_dir(label: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-{}-test-{}", label, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).ok();
         dir
@@ -7857,7 +7989,9 @@ mod tests {
         let inodes = |dir: &Path| -> BTreeMap<PathBuf, u64> {
             let mut all = BTreeMap::new();
             for sub in ["graph/entities", "graph/diagnostics", "docs", ""] {
-                let Ok(rd) = std::fs::read_dir(dir.join(sub)) else { continue };
+                let Ok(rd) = std::fs::read_dir(dir.join(sub)) else {
+                    continue;
+                };
                 for e in rd.flatten() {
                     let p = e.path();
                     if p.extension().and_then(|x| x.to_str()) == Some("yaml") {
@@ -7878,9 +8012,15 @@ mod tests {
         let r = s.apply(vec![create("ent:b", "B")], &session());
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         let after = inodes(&out);
-        assert!(after.contains_key(&out.join("graph/entities/ent~b.yaml")), "the new node is written");
+        assert!(
+            after.contains_key(&out.join("graph/entities/ent~b.yaml")),
+            "the new node is written"
+        );
         // The records live one per file: status.yaml stays, the commit point moves.
-        assert_eq!(after[&out.join("status.yaml")], before[&out.join("status.yaml")]);
+        assert_eq!(
+            after[&out.join("status.yaml")],
+            before[&out.join("status.yaml")]
+        );
         assert_ne!(after[&out.join(BUILD_FILE)], before[&out.join(BUILD_FILE)]);
         let a = out.join("graph/entities/ent~a.yaml");
         assert_eq!(after[&a], before[&a], "an unchanged node file stays");
@@ -7907,7 +8047,11 @@ mod tests {
         );
         let r = again.apply(vec![create("ent:b", "B")], &session());
         assert_eq!(r.applied, 0);
-        assert!(r.skipped[0].starts_with("store-unreadable:"), "{:?}", r.skipped);
+        assert!(
+            r.skipped[0].starts_with("store-unreadable:"),
+            "{:?}",
+            r.skipped
+        );
         assert!(again.sweep().is_empty());
         again.save();
         assert_eq!(crate::vfs::read_to_string(&shard).unwrap(), broken);
@@ -7984,27 +8128,38 @@ mod tests {
             assert_eq!(file_id(id), name, "{id}");
             assert_eq!(id_from_file(name).as_deref(), Some(id), "{name}");
         }
-        for bad in ["", "ent~%61", "ENT~a", "ent~%4", "ent~%zz", "ent~%4f", "a b", ".x"] {
+        for bad in [
+            "", "ent~%61", "ENT~a", "ent~%4", "ent~%zz", "ent~%4f", "a b", ".x",
+        ] {
             assert_eq!(id_from_file(bad), None, "{bad}");
         }
-        let names: BTreeSet<String> = ["ent:ab", "ent:Ab", "ent:AB", "ent:%41b", "ent:a~b", "ent:a:b"]
-            .iter()
-            .map(|id| file_id(id).to_lowercase())
-            .collect();
+        let names: BTreeSet<String> = [
+            "ent:ab", "ent:Ab", "ent:AB", "ent:%41b", "ent:a~b", "ent:a:b",
+        ]
+        .iter()
+        .map(|id| file_id(id).to_lowercase())
+        .collect();
         assert_eq!(names.len(), 6, "{names:?}");
     }
 
     fn every_kind_graph() -> Store {
         let mut s = Store::default();
         s.graph.entities.insert("ent:order".into(), entity("Order"));
-        s.graph.entities.insert("ent:payment".into(), entity("Payment"));
+        s.graph
+            .entities
+            .insert("ent:payment".into(), entity("Payment"));
         s.graph.entities.insert("ent:čaj".into(), entity("Čaj"));
         let mut r = seeded_req("orders.md", "An order holds a payment.");
         r.entities = vec!["ent:order".into(), "ent:payment".into()];
         r.source = Some(mention("orders.md", "/orders", "An order holds a payment."));
         // As a commit leaves it: the requirement's source is a mention on its entities.
         for e in ["ent:order", "ent:payment"] {
-            s.graph.entities.get_mut(e).unwrap().mentions.push(r.source.clone().unwrap());
+            s.graph
+                .entities
+                .get_mut(e)
+                .unwrap()
+                .mentions
+                .push(r.source.clone().unwrap());
         }
         r.edges = vec![ReqEdge {
             a: "ent:order".into(),
@@ -8040,7 +8195,9 @@ mod tests {
         s.graph
             .diagnostics
             .insert("diag:lint-1".into(), diag("lint", vec!["req:orders-1"]));
-        s.graph.redirects.insert("ent:purchase".into(), "ent:order".into());
+        s.graph
+            .redirects
+            .insert("ent:purchase".into(), "ent:order".into());
         crate::derive::recompute_relationships(&mut s);
         crate::derive::recompute_state_machines(&mut s);
         s
@@ -8048,13 +8205,19 @@ mod tests {
 
     fn tree_bytes(dir: &Path) -> BTreeMap<String, Vec<u8>> {
         fn walk(root: &Path, dir: &Path, into: &mut BTreeMap<String, Vec<u8>>) {
-            let Ok(rd) = std::fs::read_dir(dir) else { return };
+            let Ok(rd) = std::fs::read_dir(dir) else {
+                return;
+            };
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() {
                     walk(root, &p, into);
                 } else {
-                    let rel = p.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+                    let rel = p
+                        .strip_prefix(root)
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/");
                     into.insert(rel, std::fs::read(&p).unwrap());
                 }
             }
@@ -8084,7 +8247,11 @@ mod tests {
             "graph/state-machines/sm~order.yaml",
             "status.yaml",
         ] {
-            assert!(files.contains_key(name), "{name} missing from {:?}", files.keys());
+            assert!(
+                files.contains_key(name),
+                "{name} missing from {:?}",
+                files.keys()
+            );
         }
         assert_eq!(
             files["graph/redirects/ent~purchase.yaml"],
@@ -8095,9 +8262,15 @@ mod tests {
         // generation markers, no mention a requirement adds by reference.
         let order = String::from_utf8(files["graph/entities/ent~order.yaml"].clone()).unwrap();
         assert!(order.starts_with("id: ent:order\n"), "{order}");
-        assert!(!order.contains("mentions") && !order.contains("created"), "{order}");
+        assert!(
+            !order.contains("mentions") && !order.contains("created"),
+            "{order}"
+        );
         let req = String::from_utf8(files["graph/requirements/req~orders-1.yaml"].clone()).unwrap();
-        assert!(req.starts_with("id: req:orders-1\n") && !req.contains("updated:"), "{req}");
+        assert!(
+            req.starts_with("id: req:orders-1\n") && !req.contains("updated:"),
+            "{req}"
+        );
         assert!(files.contains_key("markers.yaml"));
         let back = Store::load(&out);
         assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
@@ -8179,7 +8352,8 @@ mod tests {
         };
         s.sync_docs(&parse(&[("orders.md", a), ("payments.md", b)]));
         s.save();
-        let derived = serde_json::to_value((&s.graph.relationships, &s.graph.state_machines)).unwrap();
+        let derived =
+            serde_json::to_value((&s.graph.relationships, &s.graph.state_machines)).unwrap();
         assert!(!s.graph.relationships.is_empty() && !s.graph.state_machines.is_empty());
         // What a clone carries: the committed paths only.
         for local in [
@@ -8197,9 +8371,12 @@ mod tests {
         crate::vfs::remove_file(out.join(MARKERS_FILE)).ok();
         crate::vfs::remove_file(out.join(CAUSES_FILE)).ok();
         let committed: Vec<String> = tree_bytes(&out).into_keys().collect();
-        assert!(committed
-            .iter()
-            .all(|p| crate::document_sets::committed(&format!(".jazyk/ds_main/{p}"))), "{committed:?}");
+        assert!(
+            committed
+                .iter()
+                .all(|p| crate::document_sets::committed(&format!(".jazyk/ds_main/{p}"))),
+            "{committed:?}"
+        );
         let mut opened = Store::load(&out);
         assert!(opened.load_errors.is_empty(), "{:?}", opened.load_errors);
         // The generation is local: a clone starts at the committed floor, and the
@@ -8207,7 +8384,8 @@ mod tests {
         assert_eq!(opened.status.generation, generation_floor(&opened.status));
         assert!(opened.status.changes.iter().all(|c| c.generation == 0));
         assert_eq!(
-            serde_json::to_value((&opened.graph.relationships, &opened.graph.state_machines)).unwrap(),
+            serde_json::to_value((&opened.graph.relationships, &opened.graph.state_machines))
+                .unwrap(),
             derived
         );
         assert!(opened.journal_entries().is_empty());
@@ -8224,7 +8402,9 @@ mod tests {
         let r = opened.apply(vec![create("ent:refund", "Refund")], &session());
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         assert_eq!(opened.status.generation, generation + 1);
-        assert!(out.join("graph/relationships/rel~order%7Epayment.yaml").vexists());
+        assert!(out
+            .join("graph/relationships/rel~order%7Epayment.yaml")
+            .vexists());
         assert!(out.join("graph/state-machines/sm~order.yaml").vexists());
     }
 
@@ -8251,7 +8431,10 @@ mod tests {
             let id = format!("ent:{}{}", "a".repeat(pad), "č".repeat(80));
             let stem = node_stem(&id).0;
             let prefix = stem.split("%~").next().unwrap();
-            assert!(!prefix.ends_with('%') && prefix.as_bytes()[prefix.len() - 2] != b'%', "{stem}");
+            assert!(
+                !prefix.ends_with('%') && prefix.as_bytes()[prefix.len() - 2] != b'%',
+                "{stem}"
+            );
         }
 
         let out = own_dir("long-ids");
@@ -8263,7 +8446,8 @@ mod tests {
         s.graph.redirects.insert(long("-old"), "ent:order".into());
         s.save();
         let stem = node_stem(&ids[0]).0;
-        let text = crate::vfs::read_to_string(out.join(format!("graph/entities/{stem}.yaml"))).unwrap();
+        let text =
+            crate::vfs::read_to_string(out.join(format!("graph/entities/{stem}.yaml"))).unwrap();
         assert!(text.starts_with(&format!("id: {}\n", ids[0])), "{text}");
         let back = Store::load(&out);
         assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
@@ -8291,21 +8475,42 @@ mod tests {
         let mut s = every_kind_graph();
         s.out = out.clone();
         s.status.generation = 12;
-        s.status.changes.push(ChangeRecord::new(12, 1, 1, CHANGE_ENTITY, "ent:order", "name"));
+        s.status.changes.push(ChangeRecord::new(
+            12,
+            1,
+            1,
+            CHANGE_ENTITY,
+            "ent:order",
+            "name",
+        ));
         s.save();
         let status = crate::vfs::read_to_string(out.join("status.yaml")).unwrap();
         for key in ["generation:", "verdict:", "costs:", "spent:"] {
-            assert!(!status.lines().any(|l| l.starts_with(key)), "{key} in {status}");
+            assert!(
+                !status.lines().any(|l| l.starts_with(key)),
+                "{key} in {status}"
+            );
         }
         assert_eq!(read_generation(&out), 12);
         crate::vfs::remove_file(out.join(BUILD_FILE)).unwrap();
-        assert_eq!(Store::load(&out).status.generation, 12, "a checkout starts at the floor");
+        assert_eq!(
+            Store::load(&out).status.generation,
+            12,
+            "a checkout starts at the floor"
+        );
         crate::vfs::write(out.join(BUILD_FILE), "generation: 3\n").unwrap();
         let mut low = Store::load(&out);
-        assert_eq!(low.status.generation, 12, "a stale local counter rises to the floor");
+        assert_eq!(
+            low.status.generation, 12,
+            "a stale local counter rises to the floor"
+        );
         let r = low.apply(vec![create("ent:refund", "Refund")], &session());
         assert_eq!((r.applied, r.generation), (1, 13), "{:?}", r.skipped);
-        assert_eq!(read_generation(&out), low.status.generation, "the commit wrote the raised counter");
+        assert_eq!(
+            read_generation(&out),
+            low.status.generation,
+            "the commit wrote the raised counter"
+        );
         crate::vfs::write(out.join(BUILD_FILE), "generation: 20\n").unwrap();
         assert_eq!(Store::load(&out).status.generation, 20);
     }
@@ -8342,18 +8547,33 @@ mod tests {
         run.status.spent.rounds = 7;
         run.status.verdict.state = "converged".into();
         run.save_status();
-        assert_eq!(std::fs::read(base.join("status.yaml")).unwrap(), base_status);
+        assert_eq!(
+            std::fs::read(base.join("status.yaml")).unwrap(),
+            base_status
+        );
         copy_dir(&base, &a);
         copy_dir(&base, &b);
         // Branch a commits once and keeps its open change records.
         let mut sa = Store::load(&a);
-        assert_eq!(sa.apply(vec![create("ent:alpha", "Alpha")], &session()).applied, 1);
+        assert_eq!(
+            sa.apply(vec![create("ent:alpha", "Alpha")], &session())
+                .applied,
+            1
+        );
         sa.status.costs.tokens = 111;
         sa.save_status();
         // Branch b commits twice, then converges: its records clear.
         let mut sb = Store::load(&b);
-        assert_eq!(sb.apply(vec![create("ent:beta", "Beta")], &session()).applied, 1);
-        assert_eq!(sb.apply(vec![create("ent:gamma", "Gamma")], &session()).applied, 1);
+        assert_eq!(
+            sb.apply(vec![create("ent:beta", "Beta")], &session())
+                .applied,
+            1
+        );
+        assert_eq!(
+            sb.apply(vec![create("ent:gamma", "Gamma")], &session())
+                .applied,
+            1
+        );
         let ids: Vec<String> = sb.status.changes.iter().map(|c| c.id.clone()).collect();
         sb.clear_changes(&ids);
         sb.status.costs.tokens = 222;
@@ -8402,12 +8622,22 @@ mod tests {
         let root = own_dir("git-merge");
         let git = |args: &[&str]| {
             std::process::Command::new("git")
-                .args(["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false"])
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
                 .args(args)
                 .current_dir(&root)
                 .output()
         };
-        if git(&["init", "-q", "-b", "base"]).map(|o| !o.status.success()).unwrap_or(true) {
+        if git(&["init", "-q", "-b", "base"])
+            .map(|o| !o.status.success())
+            .unwrap_or(true)
+        {
             eprintln!("no git binary; the merge was not exercised");
             return;
         }
@@ -8420,7 +8650,10 @@ mod tests {
         seed_doc(&mut s, "shop.md", text);
         let r = s.apply(vec![create("ent:order", "Order")], &session());
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
-        assert!(root.join(".jazyk/.gitignore").vexists(), "a save writes the ignore file");
+        assert!(
+            root.join(".jazyk/.gitignore").vexists(),
+            "a save writes the ignore file"
+        );
         let req = |section: &str, quote: &str| Op::CreateRequirement {
             id: String::new(),
             requirement: Requirement {
@@ -8437,20 +8670,36 @@ mod tests {
         };
         let commit = |msg: &str| {
             let add = git(&["add", "-A"]).unwrap();
-            assert!(add.status.success(), "{}", String::from_utf8_lossy(&add.stderr));
+            assert!(
+                add.status.success(),
+                "{}",
+                String::from_utf8_lossy(&add.stderr)
+            );
             let c = git(&["commit", "-q", "-m", msg]).unwrap();
             assert!(c.status.success(), "{}", String::from_utf8_lossy(&c.stderr));
         };
         commit("base");
-        assert!(git(&["checkout", "-q", "-b", "a"]).unwrap().status.success());
+        assert!(git(&["checkout", "-q", "-b", "a"])
+            .unwrap()
+            .status
+            .success());
         let mut sa = Store::load(&out);
-        let r = sa.apply(vec![req("/shop/orders", "An order holds items.")], &session());
+        let r = sa.apply(
+            vec![req("/shop/orders", "An order holds items.")],
+            &session(),
+        );
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         commit("a");
         assert!(git(&["checkout", "-q", "base"]).unwrap().status.success());
-        assert!(git(&["checkout", "-q", "-b", "b"]).unwrap().status.success());
+        assert!(git(&["checkout", "-q", "-b", "b"])
+            .unwrap()
+            .status
+            .success());
         let mut sb = Store::load(&out);
-        let r = sb.apply(vec![req("/shop/payments", "A payment settles an order.")], &session());
+        let r = sb.apply(
+            vec![req("/shop/payments", "A payment settles an order.")],
+            &session(),
+        );
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
         commit("b");
         let merged = git(&["merge", "-q", "--no-ff", "--no-edit", "a"]).unwrap();
@@ -8462,22 +8711,49 @@ mod tests {
         );
         let m = Store::load(&out);
         assert!(m.load_errors.is_empty(), "{:?}", m.load_errors);
-        assert_eq!(m.graph.requirements.len(), 2, "{:?}", m.graph.requirements.keys());
+        assert_eq!(
+            m.graph.requirements.len(),
+            2,
+            "{:?}",
+            m.graph.requirements.keys()
+        );
         let ids: BTreeSet<&String> = m.graph.requirements.keys().collect();
-        assert!(ids.iter().any(|i| i.starts_with("req:shop-orders-")), "{ids:?}");
-        assert!(ids.iter().any(|i| i.starts_with("req:shop-payments-")), "{ids:?}");
+        assert!(
+            ids.iter().any(|i| i.starts_with("req:shop-orders-")),
+            "{ids:?}"
+        );
+        assert!(
+            ids.iter().any(|i| i.starts_with("req:shop-payments-")),
+            "{ids:?}"
+        );
         // Both sources come back as mentions on the entity both branches named.
-        assert_eq!(m.graph.entities["ent:order"].mentions.len(), 2, "{:?}", m.graph.entities["ent:order"].mentions);
+        assert_eq!(
+            m.graph.entities["ent:order"].mentions.len(),
+            2,
+            "{:?}",
+            m.graph.entities["ent:order"].mentions
+        );
         let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
         assert!(!order.contains("mentions"), "{order}");
         // Each branch's change records survive the merge.
         for id in &ids {
-            assert!(m.status.has_change(CHANGE_REQ_CREATED, id), "{id}: {:?}", m.status.changes);
+            assert!(
+                m.status.has_change(CHANGE_REQ_CREATED, id),
+                "{id}: {:?}",
+                m.status.changes
+            );
         }
         // Nothing local was committed.
         let tracked = git(&["ls-files"]).unwrap();
         let tracked = String::from_utf8_lossy(&tracked.stdout);
-        for local in ["build.yaml", "markers.yaml", "causes.yaml", "journal/", "relationships/", "default-views/"] {
+        for local in [
+            "build.yaml",
+            "markers.yaml",
+            "causes.yaml",
+            "journal/",
+            "relationships/",
+            "default-views/",
+        ] {
             assert!(!tracked.contains(local), "{local} tracked:\n{tracked}");
         }
         assert!(tracked.contains(".jazyk/ds_main/changes/"), "{tracked}");
@@ -8500,7 +8776,10 @@ mod tests {
         w("graph/views/view~class+shop.yaml", "kind: class\ntitle: Shop\nmembers:\n- ent:order\nprovenance:\n  derived:\n    from:\n    - ent:order\n    reasoning: 'default view: x'\ndefault: true\n");
         w("graph/diagnostics/diag~lint-1.yaml", "rule: lint\nseverity: info\nsubjects:\n- req:shop-1\nmessage: m\nlifecycle: open\ncreated: g3\nupdated: g3\n");
         w("docs/shop.md.yaml", "contentHash: abc\nsections:\n  /shop:\n    title: Shop\n    kind: root\n    order: 0\n    raw: |-\n      # Shop\n      An order holds items.\n    hash: h1\n    lines:\n    - 0\n    - 2\n");
-        w("gen/ledger.yaml", "entities:\n  order:\n    factHash: f\n    requirements:\n    - req:shop-1\n");
+        w(
+            "gen/ledger.yaml",
+            "entities:\n  order:\n    factHash: f\n    requirements:\n    - req:shop-1\n",
+        );
         let s = Store::load(&out);
         assert!(s.load_errors.is_empty(), "{:?}", s.load_errors);
         assert_eq!(s.graph.entities["ent:order"].updated.as_deref(), Some("g4"));
@@ -8511,34 +8790,53 @@ mod tests {
         assert_eq!(s.docs["shop.md"].sections["/shop"].lines, [0, 2]);
         let ledger = crate::gen::Ledger::load(&out);
         assert!(ledger.entities.contains_key("order"));
-        let before = serde_json::to_value((&s.graph, &s.status.changes, &s.status.lookalikes)).unwrap();
+        let before =
+            serde_json::to_value((&s.graph, &s.status.changes, &s.status.lookalikes)).unwrap();
         s.save();
         ledger.save(&out).unwrap();
         let status = std::fs::read_to_string(out.join("status.yaml")).unwrap();
-        assert!(status.contains("version: 4") && !status.contains("changes") && !status.contains("lookalikes"), "{status}");
+        assert!(
+            status.contains("version: 4")
+                && !status.contains("changes")
+                && !status.contains("lookalikes"),
+            "{status}"
+        );
         assert!(out.join("changes/entity-changed/ent~order.yaml").vexists());
-        assert!(out.join("lookalikes/ent~order%7Eent~purchase.yaml").vexists());
+        assert!(out
+            .join("lookalikes/ent~order%7Eent~purchase.yaml")
+            .vexists());
         let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
         assert_eq!(order, "id: ent:order\nname: Order\n");
         // A default view is never committed: the recompute at load owns it.
         assert!(!out.join("graph/views/view~class+shop.yaml").vexists());
         let doc = std::fs::read_to_string(out.join("docs/shop.md.yaml")).unwrap();
-        assert!(!doc.contains("contentHash") && !doc.contains("lines"), "{doc}");
-        assert!(std::fs::read_to_string(out.join(BUILD_FILE)).unwrap().contains("shop.md: abc"));
+        assert!(
+            !doc.contains("contentHash") && !doc.contains("lines"),
+            "{doc}"
+        );
+        assert!(std::fs::read_to_string(out.join(BUILD_FILE))
+            .unwrap()
+            .contains("shop.md: abc"));
         let wide = std::fs::read_to_string(out.join("gen/ledger.yaml")).unwrap();
         assert!(!wide.contains("factHash"), "{wide}");
-        assert!(std::fs::read_to_string(out.join("gen/entities/order.yaml")).unwrap().starts_with("id: order\n"));
+        assert!(std::fs::read_to_string(out.join("gen/entities/order.yaml"))
+            .unwrap()
+            .starts_with("id: order\n"));
         // The upgraded store reads back the same graph, markers and all.
         let back = Store::load(&out);
         assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
         assert_eq!(back.status.version, STORE_VERSION);
         assert_eq!(
-            serde_json::to_value((&back.graph, &back.status.changes, &back.status.lookalikes)).unwrap(),
+            serde_json::to_value((&back.graph, &back.status.changes, &back.status.lookalikes))
+                .unwrap(),
             before
         );
         assert_eq!(back.docs["shop.md"].sections["/shop"].lines, [0, 2]);
         assert_eq!(back.docs["shop.md"].content_hash, "abc");
-        assert_eq!(crate::gen::Ledger::load(&out).entities["order"].fact_hash, "f");
+        assert_eq!(
+            crate::gen::Ledger::load(&out).entities["order"].fact_hash,
+            "f"
+        );
         // A cleared record deletes its file.
         let mut s = back;
         s.status.changes.clear();
@@ -8554,13 +8852,25 @@ mod tests {
         let out = own_dir("status-torn");
         crate::vfs::create_dir_all(out.join("graph/entities")).unwrap();
         crate::vfs::write(out.join("status.yaml"), "version: [4\n").unwrap();
-        crate::vfs::write(out.join("graph/entities/ent~order.yaml"), "id: ent:order\nname: Order\n").unwrap();
+        crate::vfs::write(
+            out.join("graph/entities/ent~order.yaml"),
+            "id: ent:order\nname: Order\n",
+        )
+        .unwrap();
         let s = Store::open_for_build(&out);
         assert!(!s.load_errors.is_empty());
         assert!(out.join("graph/entities/ent~order.yaml").vexists());
-        assert!(!out.with_file_name(format!("{}.bak", out.file_name().unwrap().to_string_lossy())).vexists());
+        assert!(!out
+            .with_file_name(format!(
+                "{}.bak",
+                out.file_name().unwrap().to_string_lossy()
+            ))
+            .vexists());
         s.save();
-        assert_eq!(std::fs::read_to_string(out.join("status.yaml")).unwrap(), "version: [4\n");
+        assert_eq!(
+            std::fs::read_to_string(out.join("status.yaml")).unwrap(),
+            "version: [4\n"
+        );
     }
 
     // Section line ranges recompute from the raw texts exactly as the parse gave them.
@@ -8644,13 +8954,19 @@ mod tests {
                 requirement: Requirement {
                     statement: "The sort utility outputs its lines in ascending order.".into(),
                     entities: vec!["prov:1".into()],
-                    source: Some(mention("t.md", "/t", "outputs its lines in ascending order")),
+                    source: Some(mention(
+                        "t.md",
+                        "/t",
+                        "outputs its lines in ascending order",
+                    )),
                     ..Default::default()
                 },
             },
             Op::CreateCriterion {
                 id: "crit:new-1".into(),
-                criterion: quoted("Given the lines 321, 654, 453, the utility outputs 321, 453, 654."),
+                criterion: quoted(
+                    "Given the lines 321, 654, 453, the utility outputs 321, 453, 654.",
+                ),
             },
             Op::CreateCriterion {
                 id: "crit:new-2".into(),
@@ -8671,11 +8987,17 @@ mod tests {
             },
             Op::CreateCriterion {
                 id: "crit:new-4".into(),
-                criterion: quoted("Given the lines 321, 654, 453, the utility outputs 321, 453, 654"),
+                criterion: quoted(
+                    "Given the lines 321, 654, 453, the utility outputs 321, 453, 654",
+                ),
             },
         ];
         let r = s.apply(ops, &wi().commit(3, Some(100)));
-        assert!(r.skipped.iter().any(|x| x.contains("criterion-restates")), "{:?}", r.skipped);
+        assert!(
+            r.skipped.iter().any(|x| x.contains("criterion-restates")),
+            "{:?}",
+            r.skipped
+        );
         let ids: Vec<&String> = s.graph.criteria.keys().collect();
         assert_eq!(ids.len(), 2, "{:?}", ids);
         assert!(ids.iter().all(|id| id.starts_with("crit:t-")), "{:?}", ids);
@@ -8702,7 +9024,9 @@ mod tests {
         s.apply(
             vec![Op::UpdateRequirement {
                 id: "req:t-1".into(),
-                statement: Some("The sort utility outputs its lines in ascending order by default.".into()),
+                statement: Some(
+                    "The sort utility outputs its lines in ascending order by default.".into(),
+                ),
                 entities: None,
                 edges: None,
                 transition: None,
@@ -8953,8 +9277,16 @@ mod tests {
         // A human edit is the review: the mention opens no review of the Order, while
         // the revised statement keeps its pair judgment against other requirements.
         // Mirrors docs/compiler/compilation.md#edit-paths.
-        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:order"), "{:?}", s.status.changes);
-        assert!(s.status.has_change(CHANGE_REQ_REVISED, "req:pay-1"), "{:?}", s.status.changes);
+        assert!(
+            !s.status.has_change(CHANGE_ENTITY, "ent:order"),
+            "{:?}",
+            s.status.changes
+        );
+        assert!(
+            s.status.has_change(CHANGE_REQ_REVISED, "req:pay-1"),
+            "{:?}",
+            s.status.changes
+        );
         let entry = journal_entry(&s, report.generation);
         assert_eq!(entry.kind, "dual-write");
         assert!(entry.mutations.iter().any(|m| m["op"] == "edit_doc_prose"));
@@ -9505,7 +9837,11 @@ mod tests {
                     id: "req:t-1".into(),
                     requirement: Requirement {
                         statement: "The buyer fills the cart for the customer.".into(),
-                        entities: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
+                        entities: vec![
+                            "ent:buyer".into(),
+                            "ent:cart".into(),
+                            "ent:customer".into(),
+                        ],
                         source: Some(mention("t.md", "/t", "buyer, cart, and customer")),
                         ..Default::default()
                     },
@@ -9532,8 +9868,14 @@ mod tests {
             &session(),
         );
         assert_eq!(r.applied, 1, "{:?}", r.skipped);
-        assert_eq!(s.graph.requirements["req:t-1"].entities, vec!["ent:buyer", "ent:cart"]);
-        assert_eq!(s.graph.views["view:class/shop"].members, vec!["ent:buyer", "ent:cart"]);
+        assert_eq!(
+            s.graph.requirements["req:t-1"].entities,
+            vec!["ent:buyer", "ent:cart"]
+        );
+        assert_eq!(
+            s.graph.views["view:class/shop"].members,
+            vec!["ent:buyer", "ent:cart"]
+        );
         // A staged list naming the absorbed id and its survivor apart resolves to one.
         let r = s.apply(
             vec![Op::CreateView {
@@ -9565,9 +9907,15 @@ mod tests {
             ..Default::default()
         };
         seed_doc(&mut s, "t.md", "# T\nbuyer and customer\n");
-        let with = |name: &str, not_about: &[&str], distinct: &[(&str, &str)], limits: &[(&str, u64)]| Entity {
+        let with = |name: &str,
+                    not_about: &[&str],
+                    distinct: &[(&str, &str)],
+                    limits: &[(&str, u64)]| Entity {
             not_about: not_about.iter().map(|x| x.to_string()).collect(),
-            distinct_from: distinct.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            distinct_from: distinct
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
             limits: limits
                 .iter()
                 .map(|(k, v)| (k.to_string(), LimitBump { value: *v }))
@@ -9579,11 +9927,24 @@ mod tests {
                 create("ent:payment", "Payment"),
                 Op::CreateEntity {
                     id: "ent:customer".into(),
-                    entity: with("Customer", &["req:a-1"], &[("ent:buyer", "told apart")], &[("requirements-per-entity", 70), ("attributes-per-entity", 40)]),
+                    entity: with(
+                        "Customer",
+                        &["req:a-1"],
+                        &[("ent:buyer", "told apart")],
+                        &[
+                            ("requirements-per-entity", 70),
+                            ("attributes-per-entity", 40),
+                        ],
+                    ),
                 },
                 Op::CreateEntity {
                     id: "ent:buyer".into(),
-                    entity: with("Buyer", &["req:b-1", "req:a-1"], &[("ent:payment", "the payer, not the payment")], &[("requirements-per-entity", 90), ("children-per-entity", 30)]),
+                    entity: with(
+                        "Buyer",
+                        &["req:b-1", "req:a-1"],
+                        &[("ent:payment", "the payer, not the payment")],
+                        &[("requirements-per-entity", 90), ("children-per-entity", 30)],
+                    ),
                 },
             ],
             &session(),
@@ -9620,7 +9981,11 @@ mod tests {
         };
         seed_doc(&mut s, "t.md", "# T\nshop\n");
         s.apply(
-            vec![create("ent:a", "A"), create("ent:b", "B"), create("ent:c", "C")],
+            vec![
+                create("ent:a", "A"),
+                create("ent:b", "B"),
+                create("ent:c", "C"),
+            ],
             &session(),
         );
         for (keep, absorb) in [("ent:b", "ent:a"), ("ent:c", "ent:b")] {
@@ -9639,7 +10004,11 @@ mod tests {
         let mut old = Store::default();
         old.graph.entities.insert("ent:end".into(), entity("End"));
         for i in 0..12 {
-            let to = if i == 11 { "ent:end".to_string() } else { format!("ent:x{}", i + 1) };
+            let to = if i == 11 {
+                "ent:end".to_string()
+            } else {
+                format!("ent:x{}", i + 1)
+            };
             old.graph.redirects.insert(format!("ent:x{}", i), to);
         }
         assert_eq!(old.resolve_id("ent:x0"), "ent:end");
@@ -9698,8 +10067,16 @@ mod tests {
             .filter(|c| c.kind == CHANGE_ENTITY)
             .map(|c| (c.subject.clone(), c.via.clone()))
             .collect();
-        assert!(records.contains(&("ent:orders".into(), "parent".into())), "{:?}", records);
-        assert!(!records.iter().any(|(s, _)| s == "ent:parcel"), "{:?}", records);
+        assert!(
+            records.contains(&("ent:orders".into(), "parent".into())),
+            "{:?}",
+            records
+        );
+        assert!(
+            !records.iter().any(|(s, _)| s == "ent:parcel"),
+            "{:?}",
+            records
+        );
         let entry = journal_entry(&s, r.generation);
         let moves = parent_moves_in(std::slice::from_ref(&entry));
         assert_eq!(moves.len(), 1, "{:?}", entry.mutations);
@@ -9716,7 +10093,11 @@ mod tests {
             out: own_dir("delete-cascade"),
             ..Default::default()
         };
-        seed_doc(&mut s, "t.md", "# T\nThe sort utility outputs its lines in ascending order.\n");
+        seed_doc(
+            &mut s,
+            "t.md",
+            "# T\nThe sort utility outputs its lines in ascending order.\n",
+        );
         s.apply(
             vec![
                 create("ent:sort", "Sort"),
@@ -9725,7 +10106,11 @@ mod tests {
                     requirement: Requirement {
                         statement: "The sort utility outputs its lines in ascending order.".into(),
                         entities: vec!["ent:sort".into()],
-                        source: Some(mention("t.md", "/t", "outputs its lines in ascending order")),
+                        source: Some(mention(
+                            "t.md",
+                            "/t",
+                            "outputs its lines in ascending order",
+                        )),
                         ..Default::default()
                     },
                 },
@@ -9733,7 +10118,8 @@ mod tests {
                     id: "crit:new-1".into(),
                     criterion: Criterion {
                         requirement: "req:t-1".into(),
-                        statement: "Given one line, the utility outputs that line unchanged.".into(),
+                        statement: "Given one line, the utility outputs that line unchanged."
+                            .into(),
                         kind: "boundary".into(),
                         provenance: Some(derived(&["req:t-1"])),
                         ..Default::default()
@@ -9750,19 +10136,34 @@ mod tests {
             &session(),
         );
         let entry = journal_entry(&s, r.generation);
-        let op_at = |m: usize| entry.mutations[m - 1]["op"].as_str().unwrap_or("").to_string();
+        let op_at = |m: usize| {
+            entry.mutations[m - 1]["op"]
+                .as_str()
+                .unwrap_or("")
+                .to_string()
+        };
         let req = r
             .changes
             .iter()
             .find(|c| c.kind == CHANGE_REQ_DELETED && c.subject == "req:t-1")
             .expect("a requirement-deleted record");
-        assert_eq!(op_at(req.mutation), "delete_requirement", "{:?}", entry.mutations);
+        assert_eq!(
+            op_at(req.mutation),
+            "delete_requirement",
+            "{:?}",
+            entry.mutations
+        );
         let crit = r
             .changes
             .iter()
             .find(|c| c.kind == CHANGE_CRIT_DELETED)
             .expect("a criterion-deleted record");
-        assert_eq!(op_at(crit.mutation), "delete_criterion", "{:?}", entry.mutations);
+        assert_eq!(
+            op_at(crit.mutation),
+            "delete_criterion",
+            "{:?}",
+            entry.mutations
+        );
     }
 
     // A CRLF document locates its sections for a dual write the same way an LF one
@@ -9775,17 +10176,43 @@ mod tests {
         let beta = sections["/t/beta"].raw.clone();
         let alpha = sections["/t/alpha"].raw.clone();
         // A replacement scoped to Beta never lands in Alpha's identical sentence.
-        let edit = ProseEdit::locate("t.md", "/t/beta", Some(&beta), &crlf, "The cart holds items.", "The cart holds goods.")
-            .unwrap();
-        assert_eq!(edit.full, crlf.replace("## Beta\r\nThe cart holds items.", "## Beta\r\nThe cart holds goods."));
+        let edit = ProseEdit::locate(
+            "t.md",
+            "/t/beta",
+            Some(&beta),
+            &crlf,
+            "The cart holds items.",
+            "The cart holds goods.",
+        )
+        .unwrap();
+        assert_eq!(
+            edit.full,
+            crlf.replace(
+                "## Beta\r\nThe cart holds items.",
+                "## Beta\r\nThe cart holds goods."
+            )
+        );
         // An append after a multi-line section lands right after it, in CRLF.
-        let edit = ProseEdit::locate("t.md", "/t/alpha", Some(&alpha), &crlf, "", "A cart expires.\nAfter a day.").unwrap();
+        let edit = ProseEdit::locate(
+            "t.md",
+            "/t/alpha",
+            Some(&alpha),
+            &crlf,
+            "",
+            "A cart expires.\nAfter a day.",
+        )
+        .unwrap();
         assert!(
-            edit.full.contains("It is shared.\r\n\r\nA cart expires.\r\nAfter a day.\r\n\r\n## Beta"),
+            edit.full
+                .contains("It is shared.\r\n\r\nA cart expires.\r\nAfter a day.\r\n\r\n## Beta"),
             "{:?}",
             edit.full
         );
-        assert!(!edit.full.replace("\r\n", "").contains('\n'), "{:?}", edit.full);
+        assert!(
+            !edit.full.replace("\r\n", "").contains('\n'),
+            "{:?}",
+            edit.full
+        );
     }
 
     // A move alone writes `parent` on the parent left and the one joined and no
@@ -9883,7 +10310,7 @@ mod tests {
             ],
             &session(),
         );
-        let update_parent =|id: &str, parent: &str| Op::UpdateEntity {
+        let update_parent = |id: &str, parent: &str| Op::UpdateEntity {
             id: id.into(),
             name: None,
             definition: None,
@@ -10186,10 +10613,7 @@ mod tests {
             &session(),
         );
         assert_eq!(r.applied, 1);
-        assert_eq!(
-            s.graph.views["view:usecase/t"].members,
-            vec!["req:t-1"]
-        );
+        assert_eq!(s.graph.views["view:usecase/t"].members, vec!["req:t-1"]);
         let gone = s
             .status
             .changes
@@ -10869,9 +11293,7 @@ mod tests {
             .graph
             .diagnostics
             .iter()
-            .find(|(_, d)| {
-                d.rule == "ratification-pending" && d.subjects == vec![x2.clone()]
-            })
+            .find(|(_, d)| d.rule == "ratification-pending" && d.subjects == vec![x2.clone()])
             .map(|(id, _)| id.clone())
             .expect("the commit files the proposal for the decreed fact");
         let prompt = s.graph.diagnostics[&proposal_id].prompt.as_ref().unwrap();
@@ -10882,8 +11304,7 @@ mod tests {
             s.graph
                 .diagnostics
                 .values()
-                .filter(|d| d.rule == "ratification-pending"
-                    && d.subjects == vec![x1.clone()])
+                .filter(|d| d.rule == "ratification-pending" && d.subjects == vec![x1.clone()])
                 .count(),
             1
         );
@@ -10924,7 +11345,11 @@ mod tests {
         assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
         // An accepted proposal is a human edit: the mention the landed sentence adds
         // opens no review of the Cart. Mirrors docs/compiler/goals/ratify.md#accept.
-        assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"), "{:?}", s.status.changes);
+        assert!(
+            !s.status.has_change(CHANGE_ENTITY, "ent:cart"),
+            "{:?}",
+            s.status.changes
+        );
         assert!(s
             .graph
             .diagnostics
@@ -11009,7 +11434,9 @@ mod tests {
             &session(),
         );
         assert!(r.skipped.is_empty(), "{:?}", r.skipped);
-        assert!(s.status.has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
+        assert!(s
+            .status
+            .has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
         let rid = s
             .graph
             .requirements
@@ -11033,11 +11460,17 @@ mod tests {
         let q = &s.graph.requirements[&rid];
         assert!(!q.entities.iter().any(|e| e == "ent:selection"));
         assert!(q.entities.iter().any(|e| e == "ent:checkout"));
-        assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
+        assert!(!s
+            .status
+            .has_change(CHANGE_PROVENANCE_PENDING, "ent:selection"));
         // A retract is journaled as `ratify` but is no accepted sentence: the parent
         // that took the requirement and the children is reviewed as usual.
         // Mirrors docs/compiler/goals/ratify.md#retract.
-        assert!(s.status.has_change(CHANGE_ENTITY, "ent:checkout"), "{:?}", s.status.changes);
+        assert!(
+            s.status.has_change(CHANGE_ENTITY, "ent:checkout"),
+            "{:?}",
+            s.status.changes
+        );
         let entry: JournalEntry = yaml_to(
             &s.out
                 .join("journal")
@@ -11178,9 +11611,9 @@ mod tests {
         Store::stamp_tokens(&out, 3, 5, 12051, 0);
         assert_eq!(read(4).tokens, Some(12051));
         assert_eq!(read(4).cached_tokens, None);
-        assert!(
-            !crate::vfs::read_to_string(out.join("journal/g4.yaml")).unwrap().contains("cachedTokens")
-        );
+        assert!(!crate::vfs::read_to_string(out.join("journal/g4.yaml"))
+            .unwrap()
+            .contains("cachedTokens"));
         assert_eq!(read(5).tokens, None);
     }
 
@@ -11224,21 +11657,39 @@ mod tests {
         assert_eq!(e.cached_tokens, Some(9100));
         assert_eq!(e.tokens_source.as_deref(), Some("agent"));
         let text = crate::vfs::read_to_string(out.join("journal/g2.yaml")).unwrap();
-        assert!(text.contains("tokensSource: agent") && text.contains("cachedTokens: 9100"), "{}", text);
+        assert!(
+            text.contains("tokensSource: agent") && text.contains("cachedTokens: 9100"),
+            "{}",
+            text
+        );
         // A second report on the same entry is refused and names the standing figure.
         let err = Store::stamp_reported(&out, 2, 100, None).unwrap_err();
-        assert!(err.contains("18400 tokens") && err.contains("reported by the agent"), "{}", err);
+        assert!(
+            err.contains("18400 tokens") && err.contains("reported by the agent"),
+            "{}",
+            err
+        );
         assert_eq!(read(2).tokens, Some(18400));
         // A measured entry is never overwritten.
         let err = Store::stamp_reported(&out, 3, 100, None).unwrap_err();
-        assert!(err.contains("9800 tokens") && err.contains("measured by the harness"), "{}", err);
+        assert!(
+            err.contains("9800 tokens") && err.contains("measured by the harness"),
+            "{}",
+            err
+        );
         assert_eq!(read(3).tokens_source, None);
         // Not a session, not there, not a bill.
-        assert!(Store::stamp_reported(&out, 1, 100, None).unwrap_err().contains("not a session"));
-        assert!(Store::stamp_reported(&out, 9, 100, None).unwrap_err().contains("no journal entry g9"));
+        assert!(Store::stamp_reported(&out, 1, 100, None)
+            .unwrap_err()
+            .contains("not a session"));
+        assert!(Store::stamp_reported(&out, 9, 100, None)
+            .unwrap_err()
+            .contains("no journal entry g9"));
         assert!(Store::stamp_reported(&out, 2, 0, None).is_err());
         write(4, "session", None);
-        assert!(Store::stamp_reported(&out, 4, 100, Some(101)).unwrap_err().contains("cannot exceed"));
+        assert!(Store::stamp_reported(&out, 4, 100, Some(101))
+            .unwrap_err()
+            .contains("cannot exceed"));
         assert_eq!(read(4).tokens, None);
         // A zero cached figure leaves the field absent rather than writing 0.
         Store::stamp_reported(&out, 4, 100, Some(0)).unwrap();
@@ -11260,7 +11711,10 @@ mod tests {
         fresh.status.roots = vec!["main.md".into()];
         let writer = std::thread::spawn(move || fresh.write_status("roots"));
         std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(!writer.is_finished(), "a status write ran under a held lock");
+        assert!(
+            !writer.is_finished(),
+            "a status write ran under a held lock"
+        );
         drop(held);
         assert!(writer.join().unwrap().is_ok());
         assert_eq!(Store::load(&out).status.roots, vec!["main.md".to_string()]);
@@ -11291,7 +11745,9 @@ mod tests {
         let held = FileLock::acquire(&out);
         crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
         let mut next = Store::load(&out);
-        next.graph.entities.insert("ent:b".into(), next.graph.entities["ent:a"].clone());
+        next.graph
+            .entities
+            .insert("ent:b".into(), next.graph.entities["ent:a"].clone());
         next.status.generation = 2;
         next.save_nodes();
         let reader = {
@@ -11299,7 +11755,10 @@ mod tests {
             std::thread::spawn(move || Store::load(&out))
         };
         std::thread::sleep(std::time::Duration::from_millis(300));
-        assert!(!reader.is_finished(), "a reader accepted a half-committed store");
+        assert!(
+            !reader.is_finished(),
+            "a reader accepted a half-committed store"
+        );
         next.save_status_files();
         crate::vfs::remove_file(out.join(COMMIT_MARKER)).unwrap();
         drop(held);
@@ -11341,7 +11800,11 @@ mod tests {
         };
         let mut busy = reader.join().unwrap();
         drop(held);
-        assert!(busy.load_errors[0].starts_with("store-busy:"), "{:?}", busy.load_errors);
+        assert!(
+            busy.load_errors[0].starts_with("store-busy:"),
+            "{:?}",
+            busy.load_errors
+        );
         let r = busy.apply(vec![create("ent:b", "B")], &session());
         assert_eq!(r.applied, 0);
         assert!(r.skipped[0].starts_with("store-busy:"), "{:?}", r.skipped);
@@ -11370,8 +11833,17 @@ mod tests {
             }
         }
         walk(&out, &mut files);
-        assert!(!files.iter().any(|f| f.ends_with(".tmp") || f == COMMIT_MARKER), "{:?}", files);
-        assert!(TOUCHED_DIRS.with(|t| t.borrow().is_empty()), "every touched directory was flushed");
+        assert!(
+            !files
+                .iter()
+                .any(|f| f.ends_with(".tmp") || f == COMMIT_MARKER),
+            "{:?}",
+            files
+        );
+        assert!(
+            TOUCHED_DIRS.with(|t| t.borrow().is_empty()),
+            "every touched directory was flushed"
+        );
     }
 
     // An in-memory store's marker lock: a stale marker is taken over at once, a nested
@@ -11387,10 +11859,16 @@ mod tests {
         let marker = out.join(".lock");
         let started = std::time::Instant::now();
         let outer = FileLock::acquire(&out);
-        assert!(started.elapsed() < std::time::Duration::from_secs(1), "a stale marker is not waited on");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "a stale marker is not waited on"
+        );
         assert!(marker.vexists());
         drop(FileLock::acquire(&out));
-        assert!(marker.vexists(), "a nested release removed the holder's marker");
+        assert!(
+            marker.vexists(),
+            "a nested release removed the holder's marker"
+        );
         drop(outer);
         assert!(!marker.vexists());
         drop(FileLock::acquire(&out));
@@ -11667,8 +12145,12 @@ mod tests {
         let u2 = "# U\nunder body, revised\n";
         s.sync_docs(&parse(&[("t.md", t2), ("u.md", u2)]));
         let generation = s.status.generation;
-        let here: Vec<&ChangeRecord> =
-            s.status.changes.iter().filter(|c| c.generation == generation).collect();
+        let here: Vec<&ChangeRecord> = s
+            .status
+            .changes
+            .iter()
+            .filter(|c| c.generation == generation)
+            .collect();
         assert!(here.iter().any(|c| c.kind == CHANGE_SECTION_DIRTY));
         assert!(here.iter().any(|c| c.kind == CHANGE_ALIGNMENT_PENDING));
         let ids: BTreeSet<&str> = s.status.changes.iter().map(|c| c.id.as_str()).collect();
@@ -11789,10 +12271,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        let report = s.apply(
-            vec![create("ent:fresh", "Fresh")],
-            &Commit::store("decree"),
-        );
+        let report = s.apply(vec![create("ent:fresh", "Fresh")], &Commit::store("decree"));
         assert!(report.skipped.is_empty(), "{:?}", report.skipped);
         assert!(
             report.swept.iter().any(|a| a.contains("req:gone-1")),
@@ -11809,10 +12288,7 @@ mod tests {
         assert_eq!(gc.kind, "gc");
         assert_eq!(s.status.generation, report.generation + 1);
         // A clean store commits without a sweep entry.
-        let report = s.apply(
-            vec![create("ent:other", "Other")],
-            &Commit::store("decree"),
-        );
+        let report = s.apply(vec![create("ent:other", "Other")], &Commit::store("decree"));
         assert!(report.swept.is_empty(), "{:?}", report.swept);
         assert_eq!(s.status.generation, report.generation);
     }
@@ -12157,7 +12633,9 @@ mod tests {
     #[test]
     fn sibling_transitions_of_one_machine_never_pair() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:application".into(), entity("Application"));
+        s.graph
+            .entities
+            .insert("ent:application".into(), entity("Application"));
         let mk = |st: &str, from: &str, to: &str| Requirement {
             statement: st.into(),
             entities: vec!["ent:application".into()],
@@ -12171,9 +12649,30 @@ mod tests {
             source: Some(mention("hiring.md", "/moving", "q")),
             ..Default::default()
         };
-        s.graph.requirements.insert("req:h-1".into(), mk("An Application moves from applied to screened when the recruiter reviews it.", "applied", "screened"));
-        s.graph.requirements.insert("req:h-2".into(), mk("An Application moves from applied to rejected when the recruiter declines it.", "applied", "rejected"));
-        s.graph.requirements.insert("req:h-3".into(), mk("The recruiter moves an Application from applied to screened after reviewing it.", "applied", "screened"));
+        s.graph.requirements.insert(
+            "req:h-1".into(),
+            mk(
+                "An Application moves from applied to screened when the recruiter reviews it.",
+                "applied",
+                "screened",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:h-2".into(),
+            mk(
+                "An Application moves from applied to rejected when the recruiter declines it.",
+                "applied",
+                "rejected",
+            ),
+        );
+        s.graph.requirements.insert(
+            "req:h-3".into(),
+            mk(
+                "The recruiter moves an Application from applied to screened after reviewing it.",
+                "applied",
+                "screened",
+            ),
+        );
         let n = s.requirement_neighbors("req:h-1");
         assert!(!n.contains(&"req:h-2".to_string()), "{:?}", n);
         assert!(n.contains(&"req:h-3".to_string()), "{:?}", n);
@@ -12185,8 +12684,12 @@ mod tests {
     #[test]
     fn entity_boilerplate_never_counts_as_a_shared_token() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:um".into(), entity("User Management"));
-        s.graph.entities.insert("ent:ua".into(), entity("User Account"));
+        s.graph
+            .entities
+            .insert("ent:um".into(), entity("User Management"));
+        s.graph
+            .entities
+            .insert("ent:ua".into(), entity("User Account"));
         let mk = |statement: &str| Requirement {
             statement: statement.into(),
             entities: vec!["ent:um".into(), "ent:ua".into()],
@@ -12203,13 +12706,25 @@ mod tests {
         ] {
             s.graph.requirements.insert(id.into(), mk(st));
         }
-        let bp = s.pair_boilerplate(&s.graph.requirements["req:u-3"], &s.graph.requirements["req:u-5"]);
-        assert!(bp.contains("support") && bp.contains("operation"), "{:?}", bp);
+        let bp = s.pair_boilerplate(
+            &s.graph.requirements["req:u-3"],
+            &s.graph.requirements["req:u-5"],
+        );
+        assert!(
+            bp.contains("support") && bp.contains("operation"),
+            "{:?}",
+            bp
+        );
         assert!(!bp.contains("password"), "{:?}", bp);
         let n = s.requirement_neighbors("req:u-3");
         assert!(n.is_empty(), "{:?}", n);
         let n = s.requirement_neighbors("req:u-2");
-        assert_eq!(n, vec!["req:u-1".to_string(), "req:u-6".to_string()], "{:?}", n);
+        assert_eq!(
+            n,
+            vec!["req:u-1".to_string(), "req:u-6".to_string()],
+            "{:?}",
+            n
+        );
     }
 
     // The qwen pair flood: requirements sharing only the hub entity need three shared
@@ -13174,7 +13689,9 @@ mod tests {
             ..Default::default()
         };
         s.graph.requirements.insert("req:t-1".into(), req("First."));
-        s.graph.requirements.insert("req:t-2".into(), req("Second."));
+        s.graph
+            .requirements
+            .insert("req:t-2".into(), req("Second."));
         s.graph.requirements.insert("req:t-3".into(), req("Third."));
         let v2 = "# T\nintro\n\n## Content\n\nWritten as separate paragraphs:\n\n> First. Second.\n\n> Third.\n";
         s.sync_docs(&parse(v2));
@@ -13196,7 +13713,11 @@ mod tests {
         // already holds the new body.
         let mut set = crate::context::LoadedSet::new(20_000);
         let text = set.load(&s, "t.md#/t/content", 1).unwrap();
-        assert!(text.contains("+ Written as separate paragraphs:"), "{}", text);
+        assert!(
+            text.contains("+ Written as separate paragraphs:"),
+            "{}",
+            text
+        );
         assert!(!text.contains("+ > First."), "{}", text);
 
         let gate = |staged: Vec<Op>| -> Vec<String> {
@@ -13213,10 +13734,10 @@ mod tests {
             note: Some(note.into()),
         };
         // The claim from the failed build: nothing staged, the old requirements cited.
-        assert!(
-            gate(vec![cover("All sentences are already extracted. No new sentences.")])
-                .contains(&"added-line-unaccounted".to_string())
-        );
+        assert!(gate(vec![cover(
+            "All sentences are already extracted. No new sentences."
+        )])
+        .contains(&"added-line-unaccounted".to_string()));
         // A requirement quoting the added line accounts for it.
         let staged = vec![
             Op::CreateRequirement {
@@ -13316,19 +13837,31 @@ mod tests {
             .all(|c| c.judged().is_empty()));
         // The slot opens the next waiting pair by score, then target: req:p08.
         let plan = crate::goals::pair_plan(&s);
-        assert!(plan.open.iter().any(|g| g.id == pair("req:p08")), "{:?}", plan.open.iter().map(|g| &g.id).collect::<Vec<_>>());
+        assert!(
+            plan.open.iter().any(|g| g.id == pair("req:p08")),
+            "{:?}",
+            plan.open.iter().map(|g| &g.id).collect::<Vec<_>>()
+        );
         assert!(plan.open.iter().all(|g| g.id != pair("req:p12")));
         assert_eq!(plan.waiting.len(), 3);
         assert!(plan.waiting.contains_key(&pair("req:p09")));
         // The journal entry carries the resolution and the persisted status agrees.
         let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g7.yaml")).unwrap();
         assert_eq!(entry.resolved_goals.len(), 1);
-        assert!(!Store::load(&s.out).status.has_change(CHANGE_REQ_CREATED, "req:p12"));
+        assert!(!Store::load(&s.out)
+            .status
+            .has_change(CHANGE_REQ_CREATED, "req:p12"));
         // A record with two candidates keeps standing after one is judged: give the
         // hub a record, resolve it against req:p01, and the hub's record lists the
         // partner while the other candidates keep it alive.
         let mut batch = RecordBatch::new(8);
-        batch.push(0, CHANGE_REQ_REVISED, "req:hub", "fields", serde_json::Value::Null);
+        batch.push(
+            0,
+            CHANGE_REQ_REVISED,
+            "req:hub",
+            "fields",
+            serde_json::Value::Null,
+        );
         for r in batch.records() {
             s.status.record_change(r.clone());
         }
@@ -13398,32 +13931,44 @@ mod tests {
             (
                 2,
                 "decree",
-                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:dead"}, "provenance": decree})],
+                vec![
+                    serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:dead"}, "provenance": decree}),
+                ],
             ),
             (
                 3,
                 "decree",
-                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "new", "prior": {"statement": "old1", "source": {"doc": "d.md", "section": "s", "quote": "old1"}}, "provenance": decree})],
+                vec![
+                    serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "new", "prior": {"statement": "old1", "source": {"doc": "d.md", "section": "s", "quote": "old1"}}, "provenance": decree}),
+                ],
             ),
             (
                 5,
                 "decree",
-                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newer", "prior": {"statement": "old2", "source": {"doc": "d.md", "section": "s", "quote": "old2"}}, "provenance": decree})],
+                vec![
+                    serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newer", "prior": {"statement": "old2", "source": {"doc": "d.md", "section": "s", "quote": "old2"}}, "provenance": decree}),
+                ],
             ),
             (
                 6,
                 "session",
-                vec![serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newest", "prior": {"statement": "old3"}})],
+                vec![
+                    serde_json::json!({"op": "update_requirement", "id": "req:x", "statement": "newest", "prior": {"statement": "old3"}}),
+                ],
             ),
             (
                 7,
                 "gc",
-                vec![serde_json::json!({"op": "dissolve_entity", "id": "ent:grp", "parent": "ent:p2", "children": ["ent:b", "ent:c"]})],
+                vec![
+                    serde_json::json!({"op": "dissolve_entity", "id": "ent:grp", "parent": "ent:p2", "children": ["ent:b", "ent:c"]}),
+                ],
             ),
             (
                 8,
                 "decree",
-                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p2", "prior": {"parent": "ent:p1"}, "provenance": decree})],
+                vec![
+                    serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p2", "prior": {"parent": "ent:p1"}, "provenance": decree}),
+                ],
             ),
             (
                 9,
@@ -13436,7 +13981,9 @@ mod tests {
             (
                 11,
                 "session",
-                vec![serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:p2"}})],
+                vec![
+                    serde_json::json!({"op": "update_entity", "id": "ent:a", "parent": "ent:p1", "prior": {"parent": "ent:p2"}}),
+                ],
             ),
         ];
         crate::vfs::create_dir_all(s.out.join("journal")).unwrap();
@@ -13448,7 +13995,8 @@ mod tests {
                 mutations: mutations.clone(),
                 ..Default::default()
             };
-            crate::vfs::write(s.journal_path(*g), serde_norway::to_string(&entry).unwrap()).unwrap();
+            crate::vfs::write(s.journal_path(*g), serde_norway::to_string(&entry).unwrap())
+                .unwrap();
         }
         // A torn entry is skipped, never fatal.
         crate::vfs::write(s.journal_path(10), "build: g10\nmutations: [unterminated\n").unwrap();
@@ -13474,13 +14022,29 @@ mod tests {
         ] {
             assert_eq!(s.decree_prior(id, op), naive_prior(id, op), "{} {}", id, op);
         }
-        assert_eq!(s.decree_prior("req:x", "update_requirement").unwrap()["statement"], "old2");
-        assert_eq!(s.decree_prior("ent:a", "update_entity").unwrap()["parent"], "ent:p1");
+        assert_eq!(
+            s.decree_prior("req:x", "update_requirement").unwrap()["statement"],
+            "old2"
+        );
+        assert_eq!(
+            s.decree_prior("ent:a", "update_entity").unwrap()["parent"],
+            "ent:p1"
+        );
         assert_eq!(s.decree_prior("ent:b", "update_entity"), None);
 
         let moves = vec![
-            ("ent:a".to_string(), Some("ent:p1".to_string()), Some("ent:p2".to_string()), 1),
-            ("ent:b".to_string(), Some("ent:gone".to_string()), Some("ent:dead".to_string()), 2),
+            (
+                "ent:a".to_string(),
+                Some("ent:p1".to_string()),
+                Some("ent:p2".to_string()),
+                1,
+            ),
+            (
+                "ent:b".to_string(),
+                Some("ent:gone".to_string()),
+                Some("ent:dead".to_string()),
+                2,
+            ),
             ("ent:c".to_string(), None, Some("ent:p2".to_string()), 3),
             ("ent:never".to_string(), None, None, 4),
         ];
@@ -13511,8 +14075,14 @@ mod tests {
             .filter(|(id, _)| dead.contains(id) && !s.graph.entities.contains_key(id))
             .collect();
         assert_eq!(names, naive_names);
-        assert_eq!(names["ent:dead"], ("Dead".to_string(), "private".to_string()));
-        assert!(!names.contains_key("ent:p1"), "a live parent needs no journal name");
+        assert_eq!(
+            names["ent:dead"],
+            ("Dead".to_string(), "private".to_string())
+        );
+        assert!(
+            !names.contains_key("ent:p1"),
+            "a live parent needs no journal name"
+        );
 
         let all = crate::goals::read_journal(&s.out);
         assert_eq!(all.len(), entries.len());
@@ -13542,7 +14112,14 @@ mod tests {
             out: tmp(),
             ..Default::default()
         };
-        let verbs = ["accepts", "rejects", "stores", "renders", "schedules", "archives"];
+        let verbs = [
+            "accepts",
+            "rejects",
+            "stores",
+            "renders",
+            "schedules",
+            "archives",
+        ];
         let nouns = ["order", "invoice", "ticket", "report", "session", "token"];
         for e in 0..300 {
             s.graph

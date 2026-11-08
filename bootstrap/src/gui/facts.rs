@@ -33,4 +33,3 @@ pub async fn edit_fact(
         ),
     }
 }
-

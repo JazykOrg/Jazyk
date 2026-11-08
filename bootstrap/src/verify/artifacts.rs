@@ -398,7 +398,11 @@ async fn run_cached(
                     .unwrap_or("");
                 let files = judge_files(
                     gs,
-                    package["files"].as_array().into_iter().flatten().filter_map(Value::as_str),
+                    package["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_str),
                 );
                 let input = judge_input(
                     Some(statement),
@@ -972,7 +976,9 @@ mod tests {
         let first = &ledger.requirements["req:shop-1"].tests["crit:first"].test;
         let exact = path(&gs, &first.artifact);
         assert_eq!(
-            plan(&project, &store, &gs, std::slice::from_ref(&exact)).unwrap().len(),
+            plan(&project, &store, &gs, std::slice::from_ref(&exact))
+                .unwrap()
+                .len(),
             1
         );
         assert!(plan(&project, &store, &gs, &[format!("{exact}.backup")]).is_err());

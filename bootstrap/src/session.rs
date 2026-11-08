@@ -590,7 +590,9 @@ impl Trace {
         kind: &str,
         goals: &[String],
     ) -> Trace {
-        if crate::vfs::is_scoped() { return self; }
+        if crate::vfs::is_scoped() {
+            return self;
+        }
         use std::io::Write;
         let dir = out.join("trace");
         crate::vfs::create_dir_all(&dir).ok();
@@ -695,7 +697,9 @@ impl Trace {
     }
     pub fn is_cancelled(&self) -> bool {
         #[cfg(target_arch = "wasm32")]
-        if crate::wasm::llm_bridge::cancel_requested() { return true; }
+        if crate::wasm::llm_bridge::cancel_requested() {
+            return true;
+        }
         self.cancel.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
@@ -713,8 +717,9 @@ const FEEDBACK_NOTE: &str = include_str!("../../docs/compiler/goals/prompts/feed
 // Mirrors docs/compiler/sessions.md#payload-files.
 pub(crate) const GATES: crate::payload::Fragments =
     crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/gates.md"));
-pub(crate) const BLOCKS: crate::payload::Fragments =
-    crate::payload::Fragments(include_str!("../../docs/compiler/goals/prompts/session-blocks.md"));
+pub(crate) const BLOCKS: crate::payload::Fragments = crate::payload::Fragments(include_str!(
+    "../../docs/compiler/goals/prompts/session-blocks.md"
+));
 
 // The protocol line; {target} is the batch id.
 const WORKER_PROTOCOL: &str = include_str!("../../docs/compiler/goals/prompts/worker-protocol.md");
@@ -1002,7 +1007,10 @@ impl ProjectBlock {
 
     // The block counted from goals already derived (a board's).
     pub fn from_goals(store: &Store, derived: &[Goal], batch: &[Goal], mode: &str) -> ProjectBlock {
-        let blocked = derived.iter().filter(|g| goals::blocked_on_human(&g.kind)).count();
+        let blocked = derived
+            .iter()
+            .filter(|g| goals::blocked_on_human(&g.kind))
+            .count();
         let total = derived.len() - blocked;
         let here = batch.len();
         ProjectBlock {
@@ -1035,7 +1043,10 @@ impl ProjectBlock {
         let mut s = line("project", &[]);
         s.push_str(&line(
             "project-generation",
-            &[("generation", &self.generation.to_string()), ("mode", &self.mode)],
+            &[
+                ("generation", &self.generation.to_string()),
+                ("mode", &self.mode),
+            ],
         ));
         // The judgment findings on the graph; the checks' findings arrive with the
         // build's tail. Mirrors docs/compiler/sessions.md#the-prompt.
@@ -1054,7 +1065,10 @@ impl ProjectBlock {
                 })
                 .collect();
             let note = if self.ratification > 0 {
-                BLOCKS.fill("project-diagnostics-ratification", &[("count", &ratification)])
+                BLOCKS.fill(
+                    "project-diagnostics-ratification",
+                    &[("count", &ratification)],
+                )
             } else {
                 String::new()
             };
@@ -1087,7 +1101,11 @@ impl ProjectBlock {
             .map(|(i, (severity, rule))| {
                 BLOCKS.fill(
                     "project-lint-rule",
-                    &[("index", &(i + 1).to_string()), ("severity", severity), ("rule", rule)],
+                    &[
+                        ("index", &(i + 1).to_string()),
+                        ("severity", severity),
+                        ("rule", rule),
+                    ],
                 )
             })
             .collect();
@@ -1251,7 +1269,10 @@ pub fn session_prompt_elided(
     }
     s.push('\n');
     s.push_str(&project_block.render());
-    if batch.iter().any(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify")) {
+    if batch
+        .iter()
+        .any(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify"))
+    {
         s.push('\n');
         s.push_str(BLOCKS.get("task-execution"));
         s.push('\n');
@@ -1271,7 +1292,10 @@ pub fn session_prompt_elided(
             "goal",
             &[
                 ("id", &g.id),
-                ("necessity", if g.mandatory { "mandatory" } else { "optional" }),
+                (
+                    "necessity",
+                    if g.mandatory { "mandatory" } else { "optional" },
+                ),
             ],
         ));
         s.push('\n');
@@ -1291,7 +1315,11 @@ pub fn session_prompt_elided(
         }
         s.push_str(&item("goal-change", &[("change", &change_line(g))]));
         s.push_str(&item("goal-gate", &[("gate", gate_line(&g.kind))]));
-        let fresh: Vec<&String> = g.hints.iter().filter(|h| hinted.insert((*h).clone())).collect();
+        let fresh: Vec<&String> = g
+            .hints
+            .iter()
+            .filter(|h| hinted.insert((*h).clone()))
+            .collect();
         if !fresh.is_empty() {
             let line: Vec<&str> = fresh.iter().map(|h| h.as_str()).collect();
             s.push_str(&item("goal-hints", &[("hints", &line.join("; "))]));
@@ -1325,7 +1353,10 @@ pub fn session_prompt_elided(
         Protocol::Serving => SERVING_PROTOCOL,
         Protocol::OpenBatch => OPEN_BATCH_PROTOCOL,
     };
-    s.push_str(&crate::payload::fill(line, &[("target", &project_block.batch)]));
+    s.push_str(&crate::payload::fill(
+        line,
+        &[("target", &project_block.batch)],
+    ));
     if !s.ends_with('\n') {
         s.push('\n');
     }
@@ -1367,9 +1398,11 @@ pub fn initial_loaded(store: &Store, batch: &[Goal]) -> (LoadedSet, SkillState) 
             }
             // A goal's own target is primary, and so is each side of a pair
             // target: a judgment cannot run on stubs of its own subjects.
-            let primary = batch
-                .iter()
-                .any(|g| target == format!("alignment:{}", g.target) || g.target == target || g.target.split('~').any(|part| part == target));
+            let primary = batch.iter().any(|g| {
+                target == format!("alignment:{}", g.target)
+                    || g.target == target
+                    || g.target.split('~').any(|part| part == target)
+            });
             if full && (primary || !loaded.over_high_water(0)) {
                 let text = loaded.load(store, target, 1).ok();
                 // The mark is a ceiling, not a suggestion: a supporting item that
@@ -1585,16 +1618,21 @@ mod tests {
         store.status.alignment.push(DocAlignment {
             doc: "shop.md".into(),
             changes: vec![SectionOp {
-                op: "moved".into(), from: vec!["shop.md#/shop/old-cart".into()],
-                to: vec!["shop.md#/shop/cart".into()], similarity: Some(0.9),
+                op: "moved".into(),
+                from: vec!["shop.md#/shop/old-cart".into()],
+                to: vec!["shop.md#/shop/cart".into()],
+                similarity: Some(0.9),
             }],
             proposals: vec![AnchorProposal {
-                anchor: "ent:cart".into(), from: "shop.md#/shop/old-cart".into(),
+                anchor: "ent:cart".into(),
+                from: "shop.md#/shop/old-cart".into(),
                 quote: "The Shopping Cart holds items.".into(),
                 excerpt: "Previous cart context.".into(),
                 candidates: vec![AnchorCandidate {
-                    section: "shop.md#/shop/cart".into(), similarity: 0.9,
-                    quote_locates: true, nearest: None,
+                    section: "shop.md#/shop/cart".into(),
+                    similarity: 0.9,
+                    quote_locates: true,
+                    nearest: None,
                     excerpt: "The Shopping Cart holds items.".into(),
                 }],
             }],
@@ -1606,7 +1644,13 @@ mod tests {
         let (mut loaded, _) = initial_loaded(&store, std::slice::from_ref(&goal));
         assert!(loaded.contains("alignment:shop.md"));
         let prompt = preview(&store, &[goal]);
-        for evidence in ["Previous cart context.", "old-cart", "quoteLocates", "0.9", "The Shopping Cart holds items."] {
+        for evidence in [
+            "Previous cart context.",
+            "old-cart",
+            "quoteLocates",
+            "0.9",
+            "The Shopping Cart holds items.",
+        ] {
             assert!(prompt.contains(evidence), "Missing {evidence}: {prompt}");
         }
         loaded.unload("alignment:shop.md");
@@ -1653,13 +1697,19 @@ mod tests {
     fn project_block_counts_from_a_board_without_deriving_again() {
         let s = fixture();
         let gs = crate::gen::GenSettings::from_out(&s.out);
-        let derived: Vec<Goal> = goals::REGISTRY.iter().flat_map(|k| k.derive_goals(&s, &gs)).collect();
+        let derived: Vec<Goal> = goals::REGISTRY
+            .iter()
+            .flat_map(|k| k.derive_goals(&s, &gs))
+            .collect();
         assert!(!derived.is_empty(), "the fixture opens goals");
         let batch = &derived[..1];
         let fresh = ProjectBlock::compute(&s, batch, "auto");
         let counted = ProjectBlock::from_goals(&s, &derived, batch, "auto");
         assert_eq!(fresh.render(), counted.render());
-        assert_eq!(counted.elsewhere + counted.here + counted.blocked, derived.len());
+        assert_eq!(
+            counted.elsewhere + counted.here + counted.blocked,
+            derived.len()
+        );
     }
 
     // Goal kinds pin their skills into a fresh session before anything else renders,
@@ -1698,11 +1748,14 @@ mod tests {
         let mut ids = Vec::new();
         for i in 0..160 {
             let id = format!("req:big-{}", i);
-            s.graph.requirements.insert(id.clone(), crate::model::Requirement {
-                statement: format!("{} ({})", long, i),
-                entities: vec!["ent:order".into()],
-                ..Default::default()
-            });
+            s.graph.requirements.insert(
+                id.clone(),
+                crate::model::Requirement {
+                    statement: format!("{} ({})", long, i),
+                    entities: vec!["ent:order".into()],
+                    ..Default::default()
+                },
+            );
             ids.push(id);
         }
         let g = Goal {
@@ -1718,9 +1771,20 @@ mod tests {
             hints: vec![],
         };
         let (loaded, _) = initial_loaded(&s, std::slice::from_ref(&g));
-        assert!(loaded.used() <= loaded.budget, "{} > {}", loaded.used(), loaded.budget);
+        assert!(
+            loaded.used() <= loaded.budget,
+            "{} > {}",
+            loaded.used(),
+            loaded.budget
+        );
         assert!(!loaded.deferred.is_empty());
-        assert!(loaded.render_condensed(0).contains("Not loaded (over the budget"), "{}", loaded.render_condensed(0));
+        assert!(
+            loaded
+                .render_condensed(0)
+                .contains("Not loaded (over the budget"),
+            "{}",
+            loaded.render_condensed(0)
+        );
     }
 
     // A pack line naming `scope:<scope>` resolves and loads the scope's top level as
@@ -1812,7 +1876,10 @@ mod tests {
         }
         let s = agent_contract();
         assert!(s.contains("report_feedback"));
-        let rest = AGENT_CONTRACT.split_once("{feedback}").map(|(_, r)| r).unwrap();
+        let rest = AGENT_CONTRACT
+            .split_once("{feedback}")
+            .map(|(_, r)| r)
+            .unwrap();
         assert!(s.ends_with(rest), "nothing of the contract is lost");
     }
 
@@ -1824,14 +1891,39 @@ mod tests {
         edges.target = "req:cart-items".into();
         let (_, skills) = initial_loaded(&store, &[edges]);
         assert!(skills.has_pinned());
-        assert_eq!(skills.rendered.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), vec!["edges"]);
+        assert_eq!(
+            skills
+                .rendered
+                .iter()
+                .map(|entry| entry.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["edges"]
+        );
         let extraction = skill_payload("extraction").unwrap();
         let edges = skill_payload("edges").unwrap();
-        let edge_rules = extraction.split_once("Edges. ").unwrap().1.split_once("Transitions. ").unwrap().0;
-        let stability = extraction.split_once("Stability. ").unwrap().1.split_once("Rounds. ").unwrap().0;
-        assert_eq!(edges, format!("Edges. {edge_rules}Stability. {}\n", stability.trim_end()));
+        let edge_rules = extraction
+            .split_once("Edges. ")
+            .unwrap()
+            .1
+            .split_once("Transitions. ")
+            .unwrap()
+            .0;
+        let stability = extraction
+            .split_once("Stability. ")
+            .unwrap()
+            .1
+            .split_once("Rounds. ")
+            .unwrap()
+            .0;
+        assert_eq!(
+            edges,
+            format!("Edges. {edge_rules}Stability. {}\n", stability.trim_end())
+        );
         assert!(edges.len() < extraction.len() / 4);
-        assert_eq!(goals::skills_for("reconcile-section", &store, ""), vec!["extraction"]);
+        assert_eq!(
+            goals::skills_for("reconcile-section", &store, ""),
+            vec!["extraction"]
+        );
     }
 
     // Auto-load once, the cap, and the inactive marking.

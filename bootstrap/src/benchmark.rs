@@ -157,105 +157,112 @@ pub fn yaml_blocks(md: &str) -> Vec<String> {
 // One case from its yaml value. Mirrors docs/benchmark/cases.md#case-format.
 pub fn case_from_value(v: &Value) -> Case {
     {
-            let obj = |x: &Value| -> BTreeMap<String, Value> {
-                x.as_object()
-                    .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                    .unwrap_or_default()
-            };
-            let strs = |x: &Value| -> Vec<String> {
-                x.as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|s| s.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default()
-            };
-            let tier = v["tier"].as_str().unwrap_or("extraction").to_string();
-            let default_par = match tier.as_str() {
-                "review" => 3,
-                "structure" => 5,
-                "generation" => 10,
-                "verification" => 1,
-                _ => 6,
-            };
-            let kind = v["goal"]["kind"].as_str().unwrap_or_default().to_string();
-            Case {
-                name: v["name"].as_str().unwrap_or("unnamed").to_string(),
-                par_rounds: v["par"]["rounds"].as_u64().unwrap_or(default_par) as u32,
-                deliverable: obj(&v["given"]["deliverable"])
-                    .into_iter()
-                    .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
-                    .collect(),
-                tier,
-                // Cases key on goal kinds (docs/benchmark/cases.md#case-format); the
-                // harness's internal task names still drive the legacy loop.
-                task_type: match kind.as_str() {
-                    "reconcile-section" => "reconcile-doc".to_string(),
-                    "generate" => "generate-entity".to_string(),
-                    "verify" => "verify-requirement".to_string(),
-                    other => other.to_string(),
-                },
-                kind,
-                target: v["goal"]["target"].as_str().unwrap_or_default().to_string(),
-                docs: obj(&v["given"]["docs"])
-                    .into_iter()
-                    .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
-                    .collect(),
-                entities: obj(&v["given"]["graph"]["entities"]),
-                requirements: obj(&v["given"]["graph"]["requirements"]),
-                views: obj(&v["given"]["graph"]["views"]),
-                criteria: obj(&v["given"]["graph"]["criteria"]),
-                coverage: obj(&v["given"]["graph"]["coverage"])
-                    .into_iter()
-                    .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
-                    .collect(),
-                lint: Linting {
-                    warnings: strs(&v["given"]["lint"]["warnings"]),
-                    errors: strs(&v["given"]["lint"]["errors"]),
-                },
-                checks: v["assert"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|c| {
-                                c.as_object()
-                                    .and_then(|m| m.iter().next())
-                                    .map(|(k, v)| (k.clone(), v.clone()))
+        let obj = |x: &Value| -> BTreeMap<String, Value> {
+            x.as_object()
+                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default()
+        };
+        let strs = |x: &Value| -> Vec<String> {
+            x.as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|s| s.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let tier = v["tier"].as_str().unwrap_or("extraction").to_string();
+        let default_par = match tier.as_str() {
+            "review" => 3,
+            "structure" => 5,
+            "generation" => 10,
+            "verification" => 1,
+            _ => 6,
+        };
+        let kind = v["goal"]["kind"].as_str().unwrap_or_default().to_string();
+        Case {
+            name: v["name"].as_str().unwrap_or("unnamed").to_string(),
+            par_rounds: v["par"]["rounds"].as_u64().unwrap_or(default_par) as u32,
+            deliverable: obj(&v["given"]["deliverable"])
+                .into_iter()
+                .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
+                .collect(),
+            tier,
+            // Cases key on goal kinds (docs/benchmark/cases.md#case-format); the
+            // harness's internal task names still drive the legacy loop.
+            task_type: match kind.as_str() {
+                "reconcile-section" => "reconcile-doc".to_string(),
+                "generate" => "generate-entity".to_string(),
+                "verify" => "verify-requirement".to_string(),
+                other => other.to_string(),
+            },
+            kind,
+            target: v["goal"]["target"].as_str().unwrap_or_default().to_string(),
+            docs: obj(&v["given"]["docs"])
+                .into_iter()
+                .map(|(k, t)| (k, t.as_str().unwrap_or_default().to_string()))
+                .collect(),
+            entities: obj(&v["given"]["graph"]["entities"]),
+            requirements: obj(&v["given"]["graph"]["requirements"]),
+            views: obj(&v["given"]["graph"]["views"]),
+            criteria: obj(&v["given"]["graph"]["criteria"]),
+            coverage: obj(&v["given"]["graph"]["coverage"])
+                .into_iter()
+                .map(|(k, s)| (k, s.as_str().unwrap_or_default().to_string()))
+                .collect(),
+            lint: Linting {
+                warnings: strs(&v["given"]["lint"]["warnings"]),
+                errors: strs(&v["given"]["lint"]["errors"]),
+            },
+            checks: v["assert"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|c| {
+                            c.as_object()
+                                .and_then(|m| m.iter().next())
+                                .map(|(k, v)| (k.clone(), v.clone()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            extra_goals: v["goals"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|g| {
+                            Some((
+                                g["kind"].as_str()?.to_string(),
+                                g["target"].as_str()?.to_string(),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+            steps: v["steps"]
+                .as_array()
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|st| {
+                            let call = st["call"].as_str()?.to_string();
+                            let e = &st["expect"];
+                            Some(Step {
+                                call,
+                                args: if st["args"].is_null() {
+                                    serde_json::json!({})
+                                } else {
+                                    st["args"].clone()
+                                },
+                                ok: e["ok"].as_bool(),
+                                rule: e["rule"].as_str().map(String::from),
+                                contains: e["contains"].as_str().map(String::from),
+                                absent: e["absent"].as_str().map(String::from),
                             })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                extra_goals: v["goals"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|g| {
-                                Some((g["kind"].as_str()?.to_string(), g["target"].as_str()?.to_string()))
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-                steps: v["steps"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|st| {
-                                let call = st["call"].as_str()?.to_string();
-                                let e = &st["expect"];
-                                Some(Step {
-                                    call,
-                                    args: if st["args"].is_null() { serde_json::json!({}) } else { st["args"].clone() },
-                                    ok: e["ok"].as_bool(),
-                                    rule: e["rule"].as_str().map(String::from),
-                                    contains: e["contains"].as_str().map(String::from),
-                                    absent: e["absent"].as_str().map(String::from),
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            }
+                        })
+                        .collect()
+                })
+                .unwrap_or_default(),
+        }
     }
 }
 
@@ -669,7 +676,11 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             // The entity is optional: without one, any requirement whose statement
             // matches counts (docs/benchmark/cases.md#checks).
             let Some(ent) = arg["entity"].as_str() else {
-                let found = store.graph.requirements.values().any(|r| re.is_match(&r.statement));
+                let found = store
+                    .graph
+                    .requirements
+                    .values()
+                    .any(|r| re.is_match(&r.statement));
                 return (!found).then(|| format!("no requirement matching `{}`", pat));
             };
             let Some(ent_id) = find_entity(store, ent) else {
@@ -720,7 +731,11 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     "{} has no attribute matching `{}`; its attributes: {}",
                     ent,
                     arg["name"].as_str().unwrap_or_default(),
-                    if names.is_empty() { "(none)".to_string() } else { names.join(", ") }
+                    if names.is_empty() {
+                        "(none)".to_string()
+                    } else {
+                        names.join(", ")
+                    }
                 ))
             }
         }
@@ -806,13 +821,16 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     .collect();
                 members.contains(&a_id)
                     && members.contains(&b_id)
-                    && (want.is_empty()
-                        || r.contributions.iter().any(|c| want.contains(&c.r#type)))
+                    && (want.is_empty() || r.contributions.iter().any(|c| want.contains(&c.r#type)))
             });
             (!found).then(|| {
                 format!(
                     "no {} relationship between {} and {}",
-                    if want.is_empty() { "derived".to_string() } else { want.join(" or ") },
+                    if want.is_empty() {
+                        "derived".to_string()
+                    } else {
+                        want.join(" or ")
+                    },
                     a_id,
                     b_id
                 )
@@ -840,22 +858,19 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
             // A diagnostic names a subject directly, or through a requirement whose
             // entities include it: a contradiction filed on two requirements of one
             // entity is on that entity. Mirrors docs/benchmark/cases.md#checks.
-            let names = |d: &crate::model::Diagnostic, want: &str| {
-                let want = store.resolve_id(want);
-                d.subjects.iter().any(|s| {
-                    let s = store.resolve_id(s);
-                    s == want
-                        || store
-                            .graph
-                            .requirements
-                            .get(s)
-                            .is_some_and(|r| r.entities.iter().any(|e| store.resolve_id(e) == want))
-                })
-            };
+            let names =
+                |d: &crate::model::Diagnostic, want: &str| {
+                    let want = store.resolve_id(want);
+                    d.subjects.iter().any(|s| {
+                        let s = store.resolve_id(s);
+                        s == want
+                            || store.graph.requirements.get(s).is_some_and(|r| {
+                                r.entities.iter().any(|e| store.resolve_id(e) == want)
+                            })
+                    })
+                };
             let found = store.graph.diagnostics.values().any(|d| {
-                d.lifecycle == "open"
-                    && d.rule == rule
-                    && wanted.iter().all(|want| names(d, want))
+                d.lifecycle == "open" && d.rule == rule && wanted.iter().all(|want| names(d, want))
             });
             (!found).then(|| {
                 format!(
@@ -996,8 +1011,10 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                 let Some(Provenance::Derived { from, .. }) = &e.provenance else {
                     return false;
                 };
-                let named: std::collections::BTreeSet<String> =
-                    from.iter().map(|f| store.resolve_id(f).to_string()).collect();
+                let named: std::collections::BTreeSet<String> = from
+                    .iter()
+                    .map(|f| store.resolve_id(f).to_string())
+                    .collect();
                 let children: std::collections::BTreeSet<String> =
                     crate::board::level_members(store, id).into_iter().collect();
                 named == want
@@ -1090,11 +1107,9 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                         let kept = members.contains(&m)
                             || v.excluded.iter().any(|x| resolve(&x.id) == m && noted(x))
                             || v.collapse.iter().any(|c| store.is_ancestor(c, &m))
-                            || store
-                                .graph
-                                .views
-                                .iter()
-                                .any(|(oid, o)| oid != vid && o.members.iter().any(|x| resolve(x) == m));
+                            || store.graph.views.iter().any(|(oid, o)| {
+                                oid != vid && o.members.iter().any(|x| resolve(x) == m)
+                            });
                         if !kept {
                             return Some(format!(
                                 "{} is dropped from {} without a sub-view, a collapse, or an exclusion note",
@@ -1150,7 +1165,11 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                 .graph
                 .requirements
                 .values()
-                .filter(|r| rx.as_ref().map(|re| re.is_match(&r.statement)).unwrap_or(true))
+                .filter(|r| {
+                    rx.as_ref()
+                        .map(|re| re.is_match(&r.statement))
+                        .unwrap_or(true)
+                })
                 .filter(|r| r.facets.iter().any(|f| f.facet == facet))
                 .count();
             within(
@@ -1383,7 +1402,10 @@ pub fn eval_workflow_check(
                     "{}'s test still passes with the product broken; not falsifiable",
                     rid
                 )),
-                Ok(r) if r.runner_failed() => Some(format!("broken-product rerun did not complete: {}", r.evidence)),
+                Ok(r) if r.runner_failed() => Some(format!(
+                    "broken-product rerun did not complete: {}",
+                    r.evidence
+                )),
                 Ok(_) => None,
                 Err(e) => Some(format!("broken-product rerun errored: {}", e)),
             }
@@ -1424,12 +1446,15 @@ pub fn eval_workflow_check(
             let Some(row) = ledger.requirements.get(store.resolve_id(rid)) else {
                 return Some(format!("no ledger row for {}", rid));
             };
-            let mut tests: Vec<&crate::gen::TestRef> = row.tests.values().map(|t| &t.test).collect();
+            let mut tests: Vec<&crate::gen::TestRef> =
+                row.tests.values().map(|t| &t.test).collect();
             if tests.is_empty() {
                 tests.push(&row.test);
             }
-            let tests: Vec<&crate::gen::TestRef> =
-                tests.into_iter().filter(|t| t.kind == "programmatic").collect();
+            let tests: Vec<&crate::gen::TestRef> = tests
+                .into_iter()
+                .filter(|t| t.kind == "programmatic")
+                .collect();
             if tests.is_empty() {
                 return Some(format!("{} records no programmatic test", rid));
             }
@@ -1444,7 +1469,12 @@ pub fn eval_workflow_check(
                             t.name, t.run
                         ))
                     }
-                    Ok(out) if out.runner_failed() => return Some(format!("test `{}` did not complete: {}", t.name, out.evidence)),
+                    Ok(out) if out.runner_failed() => {
+                        return Some(format!(
+                            "test `{}` did not complete: {}",
+                            t.name, out.evidence
+                        ))
+                    }
                     Ok(_) => {}
                     Err(e) => return Some(format!("test `{}` did not run: {}", t.name, e)),
                 }
@@ -1482,7 +1512,11 @@ pub fn eval_workflow_check(
                 .into_iter()
                 .filter(|f| re.is_match(f) && !exclude.as_ref().is_some_and(|x| x.is_match(f)))
                 .collect();
-            within_bounds(arg, files.len(), &format!("files match ({})", files.join(", ")))
+            within_bounds(
+                arg,
+                files.len(),
+                &format!("files match ({})", files.join(", ")),
+            )
         }
         other => Some(format!("unknown workflow check `{}`", other)),
     }
@@ -1658,7 +1692,11 @@ pub fn case_session_batch(
         target: item.target.clone(),
         ..Default::default()
     };
-    CaseSession { session: s, prompt, tools }
+    CaseSession {
+        session: s,
+        prompt,
+        tools,
+    }
 }
 
 fn run_case_turn(
@@ -1671,9 +1709,18 @@ fn run_case_turn(
     // A snippet runs a goal the board derived, change and hints intact; a case
     // runs the goal its item describes. Mirrors docs/benchmark/benchmark.md#snippets-from-a-real-project.
     derived: Option<&crate::model::Goal>,
-) -> (Vec<crate::store::Op>, u32, Option<TurnFail>, crate::store::Commit) {
+) -> (
+    Vec<crate::store::Op>,
+    u32,
+    Option<TurnFail>,
+    crate::store::Commit,
+) {
     use crate::harness::{self, AgentEvent, LoopArgs, Stop};
-    let CaseSession { session, prompt, tools } = case_session(snapshot, item, lint, gs, derived);
+    let CaseSession {
+        session,
+        prompt,
+        tools,
+    } = case_session(snapshot, item, lint, gs, derived);
     let session = std::cell::RefCell::new(session);
     let mut history = vec![serde_json::json!({"role": "user", "content": prompt})];
     let rounds = std::cell::Cell::new(0u32);
@@ -1720,8 +1767,8 @@ fn run_case_turn(
             max_rounds: round_budget,
             label: format!("bench {} (reminded)", item.target),
             conversation: false,
-        inputs: None,
-        input_close: None,
+            inputs: None,
+            input_close: None,
         });
     }
     let mut s = session.into_inner();
@@ -1866,7 +1913,10 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
         // (docs/benchmark/benchmark.md): a forced snippet runs the blocked goal
         // and says what it skipped past.
         if force {
-            println!("forced: `{}` is not ready ({}); running it anyway", goal_id, reason);
+            println!(
+                "forced: `{}` is not ready ({}); running it anyway",
+                goal_id, reason
+            );
         } else {
             eprintln!(
                 "jazyk: `{}` is not ready: {} (--force runs it anyway)",
@@ -1980,16 +2030,24 @@ pub fn run_traced(llm: &Llm, out: &std::path::Path, progress: &Trace) -> i32 {
 }
 
 fn judge_completion_trace(base: &Trace) -> (Trace, std::sync::Arc<std::sync::atomic::AtomicU32>) {
-    use std::sync::{atomic::{AtomicU32, Ordering}, Arc};
+    use std::sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    };
     let replies = Arc::new(AtomicU32::new(0));
     let observed = replies.clone();
     let base = base.clone();
-    let trace = Trace::to_sink(TraceLevel::Normal, Arc::new(move |event| {
-        if matches!(event, crate::session::TraceEvent::ModelText { text, .. } if !text.trim().is_empty()) {
-            observed.fetch_add(1, Ordering::Relaxed);
-        }
-        base.event(event.clone());
-    }), Default::default());
+    let trace = Trace::to_sink(
+        TraceLevel::Normal,
+        Arc::new(move |event| {
+            if matches!(event, crate::session::TraceEvent::ModelText { text, .. } if !text.trim().is_empty())
+            {
+                observed.fetch_add(1, Ordering::Relaxed);
+            }
+            base.event(event.clone());
+        }),
+        Default::default(),
+    );
     (trace, replies)
 }
 
@@ -2586,13 +2644,28 @@ mod tests {
         use std::sync::atomic::Ordering;
         let (trace, replies) = judge_completion_trace(&Trace::stderr(TraceLevel::Quiet));
         trace.event(TraceEvent::VerifyRowError {
-            requirement: "req:test".into(), message: "provider unavailable".into(),
+            requirement: "req:test".into(),
+            message: "provider unavailable".into(),
         });
         assert_eq!(replies.load(Ordering::Relaxed), 0);
-        trace.event(TraceEvent::ModelText { summary: false, label: "judge".into(), text: "FAIL: wrong output".into(), reply: true });
+        trace.event(TraceEvent::ModelText {
+            summary: false,
+            label: "judge".into(),
+            text: "FAIL: wrong output".into(),
+            reply: true,
+        });
         assert_eq!(replies.load(Ordering::Relaxed), 1);
-        trace.event(TraceEvent::ModelText { summary: false, label: "judge".into(), text: "not a parseable verdict".into(), reply: true });
-        assert_eq!(replies.load(Ordering::Relaxed), 2, "an invalid judgment was still received");
+        trace.event(TraceEvent::ModelText {
+            summary: false,
+            label: "judge".into(),
+            text: "not a parseable verdict".into(),
+            reply: true,
+        });
+        assert_eq!(
+            replies.load(Ordering::Relaxed),
+            2,
+            "an invalid judgment was still received"
+        );
     }
 
     #[test]
@@ -2611,14 +2684,32 @@ mod tests {
         assert_eq!(crate::gen::GenSettings::resolve(&project).deliverable, root);
         let gs = fixture_gen_settings(&root).unwrap();
         let item = crate::model::WorkItem {
-            task: case.task_type.clone(), target: case.target.clone(),
-            dirty_sections: Vec::new(), stale_anchors: Vec::new(), proposals: Vec::new(),
+            task: case.task_type.clone(),
+            target: case.target.clone(),
+            dirty_sections: Vec::new(),
+            stale_anchors: Vec::new(),
+            proposals: Vec::new(),
         };
         let mut worker = case_session(store.clone(), &item, &case.lint, &gs, None).session;
-        worker.dispatch("begin_generation", &serde_json::json!({"entity":"ent:greeter"})).unwrap();
-        worker.dispatch("write_text_file", &serde_json::json!({"path":"hello.sh","content":"echo hello"})).unwrap();
+        worker
+            .dispatch(
+                "begin_generation",
+                &serde_json::json!({"entity":"ent:greeter"}),
+            )
+            .unwrap();
+        worker
+            .dispatch(
+                "write_text_file",
+                &serde_json::json!({"path":"hello.sh","content":"echo hello"}),
+            )
+            .unwrap();
         assert!(root.join("hello.sh").exists());
-        assert!(worker.dispatch("write_text_file", &serde_json::json!({"path":"docs/greeter.md","content":"replace docs"})).is_err());
+        assert!(worker
+            .dispatch(
+                "write_text_file",
+                &serde_json::json!({"path":"docs/greeter.md","content":"replace docs"})
+            )
+            .is_err());
         let inputs = crate::task_runtime::snapshot(&root).unwrap();
         assert!(inputs.contains_key(".jazyk/jazyk.toml"));
         assert!(inputs.contains_key("docs/greeter.md"));
@@ -2654,7 +2745,11 @@ mod tests {
         };
         let cs = case_session(store, &item, &case.lint, &gs, None);
         assert!(cs.prompt.contains("which is already open"), "{}", cs.prompt);
-        assert!(!cs.prompt.contains("First call `begin_goals`"), "{}", cs.prompt);
+        assert!(
+            !cs.prompt.contains("First call `begin_goals`"),
+            "{}",
+            cs.prompt
+        );
         assert!(!cs.tools.iter().any(|t| t.name == "begin_goals"));
         crate::vfs::remove_dir_all(&tmp).ok();
     }
@@ -2670,7 +2765,11 @@ mod tests {
         let store = sandbox(case, &tmp);
         let dirty = case_dirty_sections(&store, case);
         assert!(dirty.iter().any(|s| s == "/dedupe/steps"), "{:?}", dirty);
-        assert!(!dirty.iter().any(|s| s.contains("code-block")), "{:?}", dirty);
+        assert!(
+            !dirty.iter().any(|s| s.contains("code-block")),
+            "{:?}",
+            dirty
+        );
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 
@@ -2719,13 +2818,34 @@ mod tests {
     #[test]
     fn requirement_exists_takes_an_optional_entity() {
         let mut s = Store::default();
-        s.graph.requirements.insert("req:d-1".into(), crate::model::Requirement {
-            statement: "The dedupe utility trims whitespace from the current line.".into(),
-            ..Default::default()
-        });
-        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim"}), &s, 0).is_none());
-        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "sort"}), &s, 0).is_some());
-        assert!(eval_check("requirementExists", &serde_json::json!({"statementPattern": "trim", "entity": "Dedupe"}), &s, 0).is_some());
+        s.graph.requirements.insert(
+            "req:d-1".into(),
+            crate::model::Requirement {
+                statement: "The dedupe utility trims whitespace from the current line.".into(),
+                ..Default::default()
+            },
+        );
+        assert!(eval_check(
+            "requirementExists",
+            &serde_json::json!({"statementPattern": "trim"}),
+            &s,
+            0
+        )
+        .is_none());
+        assert!(eval_check(
+            "requirementExists",
+            &serde_json::json!({"statementPattern": "sort"}),
+            &s,
+            0
+        )
+        .is_some());
+        assert!(eval_check(
+            "requirementExists",
+            &serde_json::json!({"statementPattern": "trim", "entity": "Dedupe"}),
+            &s,
+            0
+        )
+        .is_some());
     }
 
     // facetCount counts the requirements carrying a facet, optionally only those
@@ -2737,21 +2857,51 @@ mod tests {
             statement: statement.into(),
             facets: facets
                 .iter()
-                .map(|f| Facet { facet: f.to_string(), reasoning: "judged".into(), measure: None })
+                .map(|f| Facet {
+                    facet: f.to_string(),
+                    reasoning: "judged".into(),
+                    measure: None,
+                })
                 .collect(),
             ..Default::default()
         };
-        s.graph.requirements.insert("req:p-1".into(), req("Dot tells Ines who Theo works for.", &["behavior"]));
-        s.graph.requirements.insert("req:p-2".into(), req("Ines asks Dot for the harbor ledger.", &["constraint"]));
-        s.graph.requirements.insert("req:p-3".into(), req("Ines Marlow is 31.", &["constraint"]));
+        s.graph.requirements.insert(
+            "req:p-1".into(),
+            req("Dot tells Ines who Theo works for.", &["behavior"]),
+        );
+        s.graph.requirements.insert(
+            "req:p-2".into(),
+            req("Ines asks Dot for the harbor ledger.", &["constraint"]),
+        );
+        s.graph
+            .requirements
+            .insert("req:p-3".into(), req("Ines Marlow is 31.", &["constraint"]));
         let ok = |a: Value| eval_check("facetCount", &a, &s, 0);
-        assert_eq!(ok(serde_json::json!({"facet": "behavior", "min": 1, "max": 1})), None);
-        assert_eq!(ok(serde_json::json!({"facet": "constraint", "min": 2})), None);
-        assert_eq!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "tells", "min": 1})), None);
+        assert_eq!(
+            ok(serde_json::json!({"facet": "behavior", "min": 1, "max": 1})),
+            None
+        );
+        assert_eq!(
+            ok(serde_json::json!({"facet": "constraint", "min": 2})),
+            None
+        );
+        assert_eq!(
+            ok(serde_json::json!({"facet": "behavior", "statementPattern": "tells", "min": 1})),
+            None
+        );
         // A scene labeled constraint fails the scene's behavior check and its max 0.
-        assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "ledger", "min": 1})).is_some());
-        assert!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "ledger|tells", "max": 0})).is_some());
-        assert_eq!(ok(serde_json::json!({"facet": "constraint", "statementPattern": "tells", "max": 0})), None);
+        assert!(ok(
+            serde_json::json!({"facet": "behavior", "statementPattern": "ledger", "min": 1})
+        )
+        .is_some());
+        assert!(ok(
+            serde_json::json!({"facet": "constraint", "statementPattern": "ledger|tells", "max": 0})
+        )
+        .is_some());
+        assert_eq!(
+            ok(serde_json::json!({"facet": "constraint", "statementPattern": "tells", "max": 0})),
+            None
+        );
         assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "(bad"})).is_some());
     }
 
@@ -2760,8 +2910,12 @@ mod tests {
     #[test]
     fn transition_subject_reads_the_subject_entity() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:ines".into(), ent("Ines Marlow", None));
-        s.graph.entities.insert("ent:stance".into(), ent("Ines's stance toward Theo", None));
+        s.graph
+            .entities
+            .insert("ent:ines".into(), ent("Ines Marlow", None));
+        s.graph
+            .entities
+            .insert("ent:stance".into(), ent("Ines's stance toward Theo", None));
         let step = |subject: &str, from: &str, to: &str| crate::model::Requirement {
             statement: format!("The stance moves from {} to {}.", from, to),
             transition: Some(Transition {
@@ -2773,15 +2927,30 @@ mod tests {
             }),
             ..Default::default()
         };
-        s.graph.requirements.insert("req:a-1".into(), step("ent:stance", "stranger", "acquaintance"));
-        s.graph.requirements.insert("req:a-2".into(), step("ent:stance", "acquaintance", "rival"));
+        s.graph.requirements.insert(
+            "req:a-1".into(),
+            step("ent:stance", "stranger", "acquaintance"),
+        );
+        s.graph.requirements.insert(
+            "req:a-2".into(),
+            step("ent:stance", "acquaintance", "rival"),
+        );
         let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
         // Hung on a stance entity: the character carries none.
         let why = ok(serde_json::json!({"entity": "Ines Marlow"}));
-        assert!(why.as_deref().is_some_and(|w| w.contains("ent:stance")), "{:?}", why);
-        assert_eq!(ok(serde_json::json!({"entity": "ent:stance", "min": 2, "max": 2})), None);
+        assert!(
+            why.as_deref().is_some_and(|w| w.contains("ent:stance")),
+            "{:?}",
+            why
+        );
+        assert_eq!(
+            ok(serde_json::json!({"entity": "ent:stance", "min": 2, "max": 2})),
+            None
+        );
         assert!(ok(serde_json::json!({"entity": "Nobody"})).is_some());
-        s.graph.requirements.insert("req:a-3".into(), step("ent:ines", "rival", "ally"));
+        s.graph
+            .requirements
+            .insert("req:a-3".into(), step("ent:ines", "rival", "ally"));
         let ok = |a: Value| eval_check("transitionSubject", &a, &s, 0);
         assert_eq!(ok(serde_json::json!({"entity": "Ines Marlow"})), None);
         assert!(ok(serde_json::json!({"entity": "Ines Marlow", "min": 2})).is_some());
@@ -2797,11 +2966,14 @@ mod tests {
             out: tmp.join("out"),
             ..Default::default()
         };
-        s.graph.requirements.insert("req:b-1".into(), Requirement {
-            statement: "The Backend lists the products.".into(),
-            entities: vec!["ent:backend".into()],
-            ..Default::default()
-        });
+        s.graph.requirements.insert(
+            "req:b-1".into(),
+            Requirement {
+                statement: "The Backend lists the products.".into(),
+                entities: vec!["ent:backend".into()],
+                ..Default::default()
+            },
+        );
         let gs = crate::gen::GenSettings {
             configured: true,
             deliverable: tmp.to_path_buf(),
@@ -2820,34 +2992,54 @@ mod tests {
                 cwd: ".".into(),
             };
             let mut ledger = crate::gen::Ledger::load(&s.out);
-            ledger.requirements.insert("req:b-1".into(), crate::gen::ReqRow {
-                tests: BTreeMap::new(),
-                entity: "ent:backend".into(),
-                sites: Vec::new(),
-                hashes: crate::gen::RowHashes {
-                    requirement: hash_hex("The Backend lists the products."),
-                    test: crate::gen::hash_file(&crate::gen::artifact_path(&s.out, &gs, &test)),
-                    files: crate::gen::hash_files(&gs, &files),
+            ledger.requirements.insert(
+                "req:b-1".into(),
+                crate::gen::ReqRow {
+                    tests: BTreeMap::new(),
+                    entity: "ent:backend".into(),
+                    sites: Vec::new(),
+                    hashes: crate::gen::RowHashes {
+                        requirement: hash_hex("The Backend lists the products."),
+                        test: crate::gen::hash_file(&crate::gen::artifact_path(&s.out, &gs, &test)),
+                        files: crate::gen::hash_files(&gs, &files),
+                    },
+                    files,
+                    test,
+                    verdict: verdict.into(),
+                    last_run: None,
+                    exit_code: None,
+                    evidence: None,
                 },
-                files,
-                test,
-                verdict: verdict.into(),
-                last_run: None,
-                exit_code: None,
-                evidence: None,
-            });
+            );
             ledger.save(&s.out).unwrap();
         };
-        let check = |k: &str| eval_workflow_check(k, &serde_json::json!({"requirement": "req:b-1", "statuses": ["unimplemented", "failing"]}), &s, &gs, "req:b-1");
+        let check = |k: &str| {
+            eval_workflow_check(
+                k,
+                &serde_json::json!({"requirement": "req:b-1", "statuses": ["unimplemented", "failing"]}),
+                &s,
+                &gs,
+                "req:b-1",
+            )
+        };
         // No row yet: both fail.
         assert!(check("statusIn").is_some());
         assert!(check("testsFail").is_some());
         // The descriptor test bound as verifying: it passes on rerun and reads verified.
         record("sh test/b.sh", "pass", Vec::new());
         let why = check("statusIn");
-        assert!(why.as_deref().is_some_and(|w| w.contains("verified")), "{:?}", why);
+        assert!(
+            why.as_deref().is_some_and(|w| w.contains("verified")),
+            "{:?}",
+            why
+        );
         let why = check("testsFail");
-        assert!(why.as_deref().is_some_and(|w| w.contains("passes as recorded")), "{:?}", why);
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("passes as recorded")),
+            "{:?}",
+            why
+        );
         // A claimed fail does not hide a test that passes on rerun.
         record("sh test/b.sh", "fail", Vec::new());
         assert_eq!(check("statusIn"), None);
@@ -2886,7 +3078,11 @@ mod tests {
         let unpinned = serde_json::json!({"path": "package.json", "pattern": r#""\s*:\s*"(latest|\*)""#, "max": 0});
         // No file yet: a missing file fails, whatever the bounds.
         let why = check("fileMatches", named.clone());
-        assert!(why.as_deref().is_some_and(|w| w.contains("does not exist")), "{:?}", why);
+        assert!(
+            why.as_deref().is_some_and(|w| w.contains("does not exist")),
+            "{:?}",
+            why
+        );
         assert!(check("fileMatches", unpinned.clone()).is_some());
         // The erp shape: named for one part, every dependency at latest.
         write(
@@ -2894,9 +3090,19 @@ mod tests {
             "{\n  \"name\": \"warehouse-erp-frontend\",\n  \"main\": \"server.js\",\n  \"dependencies\": { \"express\": \"latest\", \"pg\": \"*\" }\n}\n",
         );
         let why = check("fileMatches", named.clone());
-        assert!(why.as_deref().is_some_and(|w| w.contains("0 matches") && w.contains("at least 1")), "{:?}", why);
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("0 matches") && w.contains("at least 1")),
+            "{:?}",
+            why
+        );
         let why = check("fileMatches", unpinned.clone());
-        assert!(why.as_deref().is_some_and(|w| w.contains("2 matches") && w.contains("at most 0")), "{:?}", why);
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("2 matches") && w.contains("at most 0")),
+            "{:?}",
+            why
+        );
         // Pinned and named for the owner: both pass, case-insensitively.
         write(
             "package.json",
@@ -2905,7 +3111,11 @@ mod tests {
         assert_eq!(check("fileMatches", named), None);
         assert_eq!(check("fileMatches", unpinned), None);
         // A bad pattern fails the check, never passes it silently.
-        assert!(check("fileMatches", serde_json::json!({"path": "package.json", "pattern": "(", "max": 0})).is_some());
+        assert!(check(
+            "fileMatches",
+            serde_json::json!({"path": "package.json", "pattern": "(", "max": 0})
+        )
+        .is_some());
 
         // Modules: the entry point, its test, a fixture under test/, and a second
         // entry point beside the first.
@@ -2923,16 +3133,44 @@ mod tests {
         };
         assert_eq!(check("fileCount", modules(1)), None);
         // Every .js file counts without the exclusion, and the failure names them.
-        let why = check("fileCount", serde_json::json!({"pathPattern": r"\.js$", "max": 1}));
-        assert!(why.as_deref().is_some_and(|w| w.contains("4 files") && w.contains("test/helper.js")), "{:?}", why);
+        let why = check(
+            "fileCount",
+            serde_json::json!({"pathPattern": r"\.js$", "max": 1}),
+        );
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("4 files") && w.contains("test/helper.js")),
+            "{:?}",
+            why
+        );
         write("src/app.js", "module.exports = {};\n");
         let why = check("fileCount", modules(1));
-        assert!(why.as_deref().is_some_and(|w| w.contains("2 files") && w.contains("src/app.js") && w.contains("src/index.js")), "{:?}", why);
+        assert!(
+            why.as_deref().is_some_and(|w| w.contains("2 files")
+                && w.contains("src/app.js")
+                && w.contains("src/index.js")),
+            "{:?}",
+            why
+        );
         assert_eq!(check("fileCount", modules(2)), None);
         // An empty match is a count of zero, so min bites and max 0 passes.
-        assert!(check("fileCount", serde_json::json!({"pathPattern": r"\.py$", "min": 1})).is_some());
-        assert_eq!(check("fileCount", serde_json::json!({"pathPattern": r"\.py$", "max": 0})), None);
-        assert!(check("fileCount", serde_json::json!({"pathPattern": "(", "max": 0})).is_some());
+        assert!(check(
+            "fileCount",
+            serde_json::json!({"pathPattern": r"\.py$", "min": 1})
+        )
+        .is_some());
+        assert_eq!(
+            check(
+                "fileCount",
+                serde_json::json!({"pathPattern": r"\.py$", "max": 0})
+            ),
+            None
+        );
+        assert!(check(
+            "fileCount",
+            serde_json::json!({"pathPattern": "(", "max": 0})
+        )
+        .is_some());
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 
@@ -2956,7 +3194,13 @@ mod tests {
         assert_eq!(node.checks.len(), 10);
         assert!(node.deliverable.is_empty());
         assert!(node.checks.iter().any(|(k, _)| k == "fileCount"));
-        assert_eq!(node.checks.iter().filter(|(k, _)| k == "fileMatches").count(), 5);
+        assert_eq!(
+            node.checks
+                .iter()
+                .filter(|(k, _)| k == "fileMatches")
+                .count(),
+            5
+        );
         let steps = cases.iter().find(|c| c.name == "steps").unwrap();
         assert_eq!(steps.checks.len(), 5); // an inner fence must not sever the asserts
         assert!(
@@ -2991,7 +3235,11 @@ mod tests {
         let split = cases.iter().find(|c| c.name == "split-view").unwrap();
         assert_eq!(split.views.len(), 1);
         assert!(!extract.derives_goal());
-        assert!(!cases.iter().find(|c| c.name == "review").unwrap().derives_goal());
+        assert!(!cases
+            .iter()
+            .find(|c| c.name == "review")
+            .unwrap()
+            .derives_goal());
         // Every embedded pattern must compile, or a case is unwinnable.
         for case in &cases {
             for (kind, arg) in &case.checks {
@@ -3016,7 +3264,11 @@ mod tests {
     }
 
     fn own_dir(name: &str) -> std::path::PathBuf {
-        let d = std::env::temp_dir().join(format!("jazyk-bench-test-{}-{}", crate::sys::process_id(), name));
+        let d = std::env::temp_dir().join(format!(
+            "jazyk-bench-test-{}-{}",
+            crate::sys::process_id(),
+            name
+        ));
         crate::vfs::remove_dir_all(&d).ok();
         d
     }
@@ -3031,8 +3283,8 @@ mod tests {
         assert_eq!(derived.len(), 14);
         for case in derived {
             let tmp = own_dir(&case.name);
-            let (store, goal) = seed_derived(case, &tmp)
-                .unwrap_or_else(|e| panic!("{}: {}", case.name, e));
+            let (store, goal) =
+                seed_derived(case, &tmp).unwrap_or_else(|e| panic!("{}: {}", case.name, e));
             assert_eq!(goal.kind, case.kind, "{}", case.name);
             assert_eq!(goal.target, case.target, "{}", case.name);
             // Every fixture quote locates, or the case is unwinnable.
@@ -3061,15 +3313,21 @@ mod tests {
                 .checks
                 .iter()
                 .all(|(kind, arg)| eval_check(kind, arg, &store, 0).is_none());
-            let expects_no_work = case.name == "dedupe-candidates-separate"
-                || case.name == "declare-edges-none";
-            assert_eq!(!vacuous, !expects_no_work, "{}: vacuous={}", case.name, vacuous);
+            let expects_no_work =
+                case.name == "dedupe-candidates-separate" || case.name == "declare-edges-none";
+            assert_eq!(
+                !vacuous, !expects_no_work,
+                "{}: vacuous={}",
+                case.name, vacuous
+            );
             match case.name.as_str() {
                 "abstract-entity" => {
                     assert_eq!(goal.change["fan_out"], 12);
                     assert!(!goal.change["candidates"].as_array().unwrap().is_empty());
                     assert!(
-                        goal.hints.iter().any(|h| h.starts_with("namesake ent:billing ")),
+                        goal.hints
+                            .iter()
+                            .any(|h| h.starts_with("namesake ent:billing ")),
                         "{:?}",
                         goal.hints
                     );
@@ -3077,15 +3335,22 @@ mod tests {
                 "abstract-entity-namesake" => {
                     assert_eq!(goal.change["fan_out"], 13);
                     assert!(
-                        goal.hints.iter().any(|h| h.starts_with("namesake ent:checkout ")),
+                        goal.hints
+                            .iter()
+                            .any(|h| h.starts_with("namesake ent:checkout ")),
                         "{:?}",
                         goal.hints
                     );
                 }
                 "split-view" => {
-                    assert_eq!(goal.change["limits"][0]["limit"], "participants-per-sequence-view");
+                    assert_eq!(
+                        goal.change["limits"][0]["limit"],
+                        "participants-per-sequence-view"
+                    );
                     assert!(
-                        goal.hints.iter().any(|h| h.starts_with("break before req:purchase-7")),
+                        goal.hints
+                            .iter()
+                            .any(|h| h.starts_with("break before req:purchase-7")),
                         "{:?}",
                         goal.hints
                     );
@@ -3097,8 +3362,16 @@ mod tests {
                         .iter()
                         .filter_map(|m| m["id"].as_str().map(String::from))
                         .collect();
-                    assert!(matched.contains(&"ent:refund".to_string()), "{:?}", goal.change);
-                    assert!(matched.contains(&"ent:order-1042".to_string()), "{:?}", goal.change);
+                    assert!(
+                        matched.contains(&"ent:refund".to_string()),
+                        "{:?}",
+                        goal.change
+                    );
+                    assert!(
+                        matched.contains(&"ent:order-1042".to_string()),
+                        "{:?}",
+                        goal.change
+                    );
                 }
                 "declare-edges" => {
                     assert_eq!(goal.change["entities"].as_array().unwrap().len(), 3);
@@ -3136,24 +3409,44 @@ mod tests {
     #[test]
     fn narrative_fixtures_locate_and_grade_work() {
         let cases = parse_cases();
-        for name in ["narrative-behavior", "machine-subject", "stated-containment"] {
+        for name in [
+            "narrative-behavior",
+            "machine-subject",
+            "stated-containment",
+        ] {
             let case = cases.iter().find(|c| c.name == name).unwrap();
             let tmp = own_dir(name);
             let s = sandbox(case, &tmp);
             for (id, e) in &s.graph.entities {
                 for m in &e.mentions {
-                    assert!(s.quote_locates(&m.doc, &m.section, &m.quote), "{}: {}", name, id);
+                    assert!(
+                        s.quote_locates(&m.doc, &m.section, &m.quote),
+                        "{}: {}",
+                        name,
+                        id
+                    );
                 }
             }
             for full in case.coverage.keys() {
                 let (doc, section) = split_section_ref(full).unwrap();
-                assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, full);
+                assert!(
+                    s.docs[&doc].sections.contains_key(&section),
+                    "{}: {}",
+                    name,
+                    full
+                );
             }
             assert!(!case_dirty_sections(&s, case).is_empty(), "{}", name);
             for (kind, arg) in &case.checks {
                 if kind == "coverageSet" {
-                    let (doc, section) = split_section_ref(arg["section"].as_str().unwrap()).unwrap();
-                    assert!(s.docs[&doc].sections.contains_key(&section), "{}: {}", name, section);
+                    let (doc, section) =
+                        split_section_ref(arg["section"].as_str().unwrap()).unwrap();
+                    assert!(
+                        s.docs[&doc].sections.contains_key(&section),
+                        "{}: {}",
+                        name,
+                        section
+                    );
                 }
                 let absence = kind == "entityAbsent"
                     || kind == "entityNameCount"
@@ -3180,45 +3473,75 @@ mod tests {
 
     fn structure_store() -> Store {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:orders".into(), Entity {
-            definition: Some("Holds the order area.".into()),
-            provenance: Some(Provenance::Derived {
-                from: vec!["ent:cart".into(), "ent:pricing".into()],
-                reasoning: "the orders document".into(),
-            }),
-            ..ent("Orders", None)
-        });
-        s.graph.entities.insert("ent:cart".into(), ent("Cart", Some("ent:orders")));
-        s.graph.entities.insert("ent:pricing".into(), ent("Pricing", Some("ent:orders")));
-        s.graph.entities.insert("ent:billing".into(), ent("Billing", None));
-        s.graph.entities.insert("ent:invoice".into(), ent("Invoice", Some("ent:billing")));
-        s.graph.entities.insert("ent:billing-area".into(), ent("Billing Area", None));
-        s.graph.requirements.insert("req:a".into(), Requirement {
-            statement: "The orders area consists of the cart and pricing.".into(),
-            entities: vec!["ent:orders".into(), "ent:cart".into(), "ent:pricing".into()],
-            edges: vec![ReqEdge {
-                a: "ent:orders".into(),
-                b: "ent:cart".into(),
-                rel_type: Some("composition".into()),
-                cardinality: None,
-            }],
-            ..Default::default()
-        });
-        s.graph.views.insert("view:sequence/flow".into(), View {
-            kind: "sequence".into(),
-            title: "Flow".into(),
-            members: vec!["req:a".into()],
-            excluded: vec![Exclusion { id: "req:b".into(), note: "belongs to view:sequence/detail".into() },
-                           Exclusion { id: "req:c".into(), note: "none".into() }],
-            collapse: vec!["ent:orders".into()],
-            ..Default::default()
-        });
-        s.graph.views.insert("view:sequence/detail".into(), View {
-            kind: "sequence".into(),
-            title: "Flow: Detail".into(),
-            members: vec!["req:d".into(), "req:a".into()],
-            ..Default::default()
-        });
+        s.graph.entities.insert(
+            "ent:orders".into(),
+            Entity {
+                definition: Some("Holds the order area.".into()),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["ent:cart".into(), "ent:pricing".into()],
+                    reasoning: "the orders document".into(),
+                }),
+                ..ent("Orders", None)
+            },
+        );
+        s.graph
+            .entities
+            .insert("ent:cart".into(), ent("Cart", Some("ent:orders")));
+        s.graph
+            .entities
+            .insert("ent:pricing".into(), ent("Pricing", Some("ent:orders")));
+        s.graph
+            .entities
+            .insert("ent:billing".into(), ent("Billing", None));
+        s.graph
+            .entities
+            .insert("ent:invoice".into(), ent("Invoice", Some("ent:billing")));
+        s.graph
+            .entities
+            .insert("ent:billing-area".into(), ent("Billing Area", None));
+        s.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "The orders area consists of the cart and pricing.".into(),
+                entities: vec!["ent:orders".into(), "ent:cart".into(), "ent:pricing".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:orders".into(),
+                    b: "ent:cart".into(),
+                    rel_type: Some("composition".into()),
+                    cardinality: None,
+                }],
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:sequence/flow".into(),
+            View {
+                kind: "sequence".into(),
+                title: "Flow".into(),
+                members: vec!["req:a".into()],
+                excluded: vec![
+                    Exclusion {
+                        id: "req:b".into(),
+                        note: "belongs to view:sequence/detail".into(),
+                    },
+                    Exclusion {
+                        id: "req:c".into(),
+                        note: "none".into(),
+                    },
+                ],
+                collapse: vec!["ent:orders".into()],
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:sequence/detail".into(),
+            View {
+                kind: "sequence".into(),
+                title: "Flow: Detail".into(),
+                members: vec!["req:d".into(), "req:a".into()],
+                ..Default::default()
+            },
+        );
         s
     }
 
@@ -3226,27 +3549,110 @@ mod tests {
     fn containment_checks_read_the_tree() {
         let s = structure_store();
         let ok = |k: &str, a: Value| eval_check(k, &a, &s, 0);
-        assert_eq!(ok("childCount", serde_json::json!({"parent": "ent:orders", "min": 2, "max": 2})), None);
-        assert!(ok("childCount", serde_json::json!({"parent": "Orders", "max": 1})).is_some());
-        assert_eq!(ok("childCount", serde_json::json!({"parent": "scope:public", "max": 3})), None);
-        assert!(ok("childCount", serde_json::json!({"parent": "scope:public", "max": 2})).is_some());
-        assert!(ok("childCount", serde_json::json!({"parent": "ent:nope", "max": 2})).is_some());
-        assert_eq!(ok("parentIs", serde_json::json!({"entity": "ent:cart", "parent": "Orders"})), None);
-        assert!(ok("parentIs", serde_json::json!({"entity": "ent:cart", "parent": "ent:billing"})).is_some());
-        assert!(ok("parentIs", serde_json::json!({"entity": "ent:billing", "parent": "ent:orders"})).is_some());
+        assert_eq!(
+            ok(
+                "childCount",
+                serde_json::json!({"parent": "ent:orders", "min": 2, "max": 2})
+            ),
+            None
+        );
+        assert!(ok(
+            "childCount",
+            serde_json::json!({"parent": "Orders", "max": 1})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "childCount",
+                serde_json::json!({"parent": "scope:public", "max": 3})
+            ),
+            None
+        );
+        assert!(ok(
+            "childCount",
+            serde_json::json!({"parent": "scope:public", "max": 2})
+        )
+        .is_some());
+        assert!(ok(
+            "childCount",
+            serde_json::json!({"parent": "ent:nope", "max": 2})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "parentIs",
+                serde_json::json!({"entity": "ent:cart", "parent": "Orders"})
+            ),
+            None
+        );
+        assert!(ok(
+            "parentIs",
+            serde_json::json!({"entity": "ent:cart", "parent": "ent:billing"})
+        )
+        .is_some());
+        assert!(ok(
+            "parentIs",
+            serde_json::json!({"entity": "ent:billing", "parent": "ent:orders"})
+        )
+        .is_some());
         // A grouping: derived from exactly its members, holding exactly them.
-        assert_eq!(ok("groupingOf", serde_json::json!({"members": ["ent:cart", "ent:pricing"]})), None);
-        assert_eq!(ok("groupingOf", serde_json::json!({"members": ["ent:cart", "ent:pricing"], "namePattern": "^orders$"})), None);
-        assert!(ok("groupingOf", serde_json::json!({"members": ["ent:cart", "ent:pricing"], "namePattern": "^billing"})).is_some());
+        assert_eq!(
+            ok(
+                "groupingOf",
+                serde_json::json!({"members": ["ent:cart", "ent:pricing"]})
+            ),
+            None
+        );
+        assert_eq!(
+            ok(
+                "groupingOf",
+                serde_json::json!({"members": ["ent:cart", "ent:pricing"], "namePattern": "^orders$"})
+            ),
+            None
+        );
+        assert!(ok(
+            "groupingOf",
+            serde_json::json!({"members": ["ent:cart", "ent:pricing"], "namePattern": "^billing"})
+        )
+        .is_some());
         assert!(ok("groupingOf", serde_json::json!({"members": ["ent:cart"]})).is_some());
         // A stated parent is no grouping: no derived provenance.
-        assert!(ok("groupingOf", serde_json::json!({"members": ["ent:invoice"]})).is_some());
-        assert_eq!(ok("entityNameCount", serde_json::json!({"namePattern": "billing", "max": 2})), None);
-        assert!(ok("entityNameCount", serde_json::json!({"namePattern": "billing", "max": 1})).is_some());
-        assert_eq!(ok("entityNameCount", serde_json::json!({"namePattern": "^billing$", "max": 1})), None);
-        assert_eq!(ok("nodeExists", serde_json::json!({"id": "ent:cart"})), None);
+        assert!(ok(
+            "groupingOf",
+            serde_json::json!({"members": ["ent:invoice"]})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "entityNameCount",
+                serde_json::json!({"namePattern": "billing", "max": 2})
+            ),
+            None
+        );
+        assert!(ok(
+            "entityNameCount",
+            serde_json::json!({"namePattern": "billing", "max": 1})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "entityNameCount",
+                serde_json::json!({"namePattern": "^billing$", "max": 1})
+            ),
+            None
+        );
+        assert_eq!(
+            ok("nodeExists", serde_json::json!({"id": "ent:cart"})),
+            None
+        );
         assert_eq!(ok("nodeExists", serde_json::json!({"id": "req:a"})), None);
-        assert_eq!(ok("nodeExists", serde_json::json!({"id": "view:sequence/flow"})), None);
+        assert_eq!(
+            ok(
+                "nodeExists",
+                serde_json::json!({"id": "view:sequence/flow"})
+            ),
+            None
+        );
         assert!(ok("nodeExists", serde_json::json!({"id": "ent:gone"})).is_some());
     }
 
@@ -3254,15 +3660,49 @@ mod tests {
     fn edge_checks_read_direction_and_type() {
         let s = structure_store();
         let ok = |k: &str, a: Value| eval_check(k, &a, &s, 0);
-        assert_eq!(ok("edgeDeclared", serde_json::json!({"requirement": "req:a", "a": "ent:orders", "b": "ent:cart", "type": "composition"})), None);
-        assert_eq!(ok("edgeDeclared", serde_json::json!({"requirement": "req:a", "a": "Orders", "b": "Cart"})), None);
+        assert_eq!(
+            ok(
+                "edgeDeclared",
+                serde_json::json!({"requirement": "req:a", "a": "ent:orders", "b": "ent:cart", "type": "composition"})
+            ),
+            None
+        );
+        assert_eq!(
+            ok(
+                "edgeDeclared",
+                serde_json::json!({"requirement": "req:a", "a": "Orders", "b": "Cart"})
+            ),
+            None
+        );
         // Direction counts, and so does the type.
-        assert!(ok("edgeDeclared", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})).is_some());
+        assert!(ok(
+            "edgeDeclared",
+            serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})
+        )
+        .is_some());
         assert!(ok("edgeDeclared", serde_json::json!({"requirement": "req:a", "a": "ent:orders", "b": "ent:cart", "type": "dependency"})).is_some());
-        assert!(ok("edgeDeclared", serde_json::json!({"requirement": "req:a", "a": "ent:orders", "b": "ent:pricing"})).is_some());
-        assert_eq!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:pricing"})), None);
-        assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})).is_some());
-        assert!(ok("edgeAbsent", serde_json::json!({"requirement": "req:nope", "a": "ent:cart", "b": "ent:orders"})).is_some());
+        assert!(ok(
+            "edgeDeclared",
+            serde_json::json!({"requirement": "req:a", "a": "ent:orders", "b": "ent:pricing"})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "edgeAbsent",
+                serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:pricing"})
+            ),
+            None
+        );
+        assert!(ok(
+            "edgeAbsent",
+            serde_json::json!({"requirement": "req:a", "a": "ent:cart", "b": "ent:orders"})
+        )
+        .is_some());
+        assert!(ok(
+            "edgeAbsent",
+            serde_json::json!({"requirement": "req:nope", "a": "ent:cart", "b": "ent:orders"})
+        )
+        .is_some());
     }
 
     // relationshipExists takes one `type` or any of several `types`.
@@ -3273,10 +3713,23 @@ mod tests {
         crate::derive::recompute_relationships(&mut s);
         let ok = |a: Value| eval_check("relationshipExists", &a, &s, 0);
         assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart"})), None);
-        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "composition"})), None);
-        assert_eq!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["composition", "aggregation"]})), None);
-        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "aggregation"})).is_some());
-        assert!(ok(serde_json::json!({"a": "Orders", "b": "Cart", "types": ["aggregation", "dependency"]})).is_some());
+        assert_eq!(
+            ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "composition"})),
+            None
+        );
+        assert_eq!(
+            ok(
+                serde_json::json!({"a": "Orders", "b": "Cart", "types": ["composition", "aggregation"]})
+            ),
+            None
+        );
+        assert!(
+            ok(serde_json::json!({"a": "Orders", "b": "Cart", "type": "aggregation"})).is_some()
+        );
+        assert!(ok(
+            serde_json::json!({"a": "Orders", "b": "Cart", "types": ["aggregation", "dependency"]})
+        )
+        .is_some());
         assert!(ok(serde_json::json!({"a": "Orders", "b": "Pricing", "types": ["composition", "aggregation"]})).is_some());
     }
 
@@ -3284,33 +3737,106 @@ mod tests {
     fn view_checks_read_membership_exclusions_and_order() {
         let s = structure_store();
         let ok = |k: &str, a: Value| eval_check(k, &a, &s, 0);
-        assert_eq!(ok("viewExists", serde_json::json!({"kind": "sequence"})), None);
-        assert_eq!(ok("viewExists", serde_json::json!({"kind": "sequence", "excluding": "view:sequence/flow"})), None);
-        assert_eq!(ok("viewExists", serde_json::json!({"kind": "sequence", "titlePattern": "detail", "excluding": "view:sequence/flow"})), None);
+        assert_eq!(
+            ok("viewExists", serde_json::json!({"kind": "sequence"})),
+            None
+        );
+        assert_eq!(
+            ok(
+                "viewExists",
+                serde_json::json!({"kind": "sequence", "excluding": "view:sequence/flow"})
+            ),
+            None
+        );
+        assert_eq!(
+            ok(
+                "viewExists",
+                serde_json::json!({"kind": "sequence", "titlePattern": "detail", "excluding": "view:sequence/flow"})
+            ),
+            None
+        );
         assert!(ok("viewExists", serde_json::json!({"kind": "sequence", "titlePattern": "^flow$", "excluding": "view:sequence/flow"})).is_some());
         assert!(ok("viewExists", serde_json::json!({"kind": "class"})).is_some());
-        assert_eq!(ok("viewMember", serde_json::json!({"view": "view:sequence/flow", "member": "req:a"})), None);
-        assert!(ok("viewMember", serde_json::json!({"view": "view:sequence/flow", "member": "req:b"})).is_some());
-        assert!(ok("viewMember", serde_json::json!({"view": "view:none", "member": "req:a"})).is_some());
-        assert_eq!(ok("viewExcludes", serde_json::json!({"view": "view:sequence/flow", "member": "req:b"})), None);
+        assert_eq!(
+            ok(
+                "viewMember",
+                serde_json::json!({"view": "view:sequence/flow", "member": "req:a"})
+            ),
+            None
+        );
+        assert!(ok(
+            "viewMember",
+            serde_json::json!({"view": "view:sequence/flow", "member": "req:b"})
+        )
+        .is_some());
+        assert!(ok(
+            "viewMember",
+            serde_json::json!({"view": "view:none", "member": "req:a"})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "viewExcludes",
+                serde_json::json!({"view": "view:sequence/flow", "member": "req:b"})
+            ),
+            None
+        );
         // A placeholder note is no note.
-        assert!(ok("viewExcludes", serde_json::json!({"view": "view:sequence/flow", "member": "req:c"})).is_some());
-        assert!(ok("viewExcludes", serde_json::json!({"view": "view:sequence/flow", "member": "req:a"})).is_some());
-        assert_eq!(ok("viewMemberOrder", serde_json::json!({"view": "view:sequence/detail", "before": "req:d", "after": "req:a"})), None);
-        assert!(ok("viewMemberOrder", serde_json::json!({"view": "view:sequence/detail", "before": "req:a", "after": "req:d"})).is_some());
-        assert!(ok("viewMemberOrder", serde_json::json!({"view": "view:sequence/detail", "before": "req:a", "after": "req:x"})).is_some());
+        assert!(ok(
+            "viewExcludes",
+            serde_json::json!({"view": "view:sequence/flow", "member": "req:c"})
+        )
+        .is_some());
+        assert!(ok(
+            "viewExcludes",
+            serde_json::json!({"view": "view:sequence/flow", "member": "req:a"})
+        )
+        .is_some());
+        assert_eq!(
+            ok(
+                "viewMemberOrder",
+                serde_json::json!({"view": "view:sequence/detail", "before": "req:d", "after": "req:a"})
+            ),
+            None
+        );
+        assert!(ok(
+            "viewMemberOrder",
+            serde_json::json!({"view": "view:sequence/detail", "before": "req:a", "after": "req:d"})
+        )
+        .is_some());
+        assert!(ok(
+            "viewMemberOrder",
+            serde_json::json!({"view": "view:sequence/detail", "before": "req:a", "after": "req:x"})
+        )
+        .is_some());
         // Accounted: a member, an excluded id with a note, a member of another
         // view, an id hidden under a collapsed entity; never a placeholder note.
-        assert_eq!(ok("membersAccounted", serde_json::json!({"view": "view:sequence/flow", "members": ["req:a", "req:b", "req:d", "ent:cart"]})), None);
-        assert!(ok("membersAccounted", serde_json::json!({"view": "view:sequence/flow", "members": ["req:c"]})).is_some());
-        assert!(ok("membersAccounted", serde_json::json!({"view": "view:sequence/flow", "members": ["req:zzz"]})).is_some());
+        assert_eq!(
+            ok(
+                "membersAccounted",
+                serde_json::json!({"view": "view:sequence/flow", "members": ["req:a", "req:b", "req:d", "ent:cart"]})
+            ),
+            None
+        );
+        assert!(ok(
+            "membersAccounted",
+            serde_json::json!({"view": "view:sequence/flow", "members": ["req:c"]})
+        )
+        .is_some());
+        assert!(ok(
+            "membersAccounted",
+            serde_json::json!({"view": "view:sequence/flow", "members": ["req:zzz"]})
+        )
+        .is_some());
     }
 
     #[test]
     fn view_within_limit_recomputes_the_commits_count() {
         let mut s = Store::default();
         for i in 0..10 {
-            s.graph.entities.insert(format!("ent:p{}", i), ent(&format!("P{}", i), None));
+            s.graph
+                .entities
+                .insert(format!("ent:p{}", i), ent(&format!("P{}", i), None));
         }
         let step = |i: usize| Requirement {
             statement: format!("P{} calls P{}.", i, i + 1),
@@ -3326,55 +3852,105 @@ mod tests {
         for i in 0..9 {
             s.graph.requirements.insert(format!("req:s{}", i), step(i));
         }
-        s.graph.views.insert("view:sequence/wide".into(), View {
-            kind: "sequence".into(),
-            title: "Wide".into(),
-            members: (0..9).map(|i| format!("req:s{}", i)).collect(),
-            ..Default::default()
-        });
-        s.graph.views.insert("view:sequence/narrow".into(), View {
-            kind: "sequence".into(),
-            title: "Narrow".into(),
-            members: (0..3).map(|i| format!("req:s{}", i)).collect(),
-            ..Default::default()
-        });
+        s.graph.views.insert(
+            "view:sequence/wide".into(),
+            View {
+                kind: "sequence".into(),
+                title: "Wide".into(),
+                members: (0..9).map(|i| format!("req:s{}", i)).collect(),
+                ..Default::default()
+            },
+        );
+        s.graph.views.insert(
+            "view:sequence/narrow".into(),
+            View {
+                kind: "sequence".into(),
+                title: "Narrow".into(),
+                members: (0..3).map(|i| format!("req:s{}", i)).collect(),
+                ..Default::default()
+            },
+        );
         let ok = |k: &str, a: Value| eval_check(k, &a, &s, 0);
         // Ten participants against a soft limit of eight.
-        let why = ok("viewWithinLimit", serde_json::json!({"view": "view:sequence/wide", "limit": "participants-per-sequence-view"}));
-        assert!(why.as_deref().is_some_and(|w| w.contains("10 participants-per-sequence-view > 8")), "{:?}", why);
-        assert_eq!(ok("viewWithinLimit", serde_json::json!({"view": "view:sequence/narrow", "limit": "participants-per-sequence-view"})), None);
-        assert_eq!(ok("viewWithinLimit", serde_json::json!({"view": "view:sequence/wide", "limit": "members-per-flow-view"})), None);
-        assert!(ok("viewWithinLimit", serde_json::json!({"view": "view:sequence/wide", "limit": "no-such-limit"})).is_some());
-        assert!(ok("viewWithinLimit", serde_json::json!({"view": "view:sequence/none", "limit": "edges-per-view"})).is_some());
+        let why = ok(
+            "viewWithinLimit",
+            serde_json::json!({"view": "view:sequence/wide", "limit": "participants-per-sequence-view"}),
+        );
+        assert!(
+            why.as_deref()
+                .is_some_and(|w| w.contains("10 participants-per-sequence-view > 8")),
+            "{:?}",
+            why
+        );
+        assert_eq!(
+            ok(
+                "viewWithinLimit",
+                serde_json::json!({"view": "view:sequence/narrow", "limit": "participants-per-sequence-view"})
+            ),
+            None
+        );
+        assert_eq!(
+            ok(
+                "viewWithinLimit",
+                serde_json::json!({"view": "view:sequence/wide", "limit": "members-per-flow-view"})
+            ),
+            None
+        );
+        assert!(ok(
+            "viewWithinLimit",
+            serde_json::json!({"view": "view:sequence/wide", "limit": "no-such-limit"})
+        )
+        .is_some());
+        assert!(ok(
+            "viewWithinLimit",
+            serde_json::json!({"view": "view:sequence/none", "limit": "edges-per-view"})
+        )
+        .is_some());
     }
 
     #[test]
     fn diagnostic_exists_takes_every_listed_subject() {
         let mut s = Store::default();
-        s.graph.diagnostics.insert("diag:contradiction-1".into(), Diagnostic {
-            rule: "contradiction".into(),
-            severity: "error".into(),
-            subjects: vec!["req:a".into(), "req:b".into()],
-            message: "cannot both hold".into(),
-            reasoning: None,
-            lifecycle: "open".into(),
-            triage: None,
-            prompt: None,
-            answer: None,
-            created: None,
-            updated: None,
-        });
+        s.graph.diagnostics.insert(
+            "diag:contradiction-1".into(),
+            Diagnostic {
+                rule: "contradiction".into(),
+                severity: "error".into(),
+                subjects: vec!["req:a".into(), "req:b".into()],
+                message: "cannot both hold".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: None,
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
         let ok = |a: Value| eval_check("diagnosticExists", &a, &s, 0);
         assert_eq!(ok(serde_json::json!({"rule": "contradiction"})), None);
-        assert_eq!(ok(serde_json::json!({"rule": "contradiction", "subject": "req:a"})), None);
-        assert_eq!(ok(serde_json::json!({"rule": "contradiction", "subjects": ["req:a", "req:b"]})), None);
-        assert!(ok(serde_json::json!({"rule": "contradiction", "subjects": ["req:a", "req:c"]})).is_some());
-        assert!(ok(serde_json::json!({"rule": "duplicate-requirement", "subjects": ["req:a", "req:b"]})).is_some());
+        assert_eq!(
+            ok(serde_json::json!({"rule": "contradiction", "subject": "req:a"})),
+            None
+        );
+        assert_eq!(
+            ok(serde_json::json!({"rule": "contradiction", "subjects": ["req:a", "req:b"]})),
+            None
+        );
+        assert!(
+            ok(serde_json::json!({"rule": "contradiction", "subjects": ["req:a", "req:c"]}))
+                .is_some()
+        );
+        assert!(ok(
+            serde_json::json!({"rule": "duplicate-requirement", "subjects": ["req:a", "req:b"]})
+        )
+        .is_some());
     }
 
     #[test]
     fn results_file_updates_in_place_per_model() {
-        let tmp = std::env::temp_dir().join(format!("jazyk-bench-results-{}", crate::sys::process_id()));
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-bench-results-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&tmp).ok();
         write_results(
             &tmp,

@@ -357,8 +357,11 @@ mod tests {
     }
 
     fn fixture(name: &str) -> (Project, std::path::PathBuf) {
-        let root =
-            std::env::temp_dir().join(format!("jazyk-gui-facts-{}-{}", name, crate::sys::process_id()));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-gui-facts-{}-{}",
+            name,
+            crate::sys::process_id()
+        ));
         crate::vfs::remove_dir_all(&root).ok();
         crate::vfs::create_dir_all(root.join("docs")).unwrap();
         crate::vfs::write(

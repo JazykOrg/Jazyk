@@ -664,7 +664,11 @@ impl Scope {
         memory::list_all()
             .into_iter()
             .filter_map(|path| {
-                let name = path.strip_prefix("/project").ok()?.to_str()?.replace('\\', "/");
+                let name = path
+                    .strip_prefix("/project")
+                    .ok()?
+                    .to_str()?
+                    .replace('\\', "/");
                 Some((name, memory::read(&path).ok()?))
             })
             .collect()
@@ -684,11 +688,17 @@ mod tests {
     #[test]
     fn scoped_native_joins_round_trip_portable_snapshot_names_and_stay_confined() {
         let _scope = super::Scope::enter(&Default::default());
-        let file = std::path::Path::new("/project").join("docs").join("main.md");
+        let file = std::path::Path::new("/project")
+            .join("docs")
+            .join("main.md");
         super::create_dir_all(file.parent().unwrap()).unwrap();
         super::write(&file, b"source").unwrap();
         assert_eq!(super::scoped_snapshot().unwrap()["docs/main.md"], b"source");
-        for outside in ["/project2/escape", "/project/../escape", "C:/project/escape"] {
+        for outside in [
+            "/project2/escape",
+            "/project/../escape",
+            "C:/project/escape",
+        ] {
             assert!(super::write(outside, b"escape").is_err(), "{outside}");
         }
     }
@@ -722,6 +732,10 @@ mod tests {
         raised("remove_dir_all");
         let reads = super::memory_generation();
         let _ = super::memory::read(dir.join("a.md"));
-        assert_eq!(super::memory_generation(), reads, "a read changed the count");
+        assert_eq!(
+            super::memory_generation(),
+            reads,
+            "a read changed the count"
+        );
     }
 }

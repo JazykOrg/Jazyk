@@ -22,27 +22,97 @@ pub struct Choice {
 }
 
 const fn c(id: &'static str, kind: Kind, name: &'static str, url: &'static str) -> Choice {
-    Choice { id, kind, name, url }
+    Choice {
+        id,
+        kind,
+        name,
+        url,
+    }
 }
 
 // Every choice, in menu order. Mirrors docs/frontends/cli.md#jazyk.
 pub const CHOICES: &[Choice] = &[
     c("gui", Kind::Web, "jazyk.dev web UI", ""),
-    c("vscode", Kind::Ide, "Visual Studio Code", "https://code.visualstudio.com"),
+    c(
+        "vscode",
+        Kind::Ide,
+        "Visual Studio Code",
+        "https://code.visualstudio.com",
+    ),
     c("cursor", Kind::Ide, "Cursor", "https://cursor.com"),
     c("zed", Kind::Ide, "Zed", "https://zed.dev"),
-    c("idea", Kind::Ide, "IntelliJ IDEA", "https://www.jetbrains.com/idea"),
-    c("phpstorm", Kind::Ide, "PhpStorm", "https://www.jetbrains.com/phpstorm"),
-    c("webstorm", Kind::Ide, "WebStorm", "https://www.jetbrains.com/webstorm"),
-    c("pycharm", Kind::Ide, "PyCharm", "https://www.jetbrains.com/pycharm"),
-    c("goland", Kind::Ide, "GoLand", "https://www.jetbrains.com/go"),
-    c("rustrover", Kind::Ide, "RustRover", "https://www.jetbrains.com/rust"),
-    c("clion", Kind::Ide, "CLion", "https://www.jetbrains.com/clion"),
-    c("rider", Kind::Ide, "Rider", "https://www.jetbrains.com/rider"),
-    c("rubymine", Kind::Ide, "RubyMine", "https://www.jetbrains.com/ruby"),
-    c("claude", Kind::Agent, "Claude Code", "https://claude.com/claude-code"),
-    c("codex", Kind::Agent, "Codex CLI", "https://github.com/openai/codex"),
-    c("gemini", Kind::Agent, "Gemini CLI", "https://github.com/google-gemini/gemini-cli"),
+    c(
+        "idea",
+        Kind::Ide,
+        "IntelliJ IDEA",
+        "https://www.jetbrains.com/idea",
+    ),
+    c(
+        "phpstorm",
+        Kind::Ide,
+        "PhpStorm",
+        "https://www.jetbrains.com/phpstorm",
+    ),
+    c(
+        "webstorm",
+        Kind::Ide,
+        "WebStorm",
+        "https://www.jetbrains.com/webstorm",
+    ),
+    c(
+        "pycharm",
+        Kind::Ide,
+        "PyCharm",
+        "https://www.jetbrains.com/pycharm",
+    ),
+    c(
+        "goland",
+        Kind::Ide,
+        "GoLand",
+        "https://www.jetbrains.com/go",
+    ),
+    c(
+        "rustrover",
+        Kind::Ide,
+        "RustRover",
+        "https://www.jetbrains.com/rust",
+    ),
+    c(
+        "clion",
+        Kind::Ide,
+        "CLion",
+        "https://www.jetbrains.com/clion",
+    ),
+    c(
+        "rider",
+        Kind::Ide,
+        "Rider",
+        "https://www.jetbrains.com/rider",
+    ),
+    c(
+        "rubymine",
+        Kind::Ide,
+        "RubyMine",
+        "https://www.jetbrains.com/ruby",
+    ),
+    c(
+        "claude",
+        Kind::Agent,
+        "Claude Code",
+        "https://claude.com/claude-code",
+    ),
+    c(
+        "codex",
+        Kind::Agent,
+        "Codex CLI",
+        "https://github.com/openai/codex",
+    ),
+    c(
+        "gemini",
+        Kind::Agent,
+        "Gemini CLI",
+        "https://github.com/google-gemini/gemini-cli",
+    ),
     c("opencode", Kind::Agent, "OpenCode", "https://opencode.ai"),
     c("pi", Kind::Agent, "Pi", "https://pi.dev"),
     c("droid", Kind::Agent, "Factory Droid", "https://factory.ai"),
@@ -50,7 +120,10 @@ pub const CHOICES: &[Choice] = &[
 
 const GROUPS: [(Kind, &str); 3] = [
     (Kind::Web, "Web"),
-    (Kind::Ide, "IDEs: language server (LSP) and the Jazyk agent (ACP)"),
+    (
+        Kind::Ide,
+        "IDEs: language server (LSP) and the Jazyk agent (ACP)",
+    ),
     (Kind::Agent, "Coding agents: jazyk tools over MCP"),
 ];
 
@@ -69,7 +142,9 @@ const JETBRAINS: &[(&str, &[&str])] = &[
 ];
 
 // The choices `jazyk init --mcp` offers: everything whose setup is an MCP entry.
-pub const MCP_CHOICES: &[&str] = &["claude", "codex", "gemini", "opencode", "pi", "droid", "cursor"];
+pub const MCP_CHOICES: &[&str] = &[
+    "claude", "codex", "gemini", "opencode", "pi", "droid", "cursor",
+];
 
 pub fn choice(id: &str) -> Option<&'static Choice> {
     CHOICES.iter().find(|c| c.id == id)
@@ -107,7 +182,11 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
             // The cursor starts on the first installed IDE: the usual pick.
             let first = groups
                 .iter()
-                .position(|g| g.rows.iter().any(|r| choice(&r.key).is_some_and(|c| c.kind == Kind::Ide)))
+                .position(|g| {
+                    g.rows
+                        .iter()
+                        .any(|r| choice(&r.key).is_some_and(|c| c.kind == Kind::Ide))
+                })
                 .map(|g| (g, 0))
                 .unwrap_or((0, 0));
             let Some((g, r)) = crate::menu::pick(&groups, first) else {
@@ -249,7 +328,9 @@ pub fn is_jetbrains(id: &str) -> bool {
 
 // An application bundle name of a JetBrains IDE.
 pub fn is_jetbrains_app(name: &str) -> bool {
-    JETBRAINS.iter().any(|(_, prefixes)| prefixes.iter().any(|p| name.starts_with(p)))
+    JETBRAINS
+        .iter()
+        .any(|(_, prefixes)| prefixes.iter().any(|p| name.starts_with(p)))
 }
 
 // Whether an ACP host family has an installed, startable IDE.
@@ -285,7 +366,10 @@ fn init_here(cwd: &Path) -> Result<(), String> {
     crate::document_sets::atomic_config(cwd, crate::cli::INIT_TOML, &crate::model::hash_hex(""))
         .map_err(|(_, e)| format!("cannot write jazyk.toml: {}", e))?;
     crate::cli::init_scaffold(cwd)?;
-    println!("jazyk: initialized {}", cwd.join(crate::document_sets::CONFIG).display());
+    println!(
+        "jazyk: initialized {}",
+        cwd.join(crate::document_sets::CONFIG).display()
+    );
     Ok(())
 }
 
@@ -303,7 +387,8 @@ pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Resul
 
 // The MCP entry one coding agent reads. Mirrors docs/frontends/cli.md#jazyk.
 pub fn setup_mcp(root: &Path, id: &str) -> Result<(), String> {
-    let a = crate::setup::agent_by_name(id).ok_or_else(|| format!("`{}` takes no MCP entry", id))?;
+    let a =
+        crate::setup::agent_by_name(id).ok_or_else(|| format!("`{}` takes no MCP entry", id))?;
     let item = crate::setup::Item::Agent(a.name);
     if crate::setup::state(&item, root) == crate::setup::State::Installed {
         return Ok(());
@@ -327,7 +412,9 @@ pub fn approve_claude(root: &Path) -> Result<(), String> {
     let Some(obj) = doc.as_object_mut() else {
         return Err(format!("{} does not hold a JSON object", rel));
     };
-    let list = obj.entry("enabledMcpjsonServers").or_insert_with(|| json!([]));
+    let list = obj
+        .entry("enabledMcpjsonServers")
+        .or_insert_with(|| json!([]));
     let Some(items) = list.as_array_mut() else {
         return Err(format!("{}: enabledMcpjsonServers is not a list", rel));
     };
@@ -348,10 +435,21 @@ pub fn approve_claude(root: &Path) -> Result<(), String> {
 pub fn unapprove_claude(root: &Path) -> Result<(), String> {
     let rel = ".claude/settings.local.json";
     let path = root.join(rel);
-    let Ok(text) = crate::vfs::read_to_string(&path) else { return Ok(()) };
-    let Ok(mut doc) = serde_json::from_str::<Value>(&text) else { return Ok(()) };
-    let Some(obj) = doc.as_object_mut() else { return Ok(()) };
-    let Some(list) = obj.get_mut("enabledMcpjsonServers").and_then(|v| v.as_array_mut()) else { return Ok(()) };
+    let Ok(text) = crate::vfs::read_to_string(&path) else {
+        return Ok(());
+    };
+    let Ok(mut doc) = serde_json::from_str::<Value>(&text) else {
+        return Ok(());
+    };
+    let Some(obj) = doc.as_object_mut() else {
+        return Ok(());
+    };
+    let Some(list) = obj
+        .get_mut("enabledMcpjsonServers")
+        .and_then(|v| v.as_array_mut())
+    else {
+        return Ok(());
+    };
     let before = list.len();
     list.retain(|v| v != "jazyk");
     if list.len() == before {
@@ -373,8 +471,9 @@ pub fn setup_codex(path: &Path, cmd: &str) -> Result<(), String> {
     let rel = path.display().to_string();
     let path = path.to_path_buf();
     let old = crate::vfs::read_to_string(&path).unwrap_or_default();
-    let mut doc: toml_edit::DocumentMut =
-        old.parse().map_err(|e| format!("{} is not valid TOML: {}", rel, e))?;
+    let mut doc: toml_edit::DocumentMut = old
+        .parse()
+        .map_err(|e| format!("{} is not valid TOML: {}", rel, e))?;
     if doc.get("mcp_servers").is_none() {
         let mut servers = toml_edit::Table::new();
         servers.set_implicit(true);
@@ -403,17 +502,23 @@ pub fn setup_codex(path: &Path, cmd: &str) -> Result<(), String> {
     entry["args"] = toml_edit::value(args);
     servers.insert("jazyk", toml_edit::Item::Table(entry));
     crate::vfs::create_dir_all(path.parent().unwrap()).map_err(|e| e.to_string())?;
-    crate::vfs::write(&path, doc.to_string()).map_err(|e| format!("cannot write {}: {}", rel, e))?;
+    crate::vfs::write(&path, doc.to_string())
+        .map_err(|e| format!("cannot write {}: {}", rel, e))?;
     Ok(())
 }
 
 // Remove `[mcp_servers.jazyk]`; an emptied table goes too, and an emptied file.
 // Mirrors docs/frontends/cli.md#jazyk-setup.
 pub fn remove_codex(path: &Path) -> Result<bool, String> {
-    let Ok(old) = crate::vfs::read_to_string(path) else { return Ok(false) };
-    let mut doc: toml_edit::DocumentMut =
-        old.parse().map_err(|e| format!("{} is not valid TOML: {}", path.display(), e))?;
-    let Some(servers) = doc.get_mut("mcp_servers").and_then(|t| t.as_table_mut()) else { return Ok(false) };
+    let Ok(old) = crate::vfs::read_to_string(path) else {
+        return Ok(false);
+    };
+    let mut doc: toml_edit::DocumentMut = old
+        .parse()
+        .map_err(|e| format!("{} is not valid TOML: {}", path.display(), e))?;
+    let Some(servers) = doc.get_mut("mcp_servers").and_then(|t| t.as_table_mut()) else {
+        return Ok(false);
+    };
     if servers.remove("jazyk").is_none() {
         return Ok(false);
     }
@@ -422,9 +527,11 @@ pub fn remove_codex(path: &Path) -> Result<bool, String> {
     }
     let text = doc.to_string();
     if text.trim().is_empty() {
-        crate::vfs::remove_file(path).map_err(|e| format!("cannot remove {}: {}", path.display(), e))?;
+        crate::vfs::remove_file(path)
+            .map_err(|e| format!("cannot remove {}: {}", path.display(), e))?;
     } else {
-        crate::vfs::write(path, text).map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
+        crate::vfs::write(path, text)
+            .map_err(|e| format!("cannot write {}: {}", path.display(), e))?;
     }
     Ok(true)
 }
@@ -476,7 +583,10 @@ fn extension(editor: &str, ext: &str, vsix: Option<(&Path, &str)>) -> Result<(),
         .status()
         .map_err(|e| format!("cannot run `{} --install-extension`: {}", editor, e))?;
     if !status.success() {
-        return Err(format!("`{} --install-extension {}` exited {}", editor, source, status));
+        return Err(format!(
+            "`{} --install-extension {}` exited {}",
+            editor, source, status
+        ));
     }
     println!("jazyk: installed the {} extension into {}", ext, editor);
     Ok(())
@@ -516,7 +626,10 @@ fn newest_vsix() -> Option<(PathBuf, String)> {
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            let version = name.strip_prefix("jazyk-")?.strip_suffix(".vsix")?.to_string();
+            let version = name
+                .strip_prefix("jazyk-")?
+                .strip_suffix(".vsix")?
+                .to_string();
             Some((e.path(), version))
         })
         .max_by_key(|(_, v)| version_tuple(v))
@@ -544,7 +657,10 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
                 .filter(|(name, _)| agent_note(name).is_empty())
                 .collect();
             if agents.len() == 1 {
-                println!("jazyk: the Jazyk agent drives {}, the only agent found", agents[0].1);
+                println!(
+                    "jazyk: the Jazyk agent drives {}, the only agent found",
+                    agents[0].1
+                );
                 return record_agent(root, &proj, &agents[0].0).map(|_| true);
             }
             println!("\nWhich coding agent should the Jazyk agent drive? `/agent` in the IDE's chat switches it later.");
@@ -583,7 +699,11 @@ fn record_agent(root: &Path, proj: &crate::project::Project, name: &str) -> Resu
     if full != old {
         crate::document_sets::atomic_config(root, &full, &crate::model::hash_hex(&old))
             .map_err(|(_, e)| format!("cannot write {}: {}", path.display(), e))?;
-        println!("jazyk: the Jazyk agent drives {} ([acp] agent in {})", name, path.display());
+        println!(
+            "jazyk: the Jazyk agent drives {} ([acp] agent in {})",
+            name,
+            path.display()
+        );
     }
     Ok(())
 }
@@ -608,7 +728,9 @@ use crate::setup::which;
 fn program(id: &str, root: &Path) -> Option<(PathBuf, Vec<String>)> {
     let here = root.display().to_string();
     match id {
-        "gui" => std::env::current_exe().ok().map(|e| (e, vec!["gui".to_string()])),
+        "gui" => std::env::current_exe()
+            .ok()
+            .map(|e| (e, vec!["gui".to_string()])),
         "vscode" => which("code").map(|p| (p, vec![here])),
         "cursor" | "zed" => which(id).map(|p| (p, vec![here])),
         id if is_jetbrains(id) => jetbrains(id, &here),
@@ -620,7 +742,9 @@ fn program(id: &str, root: &Path) -> Option<(PathBuf, Vec<String>)> {
 // on macOS its application bundle. Mirrors docs/frontends/cli.md#jazyk.
 fn jetbrains(id: &str, root: &str) -> Option<(PathBuf, Vec<String>)> {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
-    let toolbox = home.join("Library/Application Support/JetBrains/Toolbox/scripts").join(id);
+    let toolbox = home
+        .join("Library/Application Support/JetBrains/Toolbox/scripts")
+        .join(id);
     if let Some(script) = which(id).or_else(|| toolbox.vis_file().then_some(toolbox)) {
         return Some((script, vec![root.to_string()]));
     }
@@ -629,7 +753,9 @@ fn jetbrains(id: &str, root: &str) -> Option<(PathBuf, Vec<String>)> {
     }
     let prefixes = JETBRAINS.iter().find(|(s, _)| *s == id)?.1;
     for dir in [PathBuf::from("/Applications"), home.join("Applications")] {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut apps: Vec<PathBuf> = entries
             .filter_map(|e| e.ok())
             .map(|e| e.path())
@@ -642,7 +768,12 @@ fn jetbrains(id: &str, root: &str) -> Option<(PathBuf, Vec<String>)> {
         if let Some(app) = apps.pop() {
             return Some((
                 PathBuf::from("open"),
-                vec!["-na".into(), app.display().to_string(), "--args".into(), root.to_string()],
+                vec![
+                    "-na".into(),
+                    app.display().to_string(),
+                    "--args".into(),
+                    root.to_string(),
+                ],
             ));
         }
     }
@@ -656,11 +787,19 @@ fn start(choice: &Choice, root: &Path) -> i32 {
         eprintln!(
             "jazyk: {} is not installed{}; its setup is written, so it starts once installed",
             choice.name,
-            if choice.url.is_empty() { String::new() } else { format!(" (get it at {})", choice.url) }
+            if choice.url.is_empty() {
+                String::new()
+            } else {
+                format!(" (get it at {})", choice.url)
+            }
         );
         return 1;
     };
-    match std::process::Command::new(&prog).args(&args).current_dir(root).status() {
+    match std::process::Command::new(&prog)
+        .args(&args)
+        .current_dir(root)
+        .status()
+    {
         Ok(s) => s.code().unwrap_or(1),
         Err(e) => {
             eprintln!("jazyk: cannot start {}: {}", prog.display(), e);
@@ -675,15 +814,19 @@ mod tests {
     use crate::acp::install::spawn_command;
 
     fn temp(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("jazyk-start-{}-{}", name, crate::sys::process_id()));
+        let dir =
+            std::env::temp_dir().join(format!("jazyk-start-{}-{}", name, crate::sys::process_id()));
         crate::vfs::remove_dir_all(&dir).ok();
         crate::vfs::create_dir_all(&dir).unwrap();
         dir
     }
 
     fn read(path: PathBuf) -> Value {
-        jsonc_parser::parse_to_serde_value(&std::fs::read_to_string(path).unwrap(), &Default::default())
-            .unwrap()
+        jsonc_parser::parse_to_serde_value(
+            &std::fs::read_to_string(path).unwrap(),
+            &Default::default(),
+        )
+        .unwrap()
     }
 
     // Every file-based MCP choice writes the entry its agent reads, and a second run
@@ -693,30 +836,64 @@ mod tests {
         let dir = temp("mcp");
         let cmd = spawn_command();
         std::fs::create_dir_all(dir.join(".codex")).unwrap();
-        std::fs::write(dir.join(".codex/config.toml"), "# mine\nmodel = \"o3\"\n\n[mcp_servers.other]\ncommand = \"x\"\n").unwrap();
-        for id in ["claude", "codex", "cursor", "gemini", "pi", "droid", "opencode", "copilot", "zed", "junie", "roo"] {
+        std::fs::write(
+            dir.join(".codex/config.toml"),
+            "# mine\nmodel = \"o3\"\n\n[mcp_servers.other]\ncommand = \"x\"\n",
+        )
+        .unwrap();
+        for id in [
+            "claude", "codex", "cursor", "gemini", "pi", "droid", "opencode", "copilot", "zed",
+            "junie", "roo",
+        ] {
             setup_mcp(&dir, id).unwrap();
         }
         let codex = std::fs::read_to_string(dir.join(".codex/config.toml")).unwrap();
         assert!(codex.starts_with("# mine\nmodel = \"o3\""), "{}", codex);
         let parsed: toml::Value = toml::from_str(&codex).unwrap();
-        assert_eq!(parsed["mcp_servers"]["jazyk"]["command"].as_str(), Some(cmd.as_str()));
-        assert_eq!(parsed["mcp_servers"]["other"]["command"].as_str(), Some("x"));
+        assert_eq!(
+            parsed["mcp_servers"]["jazyk"]["command"].as_str(),
+            Some(cmd.as_str())
+        );
+        assert_eq!(
+            parsed["mcp_servers"]["other"]["command"].as_str(),
+            Some("x")
+        );
         setup_mcp(&dir, "codex").unwrap();
-        assert_eq!(codex, std::fs::read_to_string(dir.join(".codex/config.toml")).unwrap());
+        assert_eq!(
+            codex,
+            std::fs::read_to_string(dir.join(".codex/config.toml")).unwrap()
+        );
         let stdio = json!({"command": cmd, "args": ["mcp", "all"]});
         assert_eq!(read(dir.join(".mcp.json"))["mcpServers"]["jazyk"], stdio);
-        assert_eq!(read(dir.join(".cursor/mcp.json"))["mcpServers"]["jazyk"], stdio);
-        assert_eq!(read(dir.join(".gemini/settings.json"))["mcpServers"]["jazyk"], stdio);
+        assert_eq!(
+            read(dir.join(".cursor/mcp.json"))["mcpServers"]["jazyk"],
+            stdio
+        );
+        assert_eq!(
+            read(dir.join(".gemini/settings.json"))["mcpServers"]["jazyk"],
+            stdio
+        );
         assert_eq!(read(dir.join(".pi/mcp.json"))["mcpServers"]["jazyk"], stdio);
-        assert_eq!(read(dir.join(".factory/mcp.json"))["mcpServers"]["jazyk"]["type"], "stdio");
+        assert_eq!(
+            read(dir.join(".factory/mcp.json"))["mcpServers"]["jazyk"]["type"],
+            "stdio"
+        );
         assert_eq!(
             read(dir.join(".vscode/mcp.json"))["servers"]["jazyk"],
             json!({"type": "stdio", "command": cmd, "args": ["mcp", "all"]})
         );
-        assert_eq!(read(dir.join(".zed/settings.json"))["context_servers"]["jazyk"], stdio);
-        assert_eq!(read(dir.join(".junie/mcp/mcp.json"))["mcpServers"]["jazyk"], stdio);
-        assert_eq!(read(dir.join(".roo/mcp.json"))["mcpServers"]["jazyk"], stdio);
+        assert_eq!(
+            read(dir.join(".zed/settings.json"))["context_servers"]["jazyk"],
+            stdio
+        );
+        assert_eq!(
+            read(dir.join(".junie/mcp/mcp.json"))["mcpServers"]["jazyk"],
+            stdio
+        );
+        assert_eq!(
+            read(dir.join(".roo/mcp.json"))["mcpServers"]["jazyk"],
+            stdio
+        );
         assert_eq!(
             read(dir.join("opencode.json"))["mcp"]["jazyk"],
             json!({"type": "local", "command": [cmd, "mcp", "all"], "enabled": true})
@@ -727,7 +904,10 @@ mod tests {
         );
         let before = std::fs::read_to_string(dir.join(".claude/settings.local.json")).unwrap();
         setup_mcp(&dir, "claude").unwrap();
-        assert_eq!(before, std::fs::read_to_string(dir.join(".claude/settings.local.json")).unwrap());
+        assert_eq!(
+            before,
+            std::fs::read_to_string(dir.join(".claude/settings.local.json")).unwrap()
+        );
         crate::vfs::remove_dir_all(&dir).ok();
     }
 
@@ -742,7 +922,11 @@ mod tests {
         )
         .unwrap();
         crate::vfs::create_dir_all(dir.join(".claude")).unwrap();
-        std::fs::write(dir.join(".claude/settings.local.json"), "{\"enabledMcpjsonServers\": [\"other\"], \"x\": 1}").unwrap();
+        std::fs::write(
+            dir.join(".claude/settings.local.json"),
+            "{\"enabledMcpjsonServers\": [\"other\"], \"x\": 1}",
+        )
+        .unwrap();
         setup_mcp(&dir, "claude").unwrap();
         let mcp = read(dir.join(".mcp.json"));
         assert_eq!(mcp["mcpServers"]["jazyk"]["args"], json!(["mcp", "all"]));
@@ -761,7 +945,8 @@ mod tests {
             assert!(GROUPS.iter().any(|(k, _)| *k == c.kind), "{}", c.id);
             if c.id != "gui" {
                 assert!(
-                    crate::launcher::command_shape(c.id).is_some_and(|(n, extra)| n == Some(0) && extra.is_empty()),
+                    crate::launcher::command_shape(c.id)
+                        .is_some_and(|(n, extra)| n == Some(0) && extra.is_empty()),
                     "`{}` is not a choice command",
                     c.id
                 );

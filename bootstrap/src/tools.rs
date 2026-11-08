@@ -68,8 +68,10 @@ fn hollow(v: &Value) -> Option<Value> {
             (!kept.is_empty()).then(|| Value::Array(kept))
         }
         Value::Object(o) => {
-            let kept: serde_json::Map<String, Value> =
-                o.iter().filter_map(|(k, x)| hollow(x).map(|x| (k.clone(), x))).collect();
+            let kept: serde_json::Map<String, Value> = o
+                .iter()
+                .filter_map(|(k, x)| hollow(x).map(|x| (k.clone(), x)))
+                .collect();
             (!kept.is_empty()).then(|| Value::Object(kept))
         }
         _ => Some(v.clone()),
@@ -106,14 +108,20 @@ pub(crate) fn normalize_args(args: &Value) -> Value {
 fn prefer_quote(name: &str, args: &mut Value) -> Option<String> {
     let quoted = match name {
         "upsert_entity" => args.get("mention").is_some(),
-        "upsert_requirement" | "upsert_criterion" => args.get("quote").is_some() && args.get("section").is_some(),
+        "upsert_requirement" | "upsert_criterion" => {
+            args.get("quote").is_some() && args.get("section").is_some()
+        }
         _ => false,
     };
     if !quoted || args.get("provenance").is_none() {
         return None;
     }
     args.as_object_mut()?.remove("provenance");
-    let what = if name == "upsert_entity" { "the mention" } else { "section and quote" };
+    let what = if name == "upsert_entity" {
+        "the mention"
+    } else {
+        "section and quote"
+    };
     Some(format!(
         "provenance dropped: the call carried {} and a derivation; a fact the documents state keeps its quote as its one provenance, so send `provenance` only for what no sentence states",
         what
@@ -765,8 +773,12 @@ pub const GOAL_TOOLS: [&str; 4] = ["mark_goal_done", "mark_goal_failed", "load_s
 pub const PAIR_SETTLE_TOOL: &str = "settle_pairs";
 // The verdicts one settle_pairs entry may carry. Mirrors docs/compiler/goals/rejudge-pair.md#gate.
 pub const PAIR_VERDICTS: [&str; 4] = ["consistent", "duplicate", "contradiction", "resolved"];
-pub const GEN_TOOLS: [&str; 4] =
-    ["generation_tasks", "begin_generation", "record_generation", "record_medium"];
+pub const GEN_TOOLS: [&str; 4] = [
+    "generation_tasks",
+    "begin_generation",
+    "record_generation",
+    "record_medium",
+];
 pub const BIND_TOOLS: [&str; 3] = ["binding_tasks", "begin_binding", "record_binding"];
 pub const VERIFY_TOOLS: [&str; 4] = [
     "verification_tasks",
@@ -775,11 +787,7 @@ pub const VERIFY_TOOLS: [&str; 4] = [
     "record_verdict",
 ];
 // In-process only: a generation turn's file tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 3] = [
-    "read_text_file",
-    "write_text_file",
-    "list_files",
-];
+pub const FILE_TOOLS: [&str; 3] = ["read_text_file", "write_text_file", "list_files"];
 // The view tools, served beside the write tools. See docs/compiler/tools.md#view-tools.
 pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
 // The chat serving's human paths, in no session's toolset and never a raw write.
@@ -829,7 +837,12 @@ pub fn toolset_for_kinds(kinds: &[&str]) -> Vec<&'static str> {
             v.push(t);
         }
     }
-    if kinds.iter().any(|k| matches!(*k, "bind" | "generate" | "verify")) { v.extend(crate::task_runtime::TOOLS); }
+    if kinds
+        .iter()
+        .any(|k| matches!(*k, "bind" | "generate" | "verify"))
+    {
+        v.extend(crate::task_runtime::TOOLS);
+    }
     v.push(FEEDBACK_TOOL);
     v.push(SPEND_TOOL);
     v
@@ -897,8 +910,16 @@ pub fn toolset(task: &str) -> Vec<&'static str> {
         }
         _ => READ_TOOLS.to_vec(),
     };
-    if matches!(task, "mcp-generate" | "mcp-verify") { v.extend(crate::task_runtime::TOOLS); }
-    if task=="mcp-read" {v.extend(crate::task_runtime::TOOLS.into_iter().filter(|t|!matches!(*t,"update_tasks"|"run_task"|"cancel_run")));}
+    if matches!(task, "mcp-generate" | "mcp-verify") {
+        v.extend(crate::task_runtime::TOOLS);
+    }
+    if task == "mcp-read" {
+        v.extend(
+            crate::task_runtime::TOOLS
+                .into_iter()
+                .filter(|t| !matches!(*t, "update_tasks" | "run_task" | "cancel_run")),
+        );
+    }
     if !v.contains(&FEEDBACK_TOOL) {
         v.push(FEEDBACK_TOOL);
     }
@@ -1728,12 +1749,17 @@ impl ToolSession {
         let mut notes: BTreeMap<String, &'static str> = BTreeMap::new();
         for op in &self.staged {
             let (id, note) = match op {
-                Op::UpdateRequirement { id, statement, .. } => {
-                    (id.clone(), if statement.is_some() { "statement revised" } else { "revised" })
-                }
-                Op::UpdateEntity { id, .. } | Op::UpdateCriterion { id, .. } | Op::UpdateView { id, .. } => {
-                    (id.clone(), "revised")
-                }
+                Op::UpdateRequirement { id, statement, .. } => (
+                    id.clone(),
+                    if statement.is_some() {
+                        "statement revised"
+                    } else {
+                        "revised"
+                    },
+                ),
+                Op::UpdateEntity { id, .. }
+                | Op::UpdateCriterion { id, .. }
+                | Op::UpdateView { id, .. } => (id.clone(), "revised"),
                 Op::DeleteEntity { id, .. }
                 | Op::DeleteRequirement { id, .. }
                 | Op::DeleteCriterion { id, .. }
@@ -1769,7 +1795,8 @@ impl ToolSession {
     fn condensed_status(&self) -> String {
         // The listing only when it changed; twenty-six updates echoing the same two
         // thousand characters was repetition. Mirrors docs/compiler/context.md#the-loaded-set.
-        let full = self.with_staged_notes(self.loaded.render_condensed(self.skills.rendered_chars()));
+        let full =
+            self.with_staged_notes(self.loaded.render_condensed(self.skills.rendered_chars()));
         let mut last = self.last_condensed.borrow_mut();
         if *last == full {
             return format!(
@@ -1882,7 +1909,13 @@ impl ToolSession {
                 } if id == rid => Some(st.clone()),
                 _ => None,
             })
-            .or_else(|| self.snapshot.graph.requirements.get(rid).map(|r| r.statement.clone()))
+            .or_else(|| {
+                self.snapshot
+                    .graph
+                    .requirements
+                    .get(rid)
+                    .map(|r| r.statement.clone())
+            })
     }
 
     // upsert_criterion: the observable evidence of one requirement, staged with the
@@ -1896,7 +1929,11 @@ impl ToolSession {
         if !crate::model::CRITERION_KINDS.contains(&kind.as_str()) {
             return Err(ToolError::new(
                 "bad-kind",
-                format!("kind `{}`; one of: {}", kind, crate::model::CRITERION_KINDS.join(", ")),
+                format!(
+                    "kind `{}`; one of: {}",
+                    kind,
+                    crate::model::CRITERION_KINDS.join(", ")
+                ),
             ));
         }
         let has_source = Self::present(&args["section"]) || Self::present(&args["quote"]);
@@ -1992,12 +2029,20 @@ impl ToolSession {
                 .to_string();
             let mut from: Vec<String> = derived["from"]
                 .as_array()
-                .map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| x.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default();
             if from.is_empty() {
                 from.push(rid.clone());
             }
-            (None, Some(Provenance::Derived { from, reasoning }), req_doc.unwrap_or_else(|| "x".to_string()))
+            (
+                None,
+                Some(Provenance::Derived { from, reasoning }),
+                req_doc.unwrap_or_else(|| "x".to_string()),
+            )
         };
         let mut entities: Vec<String> = Vec::new();
         for e in Self::str_list(args, "entities") {
@@ -2044,7 +2089,9 @@ impl ToolSession {
             .graph
             .criteria
             .iter()
-            .find(|(_, c)| c.requirement == rid && crate::store::normalize_statement(&c.statement) == key)
+            .find(|(_, c)| {
+                c.requirement == rid && crate::store::normalize_statement(&c.statement) == key
+            })
             .map(|(cid, _)| cid.clone());
         if let Some(cid) = existing {
             self.stage(Op::CreateCriterion {
@@ -2061,7 +2108,9 @@ impl ToolSession {
                 _ => None,
             })
             .collect();
-        let id = self.snapshot.mint_crit_id(&criterion, req_source.as_ref(), &taken);
+        let id = self
+            .snapshot
+            .mint_crit_id(&criterion, req_source.as_ref(), &taken);
         self.stage(Op::CreateCriterion {
             id: id.clone(),
             criterion,
@@ -2099,7 +2148,8 @@ impl ToolSession {
     // A `covered` claim is honest only when a requirement is sourced from that
     // section, staged or recorded.
     fn dishonest_covered(&self) -> Option<ToolError> {
-        crate::goals::dishonest_covered(&self.snapshot, &self.staged).map(|v| ToolError::new(&v.rule, v.message))
+        crate::goals::dishonest_covered(&self.snapshot, &self.staged)
+            .map(|v| ToolError::new(&v.rule, v.message))
     }
 
     // One goal's gate over the store plus the staged work: the kind's batch gate and
@@ -2335,7 +2385,12 @@ impl ToolSession {
             _ => {
                 return Err(ToolError::new(
                     "bad-evidence",
-                    format!("{} carries evidence {} with definition current or refreshed; received {}", goal, shape, Self::evidence_shape(evidence)),
+                    format!(
+                        "{} carries evidence {} with definition current or refreshed; received {}",
+                        goal,
+                        shape,
+                        Self::evidence_shape(evidence)
+                    ),
                 ));
             }
         }
@@ -2370,8 +2425,12 @@ impl ToolSession {
                 Some("separate") => {
                     let filed = self.open_diagnostics().iter().any(|(_, d)| {
                         d.rule == "duplicate-entity"
-                            && d.subjects.iter().any(|s| self.snapshot.resolve_id(s) == target)
-                            && d.subjects.iter().any(|s| self.snapshot.resolve_id(s) == lid.as_str())
+                            && d.subjects
+                                .iter()
+                                .any(|s| self.snapshot.resolve_id(s) == target)
+                            && d.subjects
+                                .iter()
+                                .any(|s| self.snapshot.resolve_id(s) == lid.as_str())
                     });
                     if !Self::reason_given(&e) && !filed {
                         return Err(ToolError::new(
@@ -2383,7 +2442,11 @@ impl ToolSession {
                 other => {
                     return Err(ToolError::new(
                         "bad-verdict",
-                        format!("lookalike verdict `{}` for {}: merged or separate", other.unwrap_or("?"), lid),
+                        format!(
+                            "lookalike verdict `{}` for {}: merged or separate",
+                            other.unwrap_or("?"),
+                            lid
+                        ),
                     ));
                 }
             }
@@ -2392,7 +2455,8 @@ impl ToolSession {
         // batch was claimed.
         let alive = |s: &str| {
             let r = self.snapshot.resolve_id(s);
-            self.snapshot.graph.entities.contains_key(r) || self.snapshot.graph.requirements.contains_key(r)
+            self.snapshot.graph.entities.contains_key(r)
+                || self.snapshot.graph.requirements.contains_key(r)
         };
         for did in crate::goals::review_diagnostics(&self.snapshot, &target) {
             let Some(e) = find("diagnostics", "id", &did) else {
@@ -2440,7 +2504,11 @@ impl ToolSession {
                 other => {
                     return Err(ToolError::new(
                         "bad-verdict",
-                        format!("diagnostic verdict `{}` for {}: stands, resolved, or refiled", other.unwrap_or("?"), did),
+                        format!(
+                            "diagnostic verdict `{}` for {}: stands, resolved, or refiled",
+                            other.unwrap_or("?"),
+                            did
+                        ),
                     ));
                 }
             }
@@ -2464,10 +2532,22 @@ impl ToolSession {
                 }
                 Some("edge-fixed") => {
                     let fixed = self.staged.iter().any(|o| match o {
-                        Op::UpdateRequirement { id, edges: Some(es), .. } => {
+                        Op::UpdateRequirement {
+                            id,
+                            edges: Some(es),
+                            ..
+                        } => {
                             self.snapshot.graph.requirements.get(id).is_some_and(|r| {
-                                r.edges.iter().any(|x| x.rel_type.as_deref() == Some("composition") && x.a == whole && x.b == part)
-                            }) && !es.iter().any(|x| x.rel_type.as_deref() == Some("composition") && x.a == whole && x.b == part)
+                                r.edges.iter().any(|x| {
+                                    x.rel_type.as_deref() == Some("composition")
+                                        && x.a == whole
+                                        && x.b == part
+                                })
+                            }) && !es.iter().any(|x| {
+                                x.rel_type.as_deref() == Some("composition")
+                                    && x.a == whole
+                                    && x.b == part
+                            })
                         }
                         _ => false,
                     });
@@ -2489,7 +2569,11 @@ impl ToolSession {
                 other => {
                     return Err(ToolError::new(
                         "bad-verdict",
-                        format!("part verdict `{}` for {}: parented, edge-fixed, or kept", other.unwrap_or("?"), part),
+                        format!(
+                            "part verdict `{}` for {}: parented, edge-fixed, or kept",
+                            other.unwrap_or("?"),
+                            part
+                        ),
                     ));
                 }
             }
@@ -2523,7 +2607,11 @@ impl ToolSession {
                 other => {
                     return Err(ToolError::new(
                         "bad-verdict",
-                        format!("unreferenced verdict `{}` for {}: referenced or word-match", other.unwrap_or("?"), rid),
+                        format!(
+                            "unreferenced verdict `{}` for {}: referenced or word-match",
+                            other.unwrap_or("?"),
+                            rid
+                        ),
                     ));
                 }
             }
@@ -2547,14 +2635,18 @@ impl ToolSession {
                     d.subjects.iter().any(|s| r(s) == a) && d.subjects.iter().any(|s| r(s) == b)
                 };
                 let open = self.open_diagnostics();
-                let pair_open = |rule: &str| open.iter().any(|(_, d)| d.rule == rule && names_both(d));
+                let pair_open =
+                    |rule: &str| open.iter().any(|(_, d)| d.rule == rule && names_both(d));
                 let deleted = |x: &str| {
-                    self.staged.iter().any(|o| matches!(o, Op::DeleteRequirement { id, .. } if r(id) == x))
+                    self.staged
+                        .iter()
+                        .any(|o| matches!(o, Op::DeleteRequirement { id, .. } if r(id) == x))
                 };
                 // A finding naming a deleted side cannot stand as filed.
                 let alive = |x: &str| {
                     let x = r(x);
-                    self.snapshot.graph.requirements.contains_key(&x) || self.snapshot.graph.entities.contains_key(&x)
+                    self.snapshot.graph.requirements.contains_key(&x)
+                        || self.snapshot.graph.entities.contains_key(&x)
                 };
                 if let Some((id, _)) = open.iter().find(|(_, d)| {
                     (d.rule == "contradiction" || d.rule == "duplicate-requirement")
@@ -2578,7 +2670,9 @@ impl ToolSession {
                     Some("contradiction") => {
                         let carried = Self::evidence_id(evidence, "carried_by");
                         let named = open.iter().any(|(id, d)| {
-                            *id == carried && d.rule == "contradiction" && d.subjects.iter().any(|s| r(s) == a || r(s) == b)
+                            *id == carried
+                                && d.rule == "contradiction"
+                                && d.subjects.iter().any(|s| r(s) == a || r(s) == b)
                         });
                         if !named && !pair_open("contradiction") {
                             return Err(ToolError::new(
@@ -2589,7 +2683,8 @@ impl ToolSession {
                     }
                     Some("consistent") => {
                         if let Some((id, d)) = open.iter().find(|(_, d)| {
-                            (d.rule == "contradiction" || d.rule == "duplicate-requirement") && names_both(d)
+                            (d.rule == "contradiction" || d.rule == "duplicate-requirement")
+                                && names_both(d)
                         }) {
                             return Err(ToolError::new(
                                 "pair-diagnostic-open",
@@ -2660,7 +2755,13 @@ impl ToolSession {
                     other => {
                         return Err(ToolError::new(
                             "bad-evidence",
-                            format!("{} carries evidence \"merged\" or \"separate\"; received {}", goal, other.map(|v| format!("`{}`", v)).unwrap_or_else(|| Self::evidence_shape(evidence))),
+                            format!(
+                                "{} carries evidence \"merged\" or \"separate\"; received {}",
+                                goal,
+                                other
+                                    .map(|v| format!("`{}`", v))
+                                    .unwrap_or_else(|| Self::evidence_shape(evidence))
+                            ),
                         ));
                     }
                 }
@@ -2670,14 +2771,22 @@ impl ToolSession {
                     .as_array()
                     .into_iter()
                     .flatten()
-                    .filter_map(|m| Some((m["id"].as_str()?.to_string(), m["why"].as_str().unwrap_or("").to_string())))
+                    .filter_map(|m| {
+                        Some((
+                            m["id"].as_str()?.to_string(),
+                            m["why"].as_str().unwrap_or("").to_string(),
+                        ))
+                    })
                     .collect();
                 if matched.is_empty() {
                     return Ok(());
                 }
                 let entries: Vec<Value> = match evidence {
                     Value::Array(a) => a.clone(),
-                    Value::Object(m) => m.values().find_map(|v| v.as_array().cloned()).unwrap_or_default(),
+                    Value::Object(m) => m
+                        .values()
+                        .find_map(|v| v.as_array().cloned())
+                        .unwrap_or_default(),
                     _ => Vec::new(),
                 };
                 let Some(view) = self.view_after(&gs.target) else {
@@ -2685,7 +2794,10 @@ impl ToolSession {
                 };
                 const PLACEHOLDERS: [&str; 5] = ["none", "n/a", "na", "-", "null"];
                 for (id, why) in &matched {
-                    let Some(e) = entries.iter().find(|e| r(&Self::evidence_id(e, "id")) == r(id)) else {
+                    let Some(e) = entries
+                        .iter()
+                        .find(|e| r(&Self::evidence_id(e, "id")) == r(id))
+                    else {
                         return Err(ToolError::new(
                             "member-unjudged",
                             format!("{} has no verdict for {} ({}); add it with update_view add_members or exclude it with a note, then list {{id: {}, verdict: added | excluded}} in evidence, one entry per matched node; received {}", goal, id, why, id, Self::evidence_shape(evidence)),
@@ -2695,7 +2807,11 @@ impl ToolSession {
                     match e["verdict"].as_str() {
                         Some("added") => {
                             let listed = view.members.iter().any(|m| r(m) == r(id));
-                            if !(listed || (why == "query-match" && view.query.is_some() && excluded.is_none())) {
+                            if !(listed
+                                || (why == "query-match"
+                                    && view.query.is_some()
+                                    && excluded.is_none()))
+                            {
                                 return Err(ToolError::new(
                                     "added-unbacked",
                                     format!("{} claims {} added, but it is not a member of {} after this session's staged work; update_view add_members (at its position in a flow)", goal, id, gs.target),
@@ -2734,7 +2850,11 @@ impl ToolSession {
                         other => {
                             return Err(ToolError::new(
                                 "bad-verdict",
-                                format!("curate verdict `{}` for {}: added or excluded", other.unwrap_or("?"), id),
+                                format!(
+                                    "curate verdict `{}` for {}: added or excluded",
+                                    other.unwrap_or("?"),
+                                    id
+                                ),
                             ));
                         }
                     }
@@ -2742,14 +2862,18 @@ impl ToolSession {
             }
             "conform-instance" => {
                 let inst = r(&gs.target);
-                let Some(ty) = crate::derive::instance_types(&self.snapshot).get(&inst).cloned() else {
+                let Some(ty) = crate::derive::instance_types(&self.snapshot)
+                    .get(&inst)
+                    .cloned()
+                else {
                     return Ok(());
                 };
                 let attrs = crate::goals::declared_attributes(&self.snapshot, &ty);
                 let links = crate::goals::instance_links(&self.snapshot, &inst);
                 let open = self.open_diagnostics();
                 let filed = open.iter().any(|(_, d)| {
-                    d.rule == "nonconformant-instance" && d.subjects.iter().any(|s| r(s) == inst || r(s) == ty)
+                    d.rule == "nonconformant-instance"
+                        && d.subjects.iter().any(|s| r(s) == inst || r(s) == ty)
                 });
                 let repaired = self.staged.iter().any(|o| match o {
                     Op::UpdateEntity { id, .. } => r(id) == inst,
@@ -2785,7 +2909,13 @@ impl ToolSession {
                 };
                 for name in &attrs {
                     let e = evidence["attributes"].as_array().and_then(|a| {
-                        a.iter().find(|e| e["name"].as_str().is_some_and(|n| n.trim().to_lowercase() == *name)).cloned()
+                        a.iter()
+                            .find(|e| {
+                                e["name"]
+                                    .as_str()
+                                    .is_some_and(|n| n.trim().to_lowercase() == *name)
+                            })
+                            .cloned()
                     });
                     let Some(e) = e else {
                         return Err(ToolError::new(
@@ -2797,7 +2927,9 @@ impl ToolSession {
                 }
                 for (to, ty_) in &links {
                     let e = evidence["links"].as_array().and_then(|a| {
-                        a.iter().find(|e| r(&Self::evidence_id(e, "to")) == r(to)).cloned()
+                        a.iter()
+                            .find(|e| r(&Self::evidence_id(e, "to")) == r(to))
+                            .cloned()
                     });
                     let Some(e) = e else {
                         return Err(ToolError::new(
@@ -2827,7 +2959,12 @@ impl ToolSession {
                     return Ok(());
                 };
                 for key in ["none", "revised"] {
-                    for rid in gs.change[key].as_array().into_iter().flatten().filter_map(|x| x.as_str()) {
+                    for rid in gs.change[key]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|x| x.as_str())
+                    {
                         if !list.iter().any(|e| Self::evidence_id(e, "id") == rid) {
                             return Err(ToolError::new(
                                 "criteria-unjudged",
@@ -2865,23 +3002,42 @@ impl ToolSession {
         if rules == 0 {
             return Ok(());
         }
-        let entries: Vec<&Value> = evidence["lint"].as_array().map(|a| a.iter().collect()).unwrap_or_default();
+        let entries: Vec<&Value> = evidence["lint"]
+            .as_array()
+            .map(|a| a.iter().collect())
+            .unwrap_or_default();
         let target = self.snapshot.resolve_id(target).to_string();
         let mut subjects: BTreeSet<String> = self
             .snapshot
             .graph
             .requirements
             .iter()
-            .filter(|(_, r)| r.entities.iter().any(|e| self.snapshot.resolve_id(e) == target))
+            .filter(|(_, r)| {
+                r.entities
+                    .iter()
+                    .any(|e| self.snapshot.resolve_id(e) == target)
+            })
             .map(|(id, _)| id.clone())
             .collect();
         subjects.insert(target.clone());
-        let on_entity = |subs: &[String]| subs.iter().any(|s| subjects.contains(self.snapshot.resolve_id(s)));
-        let filed = self.staged.iter().any(|o| matches!(o, Op::ReportDiagnostic { diagnostic, .. }
-                if diagnostic.rule == "lint" && on_entity(&diagnostic.subjects)))
-            || self.snapshot.graph.diagnostics.values().any(|d| d.lifecycle == "open" && d.rule == "lint" && on_entity(&d.subjects));
+        let on_entity = |subs: &[String]| {
+            subs.iter()
+                .any(|s| subjects.contains(self.snapshot.resolve_id(s)))
+        };
+        let filed = self.staged.iter().any(|o| {
+            matches!(o, Op::ReportDiagnostic { diagnostic, .. }
+                if diagnostic.rule == "lint" && on_entity(&diagnostic.subjects))
+        }) || self
+            .snapshot
+            .graph
+            .diagnostics
+            .values()
+            .any(|d| d.lifecycle == "open" && d.rule == "lint" && on_entity(&d.subjects));
         for n in 1..=rules {
-            let Some(e) = entries.iter().find(|e| e["rule"].as_u64() == Some(n as u64) || e["rule"].as_str() == Some(n.to_string().as_str())) else {
+            let Some(e) = entries.iter().find(|e| {
+                e["rule"].as_u64() == Some(n as u64)
+                    || e["rule"].as_str() == Some(n.to_string().as_str())
+            }) else {
                 return Err(ToolError::new(
                     "lint-unchecked",
                     format!(
@@ -2906,7 +3062,11 @@ impl ToolSession {
                 other => {
                     return Err(ToolError::new(
                         "bad-verdict",
-                        format!("lint verdict `{}` for rule [{}]: clean or filed", other.unwrap_or("?"), n),
+                        format!(
+                            "lint verdict `{}` for rule [{}]: clean or filed",
+                            other.unwrap_or("?"),
+                            n
+                        ),
                     ));
                 }
             }
@@ -2917,7 +3077,12 @@ impl ToolSession {
     // The evidence checks of one claim, read-only over the store plus the staged work:
     // mark_goal_done runs them before anything stages, and done runs them again over
     // the final changeset. Mirrors docs/compiler/tools.md#goal-tools.
-    fn claim_evidence(&self, gs: &GoalScope, goal: &str, evidence: &Value) -> Result<(), ToolError> {
+    fn claim_evidence(
+        &self,
+        gs: &GoalScope,
+        goal: &str,
+        evidence: &Value,
+    ) -> Result<(), ToolError> {
         if gs.kind == "review-entity" {
             self.review_evidence(goal, &gs.target, evidence)?;
             // One lint entry per declared rule, filed backed by a lint finding on the
@@ -2936,7 +3101,9 @@ impl ToolSession {
         let r = |x: &str| self.snapshot.resolve_id(x).to_string();
         let rid = r(rid);
         let deleted = |id: &str| {
-            self.staged.iter().any(|o| matches!(o, Op::DeleteCriterion { id: d, .. } if d == id))
+            self.staged
+                .iter()
+                .any(|o| matches!(o, Op::DeleteCriterion { id: d, .. } if d == id))
         };
         let committed = self
             .snapshot
@@ -3052,7 +3219,9 @@ impl ToolSession {
         // A text codec hands evidence as a JSON string: parse it, so the gates read the
         // object the session meant (docs/compiler/tools.md#goal-tools).
         let evidence: Value = match &args["evidence"] {
-            Value::String(s) => serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone())),
+            Value::String(s) => {
+                serde_json::from_str::<Value>(s).unwrap_or(Value::String(s.clone()))
+            }
             other => other.clone(),
         };
         // The review's unreferenced verdicts: referenced is backed by the staged
@@ -3069,9 +3238,9 @@ impl ToolSession {
                     .staged
                     .iter()
                     .filter_map(|o| match o {
-                        Op::UpdateEntity { id, not_about_add, .. } if *id == target => {
-                            Some(not_about_add.clone())
-                        }
+                        Op::UpdateEntity {
+                            id, not_about_add, ..
+                        } if *id == target => Some(not_about_add.clone()),
                         _ => None,
                     })
                     .flatten()
@@ -3132,16 +3301,25 @@ impl ToolSession {
 
     fn done_with_goals(&mut self, args: &Value) -> Result<Value, ToolError> {
         let entries = args["goals"].as_array().ok_or_else(|| {
-            ToolError::new("bad-args", "done.goals takes a list of final {goal, justification, evidence?} claims".into())
+            ToolError::new(
+                "bad-args",
+                "done.goals takes a list of final {goal, justification, evidence?} claims".into(),
+            )
         })?;
         if entries.len() > self.scope.goals.len() {
-            return Err(ToolError::new("bad-args", "done.goals cannot contain more claims than this batch has goals".into()));
+            return Err(ToolError::new(
+                "bad-args",
+                "done.goals cannot contain more claims than this batch has goals".into(),
+            ));
         }
         let mut named = BTreeSet::new();
         for entry in entries {
             let goal = Self::str_arg(entry, "goal")?;
             if !named.insert(goal.clone()) {
-                return Err(ToolError::new("duplicate-goal", format!("done.goals names `{goal}` more than once")));
+                return Err(ToolError::new(
+                    "duplicate-goal",
+                    format!("done.goals names `{goal}` more than once"),
+                ));
             }
         }
         // mark_goal_done can append a review mutation and replace an outcome.
@@ -3209,7 +3387,8 @@ impl ToolSession {
                     settled.push(goal);
                     results.push(r);
                 }
-                Err(e) => results.push(json!({"goal": goal, "error": {"rule": e.rule, "message": e.message}})),
+                Err(e) => results
+                    .push(json!({"goal": goal, "error": {"rule": e.rule, "message": e.message}})),
             }
         }
         let open: Vec<&str> = self
@@ -3332,7 +3511,11 @@ impl ToolSession {
             self.staged_diags
                 .get(&cid)
                 .or_else(|| self.snapshot.graph.diagnostics.get(&cid))
-                .is_some_and(|d| d.lifecycle == "open" && d.rule == "contradiction" && d.subjects.iter().any(|s| *s == a || *s == b))
+                .is_some_and(|d| {
+                    d.lifecycle == "open"
+                        && d.rule == "contradiction"
+                        && d.subjects.iter().any(|s| *s == a || *s == b)
+                })
         });
         if verdict == "contradiction" && standing_contradiction.is_none() && !carried {
             match Self::opt_str(entry, "severity").as_deref() {
@@ -3417,7 +3600,9 @@ impl ToolSession {
                     });
                     if let Some(id) = named.as_ref().or(standing_contradiction.as_ref()) {
                         result["diagnostic"] = json!(id);
-                        result["note"] = json!("the contradiction already stood on the pair; no second one filed");
+                        result["note"] = json!(
+                            "the contradiction already stood on the pair; no second one filed"
+                        );
                         json!({"verdict": "contradiction", "carried_by": id})
                     } else {
                         let mut call = json!({
@@ -4130,7 +4315,9 @@ impl ToolSession {
             scope: Self::opt_str(v, "scope"),
             parent,
             stereotype: Self::opt_str(v, "stereotype"),
-            depth: v["depth"].as_u64().map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
+            depth: v["depth"]
+                .as_u64()
+                .map(|d| u32::try_from(d).unwrap_or(u32::MAX)),
         };
         if q.scope.is_none() && q.parent.is_none() && q.stereotype.is_none() {
             return Ok(None);
@@ -4253,11 +4440,14 @@ impl ToolSession {
     // path: credentials, hidden paths, Git internals, compiler state, nested projects.
     fn protected_file(&self, rel: &str, path: &std::path::Path) -> bool {
         let base = self.deliverable_root();
-        let open = |relative: &str| crate::task_runtime::safe_path(relative)
-            && crate::document_sets::allowed_components(relative)
-            && !crate::task_runtime::protected(relative)
-            && crate::document_sets::contained_relative(&base, relative);
-        let resolved = path.strip_prefix(&base)
+        let open = |relative: &str| {
+            crate::task_runtime::safe_path(relative)
+                && crate::document_sets::allowed_components(relative)
+                && !crate::task_runtime::protected(relative)
+                && crate::document_sets::contained_relative(&base, relative)
+        };
+        let resolved = path
+            .strip_prefix(&base)
             .map(|relative| relative.to_string_lossy().replace('\\', "/"))
             .unwrap_or_default();
         !open(rel.trim().trim_start_matches("./")) || !open(&resolved)
@@ -4301,7 +4491,9 @@ impl ToolSession {
                         truncated = true;
                         if taken == 0 {
                             let mut end = Self::READ_FILE_BYTES.min(line.len());
-                            while !line.is_char_boundary(end) { end -= 1; }
+                            while !line.is_char_boundary(end) {
+                                end -= 1;
+                            }
                             content.push_str(&line[..end]);
                             truncated_line = Some(start + 1);
                             taken = 1;
@@ -4318,7 +4510,13 @@ impl ToolSession {
                 if let Some(owner) = crate::gen::file_owner(&self.snapshot, &ledger, "", &rel) {
                     let entity = format!("ent:{owner}");
                     reply["owner"] = json!(entity);
-                    let needs_claim = crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &rel).is_some();
+                    let needs_claim = crate::gen::file_owner(
+                        &self.snapshot,
+                        &ledger,
+                        &self.scope.gen_target(),
+                        &rel,
+                    )
+                    .is_some();
                     reply["requires_generation"] = json!(needs_claim);
                     if needs_claim {
                         reply["begin_generation"] = json!({"entity":entity});
@@ -4344,8 +4542,13 @@ impl ToolSession {
             "write_text_file" => {
                 let raw = Self::str_arg(args, "path")?;
                 let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
-                let content = args["content"].as_str().ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?.to_owned();
-                if !self.gen.allows_source(&rel) {return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));}
+                let content = args["content"]
+                    .as_str()
+                    .ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?
+                    .to_owned();
+                if !self.gen.allows_source(&rel) {
+                    return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));
+                }
                 let path = self.deliverable_path(&rel)?;
                 // The protected-path fence holds with or without a workspace.
                 // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
@@ -4376,20 +4579,36 @@ impl ToolSession {
                 }
                 // Literal edits reuse the same Source and ownership gates as full
                 // writes. Check the complete file before committing any bytes.
-                let old_text = args.get("old_text").map(|value| value.as_str().map(str::to_owned)
-                    .ok_or_else(|| ToolError::new("bad-args", "old_text must be a string".into()))).transpose()?;
-                let expected = args.get("expectedHash").map(|_| Self::str_arg(args, "expectedHash")).transpose()?;
+                let old_text = args
+                    .get("old_text")
+                    .map(|value| {
+                        value.as_str().map(str::to_owned).ok_or_else(|| {
+                            ToolError::new("bad-args", "old_text must be a string".into())
+                        })
+                    })
+                    .transpose()?;
+                let expected = args
+                    .get("expectedHash")
+                    .map(|_| Self::str_arg(args, "expectedHash"))
+                    .transpose()?;
                 let append = args["append"].as_bool() == Some(true);
                 if old_text.is_some() && (append || expected.is_none()) {
                     return Err(ToolError::new("invalid-edit", "old_text requires expectedHash from the last read or write and cannot combine with append: true; no bytes changed".into()));
                 }
-                let current = if old_text.is_some() || expected.is_some() || (append && path.vis_file()) {
+                let current = if old_text.is_some()
+                    || expected.is_some()
+                    || (append && path.vis_file())
+                {
                     Some(crate::vfs::read_to_string(&path).map_err(|e| ToolError::new(
                         "not-found", format!("cannot read `{rel}` before editing: {e}; no bytes changed; list_files shows what exists")
                     ))?)
-                } else { None };
+                } else {
+                    None
+                };
                 if let Some(expected) = expected {
-                    let actual = crate::task_runtime::digest(current.as_deref().unwrap_or_default().as_bytes());
+                    let actual = crate::task_runtime::digest(
+                        current.as_deref().unwrap_or_default().as_bytes(),
+                    );
                     if expected != actual {
                         return Err(ToolError::new("file-conflict", format!(
                             "`{rel}` changed since the supplied expectedHash; current hash: {actual}. No bytes changed. Read the affected region and reconsider the edit before retrying"
@@ -4404,15 +4623,22 @@ impl ToolSession {
                             "old_text must be nonempty and match exactly once in `{rel}`; no bytes changed. Read the affected region and include enough unchanged surrounding text to identify the intended site"
                         )));
                     }
-                    current.as_deref().unwrap_or_default().replacen(old.as_str(), &content, 1)
+                    current
+                        .as_deref()
+                        .unwrap_or_default()
+                        .replacen(old.as_str(), &content, 1)
                 } else if append {
                     format!("{}{}", current.as_deref().unwrap_or_default(), content)
-                } else { content.clone() };
+                } else {
+                    content.clone()
+                };
                 crate::store::write_atomic(&path, next.as_bytes()).map_err(|e| {
                     ToolError::new("io-error", format!("cannot write `{rel}`: {e}"))
                 })?;
                 let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append && current.is_some(), "fileBytes": next.len(), "hash": crate::task_runtime::digest(next.as_bytes())});
-                if old_text.is_some() { reply["replaced"] = json!(1); }
+                if old_text.is_some() {
+                    reply["replaced"] = json!(1);
+                }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }
@@ -4495,7 +4721,12 @@ impl ToolSession {
     // `compound_passes`: a compound that extends an existing single name is a different
     // concept for an entity (`Employee Handbook` beside `Employee`); for a grouping it
     // is a lookalike of the area, which reuses it.
-    fn near_name(&self, name: &str, scope: &str, compound_passes: bool) -> Option<(String, String)> {
+    fn near_name(
+        &self,
+        name: &str,
+        scope: &str,
+        compound_passes: bool,
+    ) -> Option<(String, String)> {
         let raw = |s: &str| -> BTreeSet<String> {
             s.to_lowercase()
                 .split(|c: char| !c.is_alphanumeric())
@@ -4534,9 +4765,22 @@ impl ToolSession {
         // reuses it (docs/compiler/concepts/levels.md#naming).
         // Mirrors docs/compiler/model/entity.md#what-is-an-entity.
         const GENERIC: [&str; 16] = [
-            "system", "service", "module", "component", "department", "team", "tool",
-            "layer", "platform", "app", "application", "api", "process", "engine",
-            "subsystem", "hub",
+            "system",
+            "service",
+            "module",
+            "component",
+            "department",
+            "team",
+            "tool",
+            "layer",
+            "platform",
+            "app",
+            "application",
+            "api",
+            "process",
+            "engine",
+            "subsystem",
+            "hub",
         ];
         let check = |ename: &str| -> bool {
             if raw(ename) == cand_raw {
@@ -4941,7 +5185,11 @@ impl ToolSession {
         }
         let body = quote.trim_start();
         let digits = body.chars().take_while(|c| c.is_ascii_digit()).count();
-        let body = if digits > 0 && body[digits..].starts_with(". ") { &body[digits + 2..] } else { body };
+        let body = if digits > 0 && body[digits..].starts_with(". ") {
+            &body[digits + 2..]
+        } else {
+            body
+        };
         let chars: Vec<char> = body.chars().collect();
         let mut sentences: Vec<String> = Vec::new();
         let mut cur = String::new();
@@ -4979,7 +5227,12 @@ impl ToolSession {
         let full: Vec<String> = sentences
             .into_iter()
             .map(|s| s.trim().to_string())
-            .filter(|s| s.split(|c: char| !c.is_alphanumeric()).filter(|w| !w.is_empty()).count() >= 4)
+            .filter(|s| {
+                s.split(|c: char| !c.is_alphanumeric())
+                    .filter(|w| !w.is_empty())
+                    .count()
+                    >= 4
+            })
             .collect();
         if full.len() > 1 {
             return Err(ToolError::new(
@@ -5004,7 +5257,13 @@ impl ToolSession {
         }
         // The heading is the section's title, not its body: a model that quotes it
         // hears why (docs/compiler/graph.md#validation-gates).
-        let norm = |s: &str| s.trim_start_matches('#').split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
+        let norm = |s: &str| {
+            s.trim_start_matches('#')
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_lowercase()
+        };
         let title = self
             .snapshot
             .docs
@@ -5131,9 +5390,13 @@ impl ToolSession {
     // verification goals. Other batches and scopes add the author's tasks.
     // Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
     fn task_owner(&self) -> Option<String> {
-        let goals: Vec<&str> = self.scope.goals.iter()
+        let goals: Vec<&str> = self
+            .scope
+            .goals
+            .iter()
             .filter(|g| matches!(g.kind.as_str(), "bind" | "generate" | "verify"))
-            .map(|g| g.goal.as_str()).collect();
+            .map(|g| g.goal.as_str())
+            .collect();
         (!goals.is_empty()).then(|| goals.join(","))
     }
 
@@ -5200,12 +5463,18 @@ impl ToolSession {
         let mut listed: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut ops = Vec::new();
         for (k, f) in facts.iter().enumerate() {
-            let fail = |rule: &str, msg: String| ToolError::new(rule, format!("fact {}: {}", k, msg));
-            let rid = self.canon_req_id(&f.id).map_err(|e| fail(&e.rule, e.message))?;
+            let fail =
+                |rule: &str, msg: String| ToolError::new(rule, format!("fact {}: {}", k, msg));
+            let rid = self
+                .canon_req_id(&f.id)
+                .map_err(|e| fail(&e.rule, e.message))?;
             let Some(r) = self.snapshot.graph.requirements.get(&rid) else {
                 return Err(fail(
                     "unknown-id",
-                    format!("`{}` is not committed yet; a fact names a requirement the graph holds", rid),
+                    format!(
+                        "`{}` is not committed yet; a fact names a requirement the graph holds",
+                        rid
+                    ),
                 ));
             };
             let here = r
@@ -5235,7 +5504,10 @@ impl ToolSession {
                 }
                 "entities" => {
                     let Some(arr) = f.value.as_array() else {
-                        return Err(fail("bad-fact", "entities takes a list of entity ids".into()));
+                        return Err(fail(
+                            "bad-fact",
+                            "entities takes a list of entity ids".into(),
+                        ));
                     };
                     let mut canon: Vec<String> = Vec::new();
                     for e in arr {
@@ -5253,7 +5525,10 @@ impl ToolSession {
                         }
                     }
                     if canon.is_empty() {
-                        return Err(fail("bad-fact", "entities names at least one entity".into()));
+                        return Err(fail(
+                            "bad-fact",
+                            "entities names at least one entity".into(),
+                        ));
                     }
                     listed.insert(rid.clone(), canon.clone());
                     entities = Some(canon);
@@ -5265,7 +5540,10 @@ impl ToolSession {
                             "edges takes a list of {a, b, type?, cardinality?}".into(),
                         ));
                     };
-                    edges = Some(parse_edges(self, arr, Some(&ents)).map_err(|e| fail(&e.rule, e.message))?);
+                    edges = Some(
+                        parse_edges(self, arr, Some(&ents))
+                            .map_err(|e| fail(&e.rule, e.message))?,
+                    );
                 }
                 "transition" => {
                     transition = Some(
@@ -5400,11 +5678,12 @@ impl ToolSession {
                             format!("option {}: old_text does not locate in {}#{}; copy it verbatim from the section", i, doc, section),
                         ));
                     }
-                    let facts = self
-                        .parse_facts(&e["facts"])
-                        .map_err(|err| ToolError::new(&err.rule, format!("option {}: {}", i, err.message)))?;
-                    self.fact_ops(&doc, &section, &facts)
-                        .map_err(|err| ToolError::new(&err.rule, format!("option {}: {}", i, err.message)))?;
+                    let facts = self.parse_facts(&e["facts"]).map_err(|err| {
+                        ToolError::new(&err.rule, format!("option {}: {}", i, err.message))
+                    })?;
+                    self.fact_ops(&doc, &section, &facts).map_err(|err| {
+                        ToolError::new(&err.rule, format!("option {}: {}", i, err.message))
+                    })?;
                     Some(SuggestedEdit {
                         doc,
                         section,
@@ -5440,7 +5719,9 @@ impl ToolSession {
         // In particular, blank old_text must never become a full overwrite.
         if name == "write_text_file" {
             for key in ["content", "old_text", "expectedHash"] {
-                if let Some(value) = supplied.get(key) { args[key] = value.clone(); }
+                if let Some(value) = supplied.get(key) {
+                    args[key] = value.clone();
+                }
             }
         }
         let note = prefer_quote(name, &mut args);
@@ -5477,8 +5758,12 @@ impl ToolSession {
         // Mirrors docs/compiler/sessions.md#repeated-calls.
         let exempt = matches!(
             name,
-            "done" | "mark_goal_done" | "mark_goal_failed"
-                | "record_generation" | "record_binding" | PAIR_SETTLE_TOOL
+            "done"
+                | "mark_goal_done"
+                | "mark_goal_failed"
+                | "record_generation"
+                | "record_binding"
+                | PAIR_SETTLE_TOOL
         ) || crate::task_runtime::TOOLS.contains(&name);
         if !exempt {
             // A load keys on the target it resolves to, so an alias and its id are one
@@ -5515,7 +5800,8 @@ impl ToolSession {
                     let result = self.dispatch_gated(name, args);
                     let answer = Self::answer_text(&result);
                     if self.last_answers.get(&key).map(|(a, _)| a) != Some(&answer) {
-                        self.last_answers.insert(key.clone(), (answer, self.state_mark()));
+                        self.last_answers
+                            .insert(key.clone(), (answer, self.state_mark()));
                         self.repeats.insert(key, 1);
                         return result;
                     }
@@ -5550,9 +5836,10 @@ impl ToolSession {
             let result = self.dispatch_gated(name, args);
             let answer = Self::answer_text(&result);
             // A load of a loaded target is a repeat by target, whatever it answers.
-            let same = name == "load"
-                || self.last_answers.get(&key).map(|(a, _)| a) == Some(&answer);
-            self.last_answers.insert(key.clone(), (answer, self.state_mark()));
+            let same =
+                name == "load" || self.last_answers.get(&key).map(|(a, _)| a) == Some(&answer);
+            self.last_answers
+                .insert(key.clone(), (answer, self.state_mark()));
             if seen == 2 {
                 if !same {
                     self.repeats.insert(key, 1);
@@ -5576,7 +5863,11 @@ impl ToolSession {
     fn diagnostics_page(list: Vec<Value>, args: &Value) -> Value {
         let count = list.len();
         let offset = args["offset"].as_u64().map(|o| o as usize).unwrap_or(0);
-        let page: Vec<Value> = list.into_iter().skip(offset).take(DIAGNOSTICS_PAGE).collect();
+        let page: Vec<Value> = list
+            .into_iter()
+            .skip(offset)
+            .take(DIAGNOSTICS_PAGE)
+            .collect();
         let next = offset.saturating_add(page.len());
         let mut v = json!({"diagnostics": page, "count": count});
         if next < count {
@@ -5680,7 +5971,8 @@ impl ToolSession {
             "load" => {
                 let target = Self::str_arg(args, "target")?;
                 // A depth past u32 saturates instead of wrapping to a shallow load.
-                let depth = u32::try_from(args["depth"].as_u64().unwrap_or(1).max(1)).unwrap_or(u32::MAX);
+                let depth =
+                    u32::try_from(args["depth"].as_u64().unwrap_or(1).max(1)).unwrap_or(u32::MAX);
                 let id = self.canon_entity_id(&target).unwrap_or(target);
                 self.refuse_past_high_water("load", Some(&id))?;
                 let text = self
@@ -5708,8 +6000,7 @@ impl ToolSession {
                 if self.scope.goals.is_empty() && !self.skills.has_pinned() {
                     if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
                         if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
-                            v["skill"] =
-                                json!(format!("[skill: {} (active)]\n{}", skill, payload));
+                            v["skill"] = json!(format!("[skill: {} (active)]\n{}", skill, payload));
                         }
                     }
                 }
@@ -5834,7 +6125,9 @@ impl ToolSession {
                 // say what blocked it: a placeholder once landed by mistake.
                 // Mirrors docs/compiler/tools.md#goal-tools.
                 let lower = reason.trim().to_lowercase();
-                if lower.len() < 12 || ["placeholder", "todo", "tbd", "n/a", "none"].contains(&lower.as_str()) {
+                if lower.len() < 12
+                    || ["placeholder", "todo", "tbd", "n/a", "none"].contains(&lower.as_str())
+                {
                     return Err(ToolError::new(
                         "bad-reason",
                         format!(
@@ -5926,11 +6219,19 @@ impl ToolSession {
                     .collect();
                 // Bounded by lines and bytes from `line`, as file reads are.
                 // Mirrors docs/compiler/tools.md#read-tools.
-                let start = args["line"].as_u64().map(|l| (l as usize).saturating_sub(1)).unwrap_or(0);
+                let start = args["line"]
+                    .as_u64()
+                    .map(|l| (l as usize).saturating_sub(1))
+                    .unwrap_or(0);
                 let total = s.raw.split_inclusive('\n').count();
                 let mut body = String::new();
                 let mut taken = 0usize;
-                for line in s.raw.split_inclusive('\n').skip(start).take(READ_SECTION_LINES) {
+                for line in s
+                    .raw
+                    .split_inclusive('\n')
+                    .skip(start)
+                    .take(READ_SECTION_LINES)
+                {
                     if body.len() + line.len() > READ_SECTION_BYTES {
                         if taken == 0 {
                             let mut end = READ_SECTION_BYTES.min(line.len());
@@ -6148,12 +6449,15 @@ impl ToolSession {
                 // one proposal per derived criterion buried the judgment findings.
                 // Mirrors docs/compiler/tools.md#read-tools.
                 if rule.is_none() {
-                    let mut bookkeeping: std::collections::BTreeMap<String, usize> = Default::default();
+                    let mut bookkeeping: std::collections::BTreeMap<String, usize> =
+                        Default::default();
                     let list: Vec<Value> = list
                         .into_iter()
                         .filter(|d| {
                             if d["owner"] == "harness" {
-                                *bookkeeping.entry(d["rule"].as_str().unwrap_or("").to_string()).or_insert(0) += 1;
+                                *bookkeeping
+                                    .entry(d["rule"].as_str().unwrap_or("").to_string())
+                                    .or_insert(0) += 1;
                                 false
                             } else {
                                 true
@@ -6314,11 +6618,15 @@ impl ToolSession {
                         let words = |s: &str| -> BTreeSet<String> {
                             s.to_lowercase()
                                 .split(|c: char| !c.is_alphanumeric())
-                                .filter(|w| w.len() >= 3 && !["the", "and", "for", "with", "system"].contains(w))
+                                .filter(|w| {
+                                    w.len() >= 3
+                                        && !["the", "and", "for", "with", "system"].contains(w)
+                                })
                                 .map(|w| {
                                     if w.len() > 4 && w.ends_with("ies") {
                                         format!("{}y", &w[..w.len() - 3])
-                                    } else if w.len() > 3 && w.ends_with('s') && !w.ends_with("ss") {
+                                    } else if w.len() > 3 && w.ends_with('s') && !w.ends_with("ss")
+                                    {
                                         w[..w.len() - 1].to_string()
                                     } else {
                                         w.to_string()
@@ -6836,7 +7144,18 @@ impl ToolSession {
             "upsert_criterion" => self.upsert_criterion(args),
             "update_criterion" => {
                 let id = Self::str_arg(args, "id")?;
-                if !["statement", "kind", "measure", "given", "when", "then", "entities"].iter().any(|field| args.get(*field).is_some_and(|v| !v.is_null())) {
+                if ![
+                    "statement",
+                    "kind",
+                    "measure",
+                    "given",
+                    "when",
+                    "then",
+                    "entities",
+                ]
+                .iter()
+                .any(|field| args.get(*field).is_some_and(|v| !v.is_null()))
+                {
                     return Err(ToolError::new("bad-args", "Pass id and at least one criterion field to change: statement, kind, measure, given, when, then, entities.".into()));
                 }
 
@@ -6850,7 +7169,11 @@ impl ToolSession {
                     if !crate::model::CRITERION_KINDS.contains(&k.as_str()) {
                         return Err(ToolError::new(
                             "bad-kind",
-                            format!("kind `{}`; one of: {}", k, crate::model::CRITERION_KINDS.join(", ")),
+                            format!(
+                                "kind `{}`; one of: {}",
+                                k,
+                                crate::model::CRITERION_KINDS.join(", ")
+                            ),
                         ));
                     }
                 }
@@ -6883,9 +7206,15 @@ impl ToolSession {
                 let id = Self::str_arg(args, "id")?;
                 let reason = Self::str_arg(args, "reason")?;
                 if !self.criterion_known(&id) {
-                    return Err(ToolError::new("unknown-id", format!("unknown criterion id `{}`", id)));
+                    return Err(ToolError::new(
+                        "unknown-id",
+                        format!("unknown criterion id `{}`", id),
+                    ));
                 }
-                self.stage(Op::DeleteCriterion { id: id.clone(), reason })?;
+                self.stage(Op::DeleteCriterion {
+                    id: id.clone(),
+                    reason,
+                })?;
                 Ok(json!({"id": id, "deleted": true}))
             }
             "upsert_requirement" => {
@@ -7074,7 +7403,9 @@ impl ToolSession {
                         .graph
                         .requirements
                         .get(&rid)
-                        .filter(|r| crate::store::normalize_statement(&r.statement) != norm_statement)
+                        .filter(|r| {
+                            crate::store::normalize_statement(&r.statement) != norm_statement
+                        })
                         .map(|r| r.statement.clone());
                     self.staged_reqs.insert(rid.clone());
                     self.taken_ids.insert(rid.clone());
@@ -7155,7 +7486,8 @@ impl ToolSession {
                         .filter(|e| !new.contains(e) && !splits.contains(&e.as_str()))
                         .collect();
                     if !splits.is_empty() && !dropped.is_empty() {
-                        let added: Vec<&String> = new.iter().filter(|e| !stored.contains(e)).collect();
+                        let added: Vec<&String> =
+                            new.iter().filter(|e| !stored.contains(e)).collect();
                         let mut send: Vec<String> = Vec::new();
                         for e in &stored {
                             if splits.contains(&e.as_str()) {
@@ -7409,7 +7741,9 @@ impl ToolSession {
                 }
                 // A pair finding names both sides: one subject leaves the other side
                 // unfindable. Mirrors docs/compiler/model/diagnostic.md#prompts.
-                if (rule == "contradiction" || rule == "duplicate-requirement") && subjects.len() < 2 {
+                if (rule == "contradiction" || rule == "duplicate-requirement")
+                    && subjects.len() < 2
+                {
                     return Err(ToolError::new(
                         "no-subjects",
                         format!(
@@ -7765,11 +8099,17 @@ impl ToolSession {
                 // Generation works per entity: the rows come grouped by the entity
                 // they unblock (docs/compiler/tools.md#binding-tools).
                 tasks.sort_by(|a, b| {
-                    a["entity"].as_str().cmp(&b["entity"].as_str()).then(a["requirement"].as_str().cmp(&b["requirement"].as_str()))
+                    a["entity"]
+                        .as_str()
+                        .cmp(&b["entity"].as_str())
+                        .then(a["requirement"].as_str().cmp(&b["requirement"].as_str()))
                 });
-                let mut by_entity: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+                let mut by_entity: std::collections::BTreeMap<String, usize> =
+                    std::collections::BTreeMap::new();
                 for t in &tasks {
-                    *by_entity.entry(t["entity"].as_str().unwrap_or("").to_string()).or_insert(0) += 1;
+                    *by_entity
+                        .entry(t["entity"].as_str().unwrap_or("").to_string())
+                        .or_insert(0) += 1;
                 }
                 Ok(json!({
                     "tasks": tasks,
@@ -7872,12 +8212,22 @@ impl ToolSession {
             name if crate::task_runtime::TOOLS.contains(&name) => {
                 let root = crate::project::find_root(&self.gen.deliverable)
                     .or_else(|| crate::project::find_root(&self.snapshot.out))
-                    .ok_or_else(|| ToolError::new("runtime-unavailable", "Project root not found".into()))?;
+                    .ok_or_else(|| {
+                        ToolError::new("runtime-unavailable", "Project root not found".into())
+                    })?;
                 // A ledger session owns the tasks it adds; the build sweeps them once
                 // unused. Mirrors docs/consumers/gen.md#session-tasks-are-swept-when-unused.
-                let owner = if name == "update_tasks" { self.task_owner() } else { None };
+                let owner = if name == "update_tasks" {
+                    self.task_owner()
+                } else {
+                    None
+                };
                 let before = match owner {
-                    Some(_) => Some(crate::task_runtime::load(&root).map_err(|e| ToolError::new("task-runtime", e))?.1),
+                    Some(_) => Some(
+                        crate::task_runtime::load(&root)
+                            .map_err(|e| ToolError::new("task-runtime", e))?
+                            .1,
+                    ),
                     None => None,
                 };
                 let mut reply = crate::task_runtime::call(&root, name, args)
@@ -7885,16 +8235,22 @@ impl ToolSession {
                 if let (Some(owner), Some(before)) = (owner, before) {
                     // The task list is already saved: an ownership failure leaves the
                     // tasks the author's and says so, never a retryable error.
-                    let after: Vec<crate::task_runtime::Task> = serde_json::from_value(reply["tasks"].clone()).unwrap_or_default();
-                    if let Err(e) = crate::task_runtime::record_owned(&self.snapshot.out, &before, &after, &owner) {
-                        reply["ownershipNote"] = json!(format!("Tasks saved; ownership was not recorded, so they are kept: {e}"));
+                    let after: Vec<crate::task_runtime::Task> =
+                        serde_json::from_value(reply["tasks"].clone()).unwrap_or_default();
+                    if let Err(e) = crate::task_runtime::record_owned(
+                        &self.snapshot.out,
+                        &before,
+                        &after,
+                        &owner,
+                    ) {
+                        reply["ownershipNote"] = json!(format!(
+                            "Tasks saved; ownership was not recorded, so they are kept: {e}"
+                        ));
                     }
                 }
                 Ok(reply)
             }
-            "read_text_file" | "write_text_file" | "list_files" => {
-                self.file_tool(name, args)
-            }
+            "read_text_file" | "write_text_file" | "list_files" => self.file_tool(name, args),
             // An external agent's own report of what its run billed for the open batch.
             // It stages nothing; the commit takes the figure when the harness measured
             // none. Mirrors docs/compiler/tools.md#spend-tool.
@@ -8768,22 +9124,44 @@ mod tests {
     #[test]
     fn log_tool_coordinates_match_unicode_paging_and_search_lines() {
         let tools = catalog();
-        let read = tools.iter().find(|tool| tool.name == "read_run_log").unwrap();
-        assert!(read.parameters["properties"]["offset"]["description"].as_str().unwrap()
+        let read = tools
+            .iter()
+            .find(|tool| tool.name == "read_run_log")
+            .unwrap();
+        assert!(read.parameters["properties"]["offset"]["description"]
+            .as_str()
+            .unwrap()
             .contains("Unicode character"));
-        let search = tools.iter().find(|tool| tool.name == "search_run_log").unwrap();
-        assert!(search.parameters["properties"]["offset"]["description"].as_str().unwrap()
+        let search = tools
+            .iter()
+            .find(|tool| tool.name == "search_run_log")
+            .unwrap();
+        assert!(search.parameters["properties"]["offset"]["description"]
+            .as_str()
+            .unwrap()
             .contains("lines to skip"));
         let state = json!({"terminated":true, "log":"α\nЖ💡\nFAIL: x\n"});
-        let page = crate::task_runtime::present(&state, &Value::Null,
-            &json!({"operation":"read_run_log", "offset":2, "limit":2})).unwrap();
+        let page = crate::task_runtime::present(
+            &state,
+            &Value::Null,
+            &json!({"operation":"read_run_log", "offset":2, "limit":2}),
+        )
+        .unwrap();
         assert_eq!(page["text"], "Ж💡");
         assert_eq!(page["next_offset"], 4);
-        let next = crate::task_runtime::present(&state, &Value::Null,
-            &json!({"operation":"read_run_log", "offset":page["next_offset"], "limit":6})).unwrap();
+        let next = crate::task_runtime::present(
+            &state,
+            &Value::Null,
+            &json!({"operation":"read_run_log", "offset":page["next_offset"], "limit":6}),
+        )
+        .unwrap();
         assert_eq!(next["text"], "\nFAIL:");
-        let matches = crate::task_runtime::present(&state, &Value::Null,
-            &json!({"operation":"search_run_log", "query":"FAIL", "offset":1, "limit":1})).unwrap();
+        let matches = crate::task_runtime::present(
+            &state,
+            &Value::Null,
+            &json!({"operation":"search_run_log", "query":"FAIL", "offset":1, "limit":1}),
+        )
+        .unwrap();
         assert_eq!(matches["matches"], json!([{"line":3, "text":"FAIL: x"}]));
     }
 
@@ -9035,7 +9413,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v["created"], true);
-        assert!(v["note"].as_str().unwrap_or_default().contains("provenance dropped"), "{}", v);
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("provenance dropped"),
+            "{}",
+            v
+        );
         let v = t
             .dispatch(
                 "upsert_requirement",
@@ -9050,22 +9435,48 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v["created"], true, "{}", v);
-        assert!(v["note"].as_str().unwrap_or_default().contains("section and quote"), "{}", v);
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("section and quote"),
+            "{}",
+            v
+        );
         let both = normalize_args(&json!({"prompt": {"question": "Which?", "options": [
             {"label": "A", "answer": "a", "edit": {"doc": "d.md", "section": "/s", "old_text": "x", "new_text": "y"}}]}}));
         let err = t.parse_prompt(&both["prompt"]).unwrap_err();
         assert_eq!(err.rule, "bad-prompt");
-        assert!(err.message.contains("both edit and answer"), "{}", err.message);
-        let neither = normalize_args(&json!({"prompt": {"question": "Which?", "options": [{"label": "A", "answer": ""}]}}));
+        assert!(
+            err.message.contains("both edit and answer"),
+            "{}",
+            err.message
+        );
+        let neither = normalize_args(
+            &json!({"prompt": {"question": "Which?", "options": [{"label": "A", "answer": ""}]}}),
+        );
         let err = t.parse_prompt(&neither["prompt"]).unwrap_err();
-        assert!(err.message.contains("neither edit nor answer"), "{}", err.message);
+        assert!(
+            err.message.contains("neither edit nor answer"),
+            "{}",
+            err.message
+        );
         // A top-level null survives; filler inside goes.
-        assert_eq!(normalize_args(&json!({"prompt": null, "scope": "", "tags": ["", " "]})), json!({"prompt": null}));
+        assert_eq!(
+            normalize_args(&json!({"prompt": null, "scope": "", "tags": ["", " "]})),
+            json!({"prompt": null})
+        );
         // Filler variants of one search are the same call to the repeat guard.
-        for filler in [json!({"query": "gadget"}), json!({"query": "gadget", "queries": []}), json!({"query": "gadget", "queries": [""]})] {
+        for filler in [
+            json!({"query": "gadget"}),
+            json!({"query": "gadget", "queries": []}),
+            json!({"query": "gadget", "queries": [""]}),
+        ] {
             let _ = t.dispatch("search", &filler);
         }
-        let err = t.dispatch("search", &json!({"query": "gadget", "entities": []})).unwrap_err();
+        let err = t
+            .dispatch("search", &json!({"query": "gadget", "entities": []}))
+            .unwrap_err();
         assert_eq!(err.rule, "repeated-call");
     }
 
@@ -9107,7 +9518,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(v["created"], true, "{}", v);
-        assert!(v["note"].as_str().unwrap_or_default().contains("provenance dropped"), "{}", v);
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("provenance dropped"),
+            "{}",
+            v
+        );
     }
 
     // The quote wins only when it is a whole quote: a requirement or criterion needs
@@ -9125,7 +9543,8 @@ mod tests {
         let mut args = json!({"name": "Gadget", "provenance": derived});
         assert_eq!(prefer_quote("upsert_entity", &mut args), None);
         assert_eq!(args["provenance"], derived);
-        let mut args = json!({"name": "Gadget", "mention": {"section": "/shop/cart", "quote": "A Gadget"}});
+        let mut args =
+            json!({"name": "Gadget", "mention": {"section": "/shop/cart", "quote": "A Gadget"}});
         assert_eq!(prefer_quote("upsert_entity", &mut args), None);
         let mut args = json!({"id": "ent:gadget", "mention": {"section": "/shop/cart", "quote": "A Gadget"}, "provenance": derived});
         assert_eq!(prefer_quote("update_entity", &mut args), None);
@@ -9158,11 +9577,22 @@ mod tests {
     // nor `to` is a filled-in blank.
     #[test]
     fn transition_with_only_from_survives() {
-        let v = normalize_args(&json!({"transition": {"subject": "ent:order", "from": "open", "to": ""}}));
-        assert_eq!(v["transition"], json!({"subject": "ent:order", "from": "open"}));
-        let v = normalize_args(&json!({"transition": {"subject": "ent:order", "from": "", "to": "paid"}}));
-        assert_eq!(v["transition"], json!({"subject": "ent:order", "to": "paid"}));
-        let v = normalize_args(&json!({"transition": {"subject": "ent:order", "from": "", "to": " "}}));
+        let v = normalize_args(
+            &json!({"transition": {"subject": "ent:order", "from": "open", "to": ""}}),
+        );
+        assert_eq!(
+            v["transition"],
+            json!({"subject": "ent:order", "from": "open"})
+        );
+        let v = normalize_args(
+            &json!({"transition": {"subject": "ent:order", "from": "", "to": "paid"}}),
+        );
+        assert_eq!(
+            v["transition"],
+            json!({"subject": "ent:order", "to": "paid"})
+        );
+        let v =
+            normalize_args(&json!({"transition": {"subject": "ent:order", "from": "", "to": " "}}));
         assert!(v.get("transition").is_none(), "{}", v);
         let v = normalize_args(&json!({"transition": {"subject": "", "from": "", "to": ""}}));
         assert!(v.get("transition").is_none(), "{}", v);
@@ -9298,7 +9728,9 @@ mod tests {
             .graph
             .diagnostics
             .insert("diag:incomplete-build-1".into(), parked);
-        let list = t.dispatch("diagnostics", &json!({"rule": "incomplete-build"})).unwrap();
+        let list = t
+            .dispatch("diagnostics", &json!({"rule": "incomplete-build"}))
+            .unwrap();
         let owned = &list["diagnostics"].as_array().unwrap()[0];
         assert_eq!(owned["owner"], "harness", "{}", list);
         let err = t
@@ -9308,7 +9740,11 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "not-resolvable");
-        assert!(err.message.contains("owned by the harness"), "{}", err.message);
+        assert!(
+            err.message.contains("owned by the harness"),
+            "{}",
+            err.message
+        );
         let r = t
             .dispatch(
                 "resolve_diagnostic",
@@ -9863,20 +10299,36 @@ mod tests {
         // Several names in one call: one result per query, in order, misses included.
         // Mirrors docs/compiler/tools.md#read-tools.
         let many = t
-            .dispatch("search", &json!({"queries": ["Customer", "Zebra Crossing"]}))
+            .dispatch(
+                "search",
+                &json!({"queries": ["Customer", "Zebra Crossing"]}),
+            )
             .unwrap();
         let results = many["results"].as_array().unwrap();
         assert_eq!(results.len(), 2, "{}", many);
         assert_eq!(results[0]["query"], "Customer");
-        assert!(!results[0]["hits"].as_array().unwrap().is_empty(), "{}", many);
+        assert!(
+            !results[0]["hits"].as_array().unwrap().is_empty(),
+            "{}",
+            many
+        );
         assert_eq!(results[1]["query"], "Zebra Crossing");
-        assert!(results[1]["hits"].as_array().is_none_or(|h| h.is_empty()), "{}", many);
+        assert!(
+            results[1]["hits"].as_array().is_none_or(|h| h.is_empty()),
+            "{}",
+            many
+        );
         // An empty item in the list is filler, dropped where the call enters
         // (docs/compiler/tools.md#validation-and-errors): the call answers the rest.
         let one = t
             .dispatch("search", &json!({"queries": ["Customer", ""]}))
             .unwrap();
-        assert_eq!(one["results"].as_array().map(|a| a.len()), Some(1), "{}", one);
+        assert_eq!(
+            one["results"].as_array().map(|a| a.len()),
+            Some(1),
+            "{}",
+            one
+        );
         let hit = t.dispatch("search", &json!({"query": "Customer"})).unwrap();
         assert_eq!(hit["hits"][0]["id"], "ent:customer");
     }
@@ -9925,14 +10377,14 @@ mod tests {
         let mut t = session();
         t.snapshot.graph.views.clear();
         let empty = t
-            .dispatch(
-                "search",
-                &json!({"query": "requirements", "kind": "view"}),
-            )
+            .dispatch("search", &json!({"query": "requirements", "kind": "view"}))
             .unwrap();
         assert_eq!(empty["viewCount"], 0);
         assert_eq!(empty["views"], json!([]));
-        assert!(empty["next"].as_str().unwrap().contains("get_entity or load"));
+        assert!(empty["next"]
+            .as_str()
+            .unwrap()
+            .contains("get_entity or load"));
 
         for i in 0..26 {
             t.snapshot.graph.views.insert(
@@ -9972,10 +10424,7 @@ mod tests {
             assert!(!row.to_string().contains("ent:customer"));
         }
         let unlisted = t
-            .dispatch(
-                "search",
-                &json!({"query": "Diagram 25", "kind": "view"}),
-            )
+            .dispatch("search", &json!({"query": "Diagram 25", "kind": "view"}))
             .unwrap();
         assert_eq!(unlisted["hits"][0]["id"], "view:class/25");
     }
@@ -10022,7 +10471,8 @@ mod tests {
     #[test]
     fn staged_statement_is_noted_on_the_listing() {
         let mut t = session();
-        t.dispatch("load", &json!({"target": "ent:customer"})).unwrap();
+        t.dispatch("load", &json!({"target": "ent:customer"}))
+            .unwrap();
         t.dispatch(
             "update_entity",
             &json!({"id": "ent:customer", "definition": "A Customer is a person who buys."}),
@@ -10170,7 +10620,9 @@ mod tests {
             &json!({"id": "ent:customer", "remove_aliases": ["Buyer"]}),
         )
         .unwrap();
-        let v = t.dispatch("get_entity", &json!({"id": "ent:customer"})).unwrap();
+        let v = t
+            .dispatch("get_entity", &json!({"id": "ent:customer"}))
+            .unwrap();
         assert_eq!(v["aliases"], json!(["Shopper"]), "{}", v);
     }
 
@@ -10279,7 +10731,10 @@ mod tests {
                 requirement: "req:a".into(),
                 statement: "Three lines come out ordered.".into(),
                 kind: "positive".into(),
-                provenance: Some(Provenance::Derived { from: vec!["req:a".into()], reasoning: "the rule".into() }),
+                provenance: Some(Provenance::Derived {
+                    from: vec!["req:a".into()],
+                    reasoning: "the rule".into(),
+                }),
                 ..Default::default()
             },
         );
@@ -10314,7 +10769,9 @@ mod tests {
     #[test]
     fn review_names_every_lint_rule_and_backs_filed() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:gadget".into(), plain("Gadget"));
+        s.graph
+            .entities
+            .insert("ent:gadget".into(), plain("Gadget"));
         s.graph.requirements.insert(
             "req:gadget-1".into(),
             Requirement {
@@ -10338,7 +10795,8 @@ mod tests {
             )
         };
         // No rules declared: nothing to name.
-        let mut bare = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+        let mut bare =
+            ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
         assert!(bare
             .dispatch("mark_goal_done", &json!({"goal": "g:review-entity:ent:gadget", "justification": "Reviewed.", "evidence": {"definition": "current"}}))
             .is_ok());
@@ -10350,7 +10808,11 @@ mod tests {
         let err = mark(&mut t, json!([{"rule": 1, "verdict": "clean"}])).unwrap_err();
         assert_eq!(err.rule, "lint-unchecked", "{}", err.message);
         assert!(err.message.contains("rule [2]"), "{}", err.message);
-        let err = mark(&mut t, json!([{"rule": 1, "verdict": "filed"}, {"rule": 2, "verdict": "clean"}])).unwrap_err();
+        let err = mark(
+            &mut t,
+            json!([{"rule": 1, "verdict": "filed"}, {"rule": 2, "verdict": "clean"}]),
+        )
+        .unwrap_err();
         assert_eq!(err.rule, "lint-unbacked", "{}", err.message);
         t.dispatch(
             "report_diagnostic",
@@ -10358,7 +10820,11 @@ mod tests {
                     "message": "The quote carries an em dash."}),
         )
         .unwrap();
-        let v = mark(&mut t, json!([{"rule": 1, "verdict": "filed"}, {"rule": "2", "verdict": "clean"}])).unwrap();
+        let v = mark(
+            &mut t,
+            json!([{"rule": 1, "verdict": "filed"}, {"rule": "2", "verdict": "clean"}]),
+        )
+        .unwrap();
         assert_eq!(v["marked"], "g:review-entity:ent:gadget", "{}", v);
     }
 
@@ -10367,7 +10833,9 @@ mod tests {
     #[test]
     fn review_unreferenced_verdicts_are_backed_or_remembered() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:customer".into(), plain("Customer"));
+        s.graph
+            .entities
+            .insert("ent:customer".into(), plain("Customer"));
         s.graph.entities.insert("ent:order".into(), plain("Order"));
         s.graph.requirements.insert(
             "req:a".into(),
@@ -10450,7 +10918,9 @@ mod tests {
     fn review_holds_a_verdict_per_listed_lookalike_diagnostic_and_part() {
         let mut s = Store::default();
         s.graph.entities.insert("ent:cart".into(), plain("Cart"));
-        s.graph.entities.insert("ent:cart-page".into(), plain("Cart Page"));
+        s.graph
+            .entities
+            .insert("ent:cart-page".into(), plain("Cart Page"));
         s.graph.entities.insert("ent:item".into(), plain("Item"));
         s.graph.requirements.insert(
             "req:a".into(),
@@ -10466,7 +10936,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        s.graph.diagnostics.insert("diag:ambiguity-1".into(), open_diag("ambiguity", &["req:a"]));
+        s.graph.diagnostics.insert(
+            "diag:ambiguity-1".into(),
+            open_diag("ambiguity", &["req:a"]),
+        );
         let goals = one_goal("review-entity", "ent:cart", Value::Null);
         let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
         let mark = |t: &mut ToolSession, evidence: Value| {
@@ -10477,38 +10950,72 @@ mod tests {
         };
         let rule = |r: Result<Value, ToolError>| r.map(|v| v.to_string()).unwrap_err().rule;
         assert_eq!(rule(mark(&mut t, json!({}))), "bad-evidence");
-        assert_eq!(rule(mark(&mut t, json!({"definition": "current"}))), "lookalike-unjudged");
+        assert_eq!(
+            rule(mark(&mut t, json!({"definition": "current"}))),
+            "lookalike-unjudged"
+        );
         let separate = json!([{"id": "ent:cart-page", "verdict": "separate", "reason": "a page showing the Cart, not the Cart"}]);
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "merged"}]}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "merged"}]})
+            )),
             "merge-unbacked"
         );
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "separate", "reason": "n/a"}]}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": [{"id": "ent:cart-page", "verdict": "separate", "reason": "n/a"}]})
+            )),
             "reason-required"
         );
-        assert_eq!(rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate}))), "diagnostic-unjudged");
+        assert_eq!(
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": separate})
+            )),
+            "diagnostic-unjudged"
+        );
         let stands = json!([{"id": "diag:ambiguity-1", "verdict": "stands"}]);
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": [{"id": "diag:ambiguity-1", "verdict": "resolved"}]}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": separate, "diagnostics": [{"id": "diag:ambiguity-1", "verdict": "resolved"}]})
+            )),
             "diagnostic-unbacked"
         );
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": separate, "diagnostics": stands})
+            )),
             "part-unjudged"
         );
         let parented = json!([{"id": "ent:item", "verdict": "parented"}]);
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": parented}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": parented})
+            )),
             "part-unbacked"
         );
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": [{"id": "ent:item", "verdict": "kept"}]}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": [{"id": "ent:item", "verdict": "kept"}]})
+            )),
             "reason-required"
         );
-        t.dispatch("update_entity", &json!({"id": "ent:item", "parent": "ent:cart"})).unwrap();
+        t.dispatch(
+            "update_entity",
+            &json!({"id": "ent:item", "parent": "ent:cart"}),
+        )
+        .unwrap();
         assert_eq!(
-            rule(mark(&mut t, json!({"definition": "refreshed", "lookalikes": separate, "diagnostics": stands, "parts": parented}))),
+            rule(mark(
+                &mut t,
+                json!({"definition": "refreshed", "lookalikes": separate, "diagnostics": stands, "parts": parented})
+            )),
             "definition-unbacked"
         );
         let v = mark(&mut t, json!({"definition": "current", "lookalikes": separate, "diagnostics": stands, "parts": parented})).unwrap();
@@ -10520,7 +11027,9 @@ mod tests {
     #[test]
     fn review_judges_every_listed_unreferenced_statement() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:customer".into(), plain("Customer"));
+        s.graph
+            .entities
+            .insert("ent:customer".into(), plain("Customer"));
         s.graph.entities.insert("ent:order".into(), plain("Order"));
         s.graph.requirements.insert(
             "req:a".into(),
@@ -10548,27 +11057,62 @@ mod tests {
     fn rejudge_pair_verdict_is_backed_by_the_staged_work() {
         let mut t = pair_session();
         let mark = |t: &mut ToolSession, goal: &str, evidence: Value| {
-            t.dispatch("mark_goal_done", &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}))
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}),
+            )
         };
         let ab = "g:rejudge-pair:req:a~req:b";
-        assert_eq!(mark(&mut t, ab, Value::Null).unwrap_err().rule, "bad-evidence");
-        assert_eq!(mark(&mut t, ab, json!({"verdict": "duplicate"})).unwrap_err().rule, "duplicate-unbacked");
-        assert_eq!(mark(&mut t, ab, json!({"verdict": "contradiction"})).unwrap_err().rule, "contradiction-unbacked");
+        assert_eq!(
+            mark(&mut t, ab, Value::Null).unwrap_err().rule,
+            "bad-evidence"
+        );
+        assert_eq!(
+            mark(&mut t, ab, json!({"verdict": "duplicate"}))
+                .unwrap_err()
+                .rule,
+            "duplicate-unbacked"
+        );
+        assert_eq!(
+            mark(&mut t, ab, json!({"verdict": "contradiction"}))
+                .unwrap_err()
+                .rule,
+            "contradiction-unbacked"
+        );
         assert!(mark(&mut t, ab, json!({"verdict": "consistent"})).is_ok());
-        t.snapshot
-            .graph
-            .diagnostics
-            .insert("diag:contradiction-1".into(), open_diag("contradiction", &["req:a", "req:c"]));
+        t.snapshot.graph.diagnostics.insert(
+            "diag:contradiction-1".into(),
+            open_diag("contradiction", &["req:a", "req:c"]),
+        );
         let ac = "g:rejudge-pair:req:a~req:c";
-        assert_eq!(mark(&mut t, ac, json!({"verdict": "consistent"})).unwrap_err().rule, "pair-diagnostic-open");
-        assert!(mark(&mut t, ac, json!({"verdict": "contradiction", "carried_by": "diag:contradiction-1"})).is_ok());
+        assert_eq!(
+            mark(&mut t, ac, json!({"verdict": "consistent"}))
+                .unwrap_err()
+                .rule,
+            "pair-diagnostic-open"
+        );
+        assert!(mark(
+            &mut t,
+            ac,
+            json!({"verdict": "contradiction", "carried_by": "diag:contradiction-1"})
+        )
+        .is_ok());
         t.snapshot.graph.diagnostics.insert(
             "diag:duplicate-requirement-2".into(),
             open_diag("duplicate-requirement", &["req:b", "req:c", "req:gone"]),
         );
         let bc = "g:rejudge-pair:req:b~req:c";
-        assert_eq!(mark(&mut t, bc, json!({"verdict": "duplicate"})).unwrap_err().rule, "dead-subject");
-        t.dispatch("resolve_diagnostic", &json!({"id": "diag:duplicate-requirement-2", "reason": "req:gone is deleted"})).unwrap();
+        assert_eq!(
+            mark(&mut t, bc, json!({"verdict": "duplicate"}))
+                .unwrap_err()
+                .rule,
+            "dead-subject"
+        );
+        t.dispatch(
+            "resolve_diagnostic",
+            &json!({"id": "diag:duplicate-requirement-2", "reason": "req:gone is deleted"}),
+        )
+        .unwrap();
         assert!(mark(&mut t, bc, json!("consistent")).is_ok());
     }
 
@@ -10590,29 +11134,47 @@ mod tests {
         let goals = one_goal("declare-edges", "req:a", Value::Null);
         let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
         let mark = |t: &mut ToolSession, goal: &str, evidence: Value| {
-            t.dispatch("mark_goal_done", &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}))
+            t.dispatch(
+                "mark_goal_done",
+                &json!({"goal": goal, "justification": "Judged.", "evidence": evidence}),
+            )
         };
         let g = "g:declare-edges:req:a";
-        assert_eq!(mark(&mut t, g, Value::Null).unwrap_err().rule, "bad-evidence");
-        assert_eq!(mark(&mut t, g, json!("declared")).unwrap_err().rule, "edges-unbacked");
+        assert_eq!(
+            mark(&mut t, g, Value::Null).unwrap_err().rule,
+            "bad-evidence"
+        );
+        assert_eq!(
+            mark(&mut t, g, json!("declared")).unwrap_err().rule,
+            "edges-unbacked"
+        );
         t.dispatch(
             "update_requirement",
             &json!({"id": "req:a", "edges": [{"a": "ent:cart", "b": "ent:item", "type": "aggregation"}]}),
         )
         .unwrap();
-        assert_eq!(mark(&mut t, g, json!("not-structural")).unwrap_err().rule, "edges-staged");
+        assert_eq!(
+            mark(&mut t, g, json!("not-structural")).unwrap_err().rule,
+            "edges-staged"
+        );
         assert!(mark(&mut t, g, json!({"verdict": "declared"})).is_ok());
 
         let goals = one_goal("dedupe-candidates", "ent:cart~ent:item", Value::Null);
         let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
         let g = "g:dedupe-candidates:ent:cart~ent:item";
-        assert_eq!(mark(&mut t, g, json!("merged")).unwrap_err().rule, "merge-unbacked");
+        assert_eq!(
+            mark(&mut t, g, json!("merged")).unwrap_err().rule,
+            "merge-unbacked"
+        );
         t.dispatch(
             "merge_entities",
             &json!({"keep": "ent:cart", "absorb": "ent:item", "reason": "one concept named twice"}),
         )
         .unwrap();
-        assert_eq!(mark(&mut t, g, json!("separate")).unwrap_err().rule, "merge-staged");
+        assert_eq!(
+            mark(&mut t, g, json!("separate")).unwrap_err().rule,
+            "merge-staged"
+        );
         assert!(mark(&mut t, g, json!("merged")).is_ok());
     }
 
@@ -10623,8 +11185,12 @@ mod tests {
     #[test]
     fn a_repaired_edge_clears_the_untyped_refusal() {
         let mut s = Store::default();
-        s.graph.entities.insert("ent:operator".into(), plain("Operator"));
-        s.graph.entities.insert("ent:admin-cli".into(), plain("Admin CLI"));
+        s.graph
+            .entities
+            .insert("ent:operator".into(), plain("Operator"));
+        s.graph
+            .entities
+            .insert("ent:admin-cli".into(), plain("Admin CLI"));
         s.graph.requirements.insert(
             "req:admin-3".into(),
             Requirement {
@@ -10653,7 +11219,9 @@ mod tests {
         )
         .unwrap();
         assert!(mark(&mut t).is_ok(), "the repaired edge stands");
-        assert!(t.dispatch("done", &json!({"summary": "Declared the edge."})).is_ok());
+        assert!(t
+            .dispatch("done", &json!({"summary": "Declared the edge."}))
+            .is_ok());
     }
 
     // Mirrors docs/compiler/goals/curate-view.md#gate: every matched node is added or
@@ -10673,7 +11241,11 @@ mod tests {
             );
         }
         for (id, title, members) in [
-            ("view:use-case/checkout", "Checkout", vec!["req:a".to_string()]),
+            (
+                "view:use-case/checkout",
+                "Checkout",
+                vec!["req:a".to_string()],
+            ),
             ("view:use-case/returns", "Returns", Vec::new()),
         ] {
             s.graph.views.insert(
@@ -10698,17 +11270,35 @@ mod tests {
                 &json!({"goal": "g:curate-view:view:use-case/checkout", "justification": "Decided.", "evidence": evidence}),
             )
         };
-        assert_eq!(mark(&mut t, Value::Null).unwrap_err().rule, "member-unjudged");
-        assert_eq!(mark(&mut t, json!([{"id": "req:b", "verdict": "added"}])).unwrap_err().rule, "added-unbacked");
+        assert_eq!(
+            mark(&mut t, Value::Null).unwrap_err().rule,
+            "member-unjudged"
+        );
+        assert_eq!(
+            mark(&mut t, json!([{"id": "req:b", "verdict": "added"}]))
+                .unwrap_err()
+                .rule,
+            "added-unbacked"
+        );
         let excluded = json!([{"id": "req:b", "verdict": "excluded"}]);
-        assert_eq!(mark(&mut t, excluded.clone()).unwrap_err().rule, "excluded-unbacked");
+        assert_eq!(
+            mark(&mut t, excluded.clone()).unwrap_err().rule,
+            "excluded-unbacked"
+        );
         t.dispatch(
             "update_view",
             &json!({"id": "view:use-case/checkout", "exclude": [{"id": "req:b", "note": "belongs to view:use-case/returns."}]}),
         )
         .unwrap();
-        assert_eq!(mark(&mut t, excluded.clone()).unwrap_err().rule, "exclusion-points-nowhere");
-        t.dispatch("update_view", &json!({"id": "view:use-case/returns", "add_members": ["req:b"]})).unwrap();
+        assert_eq!(
+            mark(&mut t, excluded.clone()).unwrap_err().rule,
+            "exclusion-points-nowhere"
+        );
+        t.dispatch(
+            "update_view",
+            &json!({"id": "view:use-case/returns", "add_members": ["req:b"]}),
+        )
+        .unwrap();
         assert!(mark(&mut t, excluded).is_ok());
     }
 
@@ -10717,9 +11307,18 @@ mod tests {
     #[test]
     fn conform_instance_holds_a_verdict_per_attribute_and_link() {
         let mut s = Store::default();
-        let decree = Provenance::Decree { author: "t".into(), at: "t".into(), note: None };
+        let decree = Provenance::Decree {
+            author: "t".into(),
+            at: "t".into(),
+            note: None,
+        };
         let mut customer = plain("Customer");
-        customer.attributes.push(Attribute { name: "tier".into(), r#type: Some("string".into()), value: None, provenance: decree });
+        customer.attributes.push(Attribute {
+            name: "tier".into(),
+            r#type: Some("string".into()),
+            value: None,
+            provenance: decree,
+        });
         s.graph.entities.insert("ent:customer".into(), customer);
         s.graph.entities.insert("ent:ana".into(), plain("Ana"));
         s.graph.entities.insert("ent:cart".into(), plain("Cart"));
@@ -10752,13 +11351,20 @@ mod tests {
                 &json!({"goal": "g:conform-instance:ent:ana", "justification": "Compared.", "evidence": evidence}),
             )
         };
-        assert_eq!(mark(&mut t, Value::Null).unwrap_err().rule, "conformance-unjudged");
+        assert_eq!(
+            mark(&mut t, Value::Null).unwrap_err().rule,
+            "conformance-unjudged"
+        );
         let attrs = json!([{"name": "Tier", "verdict": "missing"}]);
         let err = mark(&mut t, json!({"attributes": attrs})).unwrap_err();
         assert_eq!(err.rule, "conformance-unjudged");
         assert!(err.message.contains("ent:cart"), "{}", err.message);
-        let bad_link = json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "nonconformant"}]});
-        assert_eq!(mark(&mut t, bad_link.clone()).unwrap_err().rule, "nonconformant-unbacked");
+        let bad_link =
+            json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "nonconformant"}]});
+        assert_eq!(
+            mark(&mut t, bad_link.clone()).unwrap_err().rule,
+            "nonconformant-unbacked"
+        );
         t.dispatch(
             "report_diagnostic",
             &json!({"rule": "nonconformant-instance", "severity": "warning", "subjects": ["ent:ana", "ent:customer"],
@@ -10767,12 +11373,17 @@ mod tests {
         .unwrap();
         assert!(mark(&mut t, bad_link).is_ok());
 
-        s.graph
-            .diagnostics
-            .insert("diag:nonconformant-instance-1".into(), open_diag("nonconformant-instance", &["ent:ana", "ent:customer"]));
+        s.graph.diagnostics.insert(
+            "diag:nonconformant-instance-1".into(),
+            open_diag("nonconformant-instance", &["ent:ana", "ent:customer"]),
+        );
         let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
-        let conforms = json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "conforms"}]});
-        assert_eq!(mark(&mut t, conforms).unwrap_err().rule, "nonconformant-open");
+        let conforms =
+            json!({"attributes": attrs, "links": [{"to": "ent:cart", "verdict": "conforms"}]});
+        assert_eq!(
+            mark(&mut t, conforms).unwrap_err().rule,
+            "nonconformant-open"
+        );
     }
 
     // Mirrors docs/compiler/goals/derive-criteria.md#gate: one entry per requirement
@@ -10800,7 +11411,11 @@ mod tests {
                 },
             );
         }
-        let goals = one_goal("derive-criteria", "ent:sort", json!({"none": ["req:a", "req:b"], "revised": []}));
+        let goals = one_goal(
+            "derive-criteria",
+            "ent:sort",
+            json!({"none": ["req:a", "req:b"], "revised": []}),
+        );
         let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
         let err = t
             .dispatch(
@@ -10837,7 +11452,11 @@ mod tests {
                 ..Default::default()
             },
         );
-        let goals = one_goal("derive-criteria", "ent:sort", json!({"none": ["req:a"], "revised": []}));
+        let goals = one_goal(
+            "derive-criteria",
+            "ent:sort",
+            json!({"none": ["req:a"], "revised": []}),
+        );
         let claim = json!({"goal": "g:derive-criteria:ent:sort", "justification": "Criteria written.",
                 "evidence": {"requirements": [{"id": "req:a", "criteria": ["crit:a-1"], "verdict": "stated-only"}]}});
         let delete = json!({"id": "crit:a-1", "reason": "wrong"});
@@ -10870,7 +11489,8 @@ mod tests {
             .to_string();
         let v = t.dispatch("get_entity", &json!({"id": id})).unwrap();
         assert_eq!(v["parent"], "ent:customer", "{}", v);
-        t.dispatch("update_entity", &json!({"id": id, "remove_parent": true})).unwrap();
+        t.dispatch("update_entity", &json!({"id": id, "remove_parent": true}))
+            .unwrap();
         let v = t.dispatch("get_entity", &json!({"id": id})).unwrap();
         assert!(v["parent"].is_null(), "{}", v);
     }
@@ -11089,20 +11709,31 @@ mod tests {
         let cart = json!({"goal":"g:reconcile-section:shop.md#/shop/cart", "justification":"The cart section's coverage is recorded."});
 
         // The first inline claim passes, but the second still owes its coverage.
-        let error = t.dispatch("done", &json!({"summary":"Recorded both sections.", "goals":[root, cart]})).unwrap_err();
+        let error = t
+            .dispatch(
+                "done",
+                &json!({"summary":"Recorded both sections.", "goals":[root, cart]}),
+            )
+            .unwrap_err();
         assert_eq!(error.rule, "unmarked-section");
         assert_eq!(t.staged.len(), earlier);
         assert!(t.outcomes.is_empty());
         assert!(t.done.is_none());
 
         // An otherwise valid inline claim cannot skip the remaining batch goal.
-        let error = t.dispatch("done", &json!({"summary":"Only the root.", "goals":[root]})).unwrap_err();
+        let error = t
+            .dispatch("done", &json!({"summary":"Only the root.", "goals":[root]}))
+            .unwrap_err();
         assert_eq!(error.rule, "open-goal");
         assert!(t.outcomes.is_empty());
         assert_eq!(t.staged.len(), earlier);
 
         t.dispatch("set_coverage", &json!({"section":"/shop/cart", "state":"non-normative", "note":"The fixture records this section's classification."})).unwrap();
-        t.dispatch("done", &json!({"summary":"Recorded both sections.", "goals":[root, cart]})).unwrap();
+        t.dispatch(
+            "done",
+            &json!({"summary":"Recorded both sections.", "goals":[root, cart]}),
+        )
+        .unwrap();
         assert!(t.done.is_some());
         let commit = t.commit(1, None);
         assert_eq!(commit.resolved.len(), 2);
@@ -11113,11 +11744,18 @@ mod tests {
     fn inline_done_refuses_foreign_duplicate_and_false_goal_claims() {
         let mut t = session();
         let claim = json!({"goal":"g:reconcile-section:shop.md#/shop", "justification":"The root is covered."});
-        let error = t.dispatch("done", &json!({"summary":"Duplicate.", "goals":[claim, claim]})).unwrap_err();
+        let error = t
+            .dispatch(
+                "done",
+                &json!({"summary":"Duplicate.", "goals":[claim, claim]}),
+            )
+            .unwrap_err();
         assert_eq!(error.rule, "duplicate-goal");
         let error = t.dispatch("done", &json!({"summary":"Foreign.", "goals":[{"goal":"g:reconcile-section:elsewhere.md#/elsewhere", "justification":"The section is covered."}]})).unwrap_err();
         assert_eq!(error.rule, "unknown-goal");
-        let error = t.dispatch("done", &json!({"summary":"False claim.", "goals":[claim]})).unwrap_err();
+        let error = t
+            .dispatch("done", &json!({"summary":"False claim.", "goals":[claim]}))
+            .unwrap_err();
         assert_eq!(error.rule, "unmarked-section");
         assert!(t.outcomes.is_empty());
         assert!(t.staged.is_empty());
@@ -11127,13 +11765,22 @@ mod tests {
     #[test]
     fn inline_done_rolls_back_review_mutations_and_retains_earlier_claims() {
         let mut store = Store::default();
-        store.graph.entities.insert("ent:customer".into(), plain("Customer"));
-        store.graph.entities.insert("ent:order".into(), plain("Order"));
-        store.graph.requirements.insert("req:a".into(), Requirement {
-            statement: "An Order names the Customer who placed it.".into(),
-            entities: vec!["ent:order".into()],
-            ..Default::default()
-        });
+        store
+            .graph
+            .entities
+            .insert("ent:customer".into(), plain("Customer"));
+        store
+            .graph
+            .entities
+            .insert("ent:order".into(), plain("Order"));
+        store.graph.requirements.insert(
+            "req:a".into(),
+            Requirement {
+                statement: "An Order names the Customer who placed it.".into(),
+                entities: vec!["ent:order".into()],
+                ..Default::default()
+            },
+        );
         let goals = ["customer", "order"].map(|name| Goal {
             id: format!("g:review-entity:ent:{name}"),
             kind: "review-entity".into(),
@@ -11142,12 +11789,20 @@ mod tests {
             ..Default::default()
         });
         let mut t = ToolSession::new(store, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
-        t.dispatch("update_entity", &json!({"id":"ent:order", "definition":"A purchase record naming its customer."})).unwrap();
-        t.dispatch("mark_goal_done", &json!({
-            "goal":"g:review-entity:ent:order",
-            "justification":"The definition now identifies the purchase record.",
-            "evidence":{"definition":"refreshed"}
-        })).unwrap();
+        t.dispatch(
+            "update_entity",
+            &json!({"id":"ent:order", "definition":"A purchase record naming its customer."}),
+        )
+        .unwrap();
+        t.dispatch(
+            "mark_goal_done",
+            &json!({
+                "goal":"g:review-entity:ent:order",
+                "justification":"The definition now identifies the purchase record.",
+                "evidence":{"definition":"refreshed"}
+            }),
+        )
+        .unwrap();
         let staged_before = serde_json::to_value(&t.staged).unwrap();
         let outcomes_before = serde_json::to_value(&t.outcomes).unwrap();
         let customer = json!({
@@ -11169,12 +11824,22 @@ mod tests {
         assert!(t.review_staged_note.is_none());
         assert!(t.done.is_none());
 
-        t.dispatch("done", &json!({"summary":"Reviewed both entities.", "goals":[customer]})).unwrap();
+        t.dispatch(
+            "done",
+            &json!({"summary":"Reviewed both entities.", "goals":[customer]}),
+        )
+        .unwrap();
         assert!(t.done.is_some());
-        assert_eq!(t.staged.iter().filter(|op| matches!(op,
-            Op::UpdateEntity { id, not_about_add, .. }
-                if id == "ent:customer" && not_about_add == &vec!["req:a".to_string()]
-        )).count(), 1);
+        assert_eq!(
+            t.staged
+                .iter()
+                .filter(|op| matches!(op,
+                    Op::UpdateEntity { id, not_about_add, .. }
+                        if id == "ent:customer" && not_about_add == &vec!["req:a".to_string()]
+                ))
+                .count(),
+            1
+        );
         assert_eq!(t.commit(1, None).resolved.len(), 2);
     }
 
@@ -11505,7 +12170,9 @@ mod tests {
     #[test]
     fn reported_spend_rides_the_commit_when_nothing_was_measured() {
         let mut t = session();
-        let ok = t.dispatch("report_spend", &json!({"tokens": 18400, "cached": 9100})).unwrap();
+        let ok = t
+            .dispatch("report_spend", &json!({"tokens": 18400, "cached": 9100}))
+            .unwrap();
         assert_eq!(ok["recorded"], json!(true));
         assert!(t.staged.is_empty(), "the report stages no mutation");
         let commit = t.commit(3, None);
@@ -11514,19 +12181,41 @@ mod tests {
         assert_eq!(commit.tokens_source.as_deref(), Some("agent"));
         // The harness's own measurement wins over the report.
         let commit = t.commit(3, Some(500));
-        assert_eq!((commit.tokens, commit.cached, commit.tokens_source), (Some(500), None, None));
+        assert_eq!(
+            (commit.tokens, commit.cached, commit.tokens_source),
+            (Some(500), None, None)
+        );
         // A second call replaces the first and says so; a zero cached leaves the field out.
-        let again = t.dispatch("report_spend", &json!({"tokens": 20000})).unwrap();
-        assert!(again["note"].as_str().unwrap_or("").contains("replaced"), "{}", again);
+        let again = t
+            .dispatch("report_spend", &json!({"tokens": 20000}))
+            .unwrap();
+        assert!(
+            again["note"].as_str().unwrap_or("").contains("replaced"),
+            "{}",
+            again
+        );
         let commit = t.commit(3, None);
         assert_eq!((commit.tokens, commit.cached), (Some(20000), None));
         // Bad numbers are refused and leave the report standing.
-        assert_eq!(t.dispatch("report_spend", &json!({"tokens": 0})).unwrap_err().rule, "invalid-argument");
-        assert_eq!(t.dispatch("report_spend", &json!({"tokens": 10, "cached": 11})).unwrap_err().rule, "invalid-argument");
+        assert_eq!(
+            t.dispatch("report_spend", &json!({"tokens": 0}))
+                .unwrap_err()
+                .rule,
+            "invalid-argument"
+        );
+        assert_eq!(
+            t.dispatch("report_spend", &json!({"tokens": 10, "cached": 11}))
+                .unwrap_err()
+                .rule,
+            "invalid-argument"
+        );
         assert_eq!(t.commit(3, None).tokens, Some(20000));
         // Outside an open batch the call is refused toward the CLI form.
-        let mut serving = ToolSession::new(Store::default(), WorkScope::serving("mcp-read"), 64, 24000);
-        let err = serving.dispatch("report_spend", &json!({"tokens": 10})).unwrap_err();
+        let mut serving =
+            ToolSession::new(Store::default(), WorkScope::serving("mcp-read"), 64, 24000);
+        let err = serving
+            .dispatch("report_spend", &json!({"tokens": 10}))
+            .unwrap_err();
         assert_eq!(err.rule, "no-open-batch");
         assert!(err.message.contains("jazyk spend"), "{}", err.message);
         assert_eq!(serving.commit(1, None).tokens, None);
@@ -11649,7 +12338,10 @@ mod tests {
     fn sentence_count_ignores_dots_in_names_and_abbreviations() {
         let n = ToolSession::sentence_count;
         assert_eq!(n("The definition fits customer.md verbatim."), 1);
-        assert_eq!(n("Order is a separate concept (the area vs. its member), so it stands."), 1);
+        assert_eq!(
+            n("Order is a separate concept (the area vs. its member), so it stands."),
+            1
+        );
         assert_eq!(n("It matches, e.g. the cart line. Nothing changed."), 2);
         assert_eq!(n("One. Two. Three."), 3);
         assert_eq!(n("Is it done? Yes! Done"), 3);
@@ -11693,7 +12385,10 @@ mod tests {
         assert!(t.near_name("Employees", "public", true).is_none());
         let r = t.dispatch("upsert_entity", &call("Employee Handbook", None));
         assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
-        let r = t.dispatch("upsert_entity", &call("Employee Badge", Some("ent:employee")));
+        let r = t.dispatch(
+            "upsert_entity",
+            &call("Employee Badge", Some("ent:employee")),
+        );
         assert!(r.is_ok(), "{:?}", r.err().map(|e| (e.rule, e.message)));
     }
 
@@ -11718,7 +12413,13 @@ mod tests {
     #[test]
     fn toolset_of_a_goal_kind_task_is_its_slice() {
         let names = toolset("abstract-entity");
-        for t in ["group_entities", "dissolve_entity", "update_entity", "mark_goal_done", "done"] {
+        for t in [
+            "group_entities",
+            "dissolve_entity",
+            "update_entity",
+            "mark_goal_done",
+            "done",
+        ] {
             assert!(names.contains(&t), "abstract-entity misses `{}`", t);
         }
         assert!(toolset("curate-view").contains(&"update_view"));
@@ -11742,21 +12443,33 @@ mod tests {
                 coverage: BTreeMap::new(),
             },
         );
-        let v = t.dispatch("read_section", &json!({"ref": "big.md"})).unwrap();
+        let v = t
+            .dispatch("read_section", &json!({"ref": "big.md"}))
+            .unwrap();
         assert_eq!(v["truncated"], true, "{}", v["nextLine"]);
         let next = v["nextLine"].as_u64().unwrap();
         assert!(v["raw"].as_str().unwrap().len() <= READ_SECTION_BYTES);
-        let rest = t.dispatch("read_section", &json!({"ref": "big.md", "line": next})).unwrap();
+        let rest = t
+            .dispatch("read_section", &json!({"ref": "big.md", "line": next}))
+            .unwrap();
         assert!(rest.get("truncated").is_none(), "{}", rest["nextLine"]);
-        assert!(rest["raw"].as_str().unwrap().contains(&format!("Line {} of", READ_SECTION_LINES + 19)));
+        assert!(rest["raw"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("Line {} of", READ_SECTION_LINES + 19)));
         for i in 0..(DIAGNOSTICS_PAGE + 7) {
-            t.snapshot.graph.diagnostics.insert(format!("diag:x-{:03}", i), open_diag("ambiguity", &["ent:customer"]));
+            t.snapshot.graph.diagnostics.insert(
+                format!("diag:x-{:03}", i),
+                open_diag("ambiguity", &["ent:customer"]),
+            );
         }
         let v = t.dispatch("diagnostics", &json!({})).unwrap();
         assert_eq!(v["diagnostics"].as_array().unwrap().len(), DIAGNOSTICS_PAGE);
         assert_eq!(v["count"], DIAGNOSTICS_PAGE + 7);
         assert_eq!(v["nextOffset"], DIAGNOSTICS_PAGE);
-        let v = t.dispatch("diagnostics", &json!({"offset": DIAGNOSTICS_PAGE})).unwrap();
+        let v = t
+            .dispatch("diagnostics", &json!({"offset": DIAGNOSTICS_PAGE}))
+            .unwrap();
         assert_eq!(v["diagnostics"].as_array().unwrap().len(), 7);
         assert!(v.get("truncated").is_none());
     }
@@ -11786,10 +12499,18 @@ mod tests {
         };
         let names = |v: &Value, key: &str| -> BTreeSet<String> {
             match key {
-                "required" => v["required"].as_array().into_iter().flatten()
-                    .filter_map(|x| x.as_str().map(String::from)).collect(),
-                _ => v["properties"].as_object().into_iter().flatten()
-                    .map(|(k, _)| k.clone()).collect(),
+                "required" => v["required"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect(),
+                _ => v["properties"]
+                    .as_object()
+                    .into_iter()
+                    .flatten()
+                    .map(|(k, _)| k.clone())
+                    .collect(),
             }
         };
         // report_diagnostic: tools.md and the schema require reasoning, the catalog
@@ -11802,8 +12523,14 @@ mod tests {
                 tool.parameters = done_parameters(true);
             }
             let base = camel(tool.name);
-            let Some(def) = defs.get(&format!("{}Request", base)).or_else(|| defs.get(&base)) else {
-                drift.push(format!("{}: no {}Request or {} definition", tool.name, base, base));
+            let Some(def) = defs
+                .get(&format!("{}Request", base))
+                .or_else(|| defs.get(&base))
+            else {
+                drift.push(format!(
+                    "{}: no {}Request or {} definition",
+                    tool.name, base, base
+                ));
                 continue;
             };
             for key in ["properties", "required"] {
@@ -11814,11 +12541,18 @@ mod tests {
                     }
                 }
                 if want != have {
-                    drift.push(format!("{} {}: catalog {:?}, schema {:?}", tool.name, key, want, have));
+                    drift.push(format!(
+                        "{} {}: catalog {:?}, schema {:?}",
+                        tool.name, key, want, have
+                    ));
                 }
             }
         }
-        assert!(drift.is_empty(), "tools.schema.yaml drifted from the catalog:\n{}", drift.join("\n"));
+        assert!(
+            drift.is_empty(),
+            "tools.schema.yaml drifted from the catalog:\n{}",
+            drift.join("\n")
+        );
     }
 
     // The graph --write serving is what tools.md#toolsets names: the read tools, the
@@ -11834,23 +12568,41 @@ mod tests {
         a.sort();
         expected.sort();
         assert_eq!(a, expected);
-        for absent in ["record_generation", "begin_binding", "record_verdict", PAIR_SETTLE_TOOL, "mark_goal_done"] {
+        for absent in [
+            "record_generation",
+            "begin_binding",
+            "record_verdict",
+            PAIR_SETTLE_TOOL,
+            "mark_goal_done",
+        ] {
             assert!(!served.contains(&absent), "{absent}");
         }
     }
 
     #[test]
     fn generation_workers_can_resolve_an_undecided_medium() {
-        for task in ["generate", "bind", "generate-entity", "bind-requirement", "mcp-generate"] {
+        for task in [
+            "generate",
+            "bind",
+            "generate-entity",
+            "bind-requirement",
+            "mcp-generate",
+        ] {
             for name in GEN_TOOLS {
                 assert!(toolset(task).contains(&name), "{task} lacks {name}");
             }
         }
         for kind in ["generate", "verify"] {
             let prompt = crate::goals::kind(kind).unwrap().prompt();
-            assert!(!prompt.contains("run_command"), "{kind} advertises an unavailable command tool");
+            assert!(
+                !prompt.contains("run_command"),
+                "{kind} advertises an unavailable command tool"
+            );
             assert!(!toolset(kind).contains(&"run_command"));
-            assert!(!catalog().iter().any(|t| t.name == "run_command"), "the catalog keeps an unserved command tool");
+            assert!(
+                !catalog().iter().any(|t| t.name == "run_command"),
+                "the catalog keeps an unserved command tool"
+            );
             for name in crate::task_runtime::TOOLS {
                 assert!(toolset(kind).contains(&name), "{kind} lacks {name}");
             }
@@ -11862,27 +12614,41 @@ mod tests {
     fn ledger_sessions_own_the_tasks_they_add_and_other_scopes_do_not() {
         let task = |id: &str| json!({"id":id,"name":id,"description":"d","command":"true"});
         for (kind, owned) in [("bind", true), ("reconcile-section", false)] {
-            let files = std::collections::BTreeMap::from([
-                (".jazyk/jazyk.toml".into(), b"version=1\nsets=[]\n".to_vec()),
-            ]);
+            let files = std::collections::BTreeMap::from([(
+                ".jazyk/jazyk.toml".into(),
+                b"version=1\nsets=[]\n".to_vec(),
+            )]);
             let _scope = crate::vfs::Scope::enter(&files);
             let mut tool = session();
             tool.gen.deliverable = "/project".into();
             tool.snapshot.out = "/project/.jazyk/ds_main".into();
             let goal = format!("g:{kind}:req:a-1");
-            tool.scope.goals = vec![GoalScope { goal: goal.clone(), kind: kind.into(), ..Default::default() }];
+            tool.scope.goals = vec![GoalScope {
+                goal: goal.clone(),
+                kind: kind.into(),
+                ..Default::default()
+            }];
             let revision = tool.dispatch("task_context", &json!({})).unwrap()["revision"].clone();
-            tool.dispatch("update_tasks", &json!({"expected_revision":revision,"tasks":[task("suite")]})).unwrap();
+            tool.dispatch(
+                "update_tasks",
+                &json!({"expected_revision":revision,"tasks":[task("suite")]}),
+            )
+            .unwrap();
             let ledger = crate::gen::Ledger::load(std::path::Path::new("/project/.jazyk/ds_main"));
-            assert_eq!(ledger.tasks.get("suite").map(|o| o.created_by.clone()), owned.then_some(goal), "{kind}");
+            assert_eq!(
+                ledger.tasks.get("suite").map(|o| o.created_by.clone()),
+                owned.then_some(goal),
+                "{kind}"
+            );
         }
     }
 
     #[test]
     fn runtime_observation_is_not_a_repeated_graph_mutation() {
-        let files = std::collections::BTreeMap::from([
-            (".jazyk/jazyk.toml".into(), b"version=1\nsets=[]\n".to_vec()),
-        ]);
+        let files = std::collections::BTreeMap::from([(
+            ".jazyk/jazyk.toml".into(),
+            b"version=1\nsets=[]\n".to_vec(),
+        )]);
         let _scope = crate::vfs::Scope::enter(&files);
         let mut tool = session();
         tool.gen.deliverable = "/project".into();
@@ -11890,7 +12656,9 @@ mod tests {
         for _ in 0..5 {
             let result = tool.dispatch("task_context", &json!({})).unwrap();
             assert!(result["tasks"].is_array());
-            let error = tool.dispatch("wait_run", &json!({"run_id":"pending","wait_ms":1})).unwrap_err();
+            let error = tool
+                .dispatch("wait_run", &json!({"run_id":"pending","wait_ms":1}))
+                .unwrap_err();
             assert_ne!(error.rule, "repeated-call");
         }
     }
@@ -11908,7 +12676,12 @@ mod tests {
                 continue;
             }
             for t in k.toolset() {
-                assert!(served.contains(t), "mcp compile lacks `{}` of {}", t, k.kind());
+                assert!(
+                    served.contains(t),
+                    "mcp compile lacks `{}` of {}",
+                    t,
+                    k.kind()
+                );
             }
         }
     }
@@ -11918,7 +12691,12 @@ mod tests {
         assert!(toolset("rejudge-pair").contains(&PAIR_SETTLE_TOOL));
         assert!(toolset("review-requirement").contains(&PAIR_SETTLE_TOOL));
         assert!(toolset("mcp-compile").contains(&PAIR_SETTLE_TOOL));
-        for kind in ["reconcile-section", "review-entity", "abstract-entity", "mcp-read"] {
+        for kind in [
+            "reconcile-section",
+            "review-entity",
+            "abstract-entity",
+            "mcp-read",
+        ] {
             assert!(
                 !toolset(kind).contains(&PAIR_SETTLE_TOOL),
                 "{} should not serve settle_pairs",
@@ -11938,10 +12716,9 @@ mod tests {
             ("req:b", "The Cart shall show its item count."),
             ("req:c", "The Cart shall drop its items after one hour."),
         ] {
-            s.graph.requirements.insert(
-                id.into(),
-                quoted_req(statement, &["ent:cart"], statement),
-            );
+            s.graph
+                .requirements
+                .insert(id.into(), quoted_req(statement, &["ent:cart"], statement));
         }
         s.graph.entities.insert("ent:cart".into(), plain("Cart"));
         let pair = |a: &str, b: &str| Goal {
@@ -11994,19 +12771,30 @@ mod tests {
         assert_eq!(results[1]["verdict"], "contradiction");
         let d1 = results[1]["diagnostic"].as_str().unwrap().to_string();
         assert!(d1.starts_with("diag:contradiction-"), "{}", results[1]);
-        assert_eq!(results[2]["error"]["rule"], "no-pair-diagnostic", "{}", results[2]);
+        assert_eq!(
+            results[2]["error"]["rule"], "no-pair-diagnostic",
+            "{}",
+            results[2]
+        );
         assert_eq!(
             v["settled"],
             json!(["g:rejudge-pair:req:a~req:b", "g:rejudge-pair:req:a~req:c"])
         );
         let open = v["open"].as_array().unwrap();
-        assert!(open.iter().any(|g| g == "g:rejudge-pair:req:b~req:c"), "{}", v);
+        assert!(
+            open.iter().any(|g| g == "g:rejudge-pair:req:b~req:c"),
+            "{}",
+            v
+        );
         // One resolution per goal with its own justification and evidence, as the
         // journal records them; one diagnostic staged for the contradiction.
         let commit = t.commit(1, None);
         assert_eq!(commit.resolved.len(), 2);
-        let by_goal: BTreeMap<&str, &Resolved> =
-            commit.resolved.iter().map(|r| (r.goal.as_str(), r)).collect();
+        let by_goal: BTreeMap<&str, &Resolved> = commit
+            .resolved
+            .iter()
+            .map(|r| (r.goal.as_str(), r))
+            .collect();
         assert_eq!(
             by_goal["g:rejudge-pair:req:a~req:b"].evidence,
             json!({"verdict": "consistent"})
@@ -12019,9 +12807,11 @@ mod tests {
             .justification
             .starts_with("Both cannot hold"));
         assert_eq!(t.staged.len(), 1);
-        assert!(matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
+        assert!(
+            matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
             if diagnostic.rule == "contradiction" && diagnostic.severity == "error"
-            && diagnostic.subjects == vec!["req:a".to_string(), "req:c".to_string()]));
+            && diagnostic.subjects == vec!["req:a".to_string(), "req:c".to_string()])
+        );
         // A mutating reply previews and re-renders the status like any write.
         assert!(v["status"].is_string(), "{}", v);
     }
@@ -12100,7 +12890,11 @@ mod tests {
         let r = &v["results"][0];
         assert!(r["error"].is_null(), "{}", r);
         assert_eq!(r["diagnostic"], "diag:contradiction-3", "{}", r);
-        assert!(r["note"].as_str().unwrap().contains("already stood"), "{}", r);
+        assert!(
+            r["note"].as_str().unwrap().contains("already stood"),
+            "{}",
+            r
+        );
         assert!(t.staged_diags.is_empty(), "{:?}", t.staged_diags.keys());
         assert_eq!(v["settled"], json!(["g:rejudge-pair:req:a~req:c"]));
     }
@@ -12157,11 +12951,19 @@ mod tests {
         let r = v["results"].as_array().unwrap();
         let dup = r[0]["diagnostic"].as_str().unwrap().to_string();
         assert!(dup.starts_with("diag:duplicate-requirement-"), "{}", r[0]);
-        assert_eq!(r[1]["resolved"], json!(["diag:contradiction-7"]), "{}", r[1]);
+        assert_eq!(
+            r[1]["resolved"],
+            json!(["diag:contradiction-7"]),
+            "{}",
+            r[1]
+        );
         assert_eq!(r[2]["error"]["rule"], "wrong-kind", "{}", r[2]);
         assert_eq!(r[3]["error"]["rule"], "unknown-goal", "{}", r[3]);
         assert_eq!(r[4]["error"]["rule"], "bad-args", "{}", r[4]);
-        assert!(r[4]["error"]["message"].as_str().unwrap().contains("message"));
+        assert!(r[4]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("message"));
         // Two sides quoting one document: the delete route, never a filing.
         let same = t
             .dispatch(
@@ -12173,8 +12975,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            same["results"][0]["error"]["rule"],
-            "same-document-duplicate",
+            same["results"][0]["error"]["rule"], "same-document-duplicate",
             "{}",
             same
         );
@@ -12182,9 +12983,13 @@ mod tests {
         // Two staged ops: the duplicate filing and the resolve; the refused
         // contradiction staged nothing.
         assert_eq!(t.staged.len(), 2, "{:?}", t.staged);
-        assert!(matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
-            if diagnostic.rule == "duplicate-requirement" && diagnostic.severity == "info"));
-        assert!(matches!(&t.staged[1], Op::ResolveDiagnostic { id, .. } if id == "diag:contradiction-7"));
+        assert!(
+            matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
+            if diagnostic.rule == "duplicate-requirement" && diagnostic.severity == "info")
+        );
+        assert!(
+            matches!(&t.staged[1], Op::ResolveDiagnostic { id, .. } if id == "diag:contradiction-7")
+        );
         // The duplicate resolution carries the diagnostic that carried it.
         let commit = t.commit(1, None);
         assert_eq!(commit.resolved.len(), 2);
@@ -12447,7 +13252,10 @@ mod tests {
         // A repeat whose answer changed is no repeat: the state moved between them.
         let args = json!({"query": "wishlist"});
         t.dispatch("search", &args).unwrap();
-        t.snapshot.graph.entities.insert("ent:wishlist".into(), plain("Wishlist"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:wishlist".into(), plain("Wishlist"));
         assert!(t.dispatch("search", &args).unwrap().get("repeat").is_none());
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
     }
@@ -12459,17 +13267,24 @@ mod tests {
     fn repeated_call_guard_follows_state_not_raw_arguments() {
         let mut t = session();
         for _ in 0..4 {
-            let err = t.dispatch("load", &json!({"target": "ent:nope"})).unwrap_err();
+            let err = t
+                .dispatch("load", &json!({"target": "ent:nope"}))
+                .unwrap_err();
             assert_ne!(err.rule, "repeated-call");
         }
         t.dispatch("load", &json!({"target": "Customer"})).unwrap();
-        let v = t.dispatch("load", &json!({"target": "ent:customer"})).unwrap();
+        let v = t
+            .dispatch("load", &json!({"target": "ent:customer"}))
+            .unwrap();
         assert!(v["repeat"].is_string(), "{}", v);
         // A read whose answer moved after its marked repeat answers on the third call.
         let args = json!({"query": "gizmo"});
         t.dispatch("search", &args).unwrap();
         assert!(t.dispatch("search", &args).unwrap()["repeat"].is_string());
-        t.snapshot.graph.entities.insert("ent:gizmo".into(), plain("Gizmo"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:gizmo".into(), plain("Gizmo"));
         let v = t.dispatch("search", &args).unwrap();
         assert!(v.get("repeat").is_none(), "{}", v);
         // A write refused twice answers again once the session staged a mutation.
@@ -12479,18 +13294,28 @@ mod tests {
         let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
         t.dispatch("upsert_entity", &up).unwrap();
         let third = t.dispatch("delete_entity", &args);
-        assert!(third.as_ref().err().map(|e| e.rule.as_str()) != Some("repeated-call"), "{:?}", third.err());
+        assert!(
+            third.as_ref().err().map(|e| e.rule.as_str()) != Some("repeated-call"),
+            "{:?}",
+            third.err()
+        );
         // With nothing moved, the third call is refused.
         let args = json!({"id": "ent:ghost", "reason": "unused"});
         t.dispatch("delete_entity", &args).unwrap_err();
         t.dispatch("delete_entity", &args).unwrap_err();
-        assert_eq!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+        assert_eq!(
+            t.dispatch("delete_entity", &args).unwrap_err().rule,
+            "repeated-call"
+        );
         // A commit between per-call sessions moves the state as well.
         let args = json!({"id": "ent:phantom", "reason": "unused"});
         t.dispatch("delete_entity", &args).unwrap_err();
         t.dispatch("delete_entity", &args).unwrap_err();
         t.snapshot.status.generation += 1;
-        assert_ne!(t.dispatch("delete_entity", &args).unwrap_err().rule, "repeated-call");
+        assert_ne!(
+            t.dispatch("delete_entity", &args).unwrap_err().rule,
+            "repeated-call"
+        );
     }
 
     // A refused write stages nothing and leaves no lookup entry behind.
@@ -12498,12 +13323,21 @@ mod tests {
     #[test]
     fn a_refused_write_leaves_no_staged_lookup_entries() {
         let mut t = session();
-        t.snapshot.graph.entities.insert("ent:gadget".into(), plain("Gadget"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:gadget".into(), plain("Gadget"));
         t.mutation_limit = 0;
         let up = json!({"name": "Sprocket", "definition": "a toothed wheel", "mention": {"section": "shop.md#/shop/cart", "quote": "a Sprocket"}});
-        assert_eq!(t.dispatch("upsert_entity", &up).unwrap_err().rule, "mutation-budget");
+        assert_eq!(
+            t.dispatch("upsert_entity", &up).unwrap_err().rule,
+            "mutation-budget"
+        );
         let err = t
-            .dispatch("update_entity", &json!({"id": "ent:customer", "parent": "ent:gadget"}))
+            .dispatch(
+                "update_entity",
+                &json!({"id": "ent:customer", "parent": "ent:gadget"}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "mutation-budget");
         assert!(t.staged.is_empty());
@@ -12520,17 +13354,34 @@ mod tests {
     #[test]
     fn a_huge_load_depth_saturates_instead_of_wrapping() {
         let mut t = session();
-        t.snapshot.graph.entities.insert("ent:order".into(), plain("Order"));
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:order".into(), plain("Order"));
         t.snapshot.graph.requirements.insert(
             "req:a".into(),
-            quoted_req("A Customer places an Order.", &["ent:customer", "ent:order"], "Customer"),
+            quoted_req(
+                "A Customer places an Order.",
+                &["ent:customer", "ent:order"],
+                "Customer",
+            ),
         );
-        t.dispatch("load", &json!({"target": "ent:customer", "depth": 4294967296u64}))
-            .unwrap();
+        t.dispatch(
+            "load",
+            &json!({"target": "ent:customer", "depth": 4294967296u64}),
+        )
+        .unwrap();
         assert!(
-            t.loaded.items.iter().any(|i| i.target == "ent:order" && i.what.starts_with("full")),
+            t.loaded
+                .items
+                .iter()
+                .any(|i| i.target == "ent:order" && i.what.starts_with("full")),
             "{:?}",
-            t.loaded.items.iter().map(|i| (&i.target, &i.what)).collect::<Vec<_>>()
+            t.loaded
+                .items
+                .iter()
+                .map(|i| (&i.target, &i.what))
+                .collect::<Vec<_>>()
         );
     }
 
@@ -12539,23 +13390,54 @@ mod tests {
         for name in ["record_generation", "record_binding"] {
             let files = BTreeMap::from([
                 ("hello.sh".into(), b"echo hello\n".to_vec()),
-                ("tests/check.sh".into(), b"# wrong_selector\nexit 0\n".to_vec()),
+                (
+                    "tests/check.sh".into(),
+                    b"# wrong_selector\nexit 0\n".to_vec(),
+                ),
             ]);
             let _scope = crate::vfs::Scope::enter(&files);
-            let mut snapshot = Store { out: "/project/.jazyk/ds_main".into(), ..Default::default() };
-            snapshot.graph.entities.insert("ent:greeter".into(), plain("Greeter"));
-            snapshot.graph.requirements.insert("req:hello".into(), Requirement {
-                statement: "The Greeter prints hello.".into(),
-                entities: vec!["ent:greeter".into()],
+            let mut snapshot = Store {
+                out: "/project/.jazyk/ds_main".into(),
                 ..Default::default()
-            });
-            let goals = [Goal { id: "g:generate:ent:greeter".into(), kind: "generate".into(),
-                target: "ent:greeter".into(), mandatory: true, ..Default::default() },
-                Goal { id: "g:bind:req:hello".into(), kind: "bind".into(),
-                target: "req:hello".into(), mandatory: true, ..Default::default() }];
-            let mut t = ToolSession::new(snapshot, WorkScope::for_batch("b-retry", &goals), 64, 24_000);
+            };
+            snapshot
+                .graph
+                .entities
+                .insert("ent:greeter".into(), plain("Greeter"));
+            snapshot.graph.requirements.insert(
+                "req:hello".into(),
+                Requirement {
+                    statement: "The Greeter prints hello.".into(),
+                    entities: vec!["ent:greeter".into()],
+                    ..Default::default()
+                },
+            );
+            let goals = [
+                Goal {
+                    id: "g:generate:ent:greeter".into(),
+                    kind: "generate".into(),
+                    target: "ent:greeter".into(),
+                    mandatory: true,
+                    ..Default::default()
+                },
+                Goal {
+                    id: "g:bind:req:hello".into(),
+                    kind: "bind".into(),
+                    target: "req:hello".into(),
+                    mandatory: true,
+                    ..Default::default()
+                },
+            ];
+            let mut t = ToolSession::new(
+                snapshot,
+                WorkScope::for_batch("b-retry", &goals),
+                64,
+                24_000,
+            );
             t.gen.deliverable = "/project".into();
-            let package = t.dispatch("begin_generation", &json!({"entity":"ent:greeter"})).unwrap();
+            let package = t
+                .dispatch("begin_generation", &json!({"entity":"ent:greeter"}))
+                .unwrap();
             let test = json!({"requirement":"req:hello", "kind":"programmatic", "label":"Greeting",
                 "artifact":"tests/check.sh", "name":"test_greeting", "run":"sh tests/check.sh test_greeting"});
             let args = if name == "record_generation" {
@@ -12570,11 +13452,19 @@ mod tests {
                 assert_ne!(err.rule, "repeated-call", "{name}: {err:?}");
                 assert!(err.message.contains("does not contain"), "{name}: {err:?}");
             }
-            assert!(crate::gen::Ledger::load(&t.snapshot.out).requirements.is_empty());
-            crate::vfs::write("/project/tests/check.sh", "test_greeting() { [ \"$(sh hello.sh)\" = hello ]; }\ntest_greeting\n").unwrap();
+            assert!(crate::gen::Ledger::load(&t.snapshot.out)
+                .requirements
+                .is_empty());
+            crate::vfs::write(
+                "/project/tests/check.sh",
+                "test_greeting() { [ \"$(sh hello.sh)\" = hello ]; }\ntest_greeting\n",
+            )
+            .unwrap();
             let result = t.dispatch(name, &args).unwrap();
             assert!(result.get("repeat").is_none(), "{name}: {result}");
-            assert!(!crate::gen::Ledger::load(&t.snapshot.out).requirements.is_empty());
+            assert!(!crate::gen::Ledger::load(&t.snapshot.out)
+                .requirements
+                .is_empty());
         }
     }
 
@@ -12586,19 +13476,56 @@ mod tests {
         let text = "# Warehouse\n\n## Frontend\n\nThe frontend is a web application built using React. It communicates with the\nbackend over a REST API.\n\n## People\n\nDot Feeney. Age 58. Occupation: ferry office manager.\n\n1. The employee submits the claim to their manager.\n";
         s.docs.insert(
             "w.md".into(),
-            DocRecord { content_hash: hash_hex(text), sections: crate::md::parse_sections(text), coverage: BTreeMap::new() },
+            DocRecord {
+                content_hash: hash_hex(text),
+                sections: crate::md::parse_sections(text),
+                coverage: BTreeMap::new(),
+            },
         );
-        s.graph.entities.insert("ent:frontend".into(), plain("Frontend"));
-        let mut t = ToolSession::new(s, reconcile_scope("w.md", &["/warehouse/frontend", "/warehouse/people"], &[]), 64, 24_000);
-        let req = |q: &str, sec: &str| json!({"statement": "The Frontend is a React web application.", "entities": ["ent:frontend"],
-            "section": format!("w.md#{}", sec), "quote": q, "facets": [{"facet": "constraint", "reasoning": "its form"}]});
+        s.graph
+            .entities
+            .insert("ent:frontend".into(), plain("Frontend"));
+        let mut t = ToolSession::new(
+            s,
+            reconcile_scope("w.md", &["/warehouse/frontend", "/warehouse/people"], &[]),
+            64,
+            24_000,
+        );
+        let req = |q: &str, sec: &str| {
+            json!({"statement": "The Frontend is a React web application.", "entities": ["ent:frontend"],
+            "section": format!("w.md#{}", sec), "quote": q, "facets": [{"facet": "constraint", "reasoning": "its form"}]})
+        };
         let err = t
             .dispatch("upsert_requirement", &req("The frontend is a web application built using React. It communicates with the backend over a REST API.", "/warehouse/frontend"))
             .unwrap_err();
         assert_eq!(err.rule, "quote-multi-sentence", "{}", err.message);
-        assert!(t.dispatch("upsert_requirement", &req("The frontend is a web application built using React.", "/warehouse/frontend")).is_ok());
-        assert!(t.dispatch("upsert_requirement", &req("Dot Feeney. Age 58. Occupation: ferry office manager.", "/warehouse/people")).is_ok());
-        assert!(t.dispatch("upsert_requirement", &req("1. The employee submits the claim to their manager.", "/warehouse/people")).is_ok());
+        assert!(t
+            .dispatch(
+                "upsert_requirement",
+                &req(
+                    "The frontend is a web application built using React.",
+                    "/warehouse/frontend"
+                )
+            )
+            .is_ok());
+        assert!(t
+            .dispatch(
+                "upsert_requirement",
+                &req(
+                    "Dot Feeney. Age 58. Occupation: ferry office manager.",
+                    "/warehouse/people"
+                )
+            )
+            .is_ok());
+        assert!(t
+            .dispatch(
+                "upsert_requirement",
+                &req(
+                    "1. The employee submits the claim to their manager.",
+                    "/warehouse/people"
+                )
+            )
+            .is_ok());
     }
 
     #[test]
@@ -12646,17 +13573,34 @@ mod tests {
     #[test]
     fn diagnostics_count_bookkeeping_unless_its_rule_is_asked() {
         let mut t = session();
-        for (id, rule) in [("diag:ratification-pending-1", "ratification-pending"), ("diag:ratification-pending-2", "ratification-pending"), ("diag:ambiguity-1", "ambiguity")] {
-            t.snapshot.graph.diagnostics.insert(id.into(), Diagnostic {
-                rule: rule.into(), severity: "info".into(), lifecycle: "open".into(),
-                subjects: vec!["ent:customer".into()], message: "m".into(), reasoning: None,
-                triage: None, prompt: None, answer: None, created: None, updated: None,
-            });
+        for (id, rule) in [
+            ("diag:ratification-pending-1", "ratification-pending"),
+            ("diag:ratification-pending-2", "ratification-pending"),
+            ("diag:ambiguity-1", "ambiguity"),
+        ] {
+            t.snapshot.graph.diagnostics.insert(
+                id.into(),
+                Diagnostic {
+                    rule: rule.into(),
+                    severity: "info".into(),
+                    lifecycle: "open".into(),
+                    subjects: vec!["ent:customer".into()],
+                    message: "m".into(),
+                    reasoning: None,
+                    triage: None,
+                    prompt: None,
+                    answer: None,
+                    created: None,
+                    updated: None,
+                },
+            );
         }
         let v = t.dispatch("diagnostics", &json!({})).unwrap();
         assert_eq!(v["count"], 1, "{}", v);
         assert_eq!(v["bookkeeping"]["ratification-pending"], 2, "{}", v);
-        let v = t.dispatch("diagnostics", &json!({"rule": "ratification-pending"})).unwrap();
+        let v = t
+            .dispatch("diagnostics", &json!({"rule": "ratification-pending"}))
+            .unwrap();
         assert_eq!(v["count"], 2, "{}", v);
     }
 
@@ -12667,17 +13611,26 @@ mod tests {
         let mut t = session();
         let q = "The Shopping Cart holds items a Customer intends to buy.";
         let err = t
-            .dispatch("upsert_entity", &json!({"name": "Warehouse", "definition": "d", "stereotype": "system",
-                "mention": {"section": "/shop/cart", "quote": q}}))
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Warehouse", "definition": "d", "stereotype": "system",
+                "mention": {"section": "/shop/cart", "quote": q}}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "mention-unnamed", "{}", err.message);
         assert!(t
-            .dispatch("upsert_entity", &json!({"name": "Basket", "definition": "d", "aliases": ["Shopping Cart"],
-                "mention": {"section": "/shop/cart", "quote": q}}))
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Basket", "definition": "d", "aliases": ["Shopping Cart"],
+                "mention": {"section": "/shop/cart", "quote": q}})
+            )
             .is_ok());
         assert!(t
-            .dispatch("upsert_entity", &json!({"name": "Items", "definition": "d",
-                "mention": {"section": "/shop/cart", "quote": q}}))
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Items", "definition": "d",
+                "mention": {"section": "/shop/cart", "quote": q}})
+            )
             .is_ok());
     }
 
@@ -12687,10 +13640,17 @@ mod tests {
     fn an_entity_quoting_a_heading_hears_it_is_not_minted_from_one() {
         let mut t = session();
         let err = t
-            .dispatch("upsert_entity", &json!({"name": "Shop", "definition": "d", "stereotype": "system",
-                "mention": {"section": "/shop", "quote": "Shop"}}))
+            .dispatch(
+                "upsert_entity",
+                &json!({"name": "Shop", "definition": "d", "stereotype": "system",
+                "mention": {"section": "/shop", "quote": "Shop"}}),
+            )
             .unwrap_err();
-        assert!(err.message.contains("not minted from its heading"), "{}", err.message);
+        assert!(
+            err.message.contains("not minted from its heading"),
+            "{}",
+            err.message
+        );
     }
 
     // A section is no node: derived.from naming one is refused with the quote repair.
@@ -12706,7 +13666,11 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "unknown-id");
-        assert!(err.message.contains("a section") && err.message.contains("mention"), "{}", err.message);
+        assert!(
+            err.message.contains("a section") && err.message.contains("mention"),
+            "{}",
+            err.message
+        );
     }
 
     // Past the high-water mark, load and expand refuse naming candidates; reads
@@ -12841,7 +13805,11 @@ mod tests {
             )
             .unwrap_err();
         assert_eq!(err.rule, "bad-reason");
-        assert!(err.message.contains("blocks convergence"), "{}", err.message);
+        assert!(
+            err.message.contains("blocks convergence"),
+            "{}",
+            err.message
+        );
         let v = t
             .dispatch(
                 "mark_goal_failed",
@@ -12952,15 +13920,24 @@ mod tests {
         crate::vfs::create_dir_all(&base).unwrap();
         let mut t = session();
         t.gen.deliverable = base.clone();
-        for path in [".env", ".git/config", ".jazyk/status.yaml", "keys/server.pem", "a/.ssh/id_rsa"] {
+        for path in [
+            ".env",
+            ".git/config",
+            ".jazyk/status.yaml",
+            "keys/server.pem",
+            "a/.ssh/id_rsa",
+        ] {
             let err = t
                 .dispatch("write_text_file", &json!({"path": path, "content": "x"}))
                 .unwrap_err();
             assert_eq!(err.rule, "protected-path", "{path}: {}", err.message);
             assert!(!base.join(path).vexists(), "{path}");
         }
-        t.dispatch("write_text_file", &json!({"path": "src/ok.txt", "content": "fine"}))
-            .unwrap();
+        t.dispatch(
+            "write_text_file",
+            &json!({"path": "src/ok.txt", "content": "fine"}),
+        )
+        .unwrap();
         assert!(base.join("src/ok.txt").vexists());
         crate::vfs::remove_dir_all(&base).ok();
     }
@@ -12990,7 +13967,12 @@ mod tests {
             crate::vfs::write(deliverable.join("b").join(format!("f{:04}.txt", i)), "x").unwrap();
         }
         let v = t.dispatch("list_files", &json!({})).unwrap();
-        assert_eq!(v["files"].as_array().unwrap().len(), LIST_FILES_LIMIT, "{}", v["truncated"]);
+        assert_eq!(
+            v["files"].as_array().unwrap().len(),
+            LIST_FILES_LIMIT,
+            "{}",
+            v["truncated"]
+        );
         assert_eq!(v["truncated"], true);
         crate::vfs::remove_dir_all(&base).ok();
     }
@@ -13018,7 +14000,11 @@ mod tests {
         let v = t
             .dispatch("read_text_file", &json!({"path": "src/ok.txt"}))
             .unwrap();
-        assert!(v["content"].as_str().unwrap_or_default().contains("fine"), "{}", v);
+        assert!(
+            v["content"].as_str().unwrap_or_default().contains("fine"),
+            "{}",
+            v
+        );
         #[cfg(unix)]
         {
             let err = t
@@ -13053,21 +14039,39 @@ mod tests {
 
     #[test]
     fn guessed_file_reads_keep_protected_paths_private_under_broad_source() {
-        let root = std::env::temp_dir().join(format!("jazyk-read-fence-{}-{}",
-            crate::sys::process_id(), crate::verify::now_iso().replace([':', '.'], "-")));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-read-fence-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
         let mut t = session();
         t.gen.deliverable = root.clone();
         t.gen.configured = true;
         t.gen.code = vec!["**".into()];
-        for path in [".env", ".jazyk/jazyk.toml", ".git/config", ".aws/credentials",
-            ".ssh/id_ed25519", "src/secret.pem", "src/private.key", "src/local.env", ".hidden/state"] {
+        for path in [
+            ".env",
+            ".jazyk/jazyk.toml",
+            ".git/config",
+            ".aws/credentials",
+            ".ssh/id_ed25519",
+            "src/secret.pem",
+            "src/private.key",
+            "src/local.env",
+            ".hidden/state",
+        ] {
             let full = root.join(path);
             crate::vfs::create_dir_all(full.parent().unwrap()).unwrap();
             crate::vfs::write(&full, "private fixture").unwrap();
-            let error = t.dispatch("read_text_file", &json!({"path":path})).unwrap_err();
+            let error = t
+                .dispatch("read_text_file", &json!({"path":path}))
+                .unwrap_err();
             assert_eq!(error.rule, "protected-path", "{path}");
         }
-        for path in ["docs/notes.md", "target/build-evidence.json", ".github/workflows/deploy.yml"] {
+        for path in [
+            "docs/notes.md",
+            "target/build-evidence.json",
+            ".github/workflows/deploy.yml",
+        ] {
             let full = root.join(path);
             crate::vfs::create_dir_all(full.parent().unwrap()).unwrap();
             crate::vfs::write(&full, "ordinary evidence").unwrap();
@@ -13079,7 +14083,9 @@ mod tests {
             std::os::unix::fs::symlink(root.join(".env"), root.join("environment.txt")).unwrap();
             std::os::unix::fs::symlink(root.join(".git"), root.join("repository")).unwrap();
             for path in ["environment.txt", "repository/config"] {
-                let error = t.dispatch("read_text_file", &json!({"path":path})).unwrap_err();
+                let error = t
+                    .dispatch("read_text_file", &json!({"path":path}))
+                    .unwrap_err();
                 assert_eq!(error.rule, "protected-path", "{path}");
             }
         }
@@ -13096,29 +14102,56 @@ mod tests {
         let private = root.path().join("deliverable/.env");
         std::fs::write(&private, "PRIVATE_ENVIRONMENT").unwrap();
         std::os::unix::fs::symlink(&private, root.path().join("deliverable/public.svg")).unwrap();
-        let project = crate::document_sets::Workspace::load(root.path()).unwrap().resolve(Some("ds_a")).unwrap();
-        let mut tools = ToolSession::new(Store::load(&project.out), WorkScope::serving("generate"), 20, 8000);
+        let project = crate::document_sets::Workspace::load(root.path())
+            .unwrap()
+            .resolve(Some("ds_a"))
+            .unwrap();
+        let mut tools = ToolSession::new(
+            Store::load(&project.out),
+            WorkScope::serving("generate"),
+            20,
+            8000,
+        );
         tools.gen = crate::gen::GenSettings::resolve(&project);
-        let error = tools.dispatch("write_text_file", &json!({"path":"deliverable/public.svg", "content":"changed"})).unwrap_err();
+        let error = tools
+            .dispatch(
+                "write_text_file",
+                &json!({"path":"deliverable/public.svg", "content":"changed"}),
+            )
+            .unwrap_err();
         assert_eq!(error.rule, "source-selection");
-        let error = tools.dispatch("read_text_file", &json!({"path":"deliverable/public.svg"})).unwrap_err();
+        let error = tools
+            .dispatch("read_text_file", &json!({"path":"deliverable/public.svg"}))
+            .unwrap_err();
         assert_eq!(error.rule, "protected-path");
         let error = tools.dispatch("write_text_file", &json!({"path":"deliverable/public.svg", "old_text":"PRIVATE_ENVIRONMENT", "content":"changed", "expectedHash":crate::task_runtime::digest(b"PRIVATE_ENVIRONMENT")})).unwrap_err();
         assert_eq!(error.rule, "source-selection");
-        assert_eq!(std::fs::read_to_string(&private).unwrap(), "PRIVATE_ENVIRONMENT");
+        assert_eq!(
+            std::fs::read_to_string(&private).unwrap(),
+            "PRIVATE_ENVIRONMENT"
+        );
     }
 
     #[test]
     fn file_reads_bound_single_utf8_lines_and_resume_at_following_lines() {
-        let root = std::env::temp_dir().join(format!("jazyk-read-bound-{}-{}",
-            crate::sys::process_id(), crate::verify::now_iso().replace([':', '.'], "-")));
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-read-bound-{}-{}",
+            crate::sys::process_id(),
+            crate::verify::now_iso().replace([':', '.'], "-")
+        ));
         crate::vfs::create_dir_all(&root).unwrap();
         let mut t = session();
         t.gen.deliverable = root.clone();
         // 3-byte characters put the boundary inside a scalar value at 64 KiB.
         let line = "界".repeat(ToolSession::READ_FILE_BYTES);
-        crate::vfs::write(root.join("minified.json"), format!("{line}\nfollowing line\n")).unwrap();
-        let first = t.dispatch("read_text_file", &json!({"path":"minified.json"})).unwrap();
+        crate::vfs::write(
+            root.join("minified.json"),
+            format!("{line}\nfollowing line\n"),
+        )
+        .unwrap();
+        let first = t
+            .dispatch("read_text_file", &json!({"path":"minified.json"}))
+            .unwrap();
         let content = first["content"].as_str().unwrap();
         assert!(content.len() <= ToolSession::READ_FILE_BYTES);
         assert!(line.starts_with(content));
@@ -13126,17 +14159,32 @@ mod tests {
         assert_eq!(first["truncatedLine"], 1);
         assert_eq!(first["nextLine"], 2);
         assert!(first["notice"].as_str().unwrap().contains("omitted"));
-        let next = t.dispatch("read_text_file", &json!({"path":"minified.json","line":first["nextLine"]})).unwrap();
+        let next = t
+            .dispatch(
+                "read_text_file",
+                &json!({"path":"minified.json","line":first["nextLine"]}),
+            )
+            .unwrap();
         assert_eq!(next["content"], "following line\n");
         assert!(next["truncated"].is_null());
         crate::vfs::write(root.join("minified.json"), &line).unwrap();
-        let only = t.dispatch("read_text_file", &json!({"path":"minified.json"})).unwrap();
+        let only = t
+            .dispatch("read_text_file", &json!({"path":"minified.json"}))
+            .unwrap();
         assert_eq!(only["truncatedLine"], 1);
-        assert!(only["nextLine"].is_null(), "a partial last line has no following line");
+        assert!(
+            only["nextLine"].is_null(),
+            "a partial last line has no following line"
+        );
         let regular = "a".repeat(1023) + "\n";
         crate::vfs::write(root.join("many.txt"), regular.repeat(100)).unwrap();
-        let page = t.dispatch("read_text_file", &json!({"path":"many.txt","limit":400})).unwrap();
-        assert_eq!(page["content"].as_str().unwrap().as_bytes(), regular.repeat(64).as_bytes());
+        let page = t
+            .dispatch("read_text_file", &json!({"path":"many.txt","limit":400}))
+            .unwrap();
+        assert_eq!(
+            page["content"].as_str().unwrap().as_bytes(),
+            regular.repeat(64).as_bytes()
+        );
         assert_eq!(page["nextLine"], 65);
         assert!(page["truncatedLine"].is_null());
         crate::vfs::remove_dir_all(root).ok();
@@ -13147,25 +14195,43 @@ mod tests {
         let _scope = crate::vfs::Scope::enter(&Default::default());
         let root = std::path::PathBuf::from("/project/deliverable");
         crate::vfs::create_dir_all(&root).unwrap();
-        let original = "<title>Jazyk ž</title>\r\nregex = r'\\w+\\.py'\r\n<footer>keep me</footer>\r\n";
+        let original =
+            "<title>Jazyk ž</title>\r\nregex = r'\\w+\\.py'\r\n<footer>keep me</footer>\r\n";
         crate::vfs::write(root.join("index.html"), original).unwrap();
         let mut tools = session();
         tools.gen.deliverable = root.clone();
-        let page = tools.dispatch("read_text_file", &json!({"path":"index.html","limit":1})).unwrap();
+        let page = tools
+            .dispatch("read_text_file", &json!({"path":"index.html","limit":1}))
+            .unwrap();
         assert_eq!(page["content"], "<title>Jazyk ž</title>\r\n");
-        assert_eq!(page["hash"], crate::task_runtime::digest(original.as_bytes()));
+        assert_eq!(
+            page["hash"],
+            crate::task_runtime::digest(original.as_bytes())
+        );
         assert_eq!(page["truncated"], true);
         let replacement = "<title>Jazyk ✓</title>";
         let reply = tools.dispatch("write_text_file", &json!({"path":"index.html","old_text":"<title>Jazyk ž</title>","content":replacement,"expectedHash":page["hash"]})).unwrap();
         let expected = original.replace("<title>Jazyk ž</title>", replacement);
-        assert_eq!(crate::vfs::read_to_string(root.join("index.html")).unwrap(), expected);
+        assert_eq!(
+            crate::vfs::read_to_string(root.join("index.html")).unwrap(),
+            expected
+        );
         assert_eq!(reply["replaced"], 1);
         assert_eq!(reply["fileBytes"], expected.len());
-        assert_eq!(reply["hash"], crate::task_runtime::digest(expected.as_bytes()));
+        assert_eq!(
+            reply["hash"],
+            crate::task_runtime::digest(expected.as_bytes())
+        );
         let appended = tools.dispatch("write_text_file", &json!({"path":"index.html","content":"<!-- fin -->","append":true,"expectedHash":reply["hash"]})).unwrap();
-        assert_eq!(appended["hash"], crate::task_runtime::digest(format!("{expected}<!-- fin -->").as_bytes()));
+        assert_eq!(
+            appended["hash"],
+            crate::task_runtime::digest(format!("{expected}<!-- fin -->").as_bytes())
+        );
         tools.dispatch("write_text_file", &json!({"path":"index.html","content":"","old_text":"<!-- fin -->","expectedHash":appended["hash"]})).unwrap();
-        assert_eq!(crate::vfs::read_to_string(root.join("index.html")).unwrap(), expected);
+        assert_eq!(
+            crate::vfs::read_to_string(root.join("index.html")).unwrap(),
+            expected
+        );
     }
 
     #[test]
@@ -13177,16 +14243,28 @@ mod tests {
         let mut tools = session();
         tools.gen.deliverable = root;
         crate::vfs::write(&path, "original").unwrap();
-        let stale = tools.dispatch("read_text_file", &json!({"path":"page.txt"})).unwrap()["hash"].clone();
+        let stale = tools
+            .dispatch("read_text_file", &json!({"path":"page.txt"}))
+            .unwrap()["hash"]
+            .clone();
         crate::vfs::write(&path, "aaa other aaa").unwrap();
         let hash = crate::task_runtime::digest(b"aaa other aaa");
         for (args, rule) in [
-            (json!({"old_text":"original","expectedHash":stale}), "file-conflict"),
+            (
+                json!({"old_text":"original","expectedHash":stale}),
+                "file-conflict",
+            ),
             (json!({"old_text":"aaa"}), "invalid-edit"),
             (json!({"old_text":"aaa","expectedHash":""}), "bad-args"),
-            (json!({"old_text":"aaa","expectedHash":hash,"append":true}), "invalid-edit"),
+            (
+                json!({"old_text":"aaa","expectedHash":hash,"append":true}),
+                "invalid-edit",
+            ),
             (json!({"old_text":"","expectedHash":hash}), "edit-match"),
-            (json!({"old_text":"absent","expectedHash":hash}), "edit-match"),
+            (
+                json!({"old_text":"absent","expectedHash":hash}),
+                "edit-match",
+            ),
             (json!({"old_text":"aaa","expectedHash":hash}), "edit-match"),
             (json!({"old_text":"aa","expectedHash":hash}), "edit-match"),
             (json!({"expectedHash":stale}), "file-conflict"),
@@ -13195,10 +14273,18 @@ mod tests {
             let mut args = args;
             args["path"] = json!("page.txt");
             args["content"] = json!("replacement");
-            assert_eq!(tools.dispatch("write_text_file", &args).unwrap_err().rule, rule);
+            assert_eq!(
+                tools.dispatch("write_text_file", &args).unwrap_err().rule,
+                rule
+            );
             assert_eq!(crate::vfs::read_to_string(&path).unwrap(), "aaa other aaa");
         }
-        assert_eq!(crate::vfs::read_dir(path.parent().unwrap()).unwrap().count(), 1);
+        assert_eq!(
+            crate::vfs::read_dir(path.parent().unwrap())
+                .unwrap()
+                .count(),
+            1
+        );
     }
 
     #[cfg(unix)]
@@ -13211,10 +14297,18 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
         let mut tools = session();
         tools.gen.deliverable = root.path().to_path_buf();
-        let read = tools.dispatch("read_text_file", &json!({"path":"check.sh"})).unwrap();
+        let read = tools
+            .dispatch("read_text_file", &json!({"path":"check.sh"}))
+            .unwrap();
         tools.dispatch("write_text_file", &json!({"path":"check.sh","old_text":"echo before","content":"echo after","expectedHash":read["hash"]})).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "#!/bin/sh\necho after\n");
-        assert_eq!(std::fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o750);
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "#!/bin/sh\necho after\n"
+        );
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o750
+        );
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
     }
 
@@ -13225,8 +14319,16 @@ mod tests {
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
         crate::vfs::create_dir_all(root.join("assets")).unwrap();
         crate::vfs::write(root.join(crate::document_sets::CONFIG), "version = 1\n[[sets]]\nid = 'ds_svg'\nname = 'SVG'\ndocs = ['docs/**']\nsource = ['product/**']\n").unwrap();
-        let project = crate::document_sets::Workspace::load(root).unwrap().resolve(Some("ds_svg")).unwrap();
-        let mut tools = ToolSession::new(Store::load(&project.out), WorkScope::serving("generate"), 100, 24000);
+        let project = crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .resolve(Some("ds_svg"))
+            .unwrap();
+        let mut tools = ToolSession::new(
+            Store::load(&project.out),
+            WorkScope::serving("generate"),
+            100,
+            24000,
+        );
         tools.gen = crate::gen::GenSettings::resolve(&project);
         let lines = [
             "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
@@ -13245,16 +14347,32 @@ mod tests {
                     let mut line = 1;
                     let mut append = false;
                     loop {
-                        let read = tools.dispatch("read_text_file", &json!({"path":input,"line":line,"limit":limit})).unwrap();
+                        let read = tools
+                            .dispatch(
+                                "read_text_file",
+                                &json!({"path":input,"line":line,"limit":limit}),
+                            )
+                            .unwrap();
                         assert_eq!(read["totalLines"], lines.len());
                         assert!(read["truncatedLine"].is_null());
-                        tools.dispatch("write_text_file", &json!({"path":output,"content":read["content"],"append":append})).unwrap();
-                        let Some(next) = read["nextLine"].as_u64() else { break };
+                        tools
+                            .dispatch(
+                                "write_text_file",
+                                &json!({"path":output,"content":read["content"],"append":append}),
+                            )
+                            .unwrap();
+                        let Some(next) = read["nextLine"].as_u64() else {
+                            break;
+                        };
                         assert!(next > line);
                         line = next;
                         append = true;
                     }
-                    assert_eq!(crate::vfs::read(root.join(&output)).unwrap(), source.as_bytes(), "{output}");
+                    assert_eq!(
+                        crate::vfs::read(root.join(&output)).unwrap(),
+                        source.as_bytes(),
+                        "{output}"
+                    );
                 }
             }
         }
@@ -13270,21 +14388,41 @@ mod tests {
         // Both replies span pages. The first reaches the unchanged default line
         // count; the second reaches exactly 64 KiB including its CRLF delimiters.
         for (path, source, first_next, first_bytes) in [
-            ("lines.txt", "line\r\n".repeat(401), 401, "line\r\n".len() * ToolSession::READ_FILE_LINES),
-            ("bytes.txt", ("x".repeat(1022) + "\r\n").repeat(100), 65, ToolSession::READ_FILE_BYTES),
+            (
+                "lines.txt",
+                "line\r\n".repeat(401),
+                401,
+                "line\r\n".len() * ToolSession::READ_FILE_LINES,
+            ),
+            (
+                "bytes.txt",
+                ("x".repeat(1022) + "\r\n").repeat(100),
+                65,
+                ToolSession::READ_FILE_BYTES,
+            ),
         ] {
             crate::vfs::write(root.join(path), source.as_bytes()).unwrap();
-            let first = tools.dispatch("read_text_file", &json!({"path":path})).unwrap();
+            let first = tools
+                .dispatch("read_text_file", &json!({"path":path}))
+                .unwrap();
             assert_eq!(first["nextLine"], first_next);
             assert_eq!(first["truncated"], true);
             let prefix = first["content"].as_str().unwrap();
             assert_eq!(prefix.len(), first_bytes);
             assert!(source.starts_with(prefix));
             assert!(prefix.ends_with("\r\n"));
-            let last = tools.dispatch("read_text_file", &json!({"path":path,"line":first["nextLine"]})).unwrap();
+            let last = tools
+                .dispatch(
+                    "read_text_file",
+                    &json!({"path":path,"line":first["nextLine"]}),
+                )
+                .unwrap();
             assert!(last["nextLine"].is_null());
             assert!(last["truncated"].is_null());
-            assert_eq!(format!("{prefix}{}", last["content"].as_str().unwrap()).as_bytes(), source.as_bytes());
+            assert_eq!(
+                format!("{prefix}{}", last["content"].as_str().unwrap()).as_bytes(),
+                source.as_bytes()
+            );
         }
     }
 
@@ -13301,7 +14439,10 @@ mod tests {
         ));
         let deliverable = dir.join("handbook");
         crate::vfs::create_dir_all(&deliverable).unwrap();
-        let mut s = Store { out: dir.join("out"), ..Default::default() };
+        let mut s = Store {
+            out: dir.join("out"),
+            ..Default::default()
+        };
         s.graph.entities.insert("ent:org".into(), plain("Org"));
         for (id, name, parent) in [
             ("ent:operations", "Operations", "ent:org"),
@@ -13334,49 +14475,95 @@ mod tests {
                 target: target.into(),
                 ..Default::default()
             }];
-            let mut t = ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+            let mut t =
+                ToolSession::new(s.clone(), WorkScope::for_batch("b0-1", &goals), 64, 24_000);
             t.gen.deliverable = deliverable.clone();
             t
         };
         // A member of the owner's group writes the shared page.
         let mut t = session_for("ent:store-manager");
-        t.dispatch("write_text_file", &json!({"path": "departments.md", "content": "# Departments\n"}))
+        t.dispatch(
+            "write_text_file",
+            &json!({"path": "departments.md", "content": "# Departments\n"}),
+        )
+        .unwrap();
+        let read = t
+            .dispatch("read_text_file", &json!({"path":"departments.md"}))
             .unwrap();
-        let read = t.dispatch("read_text_file", &json!({"path":"departments.md"})).unwrap();
-        assert_eq!(read["owner"],"ent:operations");
-        assert_eq!(read["requires_generation"],false);
+        assert_eq!(read["owner"], "ent:operations");
+        assert_eq!(read["requires_generation"], false);
         assert!(read.get("begin_generation").is_none());
         // Another group is refused, the owner named.
         let mut t = session_for("ent:sales");
-        let read = t.dispatch("read_text_file", &json!({"path":"departments.md"})).unwrap();
-        assert_eq!(read["owner"],"ent:operations");
-        assert_eq!(read["begin_generation"]["entity"],"ent:operations");
+        let read = t
+            .dispatch("read_text_file", &json!({"path":"departments.md"}))
+            .unwrap();
+        assert_eq!(read["owner"], "ent:operations");
+        assert_eq!(read["begin_generation"]["entity"], "ent:operations");
 
         let err = t
-            .dispatch("write_text_file", &json!({"path": "departments.md", "content": "x"}))
+            .dispatch(
+                "write_text_file",
+                &json!({"path": "departments.md", "content": "x"}),
+            )
             .unwrap_err();
         assert_eq!(err.rule, "file-owned");
         assert!(err.message.contains("operations"), "{}", err.message);
         let err = t.dispatch("write_text_file", &json!({"path":"departments.md", "old_text":"# Departments", "content":"# Changed", "expectedHash":read["hash"]})).unwrap_err();
         assert_eq!(err.rule, "file-owned");
-        assert_eq!(crate::vfs::read_to_string(deliverable.join("departments.md")).unwrap(), "# Departments\n");
+        assert_eq!(
+            crate::vfs::read_to_string(deliverable.join("departments.md")).unwrap(),
+            "# Departments\n"
+        );
         // The restated root: written, read, and listed under the root, with a note.
         let v = t
-            .dispatch("write_text_file", &json!({"path": "handbook/sales.md", "content": "# Sales\n"}))
+            .dispatch(
+                "write_text_file",
+                &json!({"path": "handbook/sales.md", "content": "# Sales\n"}),
+            )
             .unwrap();
         assert_eq!(v["written"], "sales.md", "{}", v);
-        assert!(v["note"].as_str().unwrap_or_default().contains("`sales.md`"), "{}", v);
+        assert!(
+            v["note"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("`sales.md`"),
+            "{}",
+            v
+        );
         assert!(deliverable.join("sales.md").vis_file());
         assert!(!deliverable.join("handbook").vexists());
-        let v = t.dispatch("read_text_file", &json!({"path": "handbook/sales.md"})).unwrap();
-        assert!(v["content"].as_str().unwrap_or_default().contains("# Sales"), "{}", v);
+        let v = t
+            .dispatch("read_text_file", &json!({"path": "handbook/sales.md"}))
+            .unwrap();
+        assert!(
+            v["content"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("# Sales"),
+            "{}",
+            v
+        );
         assert!(v["note"].is_string(), "{}", v);
-        let v = t.dispatch("list_files", &json!({"path": "handbook"})).unwrap();
-        assert!(v["files"].as_array().unwrap().iter().any(|f| f == "sales.md"), "{}", v);
+        let v = t
+            .dispatch("list_files", &json!({"path": "handbook"}))
+            .unwrap();
+        assert!(
+            v["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|f| f == "sales.md"),
+            "{}",
+            v
+        );
         // A deliverable that really holds `handbook/` keeps the path as given.
         crate::vfs::create_dir_all(deliverable.join("handbook")).unwrap();
         let v = t
-            .dispatch("write_text_file", &json!({"path": "handbook/inner.md", "content": "x"}))
+            .dispatch(
+                "write_text_file",
+                &json!({"path": "handbook/inner.md", "content": "x"}),
+            )
             .unwrap();
         assert_eq!(v["written"], "handbook/inner.md", "{}", v);
         assert!(v["note"].is_null(), "{}", v);
@@ -13754,7 +14941,9 @@ mod tests {
         let mut s = Store::default();
         s.graph.entities.insert("ent:svc".into(), plain("Service"));
         s.graph.entities.insert("ent:db".into(), plain("Database"));
-        s.graph.entities.insert("ent:session".into(), plain("Session"));
+        s.graph
+            .entities
+            .insert("ent:session".into(), plain("Session"));
         for (i, ents) in [
             vec!["ent:svc", "ent:session", "ent:db"],
             vec!["ent:svc", "ent:db"],
@@ -13793,7 +14982,10 @@ mod tests {
     fn caps_split_grows_the_mutation_budget_by_the_crossed_count() {
         let t = caps_session();
         assert_eq!(t.mutation_limit, crate::limits::SESSION_MUTATIONS + 96);
-        assert_eq!(level_session().mutation_limit, crate::limits::SESSION_MUTATIONS);
+        assert_eq!(
+            level_session().mutation_limit,
+            crate::limits::SESSION_MUTATIONS
+        );
     }
 
     // Mirrors docs/compiler/goals/abstract-entity.md#gate: a re-point swaps the target
@@ -13815,7 +15007,8 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.rule, "entities-dropped");
         assert!(
-            err.message.contains("send entities [ent:data-model, ent:session, ent:db]"),
+            err.message
+                .contains("send entities [ent:data-model, ent:session, ent:db]"),
             "{}",
             err.message
         );
@@ -13877,10 +15070,16 @@ mod tests {
     #[test]
     fn get_view_lists_member_relationships_lifted() {
         let mut s = Store::default();
-        for (id, name) in [("ent:server", "Server"), ("ent:db", "Database"), ("ent:cache", "Cache")] {
+        for (id, name) in [
+            ("ent:server", "Server"),
+            ("ent:db", "Database"),
+            ("ent:cache", "Cache"),
+        ] {
             s.graph.entities.insert(id.into(), plain(name));
         }
-        s.graph.entities.insert("ent:model".into(), under("Model", "ent:server"));
+        s.graph
+            .entities
+            .insert("ent:model".into(), under("Model", "ent:server"));
         let rel = |a: &str, b: &str, ty: &str| Relationship {
             members: vec![a.into(), b.into()],
             contributions: vec![Contribution {
@@ -13891,8 +15090,13 @@ mod tests {
                 requirements: vec!["req:x".into()],
             }],
         };
-        s.graph.relationships.insert("rel:1".into(), rel("ent:model", "ent:db", "dependency"));
-        s.graph.relationships.insert("rel:2".into(), rel("ent:server", "ent:cache", "association"));
+        s.graph
+            .relationships
+            .insert("rel:1".into(), rel("ent:model", "ent:db", "dependency"));
+        s.graph.relationships.insert(
+            "rel:2".into(),
+            rel("ent:server", "ent:cache", "association"),
+        );
         s.graph.views.insert(
             "view:class/backend".into(),
             View {
@@ -13903,7 +15107,9 @@ mod tests {
             },
         );
         let mut t = ToolSession::new(s, WorkScope::serving("mcp-compile"), 64, 24_000);
-        let r = t.dispatch("get_view", &json!({"id": "view:class/backend"})).unwrap();
+        let r = t
+            .dispatch("get_view", &json!({"id": "view:class/backend"}))
+            .unwrap();
         assert_eq!(
             r["relationships"],
             json!([
@@ -14016,31 +15222,56 @@ mod tests {
             .requirements
             .insert("req:shop-1".into(), quoted_req(old, &["ent:customer"], old));
         let prompt = |section: &str, facts: Value| {
-            let old_text = if section == "/shop" { "intro text" } else { "holds items" };
+            let old_text = if section == "/shop" {
+                "intro text"
+            } else {
+                "holds items"
+            };
             normalize_args(&json!({"prompt": {"question": "Which?", "options": [
                 {"label": "A", "edit": {"doc": "shop.md", "section": section,
                  "old_text": old_text, "new_text": "keeps items", "facts": facts}}]}}))
         };
-        let ok = prompt("/shop/cart", json!([{"id": "shop-1", "field": "transition",
-            "value": {"subject": "ent:customer", "from": "browsing", "to": "buying"}}]));
+        let ok = prompt(
+            "/shop/cart",
+            json!([{"id": "shop-1", "field": "transition",
+            "value": {"subject": "ent:customer", "from": "browsing", "to": "buying"}}]),
+        );
         let p = t.parse_prompt(&ok["prompt"]).unwrap().unwrap();
         let facts = &p.options[0].edit.as_ref().unwrap().facts;
         assert_eq!(facts.len(), 1);
         let ops = t.fact_ops("shop.md", "/shop/cart", facts).unwrap();
-        assert!(matches!(&ops[0], Op::UpdateRequirement { id, transition: Some(tr), .. }
-            if id == "req:shop-1" && tr.to == "buying"));
+        assert!(
+            matches!(&ops[0], Op::UpdateRequirement { id, transition: Some(tr), .. }
+            if id == "req:shop-1" && tr.to == "buying")
+        );
         // An entity list first: the transition after it is judged against the new list.
-        t.snapshot.graph.entities.insert("ent:cart".into(), plain("Cart"));
-        let reordered = prompt("/shop/cart", json!([
+        t.snapshot
+            .graph
+            .entities
+            .insert("ent:cart".into(), plain("Cart"));
+        let reordered = prompt(
+            "/shop/cart",
+            json!([
             {"id": "req:shop-1", "field": "entities", "value": ["ent:cart"]},
-            {"id": "req:shop-1", "field": "transition", "value": {"subject": "ent:customer", "from": "a", "to": "b"}}]));
+            {"id": "req:shop-1", "field": "transition", "value": {"subject": "ent:customer", "from": "a", "to": "b"}}]),
+        );
         let err = t.parse_prompt(&reordered["prompt"]).unwrap_err();
-        assert!(err.message.contains("fact 1") && err.message.contains("not among"), "{}", err.message);
-        let wrong_field = prompt("/shop/cart", json!([{"id": "req:shop-1", "field": "definition", "value": "x"}]));
+        assert!(
+            err.message.contains("fact 1") && err.message.contains("not among"),
+            "{}",
+            err.message
+        );
+        let wrong_field = prompt(
+            "/shop/cart",
+            json!([{"id": "req:shop-1", "field": "definition", "value": "x"}]),
+        );
         let err = t.parse_prompt(&wrong_field["prompt"]).unwrap_err();
         assert_eq!(err.rule, "bad-fact");
-        let elsewhere = prompt("/shop", json!([{"id": "req:shop-1", "field": "facets",
-            "value": [{"facet": "behavior", "reasoning": "a step"}]}]));
+        let elsewhere = prompt(
+            "/shop",
+            json!([{"id": "req:shop-1", "field": "facets",
+            "value": [{"facet": "behavior", "reasoning": "a step"}]}]),
+        );
         let err = t.parse_prompt(&elsewhere["prompt"]);
         let err = match err {
             Err(e) => e,

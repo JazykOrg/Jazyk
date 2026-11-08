@@ -15,8 +15,6 @@ pub fn page_value(store: &Store, id: &str) -> Option<Value> {
     view_page(store, &walk, id).map(|p| serde_json::to_value(p).expect("a page serializes"))
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -66,7 +64,10 @@ mod tests {
             .iter()
             .map(|x| x["id"].as_str().unwrap())
             .collect();
-        assert_eq!(crumbs, vec!["scope:public", "ent:shop", "ent:order-service"]);
+        assert_eq!(
+            crumbs,
+            vec!["scope:public", "ent:shop", "ent:order-service"]
+        );
         assert_eq!(c["breadcrumb"][0]["name"], "Public");
         let child = c["children"]
             .as_array()
@@ -82,7 +83,10 @@ mod tests {
             .find(|r| r["other"] == "ent:inventory-service")
             .expect("the dependency on the stock api, lifted to the inventory service");
         assert_eq!(rel["type"], "dependency");
-        assert!(matches!(rel["direction"].as_str(), Some("a" | "b" | "both")));
+        assert!(matches!(
+            rel["direction"].as_str(),
+            Some("a" | "b" | "both")
+        ));
         assert!(rel["count"].as_u64().unwrap() >= 1);
         assert!(c["requirementCount"].as_u64().is_some());
         assert!(c["proposal"].is_null());
@@ -102,7 +106,10 @@ mod tests {
         let s = store();
         let p = page_value(&s, "view:component/shop").expect("the shop level's page");
         let keys: Vec<&str> = p.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(keys, vec!["id", "kind", "title", "level", "drawn", "steps", "around"]);
+        assert_eq!(
+            keys,
+            vec!["id", "kind", "title", "level", "drawn", "steps", "around"]
+        );
         assert_eq!(p["level"]["target"], "ent:shop");
         assert_eq!(p["level"]["breadcrumb"][0]["id"], "scope:public");
         let drawn = p["drawn"].as_array().unwrap();

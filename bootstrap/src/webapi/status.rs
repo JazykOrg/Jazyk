@@ -52,11 +52,26 @@ pub fn rel_doc(root: &std::path::Path, f: &std::path::Path) -> String {
 // The same document projection as the LSP and graph location read.
 pub fn diag_counts_by_doc(store: &Store) -> BTreeMap<String, BTreeMap<&'static str, usize>> {
     let mut out: BTreeMap<String, BTreeMap<&'static str, usize>> = BTreeMap::new();
-    for d in store.graph.diagnostics.values().filter(|d| crate::diagnostic_locations::visible(d)) {
-        let sev = match d.severity.as_str() { "error" => "error", "warning" => "warning", _ => "info" };
-        let paths: std::collections::BTreeSet<_> = crate::diagnostic_locations::document_locations(store, d)
-            .into_iter().filter(|l| l.kind == "document").map(|l| l.path).collect();
-        for path in paths { *out.entry(path).or_default().entry(sev).or_default() += 1; }
+    for d in store
+        .graph
+        .diagnostics
+        .values()
+        .filter(|d| crate::diagnostic_locations::visible(d))
+    {
+        let sev = match d.severity.as_str() {
+            "error" => "error",
+            "warning" => "warning",
+            _ => "info",
+        };
+        let paths: std::collections::BTreeSet<_> =
+            crate::diagnostic_locations::document_locations(store, d)
+                .into_iter()
+                .filter(|l| l.kind == "document")
+                .map(|l| l.path)
+                .collect();
+        for path in paths {
+            *out.entry(path).or_default().entry(sev).or_default() += 1;
+        }
     }
     out
 }

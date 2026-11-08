@@ -64,17 +64,27 @@ pub fn set_max_completion_tokens(n: u64) {
 }
 
 fn completion_token_limit(over: u64, environment: Option<&str>) -> u64 {
-    if over > 0 { return over.max(256); }
-    environment.and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS).max(256)
+    if over > 0 {
+        return over.max(256);
+    }
+    environment
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(crate::limits::DEFAULT_MAX_COMPLETION_TOKENS)
+        .max(256)
 }
 
 fn base_completion_tokens() -> u64 {
-    completion_token_limit(MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed),
-        crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS").ok().as_deref())
+    completion_token_limit(
+        MAX_COMPLETION_OVERRIDE.load(Ordering::Relaxed),
+        crate::sys::env_var("JAZYK_MAX_COMPLETION_TOKENS")
+            .ok()
+            .as_deref(),
+    )
 }
 
-pub(crate) fn max_completion_tokens() -> u64 { base_completion_tokens() }
+pub(crate) fn max_completion_tokens() -> u64 {
+    base_completion_tokens()
+}
 
 // Leave room for reasoning and the final answer when compacting input history.
 pub(crate) fn model_input_tokens() -> usize {
@@ -161,8 +171,13 @@ fn tool_names(tools: Option<&[Value]>) -> Vec<String> {
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn native_io_runtime() -> &'static tokio::runtime::Runtime {
     static NETWORK: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    NETWORK.get_or_init(|| tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(1).enable_all().build().expect("native model and MCP I/O runtime"))
+    NETWORK.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .expect("native model and MCP I/O runtime")
+    })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -174,15 +189,22 @@ fn forward_model_delta(
     for content in &message.content {
         match content {
             MessageContent::Text(text) if !text.text.is_empty() => sink("content", &text.text),
-            MessageContent::Thinking(thought) if !thought.thinking.is_empty() => sink("reasoning_content", &thought.thinking),
+            MessageContent::Thinking(thought) if !thought.thinking.is_empty() => {
+                sink("reasoning_content", &thought.thinking)
+            }
             _ => {}
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn collect_native_stream<S>(stream: S, deltas: Option<crate::harness::ModelDeltaSink>) -> Result<String, String>
-where S: futures::Stream<Item = anyhow::Result<String>> + Send + Unpin + 'static {
+async fn collect_native_stream<S>(
+    stream: S,
+    deltas: Option<crate::harness::ModelDeltaSink>,
+) -> Result<String, String>
+where
+    S: futures::Stream<Item = anyhow::Result<String>> + Send + Unpin + 'static,
+{
     use futures::StreamExt;
     use goose_provider_types::{base::collect_stream, errors::ProviderError, formats::openai};
     let decoded = openai::response_to_streaming_message(stream)
@@ -192,7 +214,9 @@ where S: futures::Stream<Item = anyhow::Result<String>> + Send + Unpin + 'static
             }
         })
         .map(|result| result.map_err(|e| ProviderError::RequestFailed(e.to_string())));
-    let (message, usage) = collect_stream(Box::pin(decoded)).await.map_err(|e| e.to_string())?;
+    let (message, usage) = collect_stream(Box::pin(decoded))
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(json!({"_jazykGdkResponse":{"message":message,"usage":usage}}).to_string())
 }
 
@@ -209,13 +233,22 @@ impl Llm {
         {
             // The transcript records what changed since the run's previous request.
             // Mirrors docs/compiler/sessions.md#trace-events.
-            let messages = request.body["messages"].as_array().map(Vec::as_slice).unwrap_or_default();
-            let Value::Array(mut messages) = recorded(messages) else { unreachable!() };
-            let prefix = self.trace.as_ref()
-                .map_or(0, |trace| trace.request_prefix(run_of(&request_id), &messages));
+            let messages = request.body["messages"]
+                .as_array()
+                .map(Vec::as_slice)
+                .unwrap_or_default();
+            let Value::Array(mut messages) = recorded(messages) else {
+                unreachable!()
+            };
+            let prefix = self.trace.as_ref().map_or(0, |trace| {
+                trace.request_prefix(run_of(&request_id), &messages)
+            });
             messages.drain(..prefix);
             self.event(crate::session::TraceEvent::LlmRequest {
-                label: request_id.clone(), step: purpose.clone(), model: self.model.clone(), prefix,
+                label: request_id.clone(),
+                step: purpose.clone(),
+                model: self.model.clone(),
+                prefix,
                 messages: Value::Array(messages),
                 tools: tool_names(request.body["tools"].as_array().map(Vec::as_slice)),
             });
@@ -226,7 +259,8 @@ impl Llm {
         let response = if crate::vfs::is_scoped() {
             let mut body = request.body;
             body["_jazyk"] = json!({"requestId":request.attempt_id,"purpose":request.purpose});
-            crate::hosted::transport_async(&request.attempt_id, &body.to_string(), request.deltas).await?
+            crate::hosted::transport_async(&request.attempt_id, &body.to_string(), request.deltas)
+                .await?
         } else {
             use futures::StreamExt;
             // Only owned HTTP work runs on this process-shared executor. The
@@ -235,86 +269,129 @@ impl Llm {
             let base_url = self.base_url.clone();
             let api_key = self.api_key.clone();
             let timeout = call_timeout();
-            let api = request.body["_jazykApi"].as_str().unwrap_or(&self.api).to_owned();
-            let summary = request.body.get("_jazykReasoningSummary").map(|v| v.as_str().map(String::from)).unwrap_or_else(|| self.reasoning_summary.clone());
-            tokio_util::task::AbortOnDropHandle::new(network
-                .spawn(async move {
-                    use eventsource_stream::Eventsource;
-                    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-                    let client = CLIENT.get_or_init(reqwest::Client::new);
-                    let binding = format!("{}:{}", base_url.trim_end_matches('/'), request.body["model"].as_str().unwrap_or_default());
-                    let mut body = crate::model_api::request(&request.body, &api, summary.as_deref(), &binding)?;
-                    body["stream"] = json!(true);
-                    if api == "chat_completions" { body["stream_options"] = json!({"include_usage":true}); }
-                    let mut call = client
-                        .post(format!(
-                            "{}/{}",
-                            base_url.trim_end_matches('/'), if api == "responses" { "responses" } else { "chat/completions" }
-                        ))
-                        .timeout(timeout)
-                        .json(&body);
-                    if !api_key.is_empty() {
-                        call = call.bearer_auth(&api_key);
-                    }
-                    let response = call
-                        .send()
-                        .await
-                        .map_err(|e| format!("model transport: {e}"))?;
-                    let status = response.status();
-                    let streaming = response.headers().get(reqwest::header::CONTENT_TYPE)
-                        .and_then(|v| v.to_str().ok()).is_some_and(|v| v.starts_with("text/event-stream"));
-                    if status.is_success() && streaming {
-                        let mut received = 0usize;
-                        let bytes = response.bytes_stream().map(move |chunk| {
-                            let chunk = chunk.map_err(anyhow::Error::from)?;
-                            received = received.saturating_add(chunk.len());
-                            if received > 16 * 1024 * 1024 { anyhow::bail!("model response exceeds 16 MiB"); }
-                            Ok::<_, anyhow::Error>(chunk)
-                        });
-                        let events = bytes.eventsource().map(|event| event
-                            .map(|event| format!("data: {}", event.data)).map_err(anyhow::Error::from));
+            let api = request.body["_jazykApi"]
+                .as_str()
+                .unwrap_or(&self.api)
+                .to_owned();
+            let summary = request
+                .body
+                .get("_jazykReasoningSummary")
+                .map(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| self.reasoning_summary.clone());
+            tokio_util::task::AbortOnDropHandle::new(network.spawn(async move {
+                use eventsource_stream::Eventsource;
+                static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+                let client = CLIENT.get_or_init(reqwest::Client::new);
+                let binding = format!(
+                    "{}:{}",
+                    base_url.trim_end_matches('/'),
+                    request.body["model"].as_str().unwrap_or_default()
+                );
+                let mut body =
+                    crate::model_api::request(&request.body, &api, summary.as_deref(), &binding)?;
+                body["stream"] = json!(true);
+                if api == "chat_completions" {
+                    body["stream_options"] = json!({"include_usage":true});
+                }
+                let mut call = client
+                    .post(format!(
+                        "{}/{}",
+                        base_url.trim_end_matches('/'),
                         if api == "responses" {
-                            let mut events = Box::pin(events);
-                            let mut collector = crate::model_api::ResponseStream::default();
-                            while let Some(event) = events.next().await {
-                                let frame = event.map_err(|e| e.to_string())?;
-                                let data = frame.strip_prefix("data: ").unwrap_or(&frame);
-                                if data == "[DONE]" { continue; }
-                                let value = serde_json::from_str(data).map_err(|e| format!("Invalid Responses event: {e}"))?;
-                                if let Some((field, text)) = collector.event(&value)? { if let Some(sink) = &request.deltas { sink(field, &text); } }
-                            }
-                            return Ok(collector.finish(&binding)?.to_string());
+                            "responses"
+                        } else {
+                            "chat/completions"
                         }
-                        return collect_native_stream(Box::pin(events), request.deltas).await;
-                    }
-                    let mut stream = response.bytes_stream();
-                    let mut bytes = Vec::new();
-                    while let Some(chunk) = stream.next().await {
-                        let chunk = chunk.map_err(|e| format!("model response: {e}"))?;
-                        if bytes.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
-                            return Err("model response exceeds 16 MiB".into());
+                    ))
+                    .timeout(timeout)
+                    .json(&body);
+                if !api_key.is_empty() {
+                    call = call.bearer_auth(&api_key);
+                }
+                let response = call
+                    .send()
+                    .await
+                    .map_err(|e| format!("model transport: {e}"))?;
+                let status = response.status();
+                let streaming = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .is_some_and(|v| v.starts_with("text/event-stream"));
+                if status.is_success() && streaming {
+                    let mut received = 0usize;
+                    let bytes = response.bytes_stream().map(move |chunk| {
+                        let chunk = chunk.map_err(anyhow::Error::from)?;
+                        received = received.saturating_add(chunk.len());
+                        if received > 16 * 1024 * 1024 {
+                            anyhow::bail!("model response exceeds 16 MiB");
                         }
-                        bytes.extend_from_slice(&chunk);
-                    }
-                    let body = String::from_utf8(bytes).map_err(|e| e.to_string())?;
-                    if !status.is_success() {
-                        return Err(format!("HTTP {status}: {}", truncate(&body, 1000)));
-                    }
+                        Ok::<_, anyhow::Error>(chunk)
+                    });
+                    let events = bytes.eventsource().map(|event| {
+                        event
+                            .map(|event| format!("data: {}", event.data))
+                            .map_err(anyhow::Error::from)
+                    });
                     if api == "responses" {
-                        let value = serde_json::from_str(&body).map_err(|e| format!("Invalid Responses reply: {e}"))?;
-                        return Ok(crate::model_api::completion(&value, &binding)?.to_string());
+                        let mut events = Box::pin(events);
+                        let mut collector = crate::model_api::ResponseStream::default();
+                        while let Some(event) = events.next().await {
+                            let frame = event.map_err(|e| e.to_string())?;
+                            let data = frame.strip_prefix("data: ").unwrap_or(&frame);
+                            if data == "[DONE]" {
+                                continue;
+                            }
+                            let value = serde_json::from_str(data)
+                                .map_err(|e| format!("Invalid Responses event: {e}"))?;
+                            if let Some((field, text)) = collector.event(&value)? {
+                                if let Some(sink) = &request.deltas {
+                                    sink(field, &text);
+                                }
+                            }
+                        }
+                        return Ok(collector.finish(&binding)?.to_string());
                     }
-                    Ok::<_, String>(body)
-                }))
-                .await
-                .map_err(|e| format!("model network task: {e}"))??
+                    return collect_native_stream(Box::pin(events), request.deltas).await;
+                }
+                let mut stream = response.bytes_stream();
+                let mut bytes = Vec::new();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|e| format!("model response: {e}"))?;
+                    if bytes.len().saturating_add(chunk.len()) > 16 * 1024 * 1024 {
+                        return Err("model response exceeds 16 MiB".into());
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                let body = String::from_utf8(bytes).map_err(|e| e.to_string())?;
+                if !status.is_success() {
+                    return Err(format!("HTTP {status}: {}", truncate(&body, 1000)));
+                }
+                if api == "responses" {
+                    let value = serde_json::from_str(&body)
+                        .map_err(|e| format!("Invalid Responses reply: {e}"))?;
+                    return Ok(crate::model_api::completion(&value, &binding)?.to_string());
+                }
+                Ok::<_, String>(body)
+            }))
+            .await
+            .map_err(|e| format!("model network task: {e}"))??
         };
-        let response: Value = serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))?;
+        let response: Value =
+            serde_json::from_str(&response).map_err(|e| format!("Invalid model response: {e}"))?;
         self.event(crate::session::TraceEvent::LlmResponse {
-            label: request_id, step: purpose, ms: started.elapsed().as_millis() as u64,
-            tokens: response["usage"]["completion_tokens"].as_u64()
-                .or_else(|| response["_jazykGdkResponse"]["usage"]["usage"]["output_tokens"].as_u64()).unwrap_or(0),
-            message: response.get("_jazykGdkResponse").map(|v| v["message"].clone())
+            label: request_id,
+            step: purpose,
+            ms: started.elapsed().as_millis() as u64,
+            tokens: response["usage"]["completion_tokens"]
+                .as_u64()
+                .or_else(|| {
+                    response["_jazykGdkResponse"]["usage"]["usage"]["output_tokens"].as_u64()
+                })
+                .unwrap_or(0),
+            message: response
+                .get("_jazykGdkResponse")
+                .map(|v| v["message"].clone())
                 .unwrap_or_else(|| response["choices"][0]["message"].clone()),
         });
         Ok(response)
@@ -376,8 +453,14 @@ impl Llm {
     }
 
     fn event(&self, event: crate::session::TraceEvent) {
-        if let Some(trace) = &self.trace { trace.event(event); }
-        else if verbose() { eprintln!("[jazyk] {}", serde_json::to_string(&event).unwrap_or_default()); }
+        if let Some(trace) = &self.trace {
+            trace.event(event);
+        } else if verbose() {
+            eprintln!(
+                "[jazyk] {}",
+                serde_json::to_string(&event).unwrap_or_default()
+            );
+        }
     }
 
     // Utility inference uses the same GDK pipeline with no advertised tools.
@@ -391,16 +474,27 @@ impl Llm {
     ) -> Result<String, String> {
         let mut history = vec![json!({"role":"user","content":user})];
         let mut output = String::new();
-        let cancelled = || self.trace.as_ref().is_some_and(|trace| trace.is_cancelled());
+        let cancelled = || {
+            self.trace
+                .as_ref()
+                .is_some_and(|trace| trace.is_cancelled())
+        };
         let mut emit = |event| {
-            if let crate::harness::AgentEvent::Message(text) = event { output.push_str(&text); }
+            if let crate::harness::AgentEvent::Message(text) = event {
+                output.push_str(&text);
+            }
         };
         let mut memory = crate::harness::MemoryRecovery;
         #[cfg(not(target_arch = "wasm32"))]
         let mut durable = if crate::vfs::is_scoped() {
-            let key = format!("utility:{}", crate::model::hash_hex(&json!([label, step, system, user]).to_string()));
+            let key = format!(
+                "utility:{}",
+                crate::model::hash_hex(&json!([label, step, system, user]).to_string())
+            );
             Some(crate::session_recovery::McpRecovery::utility(key)?)
-        } else { None };
+        } else {
+            None
+        };
         #[cfg(not(target_arch = "wasm32"))]
         let recovery: &mut dyn crate::harness::Recovery = match durable.as_mut() {
             Some(recovery) => recovery,
@@ -409,14 +503,31 @@ impl Llm {
         #[cfg(target_arch = "wasm32")]
         let recovery: &mut dyn crate::harness::Recovery = &mut memory;
         let mut host = crate::harness::provider::DefaultModelHost::new(self);
-        let stop = crate::harness::run_with_host(crate::harness::LoopArgs {
-            llm: self, history: &mut history, tools: &[],
-            dispatch: &mut |_, _| Err("No tools are available in this inference".into()),
-            emit: &mut emit, cancelled: &cancelled, max_rounds: 1,
-            label: format!("{label} {step}"), conversation: true, inputs: None, input_close: None,
-        }, system, &mut host, recovery).await;
+        let stop = crate::harness::run_with_host(
+            crate::harness::LoopArgs {
+                llm: self,
+                history: &mut history,
+                tools: &[],
+                dispatch: &mut |_, _| Err("No tools are available in this inference".into()),
+                emit: &mut emit,
+                cancelled: &cancelled,
+                max_rounds: 1,
+                label: format!("{label} {step}"),
+                conversation: true,
+                inputs: None,
+                input_close: None,
+            },
+            system,
+            &mut host,
+            recovery,
+        )
+        .await;
         if output.is_empty() {
-            if let Some(message) = history.iter().rev().find(|message| message["role"] == "assistant") {
+            if let Some(message) = history
+                .iter()
+                .rev()
+                .find(|message| message["role"] == "assistant")
+            {
                 output = message["content"].as_str().unwrap_or_default().to_string();
             }
         }
@@ -425,10 +536,11 @@ impl Llm {
             crate::harness::Stop::Error(error) => Err(error),
             crate::harness::Stop::Cancelled => Err("execution cancelled".into()),
             crate::harness::Stop::Suspended => Err("suspended".into()),
-            crate::harness::Stop::MaxRounds => Err("utility inference reached its request limit".into()),
+            crate::harness::Stop::MaxRounds => {
+                Err("utility inference reached its request limit".into())
+            }
         }
     }
-
 }
 
 pub fn extract_json_object(s: &str) -> Option<String> {
@@ -480,7 +592,6 @@ pub fn truncate(s: &str, n: usize) -> String {
     out.push('…');
     out
 }
-
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests;

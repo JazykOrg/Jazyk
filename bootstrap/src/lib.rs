@@ -12,58 +12,58 @@
 
 // Core: the graph, the reconciler, and everything they need. Compiles for both
 // targets against crate::vfs instead of std::fs.
+pub mod agent_context;
+pub mod agent_workflows;
+pub mod agents_md;
 pub mod align;
 pub mod answer;
+pub mod bind;
 pub mod board;
 pub mod card;
 pub mod context;
 pub mod control;
+pub mod conversation;
 pub mod costs;
 pub mod decompile;
 pub mod derive;
 pub mod diagnostic_locations;
 pub mod docsgen;
-pub mod feedback;
-pub mod bind;
-pub mod gen;
-pub mod goals;
-pub mod ids;
-pub mod agents_md;
-pub mod agent_workflows;
-pub mod agent_context;
-pub mod harness;
-pub mod limits;
-pub mod live_preview;
-#[cfg(not(target_arch = "wasm32"))]
-mod local_socket;
-pub mod llm;
-mod scoped_state;
-pub mod inprocess;
-pub mod portable;
-pub mod conversation;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod hosted;
-pub mod mcp;
-pub mod md;
-pub mod input;
+pub mod document_sets;
 #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]
 pub mod documents;
 pub mod edit_watch;
+pub mod feedback;
+pub mod gen;
+pub mod goals;
+pub mod harness;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod hosted;
+pub mod ids;
+pub mod inprocess;
+pub mod input;
+pub mod limits;
+pub mod live_preview;
+pub mod llm;
+#[cfg(not(target_arch = "wasm32"))]
+mod local_socket;
+pub mod mcp;
+pub mod md;
 pub mod model;
+pub mod payload;
+pub mod portable;
 pub mod project;
-pub mod document_sets;
+pub mod project_context;
 pub mod protocol;
 pub mod reconcile;
 pub mod render;
 pub mod runner;
+mod scoped_state;
 pub mod session;
 pub mod session_recovery;
 pub mod store;
 pub mod sys;
-pub mod tools;
 pub mod task_runtime;
-pub mod project_context;
-pub mod payload;
+pub mod tools;
 pub mod verify;
 pub mod vfs;
 pub mod webapi;
@@ -72,9 +72,11 @@ pub mod webapi;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod acp;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod benchmark;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod benchmark;
+pub mod editor_lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gui;
 #[cfg(not(target_arch = "wasm32"))]
@@ -82,17 +84,15 @@ pub mod jsonrpc;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod launcher;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod lsp;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod menu;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod start;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod editor_lsp;
+pub mod replay;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod setup;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod lsp;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod replay;
+pub mod start;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod viewer;
 

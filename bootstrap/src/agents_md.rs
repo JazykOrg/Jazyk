@@ -68,7 +68,9 @@ fn eol(text: &str) -> &'static str {
 }
 
 fn block(inner: &str, eol: &str) -> String {
-    let body: Vec<&str> = std::iter::once(NOTICE).chain(inner.trim_end().lines()).collect();
+    let body: Vec<&str> = std::iter::once(NOTICE)
+        .chain(inner.trim_end().lines())
+        .collect();
     format!("{BEGIN}{eol}{}{eol}{END}", body.join(eol))
 }
 
@@ -81,7 +83,12 @@ pub fn render(root: &Path) -> Result<String, String> {
 pub fn enabled(root: &Path) -> bool {
     crate::document_sets::Workspace::load(root)
         .ok()
-        .and_then(|w| w.settings.get("agents").and_then(|a| a.get("block")).and_then(|b| b.as_bool()))
+        .and_then(|w| {
+            w.settings
+                .get("agents")
+                .and_then(|a| a.get("block"))
+                .and_then(|b| b.as_bool())
+        })
         .unwrap_or(true)
 }
 
@@ -195,12 +202,15 @@ fn write(path: &Path, text: &str) -> Result<(), String> {
     #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
     let mut target = path.to_path_buf();
     #[cfg(not(target_arch = "wasm32"))]
-    if !crate::vfs::is_scoped() && std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+    if !crate::vfs::is_scoped()
+        && std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink())
+    {
         if let Ok(real) = std::fs::canonicalize(path) {
             target = real;
         }
     }
-    crate::store::write_atomic(&target, text.as_bytes()).map_err(|e| format!("cannot write {}: {}", path.display(), e))
+    crate::store::write_atomic(&target, text.as_bytes())
+        .map_err(|e| format!("cannot write {}: {}", path.display(), e))
 }
 
 // Put `inner` between the markers of `text`, or append a new section. None when
@@ -212,8 +222,13 @@ fn apply(text: Option<&str>, inner: &str) -> Result<Option<String>, String> {
     let eol = eol(text);
     let wanted = block(inner, eol);
     match marker_lines(text) {
-        Markers::Broken => Err("its jazyk markers are duplicated, out of order, or unclosed; fix or delete them".into()),
-        Markers::One(b, e) => Ok((text[b..e] != wanted).then(|| format!("{}{}{}", &text[..b], wanted, &text[e..]))),
+        Markers::Broken => Err(
+            "its jazyk markers are duplicated, out of order, or unclosed; fix or delete them"
+                .into(),
+        ),
+        Markers::One(b, e) => {
+            Ok((text[b..e] != wanted).then(|| format!("{}{}{}", &text[..b], wanted, &text[e..])))
+        }
         Markers::None => {
             let mut out = text.to_string();
             if !out.is_empty() && !out.ends_with('\n') {
@@ -255,7 +270,9 @@ pub fn sync(root: &Path) -> Outcome {
     let inner = match render(root) {
         Ok(inner) => inner,
         Err(e) => {
-            outcome.warnings.push(format!("the jazyk section of AGENTS.md was not refreshed: {e}"));
+            outcome.warnings.push(format!(
+                "the jazyk section of AGENTS.md was not refreshed: {e}"
+            ));
             return outcome;
         }
     };
@@ -268,17 +285,19 @@ pub fn sync(root: &Path) -> Outcome {
             Err(e) => outcome.warnings.push(e),
         },
         Ok(None) => {}
-        Err(e) => outcome.warnings.push(format!("AGENTS.md left unchanged: {e}")),
+        Err(e) => outcome
+            .warnings
+            .push(format!("AGENTS.md left unchanged: {e}")),
     }
     if let Some(item) = outcome.items.first().cloned() {
         let _ = item;
         outcome.changed.push(if created {
-                "created AGENTS.md with the jazyk section".into()
-            } else if marker_lines(existing.as_deref().unwrap_or_default()) == Markers::None {
-                "added the jazyk section to AGENTS.md".into()
-            } else {
-                "updated the jazyk section in AGENTS.md".into()
-            });
+            "created AGENTS.md with the jazyk section".into()
+        } else if marker_lines(existing.as_deref().unwrap_or_default()) == Markers::None {
+            "added the jazyk section to AGENTS.md".into()
+        } else {
+            "updated the jazyk section in AGENTS.md".into()
+        });
     }
     if !agents.vis_file() {
         return outcome;
@@ -288,7 +307,9 @@ pub fn sync(root: &Path) -> Outcome {
         if !path.vis_file() || same_file(&path, &agents) {
             continue;
         }
-        let Ok(text) = crate::vfs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
+            continue;
+        };
         let has_markers = marker_lines(&text) != Markers::None;
         let outside = strip(&text);
         let dir = path.parent().unwrap_or(root).to_path_buf();
@@ -305,9 +326,9 @@ pub fn sync(root: &Path) -> Outcome {
                 Ok(()) => {
                     outcome.items.push(format!("an AGENTS.md import in {rel}"));
                     outcome.changed.push(if has_markers {
-                    format!("updated the AGENTS.md import in {rel}")
-                } else {
-                    format!("added an AGENTS.md import to {rel}")
+                        format!("updated the AGENTS.md import in {rel}")
+                    } else {
+                        format!("added an AGENTS.md import to {rel}")
                     })
                 }
                 Err(e) => outcome.warnings.push(e),
@@ -322,7 +343,9 @@ pub fn sync(root: &Path) -> Outcome {
 // Working commands ensure the section and imports exist at every start.
 // Mirrors docs/frontends/agent-context.md#when-it-is-written.
 pub fn refresh(start: &Path) {
-    let Some(root) = crate::project::find_root(start) else { return };
+    let Some(root) = crate::project::find_root(start) else {
+        return;
+    };
     sync(&root).report();
 }
 
@@ -331,8 +354,12 @@ pub fn state(root: &Path) -> &'static str {
     if !enabled(root) {
         return "off";
     }
-    let Ok(text) = crate::vfs::read_to_string(root.join(AGENTS)) else { return "missing" };
-    let Ok(inner) = render(root) else { return "stale" };
+    let Ok(text) = crate::vfs::read_to_string(root.join(AGENTS)) else {
+        return "missing";
+    };
+    let Ok(inner) = render(root) else {
+        return "stale";
+    };
     match marker_lines(&text) {
         Markers::One(b, e) if text[b..e] == block(&inner, eol(&text)) => "installed",
         Markers::One(..) | Markers::Broken => "stale",
@@ -348,13 +375,16 @@ pub fn remove(root: &Path) -> Result<bool, String> {
         if rel != AGENTS && same_file(&path, &root.join(AGENTS)) {
             continue;
         }
-        let Ok(text) = crate::vfs::read_to_string(&path) else { continue };
+        let Ok(text) = crate::vfs::read_to_string(&path) else {
+            continue;
+        };
         if !matches!(marker_lines(&text), Markers::One(..)) {
             continue;
         }
         let rest = strip(&text);
         if rest.trim().is_empty() {
-            crate::vfs::remove_file(&path).map_err(|e| format!("cannot delete {}: {}", path.display(), e))?;
+            crate::vfs::remove_file(&path)
+                .map_err(|e| format!("cannot delete {}: {}", path.display(), e))?;
         } else {
             let trimmed = rest.trim_end().to_string() + eol(&text);
             write(&path, &trimmed)?;
@@ -384,7 +414,10 @@ mod tests {
         let dir = project();
         let root = dir.path();
         let out = sync(root);
-        assert_eq!(out.changed, vec!["created AGENTS.md with the jazyk section"]);
+        assert_eq!(
+            out.changed,
+            vec!["created AGENTS.md with the jazyk section"]
+        );
         let text = std::fs::read_to_string(root.join(AGENTS)).unwrap();
         assert!(text.starts_with(&format!("{BEGIN}\n{NOTICE}\n")));
         assert!(text.trim_end().ends_with(END));
@@ -401,17 +434,28 @@ mod tests {
         let root = dir.path();
         let mine = "# Rules\r\n\r\nKeep it short.\r\n";
         std::fs::write(root.join(AGENTS), mine).unwrap();
-        assert_eq!(sync(root).changed, vec!["added the jazyk section to AGENTS.md"]);
+        assert_eq!(
+            sync(root).changed,
+            vec!["added the jazyk section to AGENTS.md"]
+        );
         let text = std::fs::read_to_string(root.join(AGENTS)).unwrap();
         assert!(text.starts_with(mine));
-        assert!(!text.replace("\r\n", "").contains('\n'), "line endings follow the file");
+        assert!(
+            !text.replace("\r\n", "").contains('\n'),
+            "line endings follow the file"
+        );
         // A changed configuration refreshes only the inside.
         let config = root.join(".jazyk/jazyk.toml");
-        let edited = std::fs::read_to_string(&config).unwrap().replace("src/**", "lib/**");
+        let edited = std::fs::read_to_string(&config)
+            .unwrap()
+            .replace("src/**", "lib/**");
         std::fs::write(&config, edited).unwrap();
         let tail = "\r\nAfter the section.\r\n";
         std::fs::write(root.join(AGENTS), format!("{text}{tail}")).unwrap();
-        assert_eq!(sync(root).changed, vec!["updated the jazyk section in AGENTS.md"]);
+        assert_eq!(
+            sync(root).changed,
+            vec!["updated the jazyk section in AGENTS.md"]
+        );
         let after = std::fs::read_to_string(root.join(AGENTS)).unwrap();
         assert!(after.starts_with(mine));
         assert!(after.ends_with(tail));
@@ -425,8 +469,13 @@ mod tests {
         let root = dir.path();
         sync(root);
         std::fs::write(root.join(AGENTS), "# Ours\n").unwrap();
-        assert_eq!(sync(root).changed, vec!["added the jazyk section to AGENTS.md"]);
-        assert!(std::fs::read_to_string(root.join(AGENTS)).unwrap().starts_with("# Ours\n"));
+        assert_eq!(
+            sync(root).changed,
+            vec!["added the jazyk section to AGENTS.md"]
+        );
+        assert!(std::fs::read_to_string(root.join(AGENTS))
+            .unwrap()
+            .starts_with("# Ours\n"));
         let broken = format!("{BEGIN}\nx\n{BEGIN}\n{END}\n");
         std::fs::write(root.join(AGENTS), &broken).unwrap();
         let out = sync(root);
@@ -448,7 +497,10 @@ mod tests {
         refresh(root);
         assert!(sync(root).changed.is_empty());
         assert!(!root.join(AGENTS).exists());
-        assert_eq!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(), "# Mine\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+            "# Mine\n"
+        );
         std::fs::write(root.join(AGENTS), format!("{BEGIN}\nKeep me\n{END}\n")).unwrap();
         let before = std::fs::read_to_string(root.join(AGENTS)).unwrap();
         refresh(root);
@@ -465,22 +517,39 @@ mod tests {
         std::fs::write(root.join(".claude/CLAUDE.md"), "Nested\n").unwrap();
         std::fs::write(root.join("GEMINI.md"), "See @./AGENTS.md for more.\n").unwrap();
         let out = sync(root);
-        assert!(out.changed.contains(&"added an AGENTS.md import to CLAUDE.md".to_string()), "{out:?}");
-        assert!(out.changed.contains(&"added an AGENTS.md import to .claude/CLAUDE.md".to_string()));
+        assert!(
+            out.changed
+                .contains(&"added an AGENTS.md import to CLAUDE.md".to_string()),
+            "{out:?}"
+        );
+        assert!(out
+            .changed
+            .contains(&"added an AGENTS.md import to .claude/CLAUDE.md".to_string()));
         assert_eq!(
             std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
             format!("# Claude\n\n{BEGIN}\n{NOTICE}\n@AGENTS.md\n{END}\n")
         );
-        assert!(std::fs::read_to_string(root.join(".claude/CLAUDE.md")).unwrap().contains("\n@../AGENTS.md\n"));
-        assert_eq!(std::fs::read_to_string(root.join("GEMINI.md")).unwrap(), "See @./AGENTS.md for more.\n");
+        assert!(std::fs::read_to_string(root.join(".claude/CLAUDE.md"))
+            .unwrap()
+            .contains("\n@../AGENTS.md\n"));
+        assert_eq!(
+            std::fs::read_to_string(root.join("GEMINI.md")).unwrap(),
+            "See @./AGENTS.md for more.\n"
+        );
         assert!(sync(root).changed.is_empty());
         // An import inside code does not count.
         std::fs::write(root.join("GEMINI.md"), "```\n@AGENTS.md\n```\n").unwrap();
-        assert_eq!(sync(root).changed, vec!["added an AGENTS.md import to GEMINI.md"]);
+        assert_eq!(
+            sync(root).changed,
+            vec!["added an AGENTS.md import to GEMINI.md"]
+        );
         // Removal takes every marked part and deletes files left empty.
         assert!(remove(root).unwrap());
         assert!(!root.join(AGENTS).exists());
-        assert_eq!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(), "# Claude\n");
+        assert_eq!(
+            std::fs::read_to_string(root.join("CLAUDE.md")).unwrap(),
+            "# Claude\n"
+        );
         assert_eq!(state(root), "missing");
     }
 
@@ -504,10 +573,19 @@ mod tests {
         std::fs::write(root.join("CLAUDE.md"), "# Mine\n").unwrap();
         std::os::unix::fs::symlink("CLAUDE.md", root.join(AGENTS)).unwrap();
         let out = sync(root);
-        assert_eq!(out.changed, vec!["added the jazyk section to AGENTS.md"], "{out:?}");
-        assert!(std::fs::symlink_metadata(root.join(AGENTS)).unwrap().file_type().is_symlink());
+        assert_eq!(
+            out.changed,
+            vec!["added the jazyk section to AGENTS.md"],
+            "{out:?}"
+        );
+        assert!(std::fs::symlink_metadata(root.join(AGENTS))
+            .unwrap()
+            .file_type()
+            .is_symlink());
         let text = std::fs::read_to_string(root.join("CLAUDE.md")).unwrap();
-        assert!(text.starts_with("# Mine\n\n") && text.contains(BEGIN) && !text.contains("@AGENTS.md"));
+        assert!(
+            text.starts_with("# Mine\n\n") && text.contains(BEGIN) && !text.contains("@AGENTS.md")
+        );
     }
 
     #[test]
@@ -518,7 +596,9 @@ mod tests {
         std::fs::write(root.join("CLAUDE.md"), "# Mine\n").unwrap();
         refresh(&root.join("docs"));
         assert_eq!(state(root), "installed");
-        assert!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap().contains("@AGENTS.md"));
+        assert!(std::fs::read_to_string(root.join("CLAUDE.md"))
+            .unwrap()
+            .contains("@AGENTS.md"));
         std::fs::remove_file(root.join(AGENTS)).unwrap();
         refresh(root);
         assert_eq!(state(root), "installed");
@@ -526,15 +606,24 @@ mod tests {
         std::fs::write(root.join("CLAUDE.md"), "# Mine\n").unwrap();
         refresh(root);
         assert_eq!(state(root), "installed");
-        assert!(std::fs::read_to_string(root.join(AGENTS)).unwrap().starts_with("# Rules\n"));
-        assert!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap().starts_with("# Mine\n"));
-        assert!(std::fs::read_to_string(root.join("CLAUDE.md")).unwrap().contains("@AGENTS.md"));
+        assert!(std::fs::read_to_string(root.join(AGENTS))
+            .unwrap()
+            .starts_with("# Rules\n"));
+        assert!(std::fs::read_to_string(root.join("CLAUDE.md"))
+            .unwrap()
+            .starts_with("# Mine\n"));
+        assert!(std::fs::read_to_string(root.join("CLAUDE.md"))
+            .unwrap()
+            .contains("@AGENTS.md"));
         assert!(sync(root).changed.is_empty());
     }
 
     #[test]
     fn import_tokens_skip_code_spans_and_emails() {
-        assert_eq!(import_tokens("@AGENTS.md and @docs/x.md."), vec!["AGENTS.md", "docs/x.md"]);
+        assert_eq!(
+            import_tokens("@AGENTS.md and @docs/x.md."),
+            vec!["AGENTS.md", "docs/x.md"]
+        );
         assert!(import_tokens("mail matus@matus.io or `@AGENTS.md`").is_empty());
     }
 }

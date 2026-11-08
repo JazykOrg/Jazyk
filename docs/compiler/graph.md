@@ -294,7 +294,12 @@ never dropped.
 
 A YAML write skips a file whose serialized bytes already equal the file on disk. A save
 rewrites only the node files and doc records that changed, so a commit that touches one
-node leaves the others in place, and a save with nothing changed writes nothing. The
+node leaves the others in place, and a save with nothing changed writes nothing. A
+process remembers, per node file and doc record, a fingerprint of the value it last
+wrote or found there and the file's identity then (length, modification time, inode).
+A node whose fingerprint and file identity both still match is not serialized again;
+any other writer's replacement of the file changes its identity, so that file is
+compared byte for byte as before. The
 order holds: changed node files and records first, then the deletions of removed nodes,
 then the status files and the deletions of cleared records, then `markers.yaml`, then
 `build.yaml`. A commit always changes `build.yaml` (its
@@ -666,7 +671,9 @@ from the facts because it is a function of them.
   [cone](./reconciler.md#cones) walk follows, and the name token index
   [lookalike scoring](./goals/dedupe-candidates.md) pairs by. An index is a function
   of the facts it reads, so what is derived through it is what the scan it replaces
-  derives.
+  derives. The lookups a board derivation and the sweep repeat per goal or per entity
+  (the requirements naming an entity, the instance types, a level's members) answer
+  from indices built on first use within that derivation and dropped at its end.
 
 Renderings under `diagrams/` are derived too, one step further out: the renderer reads
 the committed views and facts and writes `.puml` and `.svg`, and stores nothing back.

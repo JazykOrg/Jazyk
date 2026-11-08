@@ -551,7 +551,7 @@ from the facts because it is a function of them.
   a `behavior` or `failure-mode` requirement is keyed by its document, each entity
   lifted to its nearest ancestor in the level, the cluster slug is the document stem,
   members are in document order, and a cluster of fewer than two members derives no
-  view. A default view is stored in `views.yaml`
+  view. A default view is stored as a node file under `graph/views/`
   under its stable id with the boolean field `default: true` and provenance
   `{derived: {from: [...], reasoning: "default view: <rule>"}}`. On every commit the
   store creates the views whose rule holds, rewrites `title` and `members` on the ones

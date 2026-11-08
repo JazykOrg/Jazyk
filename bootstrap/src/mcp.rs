@@ -1211,7 +1211,7 @@ impl McpServer {
         // session. The first batch of a serving ships the agent contract and the
         // skills in full; later batches elide what the agent already saw.
         let (loaded, mut skills) = crate::session::initial_loaded(&store, &goals);
-        let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
+        let mut pb = crate::session::ProjectBlock::from_goals(&store, &board.goals, &goals, &control.compile)
             .with_lint(&self.project.linting);
         pb.batch = batch.id.clone();
         let full = args["full"].as_bool() == Some(true);

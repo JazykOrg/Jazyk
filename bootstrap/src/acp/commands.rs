@@ -366,7 +366,7 @@ pub fn preview_text(proj: &Project, out: &std::path::Path, target: &str) -> Stri
         .cloned()
         .collect();
     let (loaded, skills) = crate::session::initial_loaded(&store, &goals);
-    let mut pb = crate::session::ProjectBlock::compute(&store, &goals, &control.compile)
+    let mut pb = crate::session::ProjectBlock::from_goals(&store, &board.goals, &goals, &control.compile)
         .with_lint(&proj.linting);
     pb.batch = batch.id.clone();
     crate::session::session_prompt(&store, &goals, &loaded, &skills, &pb)

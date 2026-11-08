@@ -954,18 +954,21 @@ pub struct ProjectBlock {
 }
 
 impl ProjectBlock {
+    // Derives every goal kind once. A caller holding a derived board passes its goals
+    // to `from_goals` instead of deriving the board a second time.
     pub fn compute(store: &Store, batch: &[Goal], mode: &str) -> ProjectBlock {
         let gs = crate::gen::GenSettings::from_out(&store.out);
-        let mut total = 0usize;
-        let mut blocked = 0usize;
-        for k in goals::REGISTRY.iter() {
-            let derived = k.derive_goals(store, &gs).len();
-            if goals::blocked_on_human(k.kind()) {
-                blocked += derived;
-            } else {
-                total += derived;
-            }
-        }
+        let derived: Vec<Goal> = goals::REGISTRY
+            .iter()
+            .flat_map(|k| k.derive_goals(store, &gs))
+            .collect();
+        ProjectBlock::from_goals(store, &derived, batch, mode)
+    }
+
+    // The block counted from goals already derived (a board's).
+    pub fn from_goals(store: &Store, derived: &[Goal], batch: &[Goal], mode: &str) -> ProjectBlock {
+        let blocked = derived.iter().filter(|g| goals::blocked_on_human(&g.kind)).count();
+        let total = derived.len() - blocked;
         let here = batch.len();
         ProjectBlock {
             generation: store.status.generation,
@@ -1613,6 +1616,20 @@ mod tests {
             with
         );
         assert!(preview_with(&s, &[], &lint).contains("- lint: [1] warning: An em dash"));
+    }
+
+    // A board's goals give the same counts as a fresh derivation.
+    #[test]
+    fn project_block_counts_from_a_board_without_deriving_again() {
+        let s = fixture();
+        let gs = crate::gen::GenSettings::from_out(&s.out);
+        let derived: Vec<Goal> = goals::REGISTRY.iter().flat_map(|k| k.derive_goals(&s, &gs)).collect();
+        assert!(!derived.is_empty(), "the fixture opens goals");
+        let batch = &derived[..1];
+        let fresh = ProjectBlock::compute(&s, batch, "auto");
+        let counted = ProjectBlock::from_goals(&s, &derived, batch, "auto");
+        assert_eq!(fresh.render(), counted.render());
+        assert_eq!(counted.elsewhere + counted.here + counted.blocked, derived.len());
     }
 
     #[test]

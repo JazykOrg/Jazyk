@@ -222,7 +222,7 @@ Everything else is local: rebuilt on demand, or a log of what ran.
     so two branches add different files under the same names, and a merge would
     conflict on every one. See [a fresh checkout](#a-fresh-checkout).
   - `trace/`, `sessions/`, `snapshots/`, `feedback.jsonl`: logs.
-  - `control.yaml`, `workers/`, `leases/`, `.lock`, `.committing`: who is acting here and what this
+  - `control.yaml`, `workers/`, `leases/`, `.leases.lock`, `.lock`, `.committing`: who is acting here and what this
     operator released. The workflow defaults come from `jazyk.toml`, which is
     committed ([modes and releases](./control-plane.md#modes-and-releases)).
   - Everything else under the out directory (decompile drafts, benchmark results,

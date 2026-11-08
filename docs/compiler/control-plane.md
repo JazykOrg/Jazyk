@@ -120,9 +120,11 @@ Two directories make the actors and their claims visible:
   batch), so a dead agent's claim evaporates instead of wedging the board. The board
   shows `claimedBy` on leased goals and consumers skip them; a goal leased to the
   reading serving itself shows `claimedBy: you`.
-- Taking over an expired lease keeps the one-winner rule. The claimant (or a reader
-  sweeping expired leases) first moves the file aside under a name of its own and
-  checks that it moved the lease it read; a file that changed meanwhile goes back.
+- Taking over an expired lease keeps the one-winner rule. Claims and sweeps that may
+  take a lease over run one at a time under `.leases.lock`, an advisory lock beside
+  `leases/` that the operating system releases with its holder. The claimant (or a
+  reader sweeping expired leases) first moves the file aside under a name of its own
+  and checks that it moved the lease it read; a file that changed meanwhile goes back.
   A refresh replaces the file whole (a temporary file, then a rename), so a reader
   never sees half a lease. A lease file that does not parse counts as held until it is
   older than the lease lifetime, then it is swept like an expired one.

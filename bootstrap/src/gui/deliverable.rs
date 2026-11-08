@@ -6,10 +6,8 @@ use super::state::SharedState;
 use crate::webapi::deliverable::{
     deliverable_baseline, deliverable_file, deliverable_raw, deliverable_value,
 };
-use crate::webapi::outfiles::content_type;
 use crate::webapi::overview::overview_value;
 use axum::extract::{Query, State};
-use axum::http::{header, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use serde::Deserialize;
 
@@ -57,15 +55,7 @@ pub async fn raw(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Respo
         .await
         .expect("deliverable raw read");
     match result {
-        Ok(bytes) => (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, content_type(&p.path)),
-                (header::CACHE_CONTROL, "no-cache"),
-            ],
-            bytes,
-        )
-            .into_response(),
+        Ok(bytes) => super::outfiles::file_bytes(&p.path, bytes),
         Err(r) => refused(r),
     }
 }

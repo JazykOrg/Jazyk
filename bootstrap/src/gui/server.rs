@@ -855,6 +855,8 @@ pub(super) mod tests {
             hdr(&r, "content-type"),
             Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
         );
+        assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"));
+        assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"));
         let body = axum::body::to_bytes(r.into_body(), usize::MAX)
             .await
             .unwrap();
@@ -874,6 +876,33 @@ pub(super) mod tests {
         )
         .await;
         assert_eq!(r.status(), StatusCode::OK);
+        // Every file served as its bytes is sandboxed and typed exactly: an SVG with
+        // a script opened in a tab runs nothing with the API's origin
+        // (docs/frontends/gui.md#serving).
+        std::fs::write(st.root.join("dist/pic.svg"), "<svg><script>alert(1)</script></svg>").unwrap();
+        for path in [
+            "/api/project/raw?path=dist/pic.svg&token=secret",
+            "/api/project/file?path=dist/pic.svg&token=secret",
+            "/api/deliverable/raw?path=dist/pic.svg&token=secret",
+        ] {
+            let r = send(st.clone(), get_from(path, "https://raw.test")).await;
+            assert_eq!(r.status(), StatusCode::OK, "{}", path);
+            assert_eq!(hdr(&r, "content-type"), Some("image/svg+xml"), "{}", path);
+            assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"), "{}", path);
+            assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"), "{}", path);
+        }
+        let set = crate::document_sets::Workspace::load(&st.root).unwrap().sets[0].id.clone();
+        let diagrams = st.root.join(".jazyk").join(&set).join("diagrams");
+        std::fs::create_dir_all(&diagrams).unwrap();
+        std::fs::write(diagrams.join("v.svg"), "<svg/>").unwrap();
+        let r = send(
+            st.clone(),
+            get_from("/api/out/file?path=diagrams/v.svg&token=secret", "https://raw.test"),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(hdr(&r, "content-security-policy"), Some("sandbox"));
+        assert_eq!(hdr(&r, "x-content-type-options"), Some("nosniff"));
         std::fs::remove_dir_all(&st.root).ok();
     }
     // A page on another site can send a POST it never reads; the origin check

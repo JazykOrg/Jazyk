@@ -130,7 +130,7 @@ fn usage_error(out: &Output, needle: &str) {
     assert!(out.stdout.is_empty(), "{}", text(&out.stdout));
 }
 
-// Top-level help in each spelling exits 0 on stdout and lists every command.
+// Top-level help in each spelling exits 0 on stdout and lists the commands.
 #[test]
 fn top_level_help_lists_every_command() {
     let s = Scratch::new("top-help");
@@ -139,10 +139,24 @@ fn top_level_help_lists_every_command() {
         assert_eq!(out.status.code(), Some(0), "{args:?}");
         let help = text(&out.stdout);
         assert!(help.contains("--help, -h"), "{help}");
-        for cmd in COMMANDS
-            .iter()
-            .filter(|c| !["codegen", "testgen", "vscode", "cursor", "zed", "claude"].contains(c))
-        {
+        // Aliases, launcher choices (listed on one line), and the replay and task
+        // commands (documented under their own pages) are not lines of their own.
+        let unlisted = [
+            "codegen",
+            "testgen",
+            "vscode",
+            "cursor",
+            "zed",
+            "claude",
+            "replay",
+            "tasks",
+            "runs",
+            "run",
+            "run-status",
+            "run-log",
+            "run-cancel",
+        ];
+        for cmd in COMMANDS.iter().filter(|c| !unlisted.contains(c)) {
             assert!(
                 help.contains(cmd),
                 "`{cmd}` missing from the top-level help"

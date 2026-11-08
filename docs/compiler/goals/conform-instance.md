@@ -108,9 +108,12 @@ refuses a false one naming the rule:
   does.
 - The type is never edited from this goal: an `update_entity` whose `id` is the type,
   or an `update_requirement` on a requirement whose `entities` do not include the
-  instance, is rejected naming this rule. An update that only records `not_about`
-  (the review annotation a `review-entity` goal on the type stages in the same batch)
-  edits nothing the instance conforms to and passes.
+  instance, is rejected naming this rule (`type-edited`). An update that only records
+  `not_about` (the review annotation a `review-entity` goal on the type stages in the
+  same batch) edits nothing the instance conforms to and passes. So does an edit
+  another goal of the batch owns: one whose target is the edited type, the edited
+  requirement, or an entity that requirement names (a `review-entity` goal on the
+  type updating the type's statements, a sibling instance's own goal).
 - The justification is present.
 
 `done` runs the same gate over every goal in the batch and the per-mutation gates on

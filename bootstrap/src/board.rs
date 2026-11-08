@@ -426,27 +426,37 @@ pub fn cone_with(store: &Store, refs: &Refs, target: &str) -> Cone {
         (None, Some((a, b))) => vec![a.to_string(), b.to_string()],
         (None, None) => vec![target.to_string()],
     };
+    // Each walk keeps its own visited set: a node another seed or the other direction
+    // reached still contributes its own direction's references here.
+    let mut down: BTreeSet<String> = BTreeSet::new();
     for seed in &seeds {
         nodes.insert(seed.clone());
         if scope.is_none() {
+            let mut up: BTreeSet<String> = BTreeSet::from([seed.clone()]);
             let mut frontier = vec![seed.clone()];
             while let Some(id) = frontier.pop() {
                 for r in referents(store, &id) {
-                    if nodes.insert(r.clone()) {
+                    if up.insert(r.clone()) {
+                        frontier.push(r);
+                    }
+                }
+            }
+            nodes.extend(up);
+        }
+        // The downward walks share one set: referrers reached from any seed are
+        // walked down once, which is the same set either way.
+        if down.insert(seed.clone()) {
+            let mut frontier = vec![seed.clone()];
+            while let Some(id) = frontier.pop() {
+                for r in referrers(store, refs, &id) {
+                    if down.insert(r.clone()) {
                         frontier.push(r);
                     }
                 }
             }
         }
-        let mut frontier = vec![seed.clone()];
-        while let Some(id) = frontier.pop() {
-            for r in referrers(store, refs, &id) {
-                if nodes.insert(r.clone()) {
-                    frontier.push(r);
-                }
-            }
-        }
     }
+    nodes.extend(down);
     let mut sections: BTreeSet<String> = BTreeSet::new();
     let mut docs: BTreeSet<String> = BTreeSet::new();
     for n in &nodes {
@@ -615,11 +625,25 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
         return true;
     }
     if derived.kind == "abstract-entity" {
-        let count = |g: &Goal| g.change["limits"][0]["count"].as_u64();
-        if let (Some(then), Some(now)) = (count(failed), count(derived)) {
-            if now * 5 < then * 6 {
-                return true;
-            }
+        let within = |then: Option<u64>, now: Option<u64>| match (then, now) {
+            (Some(then), Some(now)) => Some(now * 5 < then * 6),
+            (None, None) => None,
+            _ => Some(false),
+        };
+        let bound = |g: &Goal| (g.change["limits"][0]["soft"].clone(), g.change["limits"][0]["hard"].clone());
+        let caps = within(
+            failed.change["limits"][0]["count"].as_u64(),
+            derived.change["limits"][0]["count"].as_u64(),
+        )
+        .map(|w| w && bound(failed) == bound(derived));
+        // The fan-out variant: the coupling candidates move with every requirement
+        // on the level, so only the child count and the limits in force (a bump)
+        // reopen it. A level declared flat stays failed until it changes.
+        let fan_out = within(failed.change["fan_out"].as_u64(), derived.change["fan_out"].as_u64())
+            .map(|w| w && failed.change["limit"] == derived.change["limit"]);
+        match (caps, fan_out) {
+            (Some(true), None | Some(true)) | (None, Some(true)) => return true,
+            _ => {}
         }
     }
     derived.cause.as_ref().map(|c| c.generation) <= failed.cause.as_ref().map(|c| c.generation)
@@ -630,18 +654,37 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
 // parked goal resumes first, and a session cannot resolve one whose cause is the
 // ruling owed (docs/compiler/reconciler.md#flip-detection).
 fn parked_state(p: &Goal) -> GoalState {
-    let flip = p.cause.as_ref().is_some_and(|c| c.via == "flip-detection");
-    if !flip {
+    let Some(subject) = flip_subject(p) else {
         return GoalState::Parked;
-    }
-    let subject = p.change["reparent"]
-        .as_str()
-        .or_else(|| p.change["subject"].as_str())
-        .unwrap_or(&p.target)
-        .to_string();
+    };
     GoalState::Blocked {
         on: format!("human: unstable-derivation ruling on {}", subject),
     }
+}
+
+// The node a flip-parked entry waits on a ruling for; None for any other park.
+pub(crate) fn flip_subject(p: &Goal) -> Option<String> {
+    if !p.cause.as_ref().is_some_and(|c| c.via == "flip-detection") {
+        return None;
+    }
+    Some(
+        p.change["reparent"]
+            .as_str()
+            .or_else(|| p.change["subject"].as_str())
+            .unwrap_or(&p.target)
+            .to_string(),
+    )
+}
+
+// Whether the unstable-derivation ruling on a subject is still owed: an open
+// diagnostic naming it carries no answer yet.
+fn ruling_owed(store: &Store, subject: &str) -> bool {
+    store.graph.diagnostics.values().any(|d| {
+        d.lifecycle == "open"
+            && d.rule == "unstable-derivation"
+            && d.answer.is_none()
+            && d.subjects.iter().any(|s| s == subject)
+    })
 }
 
 // `b<generation>-<n>`, the id a batch lease is filed under.
@@ -682,6 +725,8 @@ pub struct Board {
     pub reopened: Vec<String>,
     // Parked entries whose target is gone or whose change moved on.
     pub dropped_parked: Vec<String>,
+    // Failed ledger entries the ledger no longer derives.
+    pub dropped_failed: Vec<String>,
     // Why each parked goal parked, by goal id, from its stored entry.
     // Mirrors docs/compiler/reconciler.md#parked-and-failed.
     pub parked_reasons: BTreeMap<String, String>,
@@ -731,9 +776,36 @@ impl Board {
         let mut dropped_parked = Vec::new();
         let mut parked_reasons = BTreeMap::new();
         let mut reopened = Vec::new();
+        let mut dropped_failed = Vec::new();
         for entry in &store.status.parked {
             let p = &entry.goal;
             let mut kept = true;
+            // A pair parked by flip detection stays parked while its ruling is owed,
+            // whatever change the goal derives with now (the parked change names the
+            // flip, never the goal's own records); answering the ruling clears it.
+            // Mirrors docs/compiler/reconciler.md#flip-detection.
+            if let Some(subject) = flip_subject(p) {
+                if !ruling_owed(store, &subject) {
+                    dropped_parked.push(p.id.clone());
+                    continue;
+                }
+                match goals.iter_mut().find(|g| g.id == p.id) {
+                    Some(g) => g.state = parked_state(p),
+                    None if target_exists(store, &p.target) => {
+                        let mut g = p.clone();
+                        g.state = parked_state(p);
+                        goals.push(g);
+                    }
+                    None => {
+                        dropped_parked.push(p.id.clone());
+                        continue;
+                    }
+                }
+                if let Some(r) = &entry.reason {
+                    parked_reasons.insert(p.id.clone(), r.clone());
+                }
+                continue;
+            }
             match goals.iter_mut().find(|g| g.id == p.id) {
                 Some(g) => {
                     if g.change == p.change || p.change.is_null() {
@@ -776,12 +848,18 @@ impl Board {
                     }
                 }
                 None => {
-                    if target_exists(store, &f.goal.target) {
+                    // A ledger goal is the ledger's to derive, failed or parked: a
+                    // failure about a row that reads current has nothing left to say.
+                    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+                    let ledger_kind = LEDGER_KINDS.contains(&f.goal.kind.as_str());
+                    if target_exists(store, &f.goal.target) && !ledger_kind {
                         let mut g = f.goal.clone();
                         g.state = GoalState::Failed {
                             reason: f.reason.clone(),
                         };
                         goals.push(g);
+                    } else if ledger_kind {
+                        dropped_failed.push(f.goal.id.clone());
                     }
                 }
             }
@@ -868,7 +946,21 @@ impl Board {
         let mut tier_open = [0usize; 4];
         let mut tier1_open_docs = BTreeSet::new();
         let mut bind_open_by_entity: BTreeMap<String, usize> = BTreeMap::new();
+        // A document whose place-anchors goal failed stays undecided: its sections
+        // wait behind the failure, and an undecided document blocks its own sections
+        // and nothing else, so they hold no later tier or link level.
+        // Mirrors docs/compiler/goals/place-anchors.md#readiness.
+        let undecided_docs: BTreeSet<&str> = goals
+            .iter()
+            .filter(|g| g.kind == "place-anchors" && matches!(g.state, GoalState::Failed { .. }))
+            .map(|g| g.target.as_str())
+            .collect();
         for g in goals.iter().filter(|g| is_open(g)) {
+            if g.kind == "reconcile-section"
+                && target_doc(&g.target).is_some_and(|d| undecided_docs.contains(d.as_str()))
+            {
+                continue;
+            }
             if let Some(t) = goals::tier(&g.kind) {
                 tier_open[t as usize] += 1;
                 if t == 1 {
@@ -955,6 +1047,7 @@ impl Board {
             lapsed,
             reopened,
             dropped_parked,
+            dropped_failed,
             parked_reasons,
             verdict: store.status.verdict.clone(),
             open_diags: store.open_diag_counts(),
@@ -1316,8 +1409,48 @@ impl Board {
 
     // ---- batching ----
 
+    // Hold back goals a build parked mid-run: they stay open on the board (the build
+    // writes `parked` at its close) but take no batch, and the batches re-form
+    // without them so their locality neighbors still run.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    pub fn withhold(&mut self, ids: &BTreeSet<String>, store: &Store, proj: &Project) {
+        let held: Vec<String> = ids
+            .iter()
+            .filter(|id| self.batches.iter().any(|b| b.goals.contains(id)))
+            .cloned()
+            .collect();
+        if held.is_empty() {
+            return;
+        }
+        for id in held {
+            self.readiness.insert(
+                id,
+                Ready::Blocked("parked in this build; the next build resumes it first".into()),
+            );
+        }
+        self.batches = self.form_batches(store, proj);
+    }
+
     fn form_batches(&self, store: &Store, proj: &Project) -> Vec<Batch> {
         let ready: Vec<&Goal> = self.ready_goals();
+        // Generation runs leaf first over the relationships and the containment tree:
+        // every ready generate target's position in that order.
+        // Mirrors docs/compiler/goals/generate.md#readiness.
+        let generate_targets: Vec<String> = ready
+            .iter()
+            .filter(|g| g.kind == "generate")
+            .map(|g| g.target.clone())
+            .collect();
+        let topo: BTreeMap<String, usize> = crate::gen::generation_order(store, &generate_targets)
+            .into_iter()
+            .enumerate()
+            .map(|(i, t)| (t, i))
+            .collect();
+        let generate_rank = |g: &Goal| {
+            (g.kind == "generate")
+                .then(|| topo.get(&g.target).copied())
+                .flatten()
+        };
         let executor = |g: &Goal| proj.executors.resolve(&g.kind, &g.class).map(String::from);
         // Group key: class, tier, executor. GC goals sit after the compile tiers,
         // mandatory before optional.
@@ -1413,15 +1546,15 @@ impl Board {
                 ids.sort_by_key(|id| {
                     let g = self.goal(id).unwrap();
                     let parked = !matches!(g.state, GoalState::Parked);
-                    let order = match g.kind.as_str() {
-                        "rejudge-pair" => 0,
-                        "generate" => 0,
-                        "bind" => 2,
-                        "abstract-entity" => usize::MAX - entity_depth(store, &g.target),
-                        "reconcile-section" => section_order(store, &g.target),
-                        _ => 1,
+                    let (kind, order) = match g.kind.as_str() {
+                        "rejudge-pair" => (0, 0),
+                        "generate" => (0, generate_rank(g).unwrap_or(usize::MAX)),
+                        "bind" => (2, 0),
+                        "abstract-entity" => (1, usize::MAX - entity_depth(store, &g.target)),
+                        "reconcile-section" => (1, section_order(store, &g.target)),
+                        _ => (1, 0),
                     };
-                    (parked, order, id.clone())
+                    (parked, kind, order, id.clone())
                 });
                 for id in ids {
                     let g = self.goal(&id).unwrap();
@@ -1509,12 +1642,20 @@ impl Board {
                 .and_then(|g| target_doc(&g.target))
                 .and_then(|d| self.doc_levels.get(&d).copied())
                 .unwrap_or(0);
+            // Generation batches follow the leaf-first order of their earliest goal.
+            let generation = b
+                .goals
+                .iter()
+                .filter_map(|id| self.goal(id))
+                .filter_map(|g| generate_rank(g))
+                .min();
             (
                 matches!(b.class, Class::Gc),
                 b.tier.unwrap_or(0),
                 optional,
                 !parked,
                 level,
+                generation,
                 b.locality.clone(),
             )
         };
@@ -1905,128 +2046,6 @@ impl Board {
             .map(|(_, r)| r)
             .collect::<Vec<_>>()
             .join("\n")
-    }
-
-    // ---- the per-target work item the serving claims ----
-
-    // The work items one batch runs through the serving, in order.
-    pub fn work_items(&self, batch: &Batch) -> Vec<WorkItem> {
-        let mut items: Vec<WorkItem> = Vec::new();
-        for id in &batch.goals {
-            let Some(g) = self.goal(id) else { continue };
-            let Some(item) = self.work_item(g) else {
-                continue;
-            };
-            match items
-                .iter_mut()
-                .find(|i| i.task == item.task && i.target == item.target)
-            {
-                Some(existing) => {
-                    for s in item.dirty_sections {
-                        if !existing.dirty_sections.contains(&s) {
-                            existing.dirty_sections.push(s);
-                        }
-                    }
-                    for a in item.stale_anchors {
-                        if !existing.stale_anchors.contains(&a) {
-                            existing.stale_anchors.push(a);
-                        }
-                    }
-                }
-                None => items.push(item),
-            }
-        }
-        items
-    }
-
-    fn work_item(&self, g: &Goal) -> Option<WorkItem> {
-        let task = goals::legacy_task(&g.kind)?;
-        Some(match g.kind.as_str() {
-            "reconcile-section" => {
-                let (doc, sec) = split_section_ref(&g.target)?;
-                WorkItem {
-                    task: task.into(),
-                    target: doc,
-                    dirty_sections: vec![sec],
-                    stale_anchors: g.change["staleAnchors"]
-                        .as_array()
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str().map(String::from))
-                                .collect()
-                        })
-                        .unwrap_or_default(),
-                    proposals: Vec::new(),
-                }
-            }
-            "place-anchors" => WorkItem {
-                task: task.into(),
-                target: g.target.clone(),
-                dirty_sections: Vec::new(),
-                stale_anchors: Vec::new(),
-                proposals: g.change["anchors"]
-                    .as_array()
-                    .map(|a| {
-                        a.iter()
-                            .filter_map(|x| x.as_str().map(String::from))
-                            .collect()
-                    })
-                    .unwrap_or_default(),
-            },
-            "rejudge-pair" => {
-                let changed = g.change["revised"]
-                    .as_str()
-                    .or(g.change["created"].as_str())
-                    .or(g.change["survivor"].as_str())
-                    .map(String::from)
-                    .or_else(|| goals::pair_members(&g.target).map(|(a, _)| a.to_string()))?;
-                WorkItem::new(task, &changed)
-            }
-            _ => WorkItem::new(task, &g.target),
-        })
-    }
-
-    // The work item for a target the serving names (a goal id, a document, a node),
-    // or the first claimable batch's first item.
-    pub fn find_item(&self, target: Option<&str>) -> Option<WorkItem> {
-        match target {
-            None => {
-                let b = self.batches.first()?;
-                self.work_items(b).into_iter().next()
-            }
-            Some(t) => {
-                if let Some(g) = self.goal(t) {
-                    if !self.is_ready(&g.id) {
-                        return None;
-                    }
-                    let b = self.batches.iter().find(|b| b.goals.contains(&g.id))?;
-                    return self.work_items(b).into_iter().find(|i| {
-                        self.work_item(g)
-                            .is_some_and(|w| w.task == i.task && w.target == i.target)
-                    });
-                }
-                for b in &self.batches {
-                    for item in self.work_items(b) {
-                        if item.target == t || item.task == t {
-                            return Some(item);
-                        }
-                    }
-                }
-                None
-            }
-        }
-    }
-
-    // Whether an open goal still maps to the serving's work item: the success test of
-    // a session, read from the board instead of the agent's word.
-    pub fn item_open(&self, item: &WorkItem) -> bool {
-        self.goals
-            .iter()
-            .filter(|g| is_open(g))
-            .any(|g| match self.work_item(g) {
-                Some(w) => w.task == item.task && w.target == item.target,
-                None => false,
-            })
     }
 }
 
@@ -2426,6 +2445,26 @@ pub(crate) mod tests {
         assert!(!failure_stands(&failed, &mk(99, 70)));
         let other = Goal { kind: "review-entity".into(), ..mk(82, 60) };
         assert!(!failure_stands(&other, &Goal { kind: "review-entity".into(), ..mk(83, 61) }));
+    }
+
+    // A declined fan-out goal stands while its candidates move: only the child count
+    // growing by a fifth, or a bump of the limits, reopens it.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    #[test]
+    fn failed_fan_out_stands_while_coupling_moves() {
+        let mk = |count: u64, soft: u64, candidates: Value, generation: u64| Goal {
+            id: "g:abstract-entity:ent:shop".into(),
+            kind: "abstract-entity".into(),
+            target: "ent:shop".into(),
+            change: json!({"fan_out": count, "limit": {"soft": soft, "hard": 15}, "candidates": candidates}),
+            cause: Some(crate::model::Cause { generation, mutation: 0, via: "limits".into() }),
+            ..Default::default()
+        };
+        let failed = mk(10, 9, json!([["ent:a", "ent:b"]]), 60);
+        assert!(failure_stands(&failed, &mk(10, 9, json!([["ent:a", "ent:c"]]), 70)));
+        assert!(failure_stands(&failed, &mk(11, 9, json!([]), 71)));
+        assert!(!failure_stands(&failed, &mk(12, 9, json!([]), 72)));
+        assert!(!failure_stands(&failed, &mk(10, 8, json!([["ent:a", "ent:b"]]), 73)));
     }
     use super::*;
     use crate::store::{self, RecordBatch};
@@ -3068,6 +3107,48 @@ pub(crate) mod tests {
         }
     }
 
+    // Generation batches follow the leaf-first order over the relationships: the part
+    // a whole composes generates before the whole, whatever their ids.
+    // Mirrors docs/compiler/goals/generate.md#readiness.
+    #[test]
+    fn generate_batches_run_leaf_first() {
+        let mut s = Store::default();
+        for (eid, rid, crit) in [("ent:a-order", "req:r-a", "crit:a-1"), ("ent:z-line", "req:r-z", "crit:z-1")] {
+            s.graph.entities.insert(eid.into(), Entity { name: eid.into(), ..Default::default() });
+            s.graph.requirements.insert(
+                rid.into(),
+                Requirement { statement: format!("The {} answers.", eid), entities: vec![eid.into()], ..Default::default() },
+            );
+            s.graph.criteria.insert(
+                crit.into(),
+                Criterion { requirement: rid.into(), statement: format!("Asked once, the {} answers.", eid), kind: "positive".into(), ..Default::default() },
+            );
+        }
+        s.graph.relationships.insert(
+            "rel:a-order~z-line".into(),
+            crate::model::Relationship {
+                members: vec!["ent:a-order".into(), "ent:z-line".into()],
+                contributions: vec![crate::model::Contribution {
+                    a: "ent:a-order".into(),
+                    b: "ent:z-line".into(),
+                    r#type: "composition".into(),
+                    cardinality: None,
+                    requirements: vec!["req:r-a".into()],
+                }],
+            },
+        );
+        let proj = Project { out: s.out.clone(), gen_deliverable: Some("product".into()), ..Default::default() };
+        let control = Control { generate: "auto".into(), ..control_auto() };
+        let b = Board::derive(&s, &proj, &control);
+        let pos = |id: &str| {
+            b.batches
+                .iter()
+                .position(|bt| bt.goals.iter().any(|g| g == id))
+                .unwrap_or_else(|| panic!("{} unbatched: {:?}", id, b.batches))
+        };
+        assert!(pos("g:generate:ent:z-line") < pos("g:generate:ent:a-order"), "{:?}", b.batches);
+    }
+
     // A ledger locality is a wall: the batch flushes before and after it, and its
     // counters (size, sections, criteria, charged sides) start over. A pair never
     // meets a wall (pairs are tier 2, the walled kinds tiers 0, 1, and 3), so the
@@ -3288,13 +3369,36 @@ pub(crate) mod tests {
             assert_eq!(docs.len(), 1, "{:?}", batch);
             assert!(batch.goals.len() <= 3, "{:?}", batch);
         }
-        let items = b.work_items(&b.batches[0]);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].task, "reconcile-doc");
-        assert_eq!(items[0].target, "other.md");
-        assert_eq!(items[0].dirty_sections.len(), 2);
-        assert!(b.item_open(&items[0]));
-        assert_eq!(b.find_item(None).map(|i| i.target), Some("other.md".into()));
+    }
+
+    // Each direction keeps its own visited set: a node one seed reaches upward still
+    // walks downward from the other seed. Mirrors docs/compiler/reconciler.md#cones.
+    #[test]
+    fn a_node_reached_upward_still_walks_downward_from_the_other_seed() {
+        use crate::model::{Entity, Provenance, Requirement};
+        let mut s = Store::default();
+        s.graph.entities.insert("ent:pricing".into(), Entity {
+            name: "Pricing".into(),
+            provenance: Some(Provenance::Derived { from: vec!["req:b".into()], reasoning: "split".into() }),
+            ..Default::default()
+        });
+        s.graph.entities.insert("ent:discount".into(), Entity {
+            name: "Discount".into(),
+            parent: Some("ent:pricing".into()),
+            ..Default::default()
+        });
+        s.graph.requirements.insert("req:a".into(), Requirement {
+            statement: "Pricing applies to every order.".into(),
+            entities: vec!["ent:pricing".into()],
+            ..Default::default()
+        });
+        s.graph.requirements.insert("req:b".into(), Requirement {
+            statement: "Orders are priced.".into(),
+            ..Default::default()
+        });
+        let c = cone(&s, "req:a~req:b");
+        assert!(c.nodes.contains("ent:pricing"));
+        assert!(c.nodes.contains("ent:discount"), "req:b's downward walk reaches the child: {:?}", c.nodes);
     }
 
     #[test]
@@ -3464,6 +3568,12 @@ pub(crate) mod tests {
         let b = derive(&verified);
         assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
         assert!(b.dropped_parked.contains(&done.id));
+        // A failed ledger goal the ledger no longer derives drops the same way.
+        verified.status.parked.clear();
+        verified.status.failed.push(crate::model::FailedGoal { goal: done.clone(), reason: "the test cannot run".into() });
+        let b = derive(&verified);
+        assert!(b.goal(&done.id).is_none(), "{:?}", b.goal(&done.id));
+        assert!(b.dropped_failed.contains(&done.id), "{:?}", b.dropped_failed);
         // An entry parked by flip detection resumes blocked on the ruling, whatever
         // state it was written with, so no batch takes it.
         let mut ruled = settled_store();
@@ -3475,10 +3585,128 @@ pub(crate) mod tests {
         flip.change = json!({"reparent": "ent:row-of-shops", "between": ["ent:a", "ent:b"]});
         flip.cause = Some(crate::model::Cause { generation: 95, mutation: 0, via: "flip-detection".into() });
         ruled.status.parked.push(flip.clone().into());
+        ruled.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:row-of-shops"));
         let b = derive(&ruled);
         let g = b.goal(&flip.id).expect("the flip entry stands");
         assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:row-of-shops")), "{:?}", g.state);
         assert!(!b.is_ready(&flip.id));
+        assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
+        // Answering the ruling clears the entry.
+        ruled.graph.diagnostics.get_mut("diag:unstable-derivation-1").unwrap().answer =
+            Some(crate::model::DiagnosticAnswer { choice: Some(0), text: "keep".into(), status: "applied".into(), error: None });
+        let b = derive(&ruled);
+        assert!(b.dropped_parked.contains(&flip.id), "{:?}", b.dropped_parked);
+    }
+
+    fn unstable_ruling(subject: &str) -> crate::model::Diagnostic {
+        crate::model::Diagnostic {
+            rule: "unstable-derivation".into(),
+            severity: "warning".into(),
+            subjects: vec![subject.into()],
+            message: "flips".into(),
+            reasoning: None,
+            lifecycle: "open".into(),
+            triage: None,
+            prompt: None,
+            answer: None,
+            created: None,
+            updated: None,
+        }
+    }
+
+    // A failed place-anchors goal leaves its document undecided: the document's
+    // sections wait, and nothing else does. Mirrors
+    // docs/compiler/goals/place-anchors.md#readiness.
+    #[test]
+    fn a_failed_place_anchors_goal_blocks_its_own_sections_only() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ALIGNMENT_PENDING, "shop.md", "alignment", json!({"proposals": 1}));
+        record(&mut s, 10, store::CHANGE_SECTION_DIRTY, "shop.md#/shop/orders", "section", json!({"added": 1}));
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        let b = derive(&s);
+        assert!(!b.is_ready("g:review-entity:ent:customer"), "tier 0 and 1 run first");
+        let anchors = Goal {
+            id: "g:place-anchors:shop.md".into(),
+            kind: "place-anchors".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "shop.md".into(),
+            unit: "document".into(),
+            change: json!({"proposals": 1}),
+            ..Default::default()
+        };
+        s.status.failed.push(crate::model::FailedGoal { goal: anchors, reason: "no candidate fits".into() });
+        let b = derive(&s);
+        assert!(matches!(b.goal("g:place-anchors:shop.md").map(|g| &g.state), Some(GoalState::Failed { .. })));
+        assert!(!b.is_ready("g:reconcile-section:shop.md#/shop/orders"), "{:?}", b.readiness.get("g:reconcile-section:shop.md#/shop/orders"));
+        assert!(b.is_ready("g:review-entity:ent:customer"), "{:?}", b.readiness.get("g:review-entity:ent:customer"));
+        assert!(!b.verdict().converged());
+    }
+
+    // A goal parked mid-build takes no batch, and its batch neighbors still run.
+    // Mirrors docs/compiler/reconciler.md#parked-and-failed.
+    #[test]
+    fn withholding_a_parked_goal_keeps_its_batch_neighbors() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:order", "entities", json!({"requirement": "req:shop-2"}));
+        let mut b = derive(&s);
+        let (a, o) = ("g:review-entity:ent:customer".to_string(), "g:review-entity:ent:order".to_string());
+        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == a), "{:?}", b.batches);
+        assert!(b.batches.iter().flat_map(|bt| &bt.goals).any(|g| *g == o), "{:?}", b.batches);
+        b.withhold(&BTreeSet::from([a.clone()]), &s, &project_for(&s));
+        let batched: Vec<&String> = b.batches.iter().flat_map(|bt| &bt.goals).collect();
+        assert!(!batched.contains(&&a), "{:?}", b.batches);
+        assert!(batched.contains(&&o), "{:?}", b.batches);
+        assert!(!b.is_ready(&a));
+    }
+
+    // A pending flip ruling holds its pair blocked on a human: the verdict converges
+    // with the pair in the blocked count. Mirrors docs/compiler/compilation.md#convergence.
+    #[test]
+    fn a_pending_flip_ruling_rides_as_blocked_in_the_verdict() {
+        let mut s = settled_store();
+        let before = derive(&s).verdict();
+        assert!(before.converged(), "{:?}", before);
+        let flip = Goal {
+            id: "g:review-entity:ent:customer".into(),
+            kind: "review-entity".into(),
+            class: "compile".into(),
+            mandatory: true,
+            target: "ent:customer".into(),
+            unit: "entity".into(),
+            change: json!({"unstable": "customer", "subject": "ent:customer"}),
+            cause: Some(crate::model::Cause { generation: 2, mutation: 0, via: "flip-detection".into() }),
+            ..Default::default()
+        };
+        s.status.parked.push(flip.into());
+        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        let v = derive(&s).verdict();
+        assert!(v.converged(), "{:?}", v);
+        assert_eq!(v.blocked, before.blocked + 1, "{:?}", v);
+    }
+
+    // A goal parked by flip detection stays parked when it derives again: its parked
+    // change names the flip, never the goal's own records, so a change comparison
+    // would drop it at once. Mirrors docs/compiler/reconciler.md#flip-detection.
+    #[test]
+    fn a_flip_parked_goal_stays_parked_when_it_derives_again() {
+        let mut s = settled_store();
+        record(&mut s, 10, store::CHANGE_ENTITY, "ent:customer", "entities", json!({"requirement": "req:shop-1"}));
+        let derived = derive(&s)
+            .goal("g:review-entity:ent:customer")
+            .cloned()
+            .expect("the entity change derives a review");
+        let mut flip = derived.clone();
+        flip.change = json!({"unstable": "customer", "subject": "ent:customer"});
+        flip.cause = Some(crate::model::Cause { generation: 40, mutation: 0, via: "flip-detection".into() });
+        s.status.parked.push(flip.clone().into());
+        s.graph.diagnostics.insert("diag:unstable-derivation-1".into(), unstable_ruling("ent:customer"));
+        let b = derive(&s);
+        let g = b.goal(&flip.id).expect("the flip entry stands");
+        assert_eq!(g.change, derived.change, "the goal keeps its derived change");
+        assert!(matches!(&g.state, GoalState::Blocked { on } if on.contains("ent:customer")), "{:?}", g.state);
+        assert!(!b.dropped_parked.contains(&flip.id));
         assert!(b.batches.iter().all(|bt| !bt.goals.contains(&flip.id)));
     }
 

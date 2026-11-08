@@ -1668,6 +1668,9 @@ impl Store {
         if tokens == 0 || to <= from {
             return;
         }
+        // A journal rewrite is a store write: under the lock, through the atomic
+        // write. Mirrors docs/compiler/graph.md#concurrency.
+        let _flock = FileLock::acquire(out);
         // Only the session entries the turn wrote take a share, so the parts sum to
         // the spend: a checks or settle entry between them bills nothing.
         let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
@@ -1690,9 +1693,7 @@ impl Store {
         for (i, (p, mut entry)) in entries.into_iter().enumerate() {
             entry.tokens = Some(split(tokens, i));
             entry.cached_tokens = (cached > 0).then(|| split(cached, i));
-            if let Ok(out_text) = serde_norway::to_string(&entry) {
-                crate::vfs::write(&p, out_text).ok();
-            }
+            report_write(&p, write_yaml(&p, &entry));
         }
     }
 
@@ -1718,6 +1719,12 @@ impl Store {
             ));
         }
         let p = out.join("journal").join(format!("g{}.yaml", generation));
+        if !p.vis_file() {
+            return Err(format!("no journal entry g{} under {}", generation, out.display()));
+        }
+        // The read, the check, and the write hold the lock, so two stamps never both
+        // pass the no-figure check. Mirrors docs/compiler/graph.md#concurrency.
+        let _flock = FileLock::acquire(out);
         let text = crate::vfs::read_to_string(&p)
             .map_err(|_| format!("no journal entry g{} under {}", generation, out.display()))?;
         let mut entry = serde_norway::from_str::<JournalEntry>(&text)
@@ -1747,8 +1754,7 @@ impl Store {
         entry.tokens = Some(tokens);
         entry.cached_tokens = cached.filter(|c| *c > 0);
         entry.tokens_source = Some(crate::model::TOKENS_SOURCE_AGENT.to_string());
-        let out_text = serde_norway::to_string(&entry).map_err(|e| e.to_string())?;
-        crate::vfs::write(&p, out_text).map_err(|e| format!("write {}: {}", p.display(), e))?;
+        write_yaml(&p, &entry).map_err(|e| format!("write {}: {}", p.display(), e))?;
         Ok(entry)
     }
 
@@ -9916,6 +9922,55 @@ mod tests {
         // A zero cached figure leaves the field absent rather than writing 0.
         Store::stamp_reported(&out, 4, 100, Some(0)).unwrap();
         assert_eq!(read(4).cached_tokens, None);
+    }
+
+
+    // A spend stamp rewrites a committed journal entry: it waits for the store lock
+    // a writer holds and lands through the atomic write.
+    // Mirrors docs/compiler/graph.md#concurrency.
+    #[test]
+    fn spend_stamps_wait_for_the_store_lock() {
+        let out = own_dir("stamp-lock");
+        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        for g in [1, 2] {
+            let entry = JournalEntry {
+                build: format!("g{}", g),
+                generation: g,
+                kind: "session".to_string(),
+                ..Default::default()
+            };
+            crate::vfs::write(
+                out.join("journal").join(format!("g{}.yaml", g)),
+                serde_norway::to_string(&entry).unwrap(),
+            )
+            .unwrap();
+        }
+        let read = |g: u64| -> JournalEntry {
+            serde_norway::from_str(
+                &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g)))
+                    .unwrap(),
+            )
+            .unwrap()
+        };
+        let held = FileLock::acquire(&out);
+        let (a, b) = (out.clone(), out.clone());
+        let reported = std::thread::spawn(move || Store::stamp_reported(&a, 2, 500, None));
+        let measured = std::thread::spawn(move || Store::stamp_tokens(&b, 0, 1, 700, 0));
+        std::thread::sleep(std::time::Duration::from_millis(400));
+        assert_eq!(read(1).tokens, None, "a stamp wrote under a held lock");
+        assert_eq!(read(2).tokens, None, "a stamp wrote under a held lock");
+        drop(held);
+        assert_eq!(reported.join().unwrap().unwrap().tokens, Some(500));
+        measured.join().unwrap();
+        assert_eq!(read(1).tokens, Some(700));
+        assert_eq!(read(2).tokens, Some(500));
+        let leftovers: Vec<String> = crate::vfs::read_dir(out.join("journal"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "{:?}", leftovers);
     }
 
     #[test]

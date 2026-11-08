@@ -143,8 +143,9 @@ in [generation](../../consumers/gen.md).
   matches a derived or decree requirement whose ratification proposal targets that
   section, the upsert lands on that node and gives it a `source`. That is ratification
   completing by hand. See [ratification proposals](./diagnostic.md#ratification-proposals).
-- The id is `req:<doc-stem>-<n>`, minted by the store, `req:x-<n>` for derived and decree
-  requirements. E.g. `req:catalog-3`. See [identifiers](../model.md#identifiers).
+- The id is `req:<stem>-<hash>`, minted by the store from the natural key, stem `x` for
+  derived and decree requirements. E.g. `req:catalog-search-9k2d`. See
+  [identifiers](../model.md#identifiers).
 - A change to `statement`, to the source `quote` in substance, or to `edges`,
   `transition`, or `facets` is a `requirement-revised` change record and opens
   [`rejudge-pair`](../goals/rejudge-pair.md) on the requirement's neighbors. Creation

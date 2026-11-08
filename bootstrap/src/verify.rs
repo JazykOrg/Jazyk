@@ -2535,7 +2535,9 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
         let (mut s, gs) = fixture(&out);
         // Wipe the ledger: the row must surface as missing/not-generated with a repair.
-        crate::vfs::remove_file(crate::gen::Ledger::path(&out)).unwrap();
+        for f in crate::gen::Ledger::files(&out) {
+            crate::vfs::remove_file(f).unwrap();
+        }
         let p = pending(&s, &gs, None, None);
         assert_eq!(p.len(), 1);
         assert_eq!(p[0]["status"], "missing");

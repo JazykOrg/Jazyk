@@ -179,10 +179,13 @@ pub fn pdf_quote(path: &Path, quote: &str) -> Result<Vec<Value>, String> {
     if quote.trim().is_empty() {
         return Ok(vec![]);
     }
+    // Read through the filesystem seam, so a hosted workspace's in-memory tree serves
+    // the same bytes the projection read. See docs/frontends/wasm.md#filesystem.
+    let bytes = crate::vfs::read(path).map_err(|e| e.to_string())?;
     let _guard = PDF_LOCK.lock().map_err(|e| e.to_string())?;
     let pdfium = pdfium()?;
     let doc = pdfium
-        .load_pdf_from_file(path, None)
+        .load_pdf_from_byte_slice(&bytes, None)
         .map_err(|e| e.to_string())?;
     let mut hits = vec![];
     for (i, page) in doc.pages().iter().enumerate() {
@@ -429,6 +432,29 @@ mod tests {
             crate::task_runtime::digest(DOCX)
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    // A quote lookup reads the PDF through the filesystem seam: inside a hosted
+    // workspace a file only the in-memory tree holds is found, a missing one is an
+    // ordinary not-found error before the PDF reader is touched.
+    #[test]
+    fn pdf_quote_reads_through_the_vfs() {
+        let mut files = std::collections::BTreeMap::new();
+        files.insert("present.pdf".to_string(), PDF.to_vec());
+        let _scope = crate::vfs::Scope::enter(&files);
+        let err = pdf_quote(Path::new("/project/missing.pdf"), "contract").unwrap_err();
+        assert!(!err.contains("PDFium") && !err.to_lowercase().contains("pdfium"), "{}", err);
+        assert!(crate::vfs::read(Path::new("/project/present.pdf")).is_ok());
+    }
+
+    #[test]
+    #[ignore = "requires JAZYK_PROOF_PDFIUM pointing to the native PDFium library"]
+    fn pdf_quote_finds_a_quote_in_a_workspace_only_pdf() {
+        let mut files = std::collections::BTreeMap::new();
+        files.insert("contract.pdf".to_string(), PDF.to_vec());
+        let _scope = crate::vfs::Scope::enter(&files);
+        let hits = pdf_quote(Path::new("/project/contract.pdf"), "contract").unwrap();
+        assert!(!hits.is_empty());
     }
 
     #[test]

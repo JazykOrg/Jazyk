@@ -266,11 +266,14 @@ definitions:
         description: The measurable bound. Stated only on a quality facet
     additionalProperties: false
   entity:
-    description: One entry in graph/entities.yaml
+    description: One node file under graph/entities/
     type: object
     required:
       - name
     properties:
+      id:
+        type: string
+        description: The node id, the first field of its node file. The load checks it against the file name
       name:
         type: string
       aliases:
@@ -330,13 +333,13 @@ definitions:
         type: string
       created:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
       updated:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
   requirement:
     description: >-
-      One entry in graph/requirements.yaml. Carries exactly one of source (the quote
+      One node file under graph/requirements/. Carries exactly one of source (the quote
       form) or provenance (derived or decree)
     type: object
     required:
@@ -354,6 +357,9 @@ definitions:
           required:
             - source
     properties:
+      id:
+        type: string
+        description: The node id, the first field of its node file. The load checks it against the file name
       statement:
         type: string
         description: One atomic obligation, free-form
@@ -390,10 +396,10 @@ definitions:
         type: string
       created:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
       updated:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
   viewQuery:
     description: Membership by rule instead of list. Recomputed on every commit
     type: object
@@ -424,7 +430,7 @@ definitions:
     additionalProperties: false
   criterion:
     description: >-
-      One entry in graph/criteria.yaml: the observable evidence one requirement is met.
+      One node file under graph/criteria/: the observable evidence one requirement is met.
       Carries exactly one of source (the quote form) or provenance (derived or decree)
     type: object
     required:
@@ -432,6 +438,9 @@ definitions:
       - statement
       - kind
     properties:
+      id:
+        type: string
+        description: The node id, the first field of its node file. The load checks it against the file name
       requirement:
         type: string
         pattern: '^req:'
@@ -477,7 +486,7 @@ definitions:
 
   view:
     description: >-
-      One entry in graph/views.yaml. The stored half of a diagram: what it includes,
+      One node file under graph/views/ (a default view under graph/default-views/). The stored half of a diagram: what it includes,
       never how it looks
     type: object
     required:
@@ -485,6 +494,9 @@ definitions:
       - title
       - provenance
     properties:
+      id:
+        type: string
+        description: The node id, the first field of its node file. The load checks it against the file name
       kind:
         $ref: '#/definitions/viewKind'
       title:
@@ -522,10 +534,10 @@ definitions:
         $ref: '#/definitions/limits'
       created:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
       updated:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
   contribution:
     description: >-
       One direction-and-type group of a relationship, with the requirements behind it
@@ -626,7 +638,7 @@ definitions:
         items:
           $ref: '#/definitions/stateTransition'
   diagnostic:
-    description: One entry in graph/diagnostics.yaml. Sticky, reconciled across builds
+    description: One node file under graph/diagnostics/. Sticky, reconciled across builds
     type: object
     required:
       - rule
@@ -634,6 +646,9 @@ definitions:
       - subjects
       - message
     properties:
+      id:
+        type: string
+        description: The node id, the first field of its node file. The load checks it against the file name
       rule:
         type: string
       severity:
@@ -697,10 +712,10 @@ definitions:
         additionalProperties: false
       created:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
       updated:
         type: string
-        description: Generation marker (g<N>) set by the store on commit
+        description: Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file
   diagnosticPrompt:
     description: A question or proposal attached to a diagnostic
     type: object
@@ -802,7 +817,7 @@ definitions:
         type: string
         description: Content hash of raw, used for section diffing
       lines:
-        description: Start and end line in the source file
+        description: Start and end line in the source file. Recomputed at load from the raw texts in document order, never written to a docs/ record
         type: array
         minItems: 2
         maxItems: 2
@@ -827,9 +842,6 @@ definitions:
     description: One file under docs/, mirroring one source document
     type: object
     properties:
-      contentHash:
-        type: string
-        description: Hash of the source file at last reconcile
       sections:
         type: object
         description: Map of internal reference to section
@@ -866,20 +878,18 @@ definitions:
       - flow-unplaced
   changeRecord:
     description: >-
-      One entry in status.yaml changes. Written at commit, read by goal derivation as
+      One file under changes/<kind>/, named by its subject, holding kind, subject, via,
+      and detail; id, generation, and mutation are local in causes.yaml. Written at commit, read by goal derivation as
       a goal's change, cleared when the goal resolves
     type: object
     required:
-      - id
-      - generation
-      - mutation
       - kind
       - subject
     properties:
       id:
         type: string
-        description: c<generation>-<index>, the record's index within its generation
-        pattern: '^c[0-9]+-[0-9]+$'
+        description: c<generation>-<hash>, the generation that wrote it and the id hash of its kind and subject. A version 3 record keeps its c<generation>-<index> id
+        pattern: '^c[0-9]+-[0-9a-z]+$'
       generation:
         type: integer
         minimum: 0
@@ -1163,40 +1173,19 @@ definitions:
     additionalProperties: false
   status:
     description: >-
-      The status.yaml file, committed: what goal derivation reads, nothing that
-      changes without a graph change
+      The status.yaml file, committed. The rest of the status is one file per record
+      under changes/, parked/, failed/, alignment/, and lookalikes/
     type: object
     required:
       - version
     properties:
       version:
         description: >-
-          The store version. An out directory whose status.yaml lacks it or carries a
-          different one is archived whole and the store starts empty
+          The store version. A version 3 store loads and is written in this layout by
+          its next save. An out directory whose status.yaml lacks it or carries
+          another one is archived whole and the store starts empty
         type: integer
-        const: 3
-      changes:
-        description: Open change records, the input of goal derivation
-        type: array
-        items:
-          $ref: '#/definitions/changeRecord'
-      parked:
-        description: >-
-          Goals left open when a budget ran out, persisted whole. Resumed first next
-          build
-        type: array
-        items:
-          $ref: '#/definitions/goal'
-      failed:
-        description: Goals a session marked failed, each whole with its reason
-        type: array
-        items:
-          $ref: '#/definitions/failedGoal'
-      alignment:
-        description: Pending alignment proposals, one block per target document
-        type: array
-        items:
-          $ref: '#/definitions/docAlignment'
+        const: 4
       reevaluate:
         description: >-
           Anchors a place-anchors session placed with reevaluate, listed as stale

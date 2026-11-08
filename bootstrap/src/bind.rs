@@ -567,6 +567,7 @@ pub fn record(
         .first()
         .map(|e| store.resolve_id(e).to_string())
         .unwrap_or_default();
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     let row = ReqRow {
         entity,
@@ -603,7 +604,7 @@ pub fn record(
             w
         }
     });
-    ledger.save(&store.out);
+    ledger.save(&store.out)?;
     let ledger = Ledger::load(&store.out);
     let (status, reason) =
         crate::verify::status_of(store, &rid, ledger.requirements.get(&rid).unwrap(), gs);
@@ -795,12 +796,14 @@ pub async fn run_all(
             return Err("suspended".into());
         }
         if command.data.active.is_none() {
-            let mut ledger = Ledger::load(&store.out);
-            if ledger.medium.is_none() {
+            // A model call, outside the ledger lock; it lands on a fresh load.
+            if Ledger::load(&store.out).medium.is_none() {
                 let medium = crate::gen::decide_medium(store, runner, &gs.deliverable).await?;
                 trace.line("bind medium", &medium.line());
-                ledger.medium = Some(medium);
-                ledger.save(&store.out);
+                Ledger::update(&store.out, |ledger| {
+                    ledger.medium.get_or_insert(medium);
+                    Ok(())
+                })?;
             }
             let target = &command.data.owed[command.data.cursor];
             let rid = target["requirement"]
@@ -933,7 +936,7 @@ mod tests {
                 statement:"The shop shall list other items.".into(),entities:vec!["ent:shop".into()],..Default::default()
             });
             let gs = GenSettings { configured:true,deliverable:store.out.join("product"),worker:"agentic".into(),code:vec![] };
-            Ledger { medium:Some(crate::gen::Medium {form:"Markdown".into(),produced:"written".into(),toolchain:"text".into(),artifact:String::new()}),..Default::default() }.save(&store.out);
+            Ledger { medium:Some(crate::gen::Medium {form:"Markdown".into(),produced:"written".into(),toolchain:"text".into(),artifact:String::new()}),..Default::default() }.save(&store.out).unwrap();
             let runner = Worker {store:store.clone(),gs:gs.clone(),reason:reason.clone(),calls:Default::default()};
             let trace = crate::session::Trace::to_sink(crate::session::TraceLevel::Quiet,std::sync::Arc::new(|_|{}),Default::default());
             let result = run_all(&store,&runner,&gs,&[],&trace).unwrap();
@@ -1060,7 +1063,7 @@ mod tests {
         row.test.artifact = "tests/test_items.py".into();
         row.hashes.test = hash_file(&gs.deliverable.join(&row.test.artifact));
         assert_eq!(crate::verify::status_of(&store, rid, row, &gs).0, "missing");
-        ledger.save(&store.out);
+        ledger.save(&store.out).unwrap();
         assert_eq!(pending(&store, &gs)[0]["reason"], "artifact-gone");
         let cid = "crit:shop-1";
         store.graph.criteria.insert(cid.into(), crate::model::Criterion { requirement: rid.into(), statement: "Two items show two lines.".into(), ..Default::default() });
@@ -1365,7 +1368,7 @@ mod tests {
             }),
             ..Default::default()
         };
-        ledger.save(&s.out);
+        ledger.save(&s.out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("tests")).unwrap();
         let name = crate::gen::test_name("req:shop-1", "The shop shall list items.");
         crate::vfs::write(
@@ -1405,7 +1408,7 @@ mod tests {
                 record_sequence: 0,
             },
         );
-        ledger.save(&s.out);
+        ledger.save(&s.out).unwrap();
         let v = record(&s, "req:shop-1", &[], &test, &json!([]), "fail", None, &gs).unwrap();
         let w = v["mediumWarning"].as_str().expect("the record still warns");
         assert!(!w.contains("re-decides"), "{}", w);

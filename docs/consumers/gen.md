@@ -701,6 +701,12 @@ empty one. Repair or remove the file; `jazyk test --audit` then rebuilds what th
 artifacts carry. A ledger written whole into `gen/ledger.yaml` (store version 3) loads
 as it is and is split by its next save.
 
+Every path that changes the ledger loads, modifies, and saves it under the ledger lock,
+`.ledger.lock` in the out directory, so two processes writing at once never lose each
+other's rows. A test command never runs under the lock: its verdicts land on a fresh
+load taken under the lock after the run. A save that fails is an error of the operation
+that asked for it, never a recorded result.
+
 The example shows the ledger as one document, the form a load assembles:
 
 ```yaml

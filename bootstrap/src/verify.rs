@@ -459,6 +459,7 @@ pub fn mark(
         ));
     }
     let rid = store.resolve_id(rid).to_string();
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Err(format!("no ledger row for `{}`", rid));
@@ -495,7 +496,7 @@ pub fn mark(
         None => false,
     };
     let (status, _) = status_of(store, &rid, ledger.requirements.get(&rid).unwrap(), gs);
-    ledger.save(&store.out);
+    ledger.save(&store.out)?;
     Ok(json!({"recorded": rid, "verdict": verdict, "status": status, "graphMoved": stale}))
 }
 
@@ -528,6 +529,7 @@ pub fn mark_llm(
     gs: &GenSettings,
 ) -> Result<Value, String> {
     let rid = store.resolve_id(rid).to_owned();
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     let row = ledger
         .requirements
@@ -632,7 +634,7 @@ pub fn mark_llm(
         .iter()
         .map(|cid| json!({"criterion":cid,"verdict":row.tests[cid].verdict}))
         .collect();
-    ledger.save(&store.out);
+    ledger.save(&store.out)?;
     Ok(
         json!({"recorded":rid,"verdict":verdict,"status":status,"graphMoved":stale,"criteria":results}),
     )
@@ -704,6 +706,8 @@ fn task_case_outcome(result: &Value, name: &str, run_id: &str) -> Result<ProgRun
 // Mirrors docs/consumers/gen.md#tests-tie-criteria-to-the-deliverable.
 pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Value> {
     let rid = store.resolve_id(rid).to_string();
+    // The commands run on a snapshot, outside the ledger lock; their outcomes land
+    // on a fresh load under the lock (docs/consumers/gen.md#the-ledger).
     let mut ledger = Ledger::load(&store.out);
     let Some(row) = ledger.requirements.get_mut(&rid) else {
         return Vec::new();
@@ -798,11 +802,41 @@ pub fn run_criterion_tests(store: &Store, rid: &str, gs: &GenSettings) -> Vec<Va
             }
         }
     }
-    if any_fail && row.verdict == "pass" {
-        row.verdict = "fail".into();
-        row.evidence = Some("a criterion test failed".into());
+    let observed = row.tests.clone();
+    let landed = Ledger::update(&store.out, |fresh| {
+        let Some(row) = fresh.requirements.get_mut(&rid) else {
+            return Err(format!("the ledger row for `{rid}` left while its criterion tests ran"));
+        };
+        let files = crate::gen::hash_implementing(&store.out, gs, &row.files);
+        rebaseline_files(row, files);
+        for line in &lines {
+            let Some(cid) = line["criterion"].as_str() else { continue };
+            if line.get("note").is_some() || line["source"] == "task report" {
+                continue;
+            }
+            let (Some(seen), Some(t)) = (observed.get(cid), row.tests.get_mut(cid)) else { continue };
+            // A test re-bound while the command ran is not the test that ran.
+            let same = |a: &crate::gen::TestRef, b: &crate::gen::TestRef| {
+                (&a.kind, &a.artifact, &a.name, &a.run, &a.cwd) == (&b.kind, &b.artifact, &b.name, &b.run, &b.cwd)
+            };
+            if !same(&seen.test, &t.test) {
+                continue;
+            }
+            t.verdict = seen.verdict.clone();
+            t.exit_code = seen.exit_code;
+            t.last_run = seen.last_run.clone();
+            t.evidence = seen.evidence.clone();
+            t.test_hash = seen.test_hash.clone();
+        }
+        if any_fail && row.verdict == "pass" {
+            row.verdict = "fail".into();
+            row.evidence = Some("a criterion test failed".into());
+        }
+        Ok(())
+    });
+    if let Err(e) = landed {
+        lines.push(json!({"requirement": rid, "verdict": "none", "note": format!("criterion verdicts were not recorded: {e}")}));
     }
-    ledger.save(&store.out);
     lines
 }
 
@@ -1092,7 +1126,10 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
     let mut runner_failed = 0u64;
     for (rid, r) in held {
         if r.runner_failed() || identical {
-            record_runner_failure(store, &rid, r.code, &r.evidence);
+            if let Err(e) = record_runner_failure(store, &rid, r.code, &r.evidence) {
+                skipped.push(json!({"requirement": rid, "reason": format!("the runner failed and that was not recorded: {e}"), "exitCode": r.code}));
+                continue;
+            }
             runner_failed += 1;
             rows.push(json!({"requirement": rid, "verdict": "none", "reason": "runner-failed", "exitCode": r.code, "evidence": r.tail}));
             continue;
@@ -1165,8 +1202,9 @@ pub(crate) fn run_selected_after_build(store: &Store, gs: &GenSettings, targets:
 // Record a run that judged nothing: the exit code and the output stay, the verdict does
 // not move. A row with an exit code and no verdict reads as `runner-failed`
 // (docs/consumers/gen.md#status-is-derived-never-stored).
-pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str) {
+pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str) -> Result<(), String> {
     let rid = store.resolve_id(rid).to_string();
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     if let Some(row) = ledger.requirements.get_mut(&rid) {
         // The previous verdict is not today's answer: this run moved lastRun and
@@ -1187,8 +1225,9 @@ pub fn record_runner_failure(store: &Store, rid: &str, code: i32, evidence: &str
                 t.last_run = row.last_run.clone();
             }
         }
-        ledger.save(&store.out);
+        return ledger.save(&store.out);
     }
+    Ok(())
 }
 
 // Whether an artifact on disk still stands for the live statement: a programmatic
@@ -1211,6 +1250,7 @@ fn artifact_stands_for(content: &str, rid: &str, statement: &str) -> bool {
 // requirement hash is never rewritten from the live graph.
 // Mirrors docs/consumers/gen.md#runners.
 pub fn audit(store: &Store, gs: &GenSettings) -> Value {
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     let mut refreshed = 0;
     let mut reset: Vec<String> = Vec::new();
@@ -1347,7 +1387,7 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
             break;
         }
     }
-    ledger.save(&store.out);
+    let saved = ledger.save(&store.out);
     let mut reply = json!({
         "refreshed": refreshed,
         "verdictReset": reset,
@@ -1364,6 +1404,9 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         reply["foundNote"] = json!(
             "programmatic tests found for requirements with no row; a row needs the command that runs the test, which only binding records, so each stays missing until bound"
         );
+    }
+    if let Err(e) = saved {
+        reply["error"] = json!(e);
     }
     reply
 }
@@ -1487,7 +1530,7 @@ mod tests {
         let (store, gs) = fixture(out);
         let mut ledger = Ledger::load(out);
         ledger.requirements.clear();
-        ledger.save(out);
+        ledger.save(out).unwrap();
         for target in ["req:shop-1", "ent:cart"] {
             let result = run_selected(&store, &gs, &[target.into()]).unwrap();
             assert_eq!(result["passed"], 0);
@@ -1505,7 +1548,7 @@ mod tests {
         let (store, gs) = fixture(out);
         let mut ledger = Ledger::load(out);
         ledger.requirements.get_mut("req:shop-1").unwrap().test.run = "task:check".into();
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let package = task(&store, "req:shop-1", &gs).unwrap();
         assert!(package["instructions"].as_str().unwrap().contains("run_tests"));
         assert!(!package["instructions"].as_str().unwrap().contains("Exit code 0 is a pass"));
@@ -1678,7 +1721,7 @@ mod tests {
                 },
             );
         }
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let task: crate::task_runtime::Task = serde_json::from_value(json!({"id":"check","name":"Check","description":"Check all cases","command":"mvn test"})).unwrap();
         let result = json!({"exit_code":0,"tests":[{"identity":format!("Suite::{name}"),"status":"passed"},{"identity":"Suite::skipped","status":"skipped"}]});
         crate::task_runtime::import_evidence(&store, &gs, &task, &result, "first");
@@ -1746,7 +1789,7 @@ mod tests {
         row.test = row.tests["crit:first"].test.clone();
         row.hashes.test = row.tests["crit:first"].test_hash.clone();
         row.verdict = "pass".into();
-        ledger.save(out);
+        ledger.save(out).unwrap();
         (store, gs)
     }
 
@@ -1832,7 +1875,7 @@ mod tests {
         test.test.name = "case".into();
         test.test.artifact = "tests/cart.rs".into();
         test.test_hash = hash_file(&artifact_path(out, &gs, &test.test));
-        ledger.save(out);
+        ledger.save(out).unwrap();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed behavior").unwrap();
         let task: crate::task_runtime::Task = serde_json::from_value(
             json!({"id":"check","name":"Check","description":"Check cases","command":"pytest"}),
@@ -1881,7 +1924,7 @@ mod tests {
         test.test_hash = hash_file(&artifact_path(out, &gs, &test.test));
         row.test = test.test.clone();
         row.hashes.test = test.test_hash.clone();
-        ledger.save(out);
+        ledger.save(out).unwrap();
         let package = task(&store, "req:shop-1", &gs).unwrap();
         let instructions = package["instructions"].as_str().unwrap();
         assert!(instructions.contains("Run `run_tests`"));
@@ -1889,13 +1932,13 @@ mod tests {
         // Legacy commands need the same harness-owned evidence, plus LLM guidance.
         let mut legacy = Ledger::load(out);
         legacy.requirements.get_mut("req:shop-1").unwrap().test.run = "pytest -k case".into();
-        legacy.save(out);
+        legacy.save(out).unwrap();
         let package = task(&store, "req:shop-1", &gs).unwrap();
         let instructions = package["instructions"].as_str().unwrap();
         assert!(instructions.contains("Run `run_tests`"));
         assert!(instructions.contains("cannot execute the legacy command"));
         assert!(instructions.contains("Inspect every LLM entry"));
-        ledger.save(out);
+        ledger.save(out).unwrap();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// changed source").unwrap();
         let judgments = json!([criterion_judgments(&store, ["pass", "pass"])[0]]);
         mark_llm(&store, "req:shop-1", "pass", None, None, Some(&judgments), &gs).unwrap();
@@ -2021,7 +2064,7 @@ mod tests {
         crate::vfs::write(path, &text).unwrap();
         row.hashes.test = hash_hex(&text);
         row.tests.get_mut("crit:first").unwrap().test_hash = row.hashes.test.clone();
-        ledger.save(out);
+        ledger.save(out).unwrap();
         crate::vfs::write(gs.deliverable.join("src/cart.rs"), "// source changed").unwrap();
         audit(&store, &gs);
         assert!(Ledger::load(out).requirements["req:shop-1"]
@@ -2079,7 +2122,7 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
         let (s, gs) = fixture(&out);
 
-        record_runner_failure(&s, "req:shop-1", 127, "sh: pytest: command not found");
+        record_runner_failure(&s, "req:shop-1", 127, "sh: pytest: command not found").unwrap();
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.verdict, "none");
@@ -2124,7 +2167,7 @@ mod tests {
             let mut ledger = Ledger::load(&out);
             ledger.requirements.get_mut("req:shop-1").unwrap().test.run =
                 "jazyk-no-such-runner-xyz".into();
-            ledger.save(&out);
+            ledger.save(&out).unwrap();
         }
         let reply = run_selected(&s, &gs, &[]).unwrap();
         assert_eq!(reply["failed"], 0, "{}", reply);
@@ -2156,8 +2199,8 @@ mod tests {
             test_hash: row.hashes.test.clone(), verdict: "fail".into(),
             last_run: None, exit_code: Some(1), evidence: Some("earlier fail".into()),
         });
-        ledger.save(&out);
-        record_runner_failure(&store, "req:shop-1", 127, "sh: not found");
+        ledger.save(&out).unwrap();
+        record_runner_failure(&store, "req:shop-1", 127, "sh: not found").unwrap();
         let ledger = Ledger::load(&out);
         let row = &ledger.requirements["req:shop-1"];
         assert_eq!(row.tests["c:check"].verdict, "none");
@@ -2191,7 +2234,7 @@ mod tests {
             test_hash: String::new(), verdict: "none".into(),
             last_run: None, exit_code: None, evidence: None,
         });
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         let reply = run_selected(&store, &gs, &[]).unwrap();
         assert_eq!(reply["passed"], 1, "{reply}");
         let ledger = Ledger::load(&out);
@@ -2211,8 +2254,8 @@ mod tests {
         let (store, gs) = fixture(&out);
         let mut ledger = Ledger::load(&out);
         ledger.requirements.get_mut("req:shop-1").unwrap().test.run =
-            format!("rm -f '{}'", Ledger::path(&out).display());
-        ledger.save(&out);
+            format!("rm -rf '{}'", out.join("gen/requirements").display());
+        ledger.save(&out).unwrap();
         let reply = run_selected(&store, &gs, &[]).unwrap();
         assert_eq!(reply["passed"], 0, "{reply}");
         let reason = reply["skipped"][0]["reason"].as_str().unwrap_or_default();
@@ -2245,7 +2288,7 @@ mod tests {
                 last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
             });
             assert_eq!(status_of(&store, "req:shop-1", row, &gs).0, "verified");
-            ledger.save(&out);
+            ledger.save(&out).unwrap();
             let reply = run_criterion_tests(&store, "req:shop-1", &gs);
             assert_eq!(reply[0]["verdict"], "none", "{reply:?}");
             let ledger = Ledger::load(&out);
@@ -2285,7 +2328,7 @@ mod tests {
             last_run: None, exit_code: Some(0), evidence: Some("earlier pass".into()),
         });
         assert_eq!(status_of(&store, "req:shop-1", row, &gs), ("missing".into(), "artifact-gone".into()));
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         let reply = run_criterion_tests(&store, "req:shop-1", &gs);
         let line = reply.iter().find(|l| l["criterion"] == "c:check").unwrap();
         assert_eq!(line["verdict"], "none", "{reply:?}");
@@ -2485,7 +2528,7 @@ mod tests {
             artifact: "dist/deck.pptx".into(),
         });
         ledger.requirements.get_mut("req:shop-1").unwrap().files.push("dist/deck.pptx".into());
-        ledger.save(&out);
+        ledger.save(&out).unwrap();
         crate::vfs::create_dir_all(gs.deliverable.join("dist")).unwrap();
         crate::vfs::write(gs.deliverable.join("dist/deck.pptx"), "zip v1").unwrap();
         mark(&s, "req:shop-1", "pass", None, Some("ok"), Some(0), &gs).unwrap();
@@ -2783,7 +2826,8 @@ async fn judge_llm_criteria(
     ).map_err(JudgmentError::Invalid)
 }
 
-fn record_llm_failure(store: &Store, rid: &str, error: &str) {
+fn record_llm_failure(store: &Store, rid: &str, error: &str) -> Result<(), String> {
+    let _lock = Ledger::lock(&store.out);
     let mut ledger = Ledger::load(&store.out);
     if let Some(row) = ledger.requirements.get_mut(rid) {
         if row.test.kind == "llm" {
@@ -2797,8 +2841,9 @@ fn record_llm_failure(store: &Store, rid: &str, error: &str) {
             test.last_run = Some(now_iso());
             test.evidence = Some(crate::llm::truncate(error, 400));
         }
-        ledger.save(&store.out);
+        return ledger.save(&store.out);
     }
+    Ok(())
 }
 
 // Run verification over the selected rows and record verdicts. Programmatic rows
@@ -2919,7 +2964,7 @@ pub(crate) async fn run_without_build(
                     return Err(error);
                 }
                 Err(JudgmentError::Invalid(error))=> {
-                    record_llm_failure(store,&rid,&error);skipped+=1;
+                    record_llm_failure(store,&rid,&error)?;skipped+=1;
                     trace.event(TraceEvent::VerifyRowError {requirement:rid.clone(),message:error});
                 }
             }
@@ -3066,7 +3111,7 @@ pub(crate) async fn run_without_build(
     skipped = skipped.saturating_sub(held.len() as u64);
     for (rid, run, cmd) in held {
         if run.runner_failed() || identical {
-            record_runner_failure(store, &rid, run.code, &run.evidence);
+            record_runner_failure(store, &rid, run.code, &run.evidence)?;
             runner_failed += 1;
             trace.event(TraceEvent::VerifyRowError {
                 requirement: rid.clone(),

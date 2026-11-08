@@ -368,7 +368,7 @@ mod ledger_failure_tests {
             ledger.medium = Some(crate::gen::Medium {
                 form: "text".into(), produced: "written".into(), toolchain: String::new(), artifact: String::new()
             });
-            ledger.save(&project.out);
+            ledger.save(&project.out).unwrap();
             let mut control = crate::control::Control::load(&project, &project.out);
             control.generate = "auto".into();
             control.save(&project.out);

@@ -139,7 +139,7 @@ fn fixture() -> Snapshot {
         }),
         ..Default::default()
     }
-    .save(&project.out);
+    .save(&project.out).unwrap();
     let gs = GenSettings::resolve(&project);
     for name in ["site", "footer"] {
         mark(&store, &format!("ent:{name}"), None, &manifest(name), &gs).unwrap();
@@ -421,7 +421,7 @@ fn adopted_bindings_without_entity_baseline_open_one_referenced_input_goal() {
         let project = project();
         let mut ledger = Ledger::load(&project.out);
         ledger.entities.remove("site");
-        ledger.save(&project.out);
+        ledger.save(&project.out).unwrap();
         fs.snapshot()
     };
     assert!(
@@ -560,7 +560,7 @@ fn declared_build_output_is_not_an_input_but_undeclared_cache_files_are_blocked(
             produces: vec!["target/product.svg".into()],
             last_run: None,
         });
-        ledger.save(&project.out);
+        ledger.save(&project.out).unwrap();
         fs.snapshot()
     };
     let mut generated = reanchor(
@@ -828,7 +828,7 @@ fn previous_release_capsule(
     let row = ledger.entities.get_mut("site").unwrap();
     row.fact_hash = base;
     row.record_sequence = 0;
-    ledger.save(&project.out);
+    ledger.save(&project.out).unwrap();
     (capsule, fs.snapshot())
 }
 
@@ -851,7 +851,7 @@ fn pre_input_release_capsules_resume_saved_calls_and_refresh_committed_placehold
             let mut ledger = Ledger::load(&project().out);
             ledger.entities.get_mut("site").unwrap().recorded_at =
                 Some("2000-01-01T00:00:00Z".into());
-            ledger.save(&project().out);
+            ledger.save(&project().out).unwrap();
             fs.snapshot()
         };
         let requests = Arc::new(Mutex::new(Vec::<Value>::new()));

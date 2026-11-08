@@ -7621,6 +7621,7 @@ impl ToolSession {
                         "a built deliverable names the artifact its build produces".into(),
                     ));
                 }
+                let _lock = crate::gen::Ledger::lock(&self.snapshot.out);
                 let mut ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 if ledger.medium.is_some() && !ledger.entities.is_empty() {
                     return Err(ToolError::new(
@@ -7639,7 +7640,9 @@ impl ToolSession {
                 };
                 let line = medium.line();
                 ledger.medium = Some(medium);
-                ledger.save(&self.snapshot.out);
+                ledger
+                    .save(&self.snapshot.out)
+                    .map_err(|e| ToolError::new("ledger-write", e))?;
                 Ok(json!({"recorded": true, "medium": line}))
             }
             "record_generation" => {
@@ -12951,7 +12954,7 @@ mod tests {
                 record_sequence: 0,
             },
         );
-        ledger.save(&s.out);
+        ledger.save(&s.out).unwrap();
         let session_for = |target: &str| {
             let goals = vec![Goal {
                 id: format!("g:generate:{}", target),

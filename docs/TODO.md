@@ -23,8 +23,8 @@ This scratch space is a live document to outline the work for this documentation
   [capability descriptor](./frontends/gui.md#backends-and-capabilities) stay here.
 - [Journal](./compiler/graph.md#journal) rotation: cap `journal/` growth, compact old
   changesets.
-- Custom [format handlers](./compiler/parsing.md#format-handlers); Markdown is the only
-  handler today.
+- Custom [format handlers](./compiler/parsing.md#format-handlers); the built-in ones
+  are Markdown, plain text, and natively DOCX and PDF.
 - Checks-side sweep of the project [lint rules](./compiler/project-settings.md#docs); they
   run in `review-entity` sessions only.
 - Per-goal-kind executor defaults in [`[executors]`](./compiler/project-settings.md#executors):
@@ -40,14 +40,11 @@ This scratch space is a live document to outline the work for this documentation
 
 ## NEXT
 
-- [Document sets in one project](../plans/document-sets/README.md): move project
-  configuration to `.jazyk/jazyk.toml`, support named independent document/source
-  selections, and expose all sets together in the GUI, ACP, and LSP. The plan
-  includes setup, file markings, and per-set or all-dirty compilation. Not implemented.
 - Benchmark cases per goal kind
   ([deferred cases](./benchmark/benchmark.md#deferred-cases)): the kinds without a case
-  (`place-anchors`, `rejudge-pair`, `retrace`, `conform-instance`, the GC kinds), plus
-  transition facets, attributes, cardinality, and view curation. Verdict quality of the
+  (`place-anchors`, `retrace`, `conform-instance`, the caps variant of
+  `abstract-entity`), plus transition facets, attributes, cardinality, and the
+  `flow-unplaced` path of `curate-view`. Verdict quality of the
   judgment gates is the first target: a gate checks that a verdict exists, only a
   planted ground truth grades whether it is true. Refresh `known-results.yaml` on the
   new case set hash; remote runs cost money, approve per run.
@@ -67,9 +64,9 @@ This scratch space is a live document to outline the work for this documentation
   (extraction, 22.5k), the batch's tool schemas (the reconcile toolset, 24 tools,
   16.4k; the whole catalog of 52 is 37.7k), the agent contract (about 6k), and the goal
   block with the loaded set (3k to 4k). The prefix is byte-identical across a
-  session's rounds, so a provider's prompt cache applies to it; the accounting does not
-  yet show cached input (Ollama reports none, and whether LocalRouter forwards
-  `prompt_tokens_details` is unmeasured). Shorter tool descriptions or skills would cut
+  session's rounds, so a provider's prompt cache applies to it; the journal records
+  cached input as `cachedTokens` where the endpoint reports it (Ollama reports none,
+  and whether LocalRouter forwards `prompt_tokens_details` is unmeasured). Shorter tool descriptions or skills would cut
   the rest, against the explicitness the gates and benchmarks were tuned on: an owner
   decision, to be measured case by case with `jazyk status --costs` and the benchmark's
   token figures, never guessed.
@@ -118,36 +115,37 @@ LocalRouter; the default local model fails judgment-heavy goals.
   default views, lifting (a multi-type pair collapsing under it), the render emitters
   against the showcase, justification closure, flow placement, cross-class flip
   parking, change records, and gate rejections.
-- [ ] `bootstrap/example/f1` converges.
 - [ ] `bootstrap/example/f2` converges and its planted traps still trip; its
   `EXPECTED.md` states free-form statements and the new kinds.
 - [ ] The example corpora converge: `example-sort`, `example-erp`, `example-slides`.
 - [ ] The two new fixtures: `example-org` (an organization corpus) and `example-novel`
   (a narrative corpus), beside `example-slides`, each converging with views and
   diagrams that read as an org chart and as scenes.
-- [ ] The dogfood with diagrams: `cd docs && jazyk compile` reaches `converged`
-  (blocked and advised counts are acceptable, silence is not); `.jazyk/diagrams/`
+- [ ] The dogfood with diagrams: `jazyk compile` from the repository root reaches
+  `converged` (blocked and advised counts are acceptable, silence is not);
+  `.jazyk/ds_main/diagrams/`
   holds `.puml` and `.svg` per view ([output layout](./compiler/diagrams.md#output-layout));
   [docsgen](./consumers/docsgen.md) pages embed the images; `jazyk preview`,
   `jazyk explain`, and `jazyk ripple` answer ([CLI](./frontends/cli.md)); LSP hover
   shows a diagram ([capabilities](./frontends/lsp.md#capabilities)); the GUI board
   renders goals live ([GUI](./frontends/gui.md)).
-- [ ] The zero-call rebuild: an immediately repeated `jazyk compile` derives zero
-  goals and makes zero LLM calls ([incremental builds](./compiler/compilation.md#incremental-builds)).
+- [ ] The zero-call rebuild on the dogfood: an immediately repeated `jazyk compile`
+  derives zero goals and makes zero LLM calls
+  ([incremental builds](./compiler/compilation.md#incremental-builds)). `f1` holds it.
 - [ ] The dual-write roundtrip: an edit through the inspector rewrites the sentence and
   the graph in one changeset without re-dirtying the document; a decree queues a
   ratification proposal, and accepting it flips the fact's provenance to `quote`
   ([edit paths](./compiler/compilation.md#edit-paths)).
-- [ ] The store version: an out directory without `version: 3` archives to
-  `.jazyk.bak` and the next build reconciles from the empty graph, on `f1` and on
-  the dogfood.
+- [ ] The store version on the dogfood: an out directory without `version: 3`
+  archives to `<out>.bak` and the next build reconciles from the empty graph. `f1`
+  holds it.
 - [ ] Docs tree and binary agree: no page describes machinery the binary lacks, no
   behavior lacks a page, prompts and skills are `include_str!` bytes, and the root
   `AGENTS.md` describes the landed design.
 - [ ] Full docs gen and verify run to verdicts. The archive drops the old ledger, so
   binding runs fresh ([the ledger](./consumers/gen.md#the-ledger)).
-- [ ] `jazyk benchmark` under the landed harness on the four graded kinds, both
-  codecs, with the `known-results.yaml` entry refreshed.
+- [ ] `jazyk benchmark` under the native runtime on the current case set, with the
+  `known-results.yaml` entry refreshed.
 
 ## Docs versus code audit (2026-09-04)
 
@@ -159,10 +157,7 @@ mandatory GC batches rank first, the delete and merge gates hold at staging, the
 section kinds the Markdown handler produces are the ones the docs name, the CLI
 refuses unknown options with exit `2`, the `via` lists agree, the chat serving
 carries `retract_decree` and `bump_limit`, and `docsgen.md` states the entity header
-and the report files as rendered. One item stays open as an owner decision:
-
-- The section kinds `list-item` and `blockquote` left the closed list on 2026-10-10:
-  no handler produces them; a handler that does adds them when it lands.
+and the report files as rendered.
 
 ## Pair judgment volume (2026-09-05)
 
@@ -257,18 +252,12 @@ finding verified in code before a change. What landed, all docs-first with tests
 
 Left open, each an owner decision or a measurement:
 
-- The validation ladder under NOW has not run since the landing; the dogfood row of
-  `bootstrap/VALIDATION.md` still reads "no result". Every change above is verified by
-  unit tests and synthetic stores, not by a converging build.
+- The validation ladder under NOW has run only on `f1` since the landing; the dogfood
+  row of `bootstrap/VALIDATION.md` still reads "no result". Every change above is
+  verified by unit tests and synthetic stores, not by a converging build of the
+  dogfood.
 - Pair judgment volume ([pair judgment volume](#pair-judgment-volume-2026-09-05)): the
   derivation is cheap now, the sessions are not; the degree cap and locality batching
   want measuring on `example-saas`.
 - The fixed cost of a round ([NEXT](#next)): measure cached input through LocalRouter
   before cutting any payload.
-
-## Agent steering and chat recovery
-
-- Implement the approved plans in [steering](../plans/steering.md) and
-  [chat latency](../plans/chat-latency.md).
-- Verify input delivery, refresh recovery, scoped document edits, and stream
-  cancellation across native, browser, and hosted chat.

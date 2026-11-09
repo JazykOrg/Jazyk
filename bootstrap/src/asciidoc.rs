@@ -18,7 +18,12 @@ fn parser() -> Parser {
 }
 
 pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
-    let doc = parser().parse(text);
+    let terminated = if text.ends_with('\n') {
+        text.to_owned()
+    } else {
+        format!("{text}\n")
+    };
+    let doc = parser().parse(&terminated);
     let mut heads = Vec::new();
     let mut blocks = Vec::new();
     if let Some(title) = doc.header().title_source() {
@@ -95,7 +100,12 @@ pub fn references(text: &str, images: bool) -> Vec<(String, std::ops::Range<usiz
             }
         }
     }
-    let doc = parser().parse(text);
+    let terminated = if text.ends_with('\n') {
+        text.to_owned()
+    } else {
+        format!("{text}\n")
+    };
+    let doc = parser().parse(&terminated);
     let mut out = Vec::new();
     for block in doc.descendant_blocks() {
         if !matches!(
@@ -216,6 +226,16 @@ mod tests {
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].range.start.line, 8);
         assert_eq!(links[0].range.start.character, 4);
+    }
+
+    #[test]
+    fn headings_and_links_at_eof_need_no_final_newline() {
+        let text = "= Guide\n\n== Delivery";
+        assert_eq!(parse_sections(text)["/guide/delivery"].title, "Delivery");
+        assert_eq!(
+            document_links("See link:other.adoc[Other]", "guide.adoc")[0].target,
+            "other.adoc"
+        );
     }
 
     #[test]

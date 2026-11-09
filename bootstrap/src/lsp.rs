@@ -257,6 +257,26 @@ impl Lsp {
                 let r = self.on_code_action(&params);
                 reply(out, id, r);
             }
+            "textDocument/inlayHint" => {
+                let r = self.on_inlay_hints(&params);
+                reply(out, id, r);
+            }
+            "textDocument/semanticTokens/full" => {
+                let r = self.on_semantic_tokens(&params);
+                reply(out, id, r);
+            }
+            "textDocument/documentHighlight" => {
+                let r = self.on_document_highlight(&params);
+                reply(out, id, r);
+            }
+            "textDocument/documentSymbol" => {
+                let r = self.on_document_symbols(&params);
+                reply(out, id, r);
+            }
+            "workspace/symbol" => {
+                let r = self.on_workspace_symbols(&params);
+                reply(out, id, r);
+            }
             "workspace/executeCommand" => {
                 let r = self.on_execute_command(&params, out);
                 reply(out, id, r);
@@ -282,7 +302,15 @@ impl Lsp {
                 "documentLinkProvider": { "resolveProvider": false },
                 "codeLensProvider": { "resolveProvider": false },
                 "codeActionProvider": true,
-                "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.answerDiagnostic", "jazyk.documentSets", "jazyk.previewDocumentSet", "jazyk.saveDocumentSet", "jazyk.compile"] }
+                "inlayHintProvider": { "resolveProvider": false },
+                "semanticTokensProvider": {
+                    "legend": { "tokenTypes": SEMANTIC_TOKEN_TYPES, "tokenModifiers": SEMANTIC_TOKEN_MODIFIERS },
+                    "full": true
+                },
+                "documentHighlightProvider": true,
+                "documentSymbolProvider": true,
+                "workspaceSymbolProvider": true,
+                "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.showLastBuild", "jazyk.answerDiagnostic", "jazyk.documentSets", "jazyk.previewDocumentSet", "jazyk.saveDocumentSet", "jazyk.compile"] }
             },
             "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
         })
@@ -841,11 +869,17 @@ impl Lsp {
         if let Some(img) = self.flow_view_image(rid) {
             s.push_str(&img);
         }
+        // The header reads the status word; the test part keeps the raw status.
+        let word = crate::verify::status_word(
+            &status,
+            &reason,
+            crate::verify::questioned(&self.store).contains(rid),
+        );
         s.push_str(&format!(
             "**`{}`** · {} {}\n\n{}\n\n",
             rid,
-            status_glyph(&status),
-            status,
+            word_glyph(word),
+            word,
             r.statement
         ));
         if let Some(link) = self.docsgen_link(rid, r) {
@@ -1014,66 +1048,29 @@ impl Lsp {
             return json!([]);
         };
         let text = self.doc_text(&doc);
-        struct Cand {
-            line: usize,
-            col: usize,
-            len: usize,
-            id: String,
-            name: String,
-        }
-        let mut cands: Vec<Cand> = Vec::new();
-        for (id, e) in &self.store.graph.entities {
+        let docsgen = |id: &str| {
             let slug = id.strip_prefix("ent:").unwrap_or(id);
-            if !self
-                .out
-                .join("docsgen")
-                .join(format!("{}.md", slug))
-                .vexists()
-            {
-                continue;
-            }
-            let mut names = vec![e.name.clone()];
-            names.extend(e.aliases.iter().cloned());
-            for n in names {
-                for (line, col, len) in occurrences(&text, &n) {
-                    cands.push(Cand {
-                        line,
-                        col,
-                        len,
-                        id: id.clone(),
-                        name: e.name.clone(),
-                    });
-                }
-            }
-        }
-        cands.sort_by(|a, b| {
-            b.len
-                .cmp(&a.len)
-                .then(a.line.cmp(&b.line))
-                .then(a.col.cmp(&b.col))
-        });
-        let mut taken: Vec<(usize, usize, usize)> = Vec::new(); // (line, start, end)
-        let mut links: Vec<Value> = Vec::new();
-        for c in cands {
-            if links.len() >= 200 {
-                break;
-            }
-            let end = c.col + c.len;
-            if taken
-                .iter()
-                .any(|(l, s, e)| *l == c.line && c.col < *e && *s < end)
-            {
-                continue;
-            }
-            taken.push((c.line, c.col, end));
-            let slug = c.id.strip_prefix("ent:").unwrap_or(&c.id);
-            let target = path_to_uri(&self.out.join("docsgen").join(format!("{}.md", slug)));
-            links.push(json!({
-                "range": self.range((c.line, c.col, c.line, end)),
-                "target": target,
-                "tooltip": format!("{}: requirements document", c.name)
-            }));
-        }
+            self.out.join("docsgen").join(format!("{}.md", slug))
+        };
+        let links: Vec<Value> = self
+            .entity_mentions(&text, |id| docsgen(id).vexists())
+            .into_iter()
+            .take(200)
+            .map(|(line, col, len, id)| {
+                let name = self
+                    .store
+                    .graph
+                    .entities
+                    .get(&id)
+                    .map(|e| e.name.as_str())
+                    .unwrap_or(&id);
+                json!({
+                    "range": self.range((line, col, line, col + len)),
+                    "target": path_to_uri(&docsgen(&id)),
+                    "tooltip": format!("{}: requirements document", name)
+                })
+            })
+            .collect();
         json!(links)
     }
 
@@ -1087,7 +1084,7 @@ impl Lsp {
             return json!([]);
         };
         let text = self.doc_text(&doc);
-        let vmap = crate::verify::status_map(&self.store, &self.gen);
+        let statuses = self.requirement_statuses();
         let mut lenses: Vec<(usize, usize, Value)> = Vec::new();
         for (rid, r) in &self.store.graph.requirements {
             let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) else {
@@ -1097,8 +1094,8 @@ impl Lsp {
                 continue;
             };
             let mut title = rid.clone();
-            if let Some(s) = vmap.get(rid.as_str()).and_then(|v| v["status"].as_str()) {
-                title.push_str(&format!(" · {}", s));
+            if let Some(st) = statuses.get(rid.as_str()) {
+                title.push_str(&format!(" · {}", st.word));
             }
             lenses.push((
                 sl,
@@ -1109,6 +1106,22 @@ impl Lsp {
                         "title": title,
                         "command": "jazyk.openRequirement",
                         "arguments": [rid]
+                    }
+                }),
+            ));
+        }
+        // A section whose text moved since the last build lenses on its heading.
+        // Mirrors docs/frontends/lsp.md#capabilities.
+        for line in self.changed_sections(&doc, &text) {
+            lenses.push((
+                line,
+                0,
+                json!({
+                    "range": self.range((line, 0, line, 0)),
+                    "command": {
+                        "title": "Changed since last build",
+                        "command": "jazyk.showLastBuild",
+                        "arguments": [{"uri": self.doc_to_uri(&doc)}]
                     }
                 }),
             ));
@@ -1270,6 +1283,9 @@ impl Lsp {
         if cmd == "jazyk.compile" {
             return self.on_compile(&params["arguments"][0]);
         }
+        if cmd == "jazyk.showLastBuild" {
+            return self.on_show_last_build(&params["arguments"][0], out);
+        }
         if !self
             .out
             .file_name()
@@ -1356,6 +1372,434 @@ impl Lsp {
         Value::Null
     }
 
+    // ---- status words ----
+
+    // Whether this server serves one set's out directory rather than the project.
+    fn serves_one_set(&self) -> bool {
+        self.out
+            .file_name()
+            .and_then(|s| s.to_str())
+            .is_some_and(crate::document_sets::valid_id)
+    }
+
+    // Each requirement's derived status, reason, and status word. A project-wide
+    // server reads each set's own ledger, loading a set only when it has one.
+    // Mirrors docs/consumers/gen.md#status-words.
+    fn requirement_statuses(&self) -> HashMap<String, ReqStatus> {
+        let mut raw = crate::verify::status_map(&self.store, &self.gen);
+        if !self.serves_one_set() {
+            if let Ok(w) = crate::document_sets::Workspace::load(&self.root) {
+                for set in &w.sets {
+                    let Ok(p) = w.resolve(Some(&set.id)) else {
+                        continue;
+                    };
+                    if crate::gen::Ledger::load(&p.out).requirements.is_empty() {
+                        continue;
+                    }
+                    let store = Store::load(&p.out);
+                    let gs = crate::gen::GenSettings::resolve(&p);
+                    for (rid, v) in crate::verify::status_map(&store, &gs) {
+                        raw.insert(crate::webapi::sets::qualify(&rid, &set.id), v);
+                    }
+                }
+            }
+        }
+        let questions = crate::verify::questioned(&self.store);
+        raw.into_iter()
+            .map(|(rid, v)| {
+                let status = v["status"].as_str().unwrap_or("missing").to_string();
+                let reason = v["reason"].as_str().unwrap_or("").to_string();
+                let word = crate::verify::status_word(&status, &reason, questions.contains(&rid));
+                (
+                    rid,
+                    ReqStatus {
+                        status,
+                        reason,
+                        word,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    // The requirements sourced in a document whose quote locates in its current
+    // text, each with its located range, in text order.
+    fn located_requirements(
+        &self,
+        doc: &str,
+        text: &str,
+    ) -> Vec<(String, (usize, usize, usize, usize))> {
+        let mut found: Vec<(String, (usize, usize, usize, usize))> = self
+            .store
+            .graph
+            .requirements
+            .iter()
+            .filter_map(|(rid, r)| {
+                let src = r.source.as_ref().filter(|s| s.doc == doc)?;
+                md::locate(text, &src.quote).map(|range| (rid.clone(), range))
+            })
+            .collect();
+        found.sort_by_key(|f| f.1);
+        found
+    }
+
+    // One hint at the end of each located requirement quote inside the requested
+    // range: the status word, the raw status in the tooltip.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_inlay_hints(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else {
+            return json!([]);
+        };
+        let at = |p: &Value, default: usize| {
+            (
+                p["line"].as_u64().map(|v| v as usize).unwrap_or(default),
+                p["character"]
+                    .as_u64()
+                    .map(|v| v as usize)
+                    .unwrap_or(default),
+            )
+        };
+        let from = at(&params["range"]["start"], 0);
+        let to = at(&params["range"]["end"], usize::MAX);
+        let text = self.doc_text(&doc);
+        let statuses = self.requirement_statuses();
+        let mut hints: Vec<Value> = Vec::new();
+        for (rid, (_, _, el, ec)) in self.located_requirements(&doc, &text) {
+            if (el, ec) < from || (el, ec) > to {
+                continue;
+            }
+            let Some(st) = statuses.get(&rid) else {
+                continue;
+            };
+            hints.push(json!({
+                "position": {"line": el, "character": ec},
+                "label": format!("· {}", st.word),
+                "paddingLeft": true,
+                "tooltip": format!("{}: {} ({})", rid, st.status, st.reason),
+            }));
+        }
+        json!(hints)
+    }
+
+    // Non-overlapping whole-word entity mentions in `text` as (line, column, length,
+    // entity id), UTF-16 columns. The longest name wins on overlaps, then text order;
+    // `keep` filters entities before overlaps resolve. The result is in acceptance
+    // order: longest first.
+    fn entity_mentions(
+        &self,
+        text: &str,
+        keep: impl Fn(&str) -> bool,
+    ) -> Vec<(usize, usize, usize, String)> {
+        let mut cands: Vec<(usize, usize, usize, String)> = Vec::new();
+        for (id, e) in &self.store.graph.entities {
+            if !keep(id) {
+                continue;
+            }
+            for n in std::iter::once(&e.name).chain(e.aliases.iter()) {
+                for (line, col, len) in occurrences(text, n) {
+                    cands.push((line, col, len, id.clone()));
+                }
+            }
+        }
+        cands.sort_by(|a, b| b.2.cmp(&a.2).then(a.0.cmp(&b.0)).then(a.1.cmp(&b.1)));
+        let mut taken: Vec<(usize, usize, usize, String)> = Vec::new();
+        for c in cands {
+            let end = c.1 + c.2;
+            if taken
+                .iter()
+                .any(|t| t.0 == c.0 && c.1 < t.1 + t.2 && t.1 < end)
+            {
+                continue;
+            }
+            taken.push(c);
+        }
+        taken
+    }
+
+    // Every entity mention as one semantic token, so themes color them. Document
+    // links stay the navigation. Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_semantic_tokens(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else {
+            return json!({ "data": [] });
+        };
+        let text = self.doc_text(&doc);
+        let mut mentions = self.entity_mentions(&text, |_| true);
+        mentions.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        let mut data: Vec<usize> = Vec::with_capacity(mentions.len() * 5);
+        let (mut prev_line, mut prev_col) = (0usize, 0usize);
+        for (line, col, len, _) in mentions {
+            let delta_line = line - prev_line;
+            let delta_col = if delta_line == 0 { col - prev_col } else { col };
+            // Token type 0 (`type`), modifier bit 0 (`jazykEntity`).
+            data.extend([delta_line, delta_col, len, 0, 1]);
+            prev_line = line;
+            prev_col = col;
+        }
+        json!({ "data": data })
+    }
+
+    // Inside a requirement's located quote: the whole quote, with the located quotes
+    // of its criteria in the same document. Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_document_highlight(&self, params: &Value) -> Value {
+        let Some((doc, line, ch)) = self.pos(params) else {
+            return json!([]);
+        };
+        let Some((rid, r)) = self.requirement_at(&doc, line, ch) else {
+            return json!([]);
+        };
+        let text = self.doc_text(&doc);
+        let mut quotes: Vec<&str> = r.source.iter().map(|s| s.quote.as_str()).collect();
+        let criteria = self.store.criteria_of(&rid);
+        for cid in &criteria {
+            if let Some(src) = self
+                .store
+                .graph
+                .criteria
+                .get(cid)
+                .and_then(|c| c.source.as_ref())
+                .filter(|s| s.doc == doc)
+            {
+                quotes.push(&src.quote);
+            }
+        }
+        let ranges: BTreeSet<(usize, usize, usize, usize)> = quotes
+            .into_iter()
+            .filter_map(|q| md::locate(&text, q))
+            .collect();
+        json!(ranges
+            .into_iter()
+            .map(|r| json!({ "range": self.range(r), "kind": 1 }))
+            .collect::<Vec<_>>())
+    }
+
+    // The stored section tree of the document as nested symbols, headings only,
+    // each with its requirement count and read state. Ranges come from the current
+    // text where the section still parses at the same reference.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_document_symbols(&self, params: &Value) -> Value {
+        let Some(doc) = self.param_doc(params) else {
+            return json!([]);
+        };
+        let Some(record) = self.store.docs.get(&doc) else {
+            return json!([]);
+        };
+        let text = self.doc_text(&doc);
+        let current = md::parse_document(Path::new(&doc), &text);
+        let mut counts: HashMap<&str, usize> = HashMap::new();
+        for r in self.store.graph.requirements.values() {
+            if let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) {
+                *counts.entry(src.section.as_str()).or_default() += 1;
+            }
+        }
+        let mut children: HashMap<Option<&str>, Vec<(&str, &crate::model::Section)>> =
+            HashMap::new();
+        for (reference, s) in &record.sections {
+            if matches!(s.kind.as_str(), "root" | "heading") {
+                children
+                    .entry(s.parent.as_deref())
+                    .or_default()
+                    .push((reference, s));
+            }
+        }
+        for list in children.values_mut() {
+            list.sort_by_key(|(_, s)| (s.order, s.lines[0]));
+        }
+        let ctx = SymbolContext {
+            text: &text,
+            total: text.lines().count(),
+            current: &current,
+            record,
+            counts: &counts,
+            children: &children,
+        };
+        let (symbols, _) = self.section_symbols(&ctx, None);
+        json!(symbols)
+    }
+
+    // The symbols under one parent, and the last line any of them covers.
+    fn section_symbols(&self, ctx: &SymbolContext, parent: Option<&str>) -> (Vec<Value>, usize) {
+        let mut symbols = Vec::new();
+        let mut last = 0usize;
+        for (reference, s) in ctx.children.get(&parent).into_iter().flatten() {
+            let lines = ctx
+                .current
+                .get(*reference)
+                .filter(|c| c.kind == s.kind)
+                .map(|c| c.lines)
+                .unwrap_or(s.lines);
+            let max_line = ctx.total.saturating_sub(1);
+            let start = lines[0].min(max_line);
+            let own_end = lines[1].saturating_sub(1).clamp(start, max_line.max(start));
+            let (kids, kids_end) = self.section_symbols(ctx, Some(reference));
+            let end = own_end.max(kids_end);
+            last = last.max(end);
+            let n = ctx.counts.get(reference).copied().unwrap_or(0);
+            let read = match ctx
+                .record
+                .coverage
+                .get(*reference)
+                .map(|c| c.state.as_str())
+            {
+                Some("covered") => "read",
+                Some("non-normative") => "not normative",
+                _ => "not read yet",
+            };
+            let title = if s.title.trim().is_empty() {
+                reference.to_string()
+            } else {
+                s.title.clone()
+            };
+            symbols.push(json!({
+                "name": title,
+                "detail": format!(
+                    "{} requirement{} · {}",
+                    n,
+                    if n == 1 { "" } else { "s" },
+                    read
+                ),
+                "kind": 15,
+                "range": self.range((start, 0, end, line_len(ctx.text, end))),
+                "selectionRange": self.range((start, 0, start, line_len(ctx.text, start))),
+                "children": kids,
+            }));
+        }
+        (symbols, last)
+    }
+
+    // Entities by name or alias and requirements by statement or id, across every
+    // set the server reads, each at its defining mention or quote.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    fn on_workspace_symbols(&self, params: &Value) -> Value {
+        const LIMIT: usize = 200;
+        let query = params["query"].as_str().unwrap_or("").to_lowercase();
+        let hit = |s: &str| s.to_lowercase().contains(&query);
+        let mut symbols: Vec<Value> = Vec::new();
+        for (id, e) in &self.store.graph.entities {
+            if symbols.len() >= LIMIT {
+                return json!(symbols);
+            }
+            if !(hit(&e.name) || e.aliases.iter().any(|a| hit(a))) {
+                continue;
+            }
+            let Some(m) = e.mentions.first() else {
+                continue;
+            };
+            let r = self.anchor(&m.doc, &m.quote, &e.name, Some(&m.section));
+            symbols.push(json!({
+                "name": e.name, "kind": 5, "containerName": id,
+                "location": { "uri": self.doc_to_uri(&m.doc), "range": self.range(r) }
+            }));
+        }
+        for (rid, r) in &self.store.graph.requirements {
+            if symbols.len() >= LIMIT {
+                break;
+            }
+            if !(hit(&r.statement) || hit(rid)) {
+                continue;
+            }
+            let Some(src) = &r.source else {
+                continue;
+            };
+            let range = self.anchor(&src.doc, &src.quote, "", Some(&src.section));
+            symbols.push(json!({
+                "name": r.statement, "kind": 15, "containerName": rid,
+                "location": { "uri": self.doc_to_uri(&src.doc), "range": self.range(range) }
+            }));
+        }
+        json!(symbols)
+    }
+
+    // The lines a `Changed since last build` lens sits on: the start line, in the
+    // current text, of each heading-level section whose hash differs from its stored
+    // section, or that the last build did not store. A document the last build never
+    // stored has none. Mirrors docs/frontends/lsp.md#capabilities.
+    fn changed_sections(&self, doc: &str, text: &str) -> Vec<usize> {
+        let Some(record) = self.store.docs.get(doc) else {
+            return Vec::new();
+        };
+        if record.sections.values().any(|s| s.kind == "blob") {
+            return Vec::new();
+        }
+        let mut lines: Vec<usize> = md::parse_document(Path::new(doc), text)
+            .iter()
+            .filter(|(_, s)| matches!(s.kind.as_str(), "preamble" | "root" | "heading"))
+            .filter(|(reference, s)| {
+                record
+                    .sections
+                    .get(*reference)
+                    .is_none_or(|old| old.hash != s.hash)
+            })
+            .map(|(_, s)| s.lines[0])
+            .collect();
+        lines.sort_unstable();
+        lines
+    }
+
+    // The out directory of the set that holds a document: this server's own when it
+    // serves one set, else the first set whose documents match the path.
+    fn set_out_for(&self, doc: &str) -> PathBuf {
+        if self.serves_one_set() {
+            return self.out.clone();
+        }
+        crate::document_sets::Workspace::load(&self.root)
+            .ok()
+            .and_then(|w| {
+                let id = w
+                    .memberships(doc)
+                    .into_iter()
+                    .find(|m| m["role"] == "docs")?["setId"]
+                    .as_str()?
+                    .to_string();
+                w.resolve(Some(&id)).ok().map(|p| p.out)
+            })
+            .unwrap_or_else(|| self.out.clone())
+    }
+
+    // jazyk.showLastBuild {uri}: write the document as the last build stored it to
+    // `<set out>/last-build/<doc>` and ask the client to open it. A projection, safe
+    // to delete; the graph is never touched. Mirrors docs/frontends/lsp.md#commands.
+    fn on_show_last_build<W: Write>(&mut self, arg: &Value, out: &mut W) -> Value {
+        let Some(doc) = arg["uri"].as_str().and_then(|u| self.uri_to_doc(u)) else {
+            return json!({"error": "jazyk.showLastBuild needs {uri} of a project document"});
+        };
+        let Some(record) = self.store.docs.get(&doc) else {
+            return json!({"error": format!("{} has no last build", doc)});
+        };
+        let mut parts: Vec<&crate::model::Section> = record
+            .sections
+            .values()
+            .filter(|s| matches!(s.kind.as_str(), "preamble" | "root" | "heading"))
+            .collect();
+        parts.sort_by_key(|s| s.lines[0]);
+        let mut built = parts
+            .iter()
+            .map(|s| s.raw.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !built.is_empty() {
+            built.push('\n');
+        }
+        let path = self.set_out_for(&doc).join("last-build").join(&doc);
+        if let Some(dir) = path.parent() {
+            if let Err(e) = crate::vfs::create_dir_all(dir) {
+                return json!({"error": format!("cannot create {}: {}", dir.display(), e)});
+            }
+        }
+        if let Err(e) = crate::vfs::write(&path, built) {
+            return json!({"error": format!("cannot write {}: {}", path.display(), e)});
+        }
+        let uri = path_to_uri(&path);
+        let msg = json!({
+            "jsonrpc": "2.0",
+            "id": format!("jazyk-srv-{}", self.next_srv_id),
+            "method": "window/showDocument",
+            "params": { "uri": uri, "takeFocus": true }
+        });
+        self.next_srv_id += 1;
+        write_message(out, &msg);
+        json!({ "uri": uri })
+    }
+
     fn on_completion(&self) -> Value {
         let mut items: Vec<Value> = Vec::new();
         let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -1384,6 +1828,48 @@ fn reply<W: Write>(out: &mut W, id: Option<Value>, result: Value) {
 // file:// URI -> path (handles the common file:///abs/path form).
 fn uri_to_path(uri: &str) -> Option<PathBuf> {
     url::Url::parse(uri).ok()?.to_file_path().ok()
+}
+
+// The semantic token legend: entity mentions are `type` tokens with the
+// `jazykEntity` modifier. Mirrors docs/frontends/lsp.md#capabilities.
+const SEMANTIC_TOKEN_TYPES: [&str; 1] = ["type"];
+const SEMANTIC_TOKEN_MODIFIERS: [&str; 1] = ["jazykEntity"];
+
+// A requirement's derived status, its reason, and its status word.
+struct ReqStatus {
+    status: String,
+    reason: String,
+    word: &'static str,
+}
+
+// What building the document symbols of one document reads.
+struct SymbolContext<'a> {
+    text: &'a str,
+    total: usize,
+    current: &'a std::collections::BTreeMap<String, crate::model::Section>,
+    record: &'a crate::model::DocRecord,
+    counts: &'a HashMap<&'a str, usize>,
+    children: &'a HashMap<Option<&'a str>, Vec<(&'a str, &'a crate::model::Section)>>,
+}
+
+// The length of one line in UTF-16 code units, 0 past the end.
+fn line_len(text: &str, line: usize) -> usize {
+    text.lines()
+        .nth(line)
+        .map(|l| l.encode_utf16().count())
+        .unwrap_or(0)
+}
+
+// One glyph per status word, so a word reads at a glance in clients that render no
+// colour. Mirrors docs/consumers/gen.md#status-words.
+fn word_glyph(word: &str) -> &'static str {
+    match word {
+        "verified" => "✓",
+        "failing" => "✗",
+        "stale" => "↻",
+        "question" => "?",
+        _ => "–",
+    }
 }
 
 // One glyph per derived verification status, so the card reads at a glance in clients
@@ -2051,7 +2537,7 @@ mod tests {
             },
         };
         let card = lsp.requirement_card("req:shop-1", &r);
-        assert!(card.contains("– missing"), "{}", card);
+        assert!(card.contains("– not built"), "{}", card);
         assert!(card.contains("**code** · not generated"), "{}", card);
         assert!(card.contains("**test** · not generated"), "{}", card);
         crate::vfs::remove_dir_all(&tmp).ok();
@@ -2603,6 +3089,336 @@ mod tests {
         assert!(card.contains("The Cart shall hold items."), "{}", card);
         assert!(card.contains("![One (sequence)]"), "{}", card);
         assert!(card.contains("diagrams/sequence/one.svg"), "{}", card);
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // The five reader-facing words, first match wins.
+    // Mirrors docs/consumers/gen.md#status-words.
+    #[test]
+    fn status_words_map_the_derived_statuses() {
+        use crate::verify::status_word as w;
+        assert_eq!(w("verified", "passed", true), "question");
+        assert_eq!(w("failing", "failed", false), "failing");
+        assert_eq!(w("partial", "criteria-failing", false), "failing");
+        assert_eq!(w("stale-code", "code-changed", false), "stale");
+        assert_eq!(w("missing", "artifact-gone", false), "stale");
+        assert_eq!(w("verified", "passed", false), "verified");
+        for (s, r) in [
+            ("missing", "not-generated"),
+            ("unimplemented", "unimplemented"),
+            ("unverified", "never-run"),
+        ] {
+            assert_eq!(w(s, r, false), "not built");
+        }
+    }
+
+    const BUILT: &str = "# Shop\n\nThe Cart shall hold items. Orders ship daily.\n\n## Checkout\n\nA Checkout Service takes payment.\n";
+
+    // A built shop document: two entities, one requirement with a criterion quoted in
+    // the same document, an open question naming the requirement, and coverage.
+    fn editor_fixture(name: &str) -> (std::path::PathBuf, Lsp) {
+        use crate::model::{Coverage, Criterion, DocRecord};
+        let tmp =
+            std::env::temp_dir().join(format!("jazyk-lsp-{}-{}", name, crate::sys::process_id()));
+        crate::vfs::remove_dir_all(&tmp).ok();
+        let out = tmp.join(".jazyk");
+        crate::vfs::create_dir_all(&out).unwrap();
+        crate::vfs::write(tmp.join("shop.md"), BUILT).unwrap();
+        let mut store = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        let mut coverage = std::collections::BTreeMap::new();
+        coverage.insert(
+            "/shop".to_string(),
+            Coverage {
+                state: "covered".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
+        coverage.insert(
+            "/shop/checkout".to_string(),
+            Coverage {
+                state: "non-normative".into(),
+                note: None,
+                claimed_by: None,
+            },
+        );
+        store.docs.insert(
+            "shop.md".into(),
+            DocRecord {
+                content_hash: crate::model::hash_hex(BUILT),
+                sections: md::parse_sections(BUILT),
+                coverage,
+            },
+        );
+        let mention = |quote: &str, section: &str| SourceRef {
+            doc: "shop.md".into(),
+            section: section.into(),
+            quote: quote.into(),
+        };
+        store.graph.entities.insert(
+            "ent:cart".into(),
+            Entity {
+                name: "Cart".into(),
+                mentions: vec![mention("The Cart shall hold items.", "/shop")],
+                ..Default::default()
+            },
+        );
+        store.graph.entities.insert(
+            "ent:checkout-service".into(),
+            Entity {
+                name: "Checkout Service".into(),
+                aliases: vec!["checkout".into()],
+                mentions: vec![mention(
+                    "A Checkout Service takes payment.",
+                    "/shop/checkout",
+                )],
+                ..Default::default()
+            },
+        );
+        store.graph.requirements.insert(
+            "req:hold".into(),
+            Requirement {
+                statement: "The Cart shall hold items.".into(),
+                entities: vec!["ent:cart".into()],
+                source: Some(mention("The Cart shall hold items.", "/shop")),
+                ..Default::default()
+            },
+        );
+        store.graph.criteria.insert(
+            "crit:hold-1".into(),
+            Criterion {
+                requirement: "req:hold".into(),
+                statement: "Orders ship daily.".into(),
+                source: Some(mention("Orders ship daily.", "/shop")),
+                ..Default::default()
+            },
+        );
+        let lsp = lsp_at(tmp.clone(), out, store);
+        (tmp, lsp)
+    }
+
+    fn open(lsp: &mut Lsp, text: &str) -> String {
+        let uri = lsp.doc_to_uri("shop.md");
+        let mut sink: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri,
+                "languageId": "markdown", "version": 1, "text": text}}}),
+            &mut sink,
+        );
+        uri
+    }
+
+    fn ask(lsp: &mut Store, rid: &str) {
+        lsp.graph.diagnostics.insert(
+            "diag:ask".into(),
+            crate::model::Diagnostic {
+                rule: "ambiguity".into(),
+                severity: "warning".into(),
+                subjects: vec![rid.into()],
+                message: "which cart?".into(),
+                reasoning: None,
+                lifecycle: "open".into(),
+                triage: None,
+                prompt: Some(crate::model::DiagnosticPrompt {
+                    question: "Which cart?".into(),
+                    options: vec![],
+                    freeform: true,
+                }),
+                answer: None,
+                created: None,
+                updated: None,
+            },
+        );
+    }
+
+    // The initialize result declares every new capability and the legend.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn initialize_declares_the_editor_capabilities() {
+        let (tmp, lsp) = editor_fixture("caps");
+        let caps = &lsp.capabilities()["capabilities"];
+        assert_eq!(caps["inlayHintProvider"]["resolveProvider"], false);
+        assert_eq!(caps["documentHighlightProvider"], true);
+        assert_eq!(caps["documentSymbolProvider"], true);
+        assert_eq!(caps["workspaceSymbolProvider"], true);
+        assert_eq!(caps["semanticTokensProvider"]["full"], true);
+        assert_eq!(
+            caps["semanticTokensProvider"]["legend"],
+            json!({"tokenTypes": ["type"], "tokenModifiers": ["jazykEntity"]})
+        );
+        let commands = caps["executeCommandProvider"]["commands"].to_string();
+        assert!(commands.contains("jazyk.showLastBuild"), "{}", commands);
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // The status word sits at the end of each located quote, inside the requested
+    // range only; the code lens carries the same word.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn inlay_hints_and_lenses_read_the_status_word() {
+        let (tmp, mut lsp) = editor_fixture("hints");
+        let uri = open(&mut lsp, BUILT);
+        let all = json!({"textDocument": {"uri": uri},
+            "range": {"start": {"line": 0, "character": 0}, "end": {"line": 9, "character": 0}}});
+        let hints = lsp.on_inlay_hints(&all);
+        assert_eq!(
+            hints,
+            json!([{
+                "position": {"line": 2, "character": 26},
+                "label": "· not built",
+                "paddingLeft": true,
+                "tooltip": "req:hold: missing (not-generated)",
+            }])
+        );
+        let outside = json!({"textDocument": {"uri": uri},
+            "range": {"start": {"line": 4, "character": 0}, "end": {"line": 9, "character": 0}}});
+        assert_eq!(lsp.on_inlay_hints(&outside), json!([]));
+        // An open question outranks every other word.
+        ask(&mut lsp.store, "req:hold");
+        assert_eq!(lsp.on_inlay_hints(&all)[0]["label"], "· question");
+        // A suppressed question no longer counts.
+        lsp.store
+            .graph
+            .diagnostics
+            .get_mut("diag:ask")
+            .unwrap()
+            .triage = Some("suppressed".into());
+        assert_eq!(lsp.on_inlay_hints(&all)[0]["label"], "· not built");
+        lsp.store
+            .graph
+            .diagnostics
+            .get_mut("diag:ask")
+            .unwrap()
+            .triage = None;
+        let lenses = lsp.on_code_lens(&json!({"textDocument": {"uri": uri}}));
+        assert_eq!(lenses[0]["command"]["title"], "req:hold · question");
+        // A quote that no longer locates shows no hint.
+        let uri = open(&mut lsp, "# Shop\n\nThe basket holds items.\n");
+        let all = json!({"textDocument": {"uri": uri}});
+        assert_eq!(lsp.on_inlay_hints(&all), json!([]));
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // Every entity mention is one token, longest name first, encoded relative.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn semantic_tokens_mark_every_entity_mention() {
+        let (tmp, mut lsp) = editor_fixture("tokens");
+        let uri = open(&mut lsp, BUILT);
+        let tokens = lsp.on_semantic_tokens(&json!({"textDocument": {"uri": uri}}));
+        // `Cart` at 2:4, `Checkout` (the heading, an alias) at 4:3, `Checkout
+        // Service` at 6:2 wins over the alias inside it.
+        assert_eq!(
+            tokens["data"],
+            json!([2, 4, 4, 0, 1, 2, 3, 8, 0, 1, 2, 2, 16, 0, 1])
+        );
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // Inside the requirement's quote: the quote and its criterion's quote.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn document_highlight_covers_the_requirement_and_its_criteria() {
+        let (tmp, mut lsp) = editor_fixture("highlight");
+        let uri = open(&mut lsp, BUILT);
+        let at = |line: usize, character: usize| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+        assert_eq!(
+            lsp.on_document_highlight(&at(2, 10)),
+            json!([
+                {"range": {"start": {"line": 2, "character": 0}, "end": {"line": 2, "character": 26}}, "kind": 1},
+                {"range": {"start": {"line": 2, "character": 27}, "end": {"line": 2, "character": 45}}, "kind": 1},
+            ])
+        );
+        assert_eq!(lsp.on_document_highlight(&at(6, 3)), json!([]));
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // The stored tree as nested symbols with counts and read state, positioned in
+    // the current text. Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn document_symbols_nest_the_stored_sections() {
+        let (tmp, mut lsp) = editor_fixture("symbols");
+        // A line inserted above moves both sections down by two.
+        let uri = open(&mut lsp, &format!("Intro.\n\n{}", BUILT));
+        let symbols = lsp.on_document_symbols(&json!({"textDocument": {"uri": uri}}));
+        assert_eq!(symbols.as_array().unwrap().len(), 1);
+        let shop = &symbols[0];
+        assert_eq!(shop["name"], "Shop");
+        assert_eq!(shop["detail"], "1 requirement · read");
+        assert_eq!(shop["selectionRange"]["start"]["line"], 2);
+        assert_eq!(shop["range"]["end"]["line"], 8);
+        let checkout = &shop["children"][0];
+        assert_eq!(checkout["name"], "Checkout");
+        assert_eq!(checkout["detail"], "0 requirements · not normative");
+        assert_eq!(checkout["range"]["start"]["line"], 6);
+        assert_eq!(
+            checkout["selectionRange"]["end"],
+            json!({"line": 6, "character": 11})
+        );
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // Entities by name or alias and requirements by statement, each located.
+    // Mirrors docs/frontends/lsp.md#capabilities.
+    #[test]
+    fn workspace_symbols_find_entities_and_requirements() {
+        let (tmp, lsp) = editor_fixture("wsym");
+        let found = lsp.on_workspace_symbols(&json!({"query": "CHECKOUT"}));
+        assert_eq!(found.as_array().unwrap().len(), 1);
+        assert_eq!(found[0]["name"], "Checkout Service");
+        assert_eq!(found[0]["kind"], 5);
+        assert_eq!(found[0]["location"]["range"]["start"]["line"], 6);
+        let found = lsp.on_workspace_symbols(&json!({"query": "hold items"}));
+        assert_eq!(found.as_array().unwrap().len(), 1);
+        assert_eq!(found[0]["containerName"], "req:hold");
+        assert_eq!(found[0]["location"]["range"]["start"]["line"], 2);
+        assert_eq!(
+            lsp.on_workspace_symbols(&json!({"query": ""}))
+                .as_array()
+                .unwrap()
+                .len(),
+            3
+        );
+        crate::vfs::remove_dir_all(&tmp).ok();
+    }
+
+    // An edited section lenses on its heading; the command writes the last-built
+    // text as a projection and asks the client to show it.
+    // Mirrors docs/frontends/lsp.md#capabilities and #commands.
+    #[test]
+    fn changed_sections_lens_and_show_the_last_build() {
+        let (tmp, mut lsp) = editor_fixture("changed");
+        let uri = open(&mut lsp, BUILT);
+        let changed = |lsp: &Lsp| {
+            lsp.on_code_lens(&json!({"textDocument": {"uri": uri}}))
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|l| l["command"]["command"] == "jazyk.showLastBuild")
+                .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+                .collect::<Vec<_>>()
+        };
+        assert!(changed(&lsp).is_empty());
+        open(&mut lsp, &BUILT.replace("takes payment", "takes cards"));
+        assert_eq!(changed(&lsp), [4]);
+        let mut sink: Vec<u8> = Vec::new();
+        lsp.handle(
+            json!({"id": 9, "method": "workspace/executeCommand", "params": {
+                "command": "jazyk.showLastBuild", "arguments": [{"uri": uri}]}}),
+            &mut sink,
+        );
+        let projection = tmp.join(".jazyk/last-build/shop.md");
+        assert_eq!(crate::vfs::read_to_string(&projection).unwrap(), BUILT);
+        let wire = String::from_utf8(sink).unwrap();
+        assert!(
+            wire.contains("\"method\":\"window/showDocument\""),
+            "{}",
+            wire
+        );
+        assert!(wire.contains("last-build/shop.md"), "{}", wire);
         crate::vfs::remove_dir_all(&tmp).ok();
     }
 }

@@ -374,6 +374,40 @@ pub fn pending(
     out
 }
 
+// The reader-facing word for a requirement, first match wins: an open question,
+// then failing, stale, verified, and everything else not built.
+// Mirrors docs/consumers/gen.md#status-words.
+pub fn status_word(status: &str, reason: &str, question: bool) -> &'static str {
+    if question {
+        "question"
+    } else if matches!(status, "failing" | "partial") {
+        "failing"
+    } else if status.starts_with("stale-") || (status == "missing" && reason == "artifact-gone") {
+        "stale"
+    } else if status == "verified" {
+        "verified"
+    } else {
+        "not built"
+    }
+}
+
+// The requirements an open, unanswered, unsuppressed prompted diagnostic names as a
+// subject (a failed answer counts as unanswered), resolved through redirects.
+// Mirrors docs/consumers/gen.md#status-words.
+pub fn questioned(store: &Store) -> std::collections::BTreeSet<String> {
+    store
+        .graph
+        .diagnostics
+        .values()
+        .filter(|d| d.lifecycle == "open" && d.prompt.is_some())
+        .filter(|d| d.triage.as_deref() != Some("suppressed"))
+        .filter(|d| d.answer.as_ref().is_none_or(|a| a.status == "failed"))
+        .flat_map(|d| d.subjects.iter())
+        .map(|s| store.resolve_id(s).to_string())
+        .filter(|s| store.graph.requirements.contains_key(s))
+        .collect()
+}
+
 // One status entry per graph requirement, for renderers (viewer, docsgen, LSP hover).
 // Requirements without a ledger row read missing/not-generated.
 pub fn status_map(store: &Store, gs: &GenSettings) -> std::collections::BTreeMap<String, Value> {

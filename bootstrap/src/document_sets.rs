@@ -517,7 +517,9 @@ fn known_role_overlap_in(
             pattern.strip_suffix("/**")
         };
         if let Some(folder) = folder {
-            for extension in ["md", "markdown", "txt", "docx", "pdf"] {
+            for extension in [
+                "md", "markdown", "txt", "adoc", "asciidoc", "asc", "rst", "rest", "docx", "pdf",
+            ] {
                 candidates.push(format!(
                     "{}__jazyk_role_probe__.{extension}",
                     if folder.is_empty() {

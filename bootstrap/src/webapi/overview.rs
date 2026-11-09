@@ -27,7 +27,10 @@ fn ext(path: &str) -> String {
 }
 
 fn is_prose(path: &str) -> bool {
-    matches!(ext(path).as_str(), "md" | "markdown" | "txt")
+    matches!(
+        ext(path).as_str(),
+        "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc" | "rst" | "rest"
+    )
 }
 
 fn tests_of(ledger: &Ledger) -> impl Iterator<Item = &TestRef> {
@@ -292,7 +295,15 @@ fn readme(p: &Project, gs: &GenSettings, product: &[String]) -> Value {
         let lower = f.rsplit('/').next().unwrap_or(f).to_ascii_lowercase();
         matches!(
             lower.as_str(),
-            "readme" | "readme.md" | "readme.markdown" | "readme.txt"
+            "readme"
+                | "readme.md"
+                | "readme.markdown"
+                | "readme.txt"
+                | "readme.adoc"
+                | "readme.asciidoc"
+                | "readme.asc"
+                | "readme.rst"
+                | "readme.rest"
         )
     });
     if let Some(f) = own {

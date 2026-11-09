@@ -94,7 +94,12 @@ pub fn supported_format(path: &std::path::Path) -> bool {
     }
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| matches!(e.to_ascii_lowercase().as_str(), "md" | "markdown" | "txt"))
+        .map(|e| {
+            matches!(
+                e.to_ascii_lowercase().as_str(),
+                "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc" | "rst" | "rest"
+            )
+        })
         .unwrap_or(false)
 }
 
@@ -136,10 +141,10 @@ pub fn slug(s: &str) -> String {
     out.trim_matches('-').to_string()
 }
 
-struct Head {
-    level: usize,
-    title: String,
-    line: usize,
+pub(crate) struct Head {
+    pub(crate) level: usize,
+    pub(crate) title: String,
+    pub(crate) line: usize,
 }
 
 // A fence line: the fence character (backtick or tilde), its length, and the info
@@ -163,11 +168,11 @@ fn closes(line: &str, c: char, n: usize) -> bool {
 }
 
 // One fenced block: its line range (the fences included), its kind, and its title.
-struct Block {
-    start: usize,
-    end: usize,
-    kind: &'static str,
-    title: String,
+pub(crate) struct Block {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) kind: &'static str,
+    pub(crate) title: String,
 }
 
 // The fenced blocks inside `lines[start..end]`, in order. A block is a `diagram`
@@ -206,6 +211,27 @@ fn blocks(lines: &[&str], start: usize, end: usize) -> Vec<Block> {
         i = close;
     }
     out
+}
+
+pub fn parse_document_checked(
+    path: &std::path::Path,
+    text: &str,
+) -> Result<BTreeMap<String, Section>, String> {
+    if crate::rst::supported(path) {
+        crate::rst::parse_sections(text)
+    } else {
+        Ok(parse_document(path, text))
+    }
+}
+
+pub fn parse_document(path: &std::path::Path, text: &str) -> BTreeMap<String, Section> {
+    if crate::rst::supported(path) {
+        crate::rst::parse_sections(text).unwrap_or_default()
+    } else if crate::asciidoc::supported(path) {
+        crate::asciidoc::parse_sections(text)
+    } else {
+        parse_sections(text)
+    }
 }
 
 pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
@@ -249,6 +275,15 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
         }
     }
 
+    section_tree(text, heads, blocks(&lines, 0, lines.len()))
+}
+
+pub(crate) fn section_tree(
+    text: &str,
+    heads: Vec<Head>,
+    blocks: Vec<Block>,
+) -> BTreeMap<String, Section> {
+    let lines: Vec<&str> = text.lines().collect();
     let mut sections: BTreeMap<String, Section> = BTreeMap::new();
     // Content before the first heading, or a whole document without headings, forms a
     // preamble section at `/`, so no prose is invisible to extraction. Mirrors
@@ -350,7 +385,10 @@ pub fn parse_sections(text: &str) -> BTreeMap<String, Section> {
     let mut block_sections: Vec<(String, Section)> = Vec::new();
     let mut shifts: HashMap<String, usize> = HashMap::new();
     for (parent, start, end) in holders {
-        let found = blocks(&lines, start, end);
+        let found: Vec<_> = blocks
+            .iter()
+            .filter(|b| b.start >= start && b.end <= end)
+            .collect();
         let mut per_kind: HashMap<&str, usize> = HashMap::new();
         for (order, b) in found.iter().enumerate() {
             let n = per_kind.entry(b.kind).or_insert(0);
@@ -426,7 +464,7 @@ pub struct LinkDiagnostic {
     pub range: LinkRange,
 }
 
-fn link_position(text: &str, byte: usize) -> LinkPosition {
+pub(crate) fn link_position(text: &str, byte: usize) -> LinkPosition {
     let before = &text[..byte];
     LinkPosition {
         line: before.bytes().filter(|b| *b == b'\n').count(),
@@ -469,6 +507,12 @@ pub fn resolve_document_link(from_doc: &str, href: &str) -> Option<String> {
 // The CommonMark parser excludes images, code and raw HTML and resolves reference
 // link definitions. Offsets cover the occurrence, including reference-link labels.
 pub fn document_links(text: &str, from_doc: &str) -> Vec<DocumentLink> {
+    if crate::rst::supported(std::path::Path::new(from_doc)) {
+        return crate::rst::document_links(text, from_doc);
+    }
+    if crate::asciidoc::supported(std::path::Path::new(from_doc)) {
+        return crate::asciidoc::document_links(text, from_doc);
+    }
     pulldown_cmark::Parser::new(text)
         .into_offset_iter()
         .filter_map(|(event, bytes)| {

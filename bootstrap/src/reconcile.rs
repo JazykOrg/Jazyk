@@ -4246,7 +4246,7 @@ mod tests {
             "# Good\nThe system shall respond.\n",
         )
         .unwrap();
-        crate::vfs::write(dir.join("docs/notes.rst"), "plain notes\n").unwrap();
+        crate::vfs::write(dir.join("docs/notes.opaque"), "plain notes\n").unwrap();
         crate::vfs::write(dir.join("docs/bad.md"), b"# Bad\n\xff\xfe\n").unwrap();
         let proj = Project {
             root: dir.clone(),
@@ -4257,12 +4257,12 @@ mod tests {
         let (parsed, _) = parse_all(&proj);
         assert_eq!(
             parsed.keys().collect::<Vec<_>>(),
-            vec!["docs/good.md", "docs/notes.rst"]
+            vec!["docs/good.md", "docs/notes.opaque"]
         );
         let f = checks(&Store::default(), &proj);
         let unsupported = rules_for(&f, "unsupported-format");
         assert!(unsupported.is_empty(), "{:?}", unsupported);
-        assert_eq!(parsed["docs/notes.rst"].1["/"].kind, "blob");
+        assert_eq!(parsed["docs/notes.opaque"].1["/"].kind, "blob");
         let errors = rules_for(&f, "parse-error");
         assert_eq!(errors.len(), 1, "{:?}", errors);
         assert_eq!(errors[0].1, ["docs/bad.md"]);
@@ -4288,7 +4288,7 @@ mod tests {
         assert_eq!(open(&s, "parse-error"), 1);
         assert_eq!(s.graph.diagnostics.len(), 1);
         crate::vfs::write(dir.join("docs/bad.md"), "# Bad\nnow readable\n").unwrap();
-        crate::vfs::remove_file(dir.join("docs/notes.rst")).unwrap();
+        crate::vfs::remove_file(dir.join("docs/notes.opaque")).unwrap();
         s.reconcile_check_diags(checks(&s, &proj));
         assert_eq!(open(&s, "unsupported-format"), 0);
         assert_eq!(open(&s, "parse-error"), 0);

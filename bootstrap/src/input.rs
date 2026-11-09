@@ -26,7 +26,7 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
             .and_then(|bytes| {
                 let sha = crate::task_runtime::digest(&bytes);
                 if md::supported_format(&file) {
-                    md::project_bytes(&file, &bytes).map(|text| {
+                    md::project_bytes(&file, &bytes).and_then(|text| {
                         // UTF-8 prose already hashes all original bytes. Native package
                         // projections must retain the original package byte identity.
                         let hash = if matches!(
@@ -41,7 +41,7 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
                         } else {
                             hash_hex(&text)
                         };
-                        (hash, md::parse_sections(&text))
+                        Ok((hash, md::parse_document_checked(&file, &text)?))
                     })
                 } else {
                     blobs.insert(
@@ -58,11 +58,22 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
         let Ok((_, sections)) = input else { continue };
         // Parse the full projection to retain reference-style link definitions.
         let text = projection_text(sections);
-        for (event, range) in Parser::new(&text).into_offset_iter() {
-            let Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) = event
-            else {
-                continue;
-            };
+        let references: Vec<_> = if crate::rst::supported(std::path::Path::new(doc)) {
+            crate::rst::references(&text, true)
+        } else if crate::asciidoc::supported(std::path::Path::new(doc)) {
+            crate::asciidoc::references(&text, true)
+        } else {
+            Parser::new(&text)
+                .into_offset_iter()
+                .filter_map(|(event, range)| match event {
+                    Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                        Some((dest_url.into_string(), range))
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        for (dest_url, range) in references {
             let crate::gen::assets::Target::Local(path) =
                 crate::gen::assets::target(doc, &dest_url)
             else {
@@ -234,6 +245,40 @@ mod tests {
             ("src/logo.svg".into(), b"<svg>this is not prose</svg>".to_vec()),
         ])
     }
+    #[test]
+    fn asciidoc_inventory_uses_native_sections() {
+        let mut files = fixture();
+        files.insert(
+            "guide.ADOC".into(),
+            b"= Guide\n\n== Policy\nOrders must persist.\n".to_vec(),
+        );
+        let _scope = crate::vfs::Scope::enter(&files);
+        let inputs = scan(&project());
+        let (_, sections) = inputs["guide.ADOC"].as_ref().unwrap();
+        assert_eq!(sections["/guide/policy"].kind, "heading");
+        assert!(sections["/guide/policy"]
+            .raw
+            .contains("Orders must persist."));
+    }
+
+    #[test]
+    fn asciidoc_images_attach_original_reference_context_to_blobs() {
+        let mut files = fixture();
+        files.insert(
+            "guide.adoc".into(),
+            b"= Guide\n\n== Brand\nThe logo must be used.\n\nimage::logo.svg[Logo]\n".to_vec(),
+        );
+        let _scope = crate::vfs::Scope::enter(&files);
+        let inputs = scan(&project());
+        let (_, sections) = inputs["logo.svg"].as_ref().unwrap();
+        let value: Value = serde_json::from_str(&sections["/"].raw).unwrap();
+        assert!(value["references"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["doc"] == "guide.adoc" && r["section"] == "/guide/brand"));
+    }
+
     fn project() -> Project {
         crate::document_sets::Workspace::load(std::path::Path::new("/project"))
             .unwrap()

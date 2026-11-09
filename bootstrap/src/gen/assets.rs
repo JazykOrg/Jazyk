@@ -51,19 +51,25 @@ struct Document {
 impl Document {
     fn read(path: &Path) -> Option<Self> {
         let text = crate::md::read_doc(path).ok()?;
-        let sections = crate::md::parse_sections(&text);
-        let links = Parser::new(&text)
-            .into_offset_iter()
-            .filter_map(|(event, range)| {
-                let href = match event {
-                    Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
-                        dest_url.into_string()
-                    }
-                    _ => return None,
-                };
-                Some((href, range))
-            })
-            .collect();
+        let sections = crate::md::parse_document_checked(path, &text).ok()?;
+        let links = if crate::rst::supported(path) {
+            crate::rst::references(&text, true)
+        } else if crate::asciidoc::supported(path) {
+            crate::asciidoc::references(&text, true)
+        } else {
+            Parser::new(&text)
+                .into_offset_iter()
+                .filter_map(|(event, range)| {
+                    let href = match event {
+                        Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                            dest_url.into_string()
+                        }
+                        _ => return None,
+                    };
+                    Some((href, range))
+                })
+                .collect()
+        };
         Some(Self {
             text,
             sections,

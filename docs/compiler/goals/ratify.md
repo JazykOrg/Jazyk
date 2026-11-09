@@ -108,7 +108,8 @@ and its target and renders the proposal on the subject's page
 - The options: the `edit` (accept), and an `answer` option labeled retract. Freeform
   is accepted: a reply that rewrites the sentence is the accepted sentence.
 
-One goal and one proposal per fact. Docsgen groups the pending proposals of one
+One goal per fact. Related derived criteria share a proposal as specified in
+[ratification proposals](../model/diagnostic.md#ratification-proposals). Docsgen groups the pending proposals of one
 target document together in its ratification report, so a reviewer reads them as one
 draft.
 

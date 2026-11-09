@@ -80,7 +80,9 @@ fn walk(
         }
         provenance(store, r.provenance.as_ref(), seen, out);
     } else if let Some(e) = store.graph.entities.get(&id) {
-        for s in &e.mentions {
+        // The defining mention only: a finding about an entity is not about every
+        // sentence that names it. Mirrors docs/compiler/model/diagnostic.md#locations.
+        if let Some(s) = e.mentions.first() {
             source(s, related, out);
         }
         provenance(store, e.provenance.as_ref(), seen, out);
@@ -286,6 +288,36 @@ mod tests {
     }
     fn finding(subjects: &[&str]) -> Diagnostic {
         serde_json::from_value(json!({"rule":"contradiction", "severity":"warning", "message":"Conflict", "subjects":subjects})).unwrap()
+    }
+
+    #[test]
+    fn an_entity_finding_locates_on_the_defining_mention_only() {
+        let mut s = fixture();
+        s.graph.entities.get_mut("ent:one").unwrap().mentions.push(
+            serde_json::from_value(
+                json!({"doc":"docs/other.md","section":"/x","quote":"An order"}),
+            )
+            .unwrap(),
+        );
+        let found = document_locations(&s, &finding(&["ent:one"]));
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            (
+                found[0].path.as_str(),
+                found[0].section.as_deref(),
+                found[0].quote.as_deref()
+            ),
+            ("docs/rules.md", Some("/rules"), Some("Orders"))
+        );
+        assert!(!found[0].related);
+        // An entity no document states has no location: the finding stays project-wide.
+        s.graph
+            .entities
+            .get_mut("ent:one")
+            .unwrap()
+            .mentions
+            .clear();
+        assert!(document_locations(&s, &finding(&["ent:one"])).is_empty());
     }
 
     #[test]

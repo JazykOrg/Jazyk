@@ -54,6 +54,7 @@ it and the next build reconciles from empty.
     <kind>/<slug>.puml   # one per view, rewritten on every commit
     <kind>/<slug>.svg    # its rendering (.png beside it on demand)
   docsgen/               # generated documentation, see consumers/docsgen.md
+  last-build/            # documents as the last build stored them, see frontends/lsp.md#commands
   gen/                   # the generation ledger, see consumers/gen.md
   trace/                 # session transcripts
   sessions/

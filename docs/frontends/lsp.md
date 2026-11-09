@@ -17,7 +17,7 @@ editor positions. It shares the deterministic document-link check with the compi
 Hovers, diagnostics, and every other request read only and never call the LLM. Its
 writes are explicit, human-initiated [commands](#commands): answering a
 [diagnostic prompt](../compiler/model/diagnostic.md#prompts), editing a document set,
-and starting a compile.
+starting a compile, and writing the [last-build projection](#commands) of a document.
 
 Native document links use standard file URLs. Drive letters, Unicode, spaces and
 URI delimiters round-trip through the URL library. A non-file URI does not name
@@ -138,8 +138,7 @@ the CLI and ACP chat.
 - Hover inside a requirement's located quote: the requirement card, three parts, each part
   linked. The hover range is the located quote, so the whole statement highlights.
   - The requirement: the id, the `statement`, its facets, its edges and transition when
-    it has them, the derived
-    [status](../consumers/gen.md#status-is-derived-never-stored), and a link to the
+    it has them, its [status word](../consumers/gen.md#status-words), and a link to the
     requirement's heading in its entity's requirements document at
     `<out>/docsgen/<slug>.md`. When a flow view lists the requirement as a member, the
     image of the smallest such view sits above the card by the same rule as for
@@ -149,8 +148,9 @@ the CLI and ACP chat.
     site relocates to, marked when the site moved or was lost. A manifest file that
     carries no site links to the file itself.
   - The test: the kind and label, a link to the artifact at the line the test name sits
-    on, the status with the last run time and the run command, and the evidence tail
-    from the last verdict.
+    on, the derived [status](../consumers/gen.md#status-is-derived-never-stored) and its
+    reason with the last run time and the run command, and the evidence tail from the
+    last verdict.
   - Links are absolute `file://` URIs with an `#L<line>` fragment, so any client
     navigates; image sources are `file://` URIs too. The requirement link also carries
     `?req=<id>`, and so does the test link when the artifact is an `llm` test's
@@ -183,8 +183,8 @@ the CLI and ACP chat.
 - Completion: entity names and aliases, from the name index (see
   [derived data](../compiler/graph.md#derived-data)).
 - Code lens: every requirement sourced in the open document shows one lens above its
-  located quote: the requirement id, plus its verification status when the
-  [ledger](../consumers/gen.md#the-ledger) exists. The attachment is visible without
+  located quote: the requirement id and its
+  [status word](../consumers/gen.md#status-words). The attachment is visible without
   hovering. A lens is emitted only where the quote locates, so a broken quote never
   shows a misplaced lens. Clicking runs `jazyk.openRequirement` (declared under
   `executeCommandProvider`); the server answers with a `window/showDocument` request
@@ -196,6 +196,38 @@ the CLI and ACP chat.
   (see [documentation generation](../consumers/docsgen.md)). A reader clicks any mention
   of a concept and lands on its assembled requirements. Links are emitted only when the
   target file exists.
+- Inlay hints: at the end of each located requirement quote in the open document, one
+  hint with the requirement's [status word](../consumers/gen.md#status-words), e.g.
+  `· verified`. Its tooltip names the requirement id, the derived status, and its
+  reason. A hint is emitted only where the quote locates, the code lens rule, and only
+  inside the requested range. A project that never generated shows no `not built`
+  hint: every sentence would carry it. Questions still show.
+- Semantic tokens (`full`): every whole-word, case-insensitive occurrence of an entity
+  name or alias, the same occurrences completion offers, is one token, so themes color
+  entity mentions. The legend has one token type, `type`, and one modifier,
+  `jazykEntity`. The longest name wins where occurrences overlap. Unlike document
+  links, a token needs no requirements document. Document links stay the navigation.
+- Document highlight: inside a requirement's located quote, the whole quote highlights,
+  with the located quotes of the requirement's criteria in the same document.
+- Document symbols: the stored [section tree](../compiler/model/section.md) of the open
+  document, as nested symbols named by their headings. Fenced blocks and the text
+  before the first heading are not symbols. Each symbol's `detail` gives the number of
+  requirements sourced in the section and its read state from
+  [coverage](../compiler/model/section.md#coverage): `read` (`covered`),
+  `not normative` (`non-normative`), or `not read yet` (`unprocessed`, or no mark).
+  E.g. `3 requirements · read`. Ranges come from the current text: a section that
+  still parses at the same reference takes its current lines, otherwise its stored
+  ones.
+- Workspace symbols: entities, matched by name or alias, and requirements, matched by
+  `statement` or id, across all document sets. The match is a case-insensitive
+  substring of the query; an empty query matches everything. An entity is located at
+  its defining mention, a requirement at its quote. At most 200 symbols answer.
+- Changed since last build: on the heading line of each section of the open document
+  whose current text hashes differently from its stored section (the comparison the
+  [dirty set](../compiler/reconciler.md#dirty-set) makes), one code lens
+  `Changed since last build`. A section new since the last build counts as changed.
+  The text before the first heading lenses on its first line. Clicking runs
+  `jazyk.showLastBuild` (see [commands](#commands)).
 
 ## Commands
 
@@ -205,6 +237,14 @@ request.
 
 - `jazyk.openRequirement`: open a requirement's heading in its requirements document
   (see the code lens under [capabilities](#capabilities)).
+- `jazyk.showLastBuild`: write the document as the last build stored it to
+  `<out>/last-build/<doc path>` and answer with a `window/showDocument` request that
+  opens it. The text is the stored sections'
+  [raw](../compiler/model/section.md#fields) joined in document order
+  ([reconstruction](../compiler/parsing.md#reconstruction)). `<out>` is the out
+  directory of the document set that holds the document. The file is a projection:
+  local, rewritten on every call, safe to delete. The command never touches the graph.
+  A client with a diff view compares the two files.
 - `jazyk.answerDiagnostic`: answer a [diagnostic prompt](../compiler/model/diagnostic.md#prompts)
   with an option index or `text` (see the code actions under [capabilities](#capabilities)).
 - `jazyk.documentSets`: the project's [document sets](../compiler/document-sets.md) and

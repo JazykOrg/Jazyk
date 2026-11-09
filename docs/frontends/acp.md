@@ -430,12 +430,57 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
   ([default views](../compiler/model/view.md#default-views)).
 - The prose edit surfaces to the ACP client as a file write plus a diff on the tool
   call, so an IDE shows it in the buffer and the review UI. See
-  [doc edit delegation](#doc-edit-delegation).
+  [doc edit delegation](#doc-edit-delegation) and [edit effects](#edit-effects).
 - Every dual write journals a `dual-write` entry, every decree a `decree` entry
   ([journal](../compiler/graph.md#journal)), so `jazyk ripple` roots the cascade at
   the chat edit.
 - Direct graph writes without a prose edit are not in the `chat` toolset. That path
   remains only in `jazyk mcp graph --write`, the debugging surface.
+
+### Edit effects
+
+Every chat tool reply that commits a change carries `effects`: what the call
+changed, in one structured record. The dual-write tools, `edit_fact`, and
+`write_document` carry it.
+
+- `files`: one entry per changed hunk, `{path, abs, kind, line, created, oldText,
+  newText}`. `kind` is `doc`, `config`, `source`, or `test`. `line` is the 1-based
+  line the hunk starts at in the new text. `oldText` and `newText` hold only the
+  changed lines, so the model's context stays small.
+- `graph`: one entry per node that differs after the commit, `{op, kind, id,
+  title}`. `op` is `added`, `updated`, or `removed`. An added or removed node
+  carries `node`, its fields. An updated node carries `changes`, one
+  `{field, before, after}` per changed field. Derived relationships and state
+  machines are included, so an edge change also names the link it moved. Default
+  views are left out.
+- More than 40 graph entries are cut; `truncated` counts the rest.
+
+E.g.:
+
+```json
+{"committed": true, "effects": {
+  "files": [{"path": "docs/orders.md", "kind": "doc", "line": 12,
+             "oldText": "Orders ship in two days.\n", "newText": "Orders ship in one day.\n"}],
+  "graph": [{"op": "updated", "kind": "requirement", "id": "req:orders-ship-1a2b",
+             "title": "Orders ship in one day.",
+             "changes": [{"field": "statement", "before": "Orders ship in two days.",
+                          "after": "Orders ship in one day."}]}]}}
+```
+
+Every ACP surface decorates a completed tool call update whose output carries
+`effects`: the embedded agent, the [IDE proxy](#the-ide-proxy) (for any agent's
+call to a jazyk tool), the GUI chat, and the browser tab. The decoration uses
+standard tool call fields, so any client renders it:
+
+- `kind` is `edit`.
+- `content` holds one `diff` block per file hunk (`path` absolute, `oldText`
+  omitted for a new file) and one text block with the graph changes as markdown,
+  one line per node (`**+ New requirement** `req:…`: statement`, then one line per
+  changed field, `before → after`).
+- `locations` lists each file with its 0-based line, so a client that follows the
+  agent opens the change.
+- `_meta.jazyk.effects` holds the record itself. A client that reads it renders
+  its own forms (the jazyk.dev editor); one that does not loses nothing.
 
 ### Project tools
 

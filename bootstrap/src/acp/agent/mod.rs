@@ -448,7 +448,9 @@ pub fn run() -> i32 {
                                 let fields = ToolCallUpdateFields::new()
                                     .status(if ok { ToolCallStatus::Completed } else { ToolCallStatus::Failed })
                                     .raw_output(json!(result));
-                                notify(SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields)));
+                                let mut update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields));
+                                crate::acp::decorate_effects(&mut update);
+                                notify(update);
                             }
                             AgentEvent::Usage { tokens, cached } => {
                                 total_tokens += tokens;

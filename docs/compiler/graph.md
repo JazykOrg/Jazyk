@@ -183,7 +183,11 @@ different nodes touch different files and git merges them without a conflict.
   - `created` and `updated` live in the local `markers.yaml`.
   - An entity's `mentions` omit every mention that equals the `source` of a requirement
     referencing the entity ([derived data](#derived-data)). A load adds those sources
-    back, after the written mentions, in requirement id order.
+    back, after the written mentions, in document order: by
+    [link level](./reconciler.md#link-levels) from the stamped `roots` (roots first),
+    then by document path, then by position in the document. So the first of them is
+    the most upstream place a requirement names the entity, and every checkout orders
+    them the same way.
 - A save writes the files whose bytes changed and deletes the files of nodes that left
   the graph. A file whose name does not decode, or whose content does not parse, makes
   the store read-only ([writes and unreadable files](#writes-and-unreadable-files)).

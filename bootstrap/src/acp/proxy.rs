@@ -800,6 +800,9 @@ fn ensure_down(
                         );
                     }
                 }
+                // A jazyk tool reply with effects reaches the IDE as a native diff.
+                // Mirrors docs/frontends/acp.md#edit-effects.
+                crate::acp::decorate_effects(&mut n.update);
                 if let Some(up) = &up_n {
                     let _ = up.send_notification(n);
                 }

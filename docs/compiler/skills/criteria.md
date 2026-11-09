@@ -29,3 +29,11 @@ Density. One per requirement is the norm: the situation the statement describes,
 Wording. Present tense, the actor first when there is one, the values in the sentence, backticks around literal identifiers and values that must match verbatim. Optional `given`, `when`, `then` split the same sentence for a test writer; `statement` stays the one line.
 
 Derived criteria are proposals. Each carries `provenance: {derived: {from: [the requirement id], reasoning}}` and reads as the sentence the documents should gain under the requirement's section, so the ratification proposal can be accepted as prose. Say in `reasoning` which part of the statement the criterion covers (the bound, the negative, the measure).
+
+Before adding a criterion, read the requirement's existing criteria and pending proposals.
+Reuse or update a criterion covering the same condition and outcome. Combine checks
+that observe one outcome into one criterion, rather than proposing each configuration
+key or source reference separately. Keep independent outcomes separate. Do not derive
+an operational failure from a missing configuration value unless the requirement states
+that failure. Explain the proposed obligation in words an author can understand without
+opening the graph. The engine groups related criteria for one ratification decision.

@@ -176,3 +176,5 @@ mod site_schemas {
 }
 
 pub mod asciidoc;
+
+pub mod rst;

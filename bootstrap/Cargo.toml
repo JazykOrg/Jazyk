@@ -28,6 +28,8 @@ name = "document_proof"
 required-features = ["document-proof"]
 
 [dependencies]
+pest = "=2.8.3"
+pest_derive = "=2.8.3"
 asciidoc-parser = "=0.31.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

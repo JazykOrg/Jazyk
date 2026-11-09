@@ -26,6 +26,7 @@ pub fn file_kind(path: &str) -> &'static str {
         || lower.ends_with(".markdown")
         || lower.ends_with(".txt")
         || crate::asciidoc::supported(Path::new(path))
+        || crate::rst::supported(Path::new(path))
     {
         "doc"
     } else if lower.contains("test") || lower.contains("spec") {

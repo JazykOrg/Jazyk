@@ -51,8 +51,10 @@ struct Document {
 impl Document {
     fn read(path: &Path) -> Option<Self> {
         let text = crate::md::read_doc(path).ok()?;
-        let sections = crate::md::parse_document(path, &text);
-        let links = if crate::asciidoc::supported(path) {
+        let sections = crate::md::parse_document_checked(path, &text).ok()?;
+        let links = if crate::rst::supported(path) {
+            crate::rst::references(&text, true)
+        } else if crate::asciidoc::supported(path) {
             crate::asciidoc::references(&text, true)
         } else {
             Parser::new(&text)

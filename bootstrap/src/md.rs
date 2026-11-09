@@ -97,7 +97,7 @@ pub fn supported_format(path: &std::path::Path) -> bool {
         .map(|e| {
             matches!(
                 e.to_ascii_lowercase().as_str(),
-                "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc"
+                "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc" | "rst" | "rest"
             )
         })
         .unwrap_or(false)
@@ -213,8 +213,21 @@ fn blocks(lines: &[&str], start: usize, end: usize) -> Vec<Block> {
     out
 }
 
+pub fn parse_document_checked(
+    path: &std::path::Path,
+    text: &str,
+) -> Result<BTreeMap<String, Section>, String> {
+    if crate::rst::supported(path) {
+        crate::rst::parse_sections(text)
+    } else {
+        Ok(parse_document(path, text))
+    }
+}
+
 pub fn parse_document(path: &std::path::Path, text: &str) -> BTreeMap<String, Section> {
-    if crate::asciidoc::supported(path) {
+    if crate::rst::supported(path) {
+        crate::rst::parse_sections(text).unwrap_or_default()
+    } else if crate::asciidoc::supported(path) {
         crate::asciidoc::parse_sections(text)
     } else {
         parse_sections(text)
@@ -494,6 +507,9 @@ pub fn resolve_document_link(from_doc: &str, href: &str) -> Option<String> {
 // The CommonMark parser excludes images, code and raw HTML and resolves reference
 // link definitions. Offsets cover the occurrence, including reference-link labels.
 pub fn document_links(text: &str, from_doc: &str) -> Vec<DocumentLink> {
+    if crate::rst::supported(std::path::Path::new(from_doc)) {
+        return crate::rst::document_links(text, from_doc);
+    }
     if crate::asciidoc::supported(std::path::Path::new(from_doc)) {
         return crate::asciidoc::document_links(text, from_doc);
     }

@@ -26,7 +26,7 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
             .and_then(|bytes| {
                 let sha = crate::task_runtime::digest(&bytes);
                 if md::supported_format(&file) {
-                    md::project_bytes(&file, &bytes).map(|text| {
+                    md::project_bytes(&file, &bytes).and_then(|text| {
                         // UTF-8 prose already hashes all original bytes. Native package
                         // projections must retain the original package byte identity.
                         let hash = if matches!(
@@ -41,7 +41,7 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
                         } else {
                             hash_hex(&text)
                         };
-                        (hash, md::parse_document(&file, &text))
+                        Ok((hash, md::parse_document_checked(&file, &text)?))
                     })
                 } else {
                     blobs.insert(
@@ -58,7 +58,9 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
         let Ok((_, sections)) = input else { continue };
         // Parse the full projection to retain reference-style link definitions.
         let text = projection_text(sections);
-        let references: Vec<_> = if crate::asciidoc::supported(std::path::Path::new(doc)) {
+        let references: Vec<_> = if crate::rst::supported(std::path::Path::new(doc)) {
+            crate::rst::references(&text, true)
+        } else if crate::asciidoc::supported(std::path::Path::new(doc)) {
             crate::asciidoc::references(&text, true)
         } else {
             Parser::new(&text)

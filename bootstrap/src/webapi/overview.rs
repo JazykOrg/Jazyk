@@ -29,7 +29,7 @@ fn ext(path: &str) -> String {
 fn is_prose(path: &str) -> bool {
     matches!(
         ext(path).as_str(),
-        "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc"
+        "md" | "markdown" | "txt" | "adoc" | "asciidoc" | "asc" | "rst" | "rest"
     )
 }
 
@@ -302,6 +302,8 @@ fn readme(p: &Project, gs: &GenSettings, product: &[String]) -> Value {
                 | "readme.adoc"
                 | "readme.asciidoc"
                 | "readme.asc"
+                | "readme.rst"
+                | "readme.rest"
         )
     });
     if let Some(f) = own {

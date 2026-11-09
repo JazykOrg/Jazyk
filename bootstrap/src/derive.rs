@@ -116,15 +116,23 @@ fn scan_instance_types(store: &Store) -> BTreeMap<String, String> {
 // roots, every document is its own level in path order. The board orders tier 1 with
 // the same computation (board::doc_levels). Mirrors docs/compiler/reconciler.md#link-levels.
 pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usize> {
+    doc_levels_in(&store.docs, roots)
+}
+
+// The same levels over a document map alone, for the store's own load and commit.
+pub(crate) fn doc_levels_in(
+    docs: &BTreeMap<String, crate::model::DocRecord>,
+    roots: &[String],
+) -> BTreeMap<String, usize> {
     let mut links: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (doc, rec) in &store.docs {
+    for (doc, rec) in docs {
         let mut targets: Vec<String> = Vec::new();
         for sec in rec.sections.values() {
             if sec.kind == "blob" {
                 continue;
             }
             for l in md::doc_links(&sec.raw, doc) {
-                if store.docs.contains_key(&l) && !targets.contains(&l) {
+                if docs.contains_key(&l) && !targets.contains(&l) {
                     targets.push(l);
                 }
             }
@@ -133,12 +141,12 @@ pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usiz
     }
     let roots: Vec<String> = roots
         .iter()
-        .filter(|d| store.docs.contains_key(*d))
+        .filter(|d| docs.contains_key(*d))
         .cloned()
         .collect();
     let mut level_of: BTreeMap<String, usize> = BTreeMap::new();
     if roots.is_empty() {
-        for (i, d) in store.docs.keys().enumerate() {
+        for (i, d) in docs.keys().enumerate() {
             level_of.insert(d.clone(), i);
         }
         return level_of;
@@ -162,7 +170,7 @@ pub fn doc_levels_from(store: &Store, roots: &[String]) -> BTreeMap<String, usiz
         frontier = next;
     }
     let max = level_of.values().max().copied().unwrap_or(0);
-    for d in store.docs.keys() {
+    for d in docs.keys() {
         level_of.entry(d.clone()).or_insert(max + 1);
     }
     level_of

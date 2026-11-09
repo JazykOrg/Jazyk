@@ -1909,18 +1909,34 @@ fn reference_sources(graph: &Graph) -> BTreeMap<String, Vec<SourceRef>> {
 }
 
 // The canonical order of an entity's mentions: the ones it states itself first, in
-// their stated order, then the ones requirements add by reference, in document order.
+// their stated order, then the ones requirements add by reference, in document order
+// (link level from the stamped roots, then path, then position).
 // The same order holds in memory and after a load. With `add`, the by-reference
 // mentions an entity file leaves out come back; a source whose section is known and no
 // longer holds its quote is stale and stays out, as the sweep would prune it.
 // Mirrors docs/compiler/graph.md#node-files.
-fn normalize_mentions(graph: &mut Graph, docs: &BTreeMap<String, DocRecord>, add: bool) {
+fn normalize_mentions(
+    graph: &mut Graph,
+    docs: &BTreeMap<String, DocRecord>,
+    roots: &[String],
+    add: bool,
+) {
     let stale = |m: &SourceRef| {
         docs.get(&m.doc)
             .and_then(|d| d.sections.get(&m.section))
             .is_some_and(|s| !text_contains(&s.raw, &m.quote))
     };
-    let place = |m: &SourceRef| -> (String, usize, usize, String) {
+    // Link levels cost a pass over every section's links: computed once, and only when
+    // some entity holds by-reference mentions from more than one document.
+    let levels: std::cell::OnceCell<BTreeMap<String, usize>> = std::cell::OnceCell::new();
+    let level = |doc: &str| -> usize {
+        levels
+            .get_or_init(|| crate::derive::doc_levels_in(docs, roots))
+            .get(doc)
+            .copied()
+            .unwrap_or(usize::MAX)
+    };
+    let place = |m: &SourceRef, several_docs: bool| -> (usize, String, usize, usize, String) {
         let sec = docs.get(&m.doc).and_then(|d| d.sections.get(&m.section));
         let line = sec.map(|s| s.lines[0]).unwrap_or(usize::MAX);
         let at = sec
@@ -1930,7 +1946,8 @@ fn normalize_mentions(graph: &mut Graph, docs: &BTreeMap<String, DocRecord>, add
                 hay.find(&needle)
             })
             .unwrap_or(usize::MAX);
-        (m.doc.clone(), line, at, m.quote.clone())
+        let lv = if several_docs { level(&m.doc) } else { 0 };
+        (lv, m.doc.clone(), line, at, m.quote.clone())
     };
     let by_reference = reference_sources(graph);
     for (id, e) in graph.entities.iter_mut() {
@@ -1945,7 +1962,8 @@ fn normalize_mentions(graph: &mut Graph, docs: &BTreeMap<String, DocRecord>, add
                 }
             }
         }
-        by_ref.sort_by_cached_key(|m| place(m));
+        let several_docs = by_ref.iter().any(|m| m.doc != by_ref[0].doc);
+        by_ref.sort_by_cached_key(|m| place(m, several_docs));
         e.mentions = own;
         e.mentions.extend(by_ref);
     }
@@ -2379,7 +2397,8 @@ impl Store {
         // Mirrors docs/compiler/graph.md#storage-layout.
         let markers: Markers = shard(&out.join(MARKERS_FILE), &mut errors);
         apply_markers(&mut store.graph, &markers);
-        normalize_mentions(&mut store.graph, &store.docs, true);
+        let roots = store.status.roots.clone();
+        normalize_mentions(&mut store.graph, &store.docs, &roots, true);
         // The derived kinds are local: a checkout carries none, so a load that finds
         // any of their directories missing recomputes them in memory and the next
         // commit writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
@@ -2588,7 +2607,8 @@ impl Store {
 
     // A commit's write: the mentions in their canonical order, then the files.
     fn persist(&mut self) {
-        normalize_mentions(&mut self.graph, &self.docs, false);
+        let roots = self.status.roots.clone();
+        normalize_mentions(&mut self.graph, &self.docs, &roots, false);
         self.save();
     }
 
@@ -9032,6 +9052,81 @@ mod tests {
             assert!(m.graph.entities.contains_key(id), "{id}");
         }
         assert!(m.status.generation >= generation_floor(&m.status));
+    }
+
+    // An entity no document states takes its mentions from the requirements naming it.
+    // The first is the most upstream one by link level from the roots, not the first by
+    // path: `catalog.md` sorts before `system.md`, but the root `system.md` links to it.
+    // Mirrors docs/compiler/graph.md#node-files.
+    #[test]
+    fn by_reference_mentions_follow_link_levels_from_the_roots() {
+        let out = own_dir("mention-levels").join(".jazyk/ds_main");
+        let mut s = Store {
+            out: out.clone(),
+            ..Default::default()
+        };
+        seed_doc(
+            &mut s,
+            "system.md",
+            "# System\nThe system serves a customer. See [the catalog](catalog.md).\n",
+        );
+        seed_doc(
+            &mut s,
+            "catalog.md",
+            "# Catalog\nA customer browses the catalog.\n",
+        );
+        s.status.roots = vec!["system.md".into()];
+        let mut customer = entity("Customer");
+        customer.provenance = Some(derived(&["req:x"]));
+        let req = |doc: &str, sec: &str, quote: &str| Op::CreateRequirement {
+            id: String::new(),
+            requirement: Requirement {
+                statement: quote.into(),
+                entities: vec!["ent:customer".into()],
+                source: Some(mention(doc, sec, quote)),
+                facets: vec![Facet {
+                    facet: "behavior".into(),
+                    reasoning: "stated".into(),
+                    measure: None,
+                }],
+                ..Default::default()
+            },
+        };
+        // The catalog requirement lands first, so neither commit order nor path order
+        // would put the root first.
+        let r = s.apply(
+            vec![
+                Op::CreateEntity {
+                    id: "ent:customer".into(),
+                    entity: customer,
+                },
+                req("catalog.md", "/catalog", "A customer browses the catalog."),
+            ],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        let r = s.apply(
+            vec![req("system.md", "/system", "The system serves a customer.")],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        let docs = |st: &Store| -> Vec<String> {
+            st.graph.entities["ent:customer"]
+                .mentions
+                .iter()
+                .map(|m| m.doc.clone())
+                .collect()
+        };
+        assert_eq!(docs(&s), ["system.md", "catalog.md"]);
+        let loaded = Store::load(&out);
+        assert!(loaded.load_errors.is_empty(), "{:?}", loaded.load_errors);
+        assert_eq!(docs(&loaded), ["system.md", "catalog.md"]);
+        // With no roots stamped, every document is its own level in path order.
+        let mut no_roots = loaded;
+        no_roots.status.roots.clear();
+        let roots: Vec<String> = Vec::new();
+        normalize_mentions(&mut no_roots.graph, &no_roots.docs, &roots, false);
+        assert_eq!(docs(&no_roots), ["catalog.md", "system.md"]);
     }
 
     // Two branches from one base each extract a requirement about the same entity from

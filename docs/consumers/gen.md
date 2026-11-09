@@ -882,6 +882,35 @@ an `unimplemented` or `partial` row or an entity whose facts moved, a `verify` g
 it alone until its test or files change. `jazyk test` and `run_tests` with no target
 rerun it anyway, because a rerun is what a person asking for one wants.
 
+### Status words
+
+Every frontend shows a reader one of five words for a requirement, mapped from the
+derived status above. First match wins:
+
+1. `question`: an open, unanswered, unsuppressed diagnostic with a
+   [prompt](../compiler/model/diagnostic.md#prompts) names the requirement as a
+   subject. A failed answer counts as unanswered. A diagnostic with triage
+   `suppressed` does not count.
+2. `failing`: status `failing` or `partial`.
+3. `stale`: any `stale-*` status, or `missing` with reason `artifact-gone`.
+4. `verified`: status `verified`.
+5. `not built`: everything else (`missing` with reason `not-generated`,
+   `unimplemented`, `unverified`, a project with no ledger at all).
+
+Each word has one color role:
+
+| Word | Color role |
+| --- | --- |
+| `verified` | green |
+| `failing` | red |
+| `stale` | amber |
+| `question` | violet |
+| `not built` | neutral |
+
+The word is for reading at a glance. The raw status, its reason, and its repair stay
+available wherever a frontend shows detail (the [LSP](../frontends/lsp.md#capabilities)
+requirement card, `jazyk test --list`).
+
 ### The cascade
 
 Rewording a requirement flips its row to `stale-requirement`. Generation updates the

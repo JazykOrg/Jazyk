@@ -291,8 +291,16 @@ A `derived` or `decree` fact has no sentence in the documents behind it. The com
 lands such a fact files one `ratification-pending` diagnostic on it, mechanically, and
 writes the `provenance-pending` change record the blocked
 [`ratify` goal](../goals/ratify.md) derives from. The diagnostic is the proposal; the goal
-is the count on the board. One proposal per fact, open exactly while the fact stands with
-non-quote provenance.
+is the count on the board. Each pending fact belongs to one open proposal.
+Derived criteria of the same requirement that append to the same section share one
+proposal. Their sentences appear together as paragraphs, with all criterion ids in
+`subjects`. Replacement edits, decrees, and different requirements stay separate.
+An unanswered proposal absorbs new criteria of that requirement at commit, including
+compatible proposals left by earlier commits. Answered proposals are never merged.
+Accept inserts the combined text once and quotes each criterion's own sentence.
+Retract removes every listed criterion. Freeform rewording is unavailable for a
+combined proposal, since one reply cannot assign separate statements to its facts.
+Ratifying or retracting one member separately refreshes the remaining proposal.
 
 - `subjects`: the fact's node. For an attribute, the entity, the `message` naming the
   attribute.

@@ -378,7 +378,7 @@ impl Lsp {
         }
         if let Some(sec) = section {
             if let Some(s) = self.store.docs.get(doc).and_then(|d| d.sections.get(sec)) {
-                return (s.lines[0], 0, s.lines[0], 0);
+                return section_anchor(&text, s).unwrap_or((s.lines[0], 0, s.lines[0], 0));
             }
         }
         (0, 0, 0, 0)
@@ -1591,8 +1591,82 @@ fn diagnostic_source(root: &Path, id: &str) -> String {
         .unwrap_or_else(|| "jazyk".into())
 }
 
+// Where a finding about a whole section sits: its heading, or its first sentence
+// when it has none, or a diagram's opening fence; never across its body. Located in
+// the current text from the section's start line, so it follows edits above it.
+// Mirrors docs/frontends/lsp.md#capabilities.
+fn section_anchor(text: &str, s: &crate::model::Section) -> Option<(usize, usize, usize, usize)> {
+    let needle = section_lead(&s.raw)?;
+    // Prefer the occurrence at or after the section's recorded start line.
+    let from = s.lines[0].min(text.lines().count());
+    let offset: usize = text.split_inclusive('\n').take(from).map(str::len).sum();
+    if let Some((a, b, c, d)) = md::locate(&text[offset..], &needle) {
+        return Some((a + from, b, c + from, d));
+    }
+    md::locate(text, &needle)
+}
+
+// The text a section-wide finding underlines: the heading line, a diagram's fence
+// line, or the first sentence of the first paragraph (its first line when no
+// sentence ends inside the paragraph).
+fn section_lead(raw: &str) -> Option<String> {
+    let body: Vec<&str> = raw.lines().skip_while(|l| l.trim().is_empty()).collect();
+    let first = body.first()?.trim();
+    if first.starts_with('#') || first.starts_with("```") || first.starts_with("~~~") {
+        return Some(first.to_string());
+    }
+    let paragraph: Vec<&str> = body
+        .iter()
+        .take_while(|l| !l.trim().is_empty())
+        .map(|l| l.trim())
+        .collect();
+    let joined = paragraph.join(" ");
+    let chars: Vec<(usize, char)> = joined.char_indices().collect();
+    for (i, (at, c)) in chars.iter().enumerate() {
+        let ends = matches!(c, '.' | '!' | '?')
+            && chars.get(i + 1).is_none_or(|(_, n)| n.is_whitespace())
+            && i > 0
+            && chars[i - 1].1.is_alphanumeric();
+        if ends {
+            return Some(joined[..at + c.len_utf8()].to_string());
+        }
+    }
+    Some(first.to_string())
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn section_findings_anchor_on_heading_or_first_sentence() {
+        assert_eq!(
+            section_lead("## Payments\n\nA payment is captured.\n").as_deref(),
+            Some("## Payments")
+        );
+        assert_eq!(
+            section_lead("\nThe shop sells books online. A customer fills a cart.\n").as_deref(),
+            Some("The shop sells books online.")
+        );
+        assert_eq!(
+            section_lead("Orders ship\nin one day. Then more.\n\nNext.").as_deref(),
+            Some("Orders ship in one day.")
+        );
+        assert_eq!(
+            section_lead("A list of things\n").as_deref(),
+            Some("A list of things")
+        );
+        assert_eq!(
+            section_lead("```plantuml\n@startuml\n```").as_deref(),
+            Some("```plantuml")
+        );
+        let text = "# Shop\n\nIntro.\n\n## Payments\n\nA payment is captured.\n";
+        let sec: crate::model::Section = serde_json::from_value(serde_json::json!({
+            "title": "Payments", "kind": "heading", "order": 0,
+            "raw": "## Payments\n\nA payment is captured.\n", "hash": "x"
+        }))
+        .unwrap();
+        assert_eq!(section_anchor(text, &sec), Some((4, 0, 4, 11)));
+    }
+
     // The refresh keys on one line per set plus the configuration hash, and loads
     // the graph only when one moved (docs/frontends/lsp.md#rebuilds-and-refresh).
     #[test]

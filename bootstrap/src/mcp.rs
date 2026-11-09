@@ -4094,6 +4094,7 @@ impl McpServer {
                 self.attach_effects(
                     &mut v,
                     &before,
+                    &s.graph,
                     &[(
                         edit.doc.as_str(),
                         Some(edit.old_full.as_str()),
@@ -4200,7 +4201,7 @@ impl McpServer {
         let mut v = reply;
         v["committed"] = json!(true);
         v["generation"] = json!(report.generation);
-        self.attach_effects(&mut v, &before, &[]);
+        self.attach_effects(&mut v, &before, &s.graph, &[]);
         v
     }
 
@@ -4210,17 +4211,16 @@ impl McpServer {
         &self,
         v: &mut Value,
         before: &crate::model::Graph,
+        after: &crate::model::Graph,
         files: &[(&str, Option<&str>, &str)],
     ) {
-        let after = Store::load(&self.out).graph;
         let files = files
             .iter()
             .filter_map(|(rel, old, new)| {
                 crate::effects::file_effect(&self.project.root, rel, *old, new)
             })
             .collect();
-        if let Some(e) =
-            crate::effects::record(files, crate::effects::graph_effects(before, &after))
+        if let Some(e) = crate::effects::record(files, crate::effects::graph_effects(before, after))
         {
             v["effects"] = e;
         }

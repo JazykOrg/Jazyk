@@ -473,8 +473,10 @@ call to a jazyk tool), the GUI chat, and the browser tab. The decoration uses
 standard tool call fields, so any client renders it:
 
 - `kind` is `edit`.
-- `content` holds one `diff` block per file hunk (`path` absolute, `oldText`
-  omitted for a new file) and one text block with the graph changes as markdown,
+- `content` holds one `diff` block per file (`path` absolute, `oldText` omitted for
+  a new file): the whole file before and after, rebuilt from the file as it stands
+  when the hunk still sits at its line, the changed lines alone otherwise. Then one
+  text block with the graph changes as markdown,
   one line per node (`**+ New requirement** `req:…`: statement`, then one line per
   changed field, `before → after`).
 - `locations` lists each file with its 0-based line, so a client that follows the

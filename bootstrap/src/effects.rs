@@ -22,7 +22,11 @@ pub fn file_kind(path: &str) -> &'static str {
     let lower = path.to_ascii_lowercase();
     if lower.ends_with("jazyk.toml") {
         "config"
-    } else if lower.ends_with(".md") || lower.ends_with(".markdown") || lower.ends_with(".txt") {
+    } else if lower.ends_with(".md")
+        || lower.ends_with(".markdown")
+        || lower.ends_with(".txt")
+        || crate::asciidoc::supported(Path::new(path))
+    {
         "doc"
     } else if lower.contains("test") || lower.contains("spec") {
         "test"

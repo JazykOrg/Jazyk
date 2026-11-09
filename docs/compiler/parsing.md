@@ -9,10 +9,12 @@ including whole-file envelopes for opaque inputs.
 
 - A handler claims a file by its format and produces the section tree.
 - Markdown (`.md`, `.markdown`) is built in.
+- AsciiDoc (`.adoc`, `.asciidoc`, `.asc`) is built in on native and browser builds.
+  Extensions are case-insensitive. Its parser reads AsciiDoc syntax, not Markdown.
 - Plain text (`.txt`) is built in and read by the Markdown handler. Plain prose parses
   as paragraphs; a line that happens to look like Markdown reads as Markdown.
 - Native builds also read [DOCX and PDF](./binary-documents.md), within the documented
-  extraction profile. The browser-only engine projects Markdown and plain text.
+  extraction profile. The browser-only engine projects Markdown, AsciiDoc, and plain text.
   Other files compile as opaque inputs.
 - Custom handlers per project are planned. The
   configuration format is specified in
@@ -97,6 +99,24 @@ Each section carries:
 - `lines`: the line range in the source file, for editor integration. A stored record
   omits it; a load recomputes it from the `raw` texts in document order
   ([storage layout](./graph.md#storage-layout)).
+
+## AsciiDoc section tree
+
+The AsciiDoc handler uses a syntax parser with includes and file access disabled.
+Single-line `=` titles and `==` through `======` section headings produce the
+same root, heading, parent, order, and slug references as other prose handlers.
+Headings inside listings, literals, comments, or passthrough blocks do not create
+sections. Lists, tables, admonitions, and attributes remain in their containing
+section. Source text is retained verbatim for provenance and edits, without
+attribute substitution in quoted text. CRLF uses the existing text normalization.
+
+Listing and literal blocks produce `code-block` children. A block styled
+`plantuml`, `puml`, or `uml`, or starting with `@start`, produces a `diagram` child.
+The parent retains the block text. Duplicate headings retain distinct references.
+AsciiDoc `link:` and `xref:` document links feed the same scheduling and missing
+link checks as Markdown links. Links and images provide context to opaque inputs.
+AsciiDoc is prose for product overview and document role checks. Legacy underlined headings and extensions are not
+part of this profile. Includes remain source text and never import other files.
 
 ## References
 

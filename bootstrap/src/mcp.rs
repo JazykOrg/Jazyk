@@ -2734,9 +2734,13 @@ impl McpServer {
                 }
                 match sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text) {
                     Ok(()) => {
-                        return Ok(result_value(
-                            json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true}),
-                        ))
+                        let mut v = json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true});
+                        if let Some(f) =
+                            crate::effects::file_effect(&project.root, path, old.as_deref(), text)
+                        {
+                            v["effects"] = json!({"files": [f]});
+                        }
+                        return Ok(result_value(v));
                     }
                     // Nothing listening: the direct write below, as for any serving.
                     Err(SinkError::Unavailable(reason)) => self.note(&format!(
@@ -2750,8 +2754,18 @@ impl McpServer {
                     }
                 }
             }
+            let before = crate::webapi::docs::safe_doc_path_why(&project, path)
+                .ok()
+                .and_then(|abs| crate::vfs::read_to_string(&abs).ok());
             return match crate::webapi::docs::doc_write(&project, path, text, base) {
-                crate::webapi::docs::DocWrite::Written(v) => Ok(result_value(v)),
+                crate::webapi::docs::DocWrite::Written(mut v) => {
+                    if let Some(f) =
+                        crate::effects::file_effect(&project.root, path, before.as_deref(), text)
+                    {
+                        v["effects"] = json!({"files": [f]});
+                    }
+                    Ok(result_value(v))
+                }
                 crate::webapi::docs::DocWrite::Conflict(v) => Ok(text_result(
                     json!({"error":{"rule":"stale-document","message":v}}),
                     true,
@@ -4066,6 +4080,7 @@ impl McpServer {
         s.sync_docs(&parsed);
         let write =
             |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
+        let before = s.graph.clone();
         match s.dual_write(
             &self.project.root,
             edit,
@@ -4073,8 +4088,20 @@ impl McpServer {
             &crate::store::Commit::store(kind),
             Some(&write),
         ) {
-            Ok(report) => json!({"committed": true, "applied": report.applied, "doc": edit.doc,
-                   "note": "the prose and the graph moved together; no recompile is owed for this edit"}),
+            Ok(report) => {
+                let mut v = json!({"committed": true, "applied": report.applied, "doc": edit.doc,
+                   "note": "the prose and the graph moved together; no recompile is owed for this edit"});
+                self.attach_effects(
+                    &mut v,
+                    &before,
+                    &[(
+                        edit.doc.as_str(),
+                        Some(edit.old_full.as_str()),
+                        edit.full.as_str(),
+                    )],
+                );
+                v
+            }
             Err(e) => json!({"error": {"rule": "commit-skipped", "message": e}}),
         }
     }
@@ -4165,6 +4192,7 @@ impl McpServer {
         }
         let mut s = Store::load(&self.out);
         s.sync_docs(&parsed);
+        let before = s.graph.clone();
         let report = s.apply(ops, &crate::store::Commit::store("decree"));
         if !report.skipped.is_empty() {
             return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
@@ -4172,7 +4200,30 @@ impl McpServer {
         let mut v = reply;
         v["committed"] = json!(true);
         v["generation"] = json!(report.generation);
+        self.attach_effects(&mut v, &before, &[]);
         v
+    }
+
+    // The reply's `effects`: the file hunks written and the graph as it differs from
+    // `before` after the commit. Mirrors docs/frontends/acp.md#edit-effects.
+    fn attach_effects(
+        &self,
+        v: &mut Value,
+        before: &crate::model::Graph,
+        files: &[(&str, Option<&str>, &str)],
+    ) {
+        let after = Store::load(&self.out).graph;
+        let files = files
+            .iter()
+            .filter_map(|(rel, old, new)| {
+                crate::effects::file_effect(&self.project.root, rel, *old, new)
+            })
+            .collect();
+        if let Some(e) =
+            crate::effects::record(files, crate::effects::graph_effects(before, &after))
+        {
+            v["effects"] = e;
+        }
     }
 
     // The decree's author: the connected client's name, else the login, else `human`,

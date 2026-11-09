@@ -151,7 +151,18 @@ impl ChatManager {
             for (n, r) in records.iter().enumerate() {
                 let update = match r["kind"].as_str().unwrap_or("") {
                     "user" => json!({"sessionUpdate": "user_message", "text": r["text"]}),
-                    "update" => r["update"].clone(),
+                    // A transcript recorded before effects were decorated (or by
+                    // another writer) decorates on the way back in.
+                    // Mirrors docs/frontends/acp.md#edit-effects.
+                    "update" => {
+                        let mut u = r["update"].clone();
+                        if u["sessionUpdate"] == "tool_call_update"
+                            && u["_meta"]["jazyk"]["effects"].is_null()
+                        {
+                            crate::effects::decorate(&mut u);
+                        }
+                        u
+                    }
                     _ => continue,
                 };
                 let cursor = update["cursor"].as_u64().unwrap_or(n as u64);
@@ -247,6 +258,13 @@ async fn restore(st: &SharedState) {
 }
 
 fn append(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, mut update: Value) {
+    // An external agent's jazyk tool reply carries effects too; decorate it the way
+    // the embedded agent does. Mirrors docs/frontends/acp.md#edit-effects.
+    if update["sessionUpdate"] == "tool_call_update"
+        && update["_meta"]["jazyk"]["effects"].is_null()
+    {
+        crate::effects::decorate(&mut update);
+    }
     // Serialize transcript writes with the in-memory cursor. Admissions use the
     // same session lock and a checked, flushed write before HTTP acceptance.
     let (id, n, elided) = {

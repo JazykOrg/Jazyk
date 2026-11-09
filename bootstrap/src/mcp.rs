@@ -4141,7 +4141,10 @@ impl McpServer {
         store.sync_docs(&parsed);
         let report = store.apply(
             std::mem::take(&mut session.staged),
-            &crate::store::Commit::store("chat-criterion"),
+            &crate::store::Commit {
+                all_or_nothing: true,
+                ..crate::store::Commit::store("chat-criterion")
+            },
         );
         if !report.skipped.is_empty() {
             return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
@@ -4950,6 +4953,95 @@ mod tests {
             serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(context["location"], "local");
         assert_eq!(context["github"], Value::Null);
+        crate::vfs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn chat_links_pending_criterion_to_existing_description_without_editing_prose() {
+        let dir = bare_dir("criterion-source-link");
+        let path = dir.join("docs/landing.md");
+        let prose = "# Landing Page\n## Hero\n### Title\n`Jazyk` with pronunciation `/jazɪk/` (smaller font and greyed out).\n";
+        crate::vfs::write(&path, prose).unwrap();
+        let project = crate::project::Project::load(&dir);
+        let mut store = Store::load(&project.out);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        store.sync_docs(&parsed);
+        store.graph.requirements.insert(
+            "req:landing-1".into(),
+            crate::model::Requirement {
+                statement: "The hero title displays Jazyk and its pronunciation.".into(),
+                source: Some(crate::model::SourceRef {
+                    doc: "docs/landing.md".into(),
+                    section: "/landing-page/hero/title".into(),
+                    quote: "`Jazyk` with pronunciation `/jazɪk/` (smaller font and greyed out)."
+                        .into(),
+                }),
+                ..Default::default()
+            },
+        );
+        let statement = "A visitor opening the Landing Page sees the hero title `Jazyk` with pronunciation `/jazɪk/` in a smaller, greyed-out font.";
+        let report = store.apply(
+            vec![crate::store::Op::CreateCriterion {
+                id: "crit:landing-1".into(),
+                criterion: crate::model::Criterion {
+                    requirement: "req:landing-1".into(),
+                    statement: statement.into(),
+                    kind: "positive".into(),
+                    provenance: Some(crate::model::Provenance::Derived {
+                        from: vec!["req:landing-1".into()],
+                        reasoning: "The appearance a visitor observes".into(),
+                    }),
+                    ..Default::default()
+                },
+            }],
+            &crate::store::Commit::store("test"),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert_eq!(store.pending_proposals(), 1);
+        let cid = store.criteria_of("req:landing-1")[0].clone();
+        let serving = McpServer::with_bridge(
+            project.clone(),
+            project.out.clone(),
+            vec!["chat".into()],
+            false,
+            BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        );
+        for args in [
+            json!({"id":cid,"section":"docs/landing.md#/landing-page/hero/title"}),
+            json!({"id":cid,"section":"docs/landing.md#/landing-page/hero/title","quote":"An invented quotation."}),
+        ] {
+            let reply = serving
+                .handle(
+                    "tools/call",
+                    &json!({"name":"update_criterion","arguments":args}),
+                )
+                .unwrap();
+            assert_eq!(reply["isError"], true, "{reply}");
+            assert_eq!(Store::load(&project.out).pending_proposals(), 1);
+        }
+        let reply = serving
+            .handle(
+                "tools/call",
+                &json!({"name":"update_criterion","arguments":{
+                    "id":cid,"section":"docs/landing.md#/landing-page/hero/title",
+                    "quote":"`Jazyk` with pronunciation `/jazɪk/` (smaller font and greyed out)."
+                }}),
+            )
+            .unwrap();
+        assert_ne!(reply["isError"], true, "{reply}");
+        let store = Store::load(&project.out);
+        let c = &store.graph.criteria[&cid];
+        assert_eq!(c.statement, statement);
+        assert!(c.provenance.is_none());
+        assert_eq!(c.source, store.graph.requirements["req:landing-1"].source);
+        assert_eq!(store.pending_proposals(), 0);
+        assert!(!store
+            .status
+            .has_change(crate::store::CHANGE_PROVENANCE_PENDING, &cid));
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), prose);
         crate::vfs::remove_dir_all(dir).ok();
     }
 

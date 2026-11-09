@@ -787,6 +787,12 @@ definitions:
     properties:
       id:
         type: string
+      section:
+        type: string
+        description: Section containing existing prose supporting the pending criterion, paired with quote
+      quote:
+        type: string
+        description: Verbatim supporting text; links the criterion without editing the document
       statement:
         type: string
       kind:

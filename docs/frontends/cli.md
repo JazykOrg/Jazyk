@@ -442,9 +442,9 @@ its proposal), or an `answer` goal (`g:answer:diag:decision-2`).
   provenance flips to `quote`. The retract option of a ratification proposal is
   deterministic too. Any other option records `handling` and runs an
   [answer session](./acp.md#answer-sessions) in the foreground, printing its outcome.
-- `--text "..."`: a freeform reply. On a ratification proposal it is the accepted
-  sentence, landed where the proposal's edit would; elsewhere it records `handling`
-  and runs the answer session.
+- `--text "..."`: instructions for the agent, including on a ratification proposal.
+  It records `handling` and runs the answer session. It never inserts the reply
+  directly into a document.
 
 E.g.:
 
@@ -454,7 +454,7 @@ diag:ratification-pending-6  ratification-pending on ent:funds
   Should docs/checkout.md state it? "Funds: Funds gathers ..."
   0  Insert into docs/checkout.md /checkout (edit)
   1  Retract (answer)
-  freeform accepted: a reply rewords the sentence
+  freeform accepted: --text "..."
 $ jazyk answer g:ratify:ent:funds --option 0
 jazyk: applied: the sentence landed in docs/checkout.md and the fact is quoted from it
 ```

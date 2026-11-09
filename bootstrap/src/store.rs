@@ -4811,7 +4811,7 @@ impl Store {
         );
         if let Some(p) = &mut d.prompt {
             p.question = "Add these acceptance criteria to the document? Review the proposed text before accepting.".into();
-            p.freeform = count == 1;
+            p.freeform = true;
             if let Some(e) = p.options.iter_mut().find_map(|o| o.edit.as_mut()) {
                 e.new_text = text;
             }

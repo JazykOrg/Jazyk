@@ -302,8 +302,8 @@ proposal. Their sentences appear together as paragraphs, with all criterion ids 
 An unanswered proposal absorbs new criteria of that requirement at commit, including
 compatible proposals left by earlier commits. Answered proposals are never merged.
 Accept inserts the combined text once and quotes each criterion's own sentence.
-Retract removes every listed criterion. Freeform rewording is unavailable for a
-combined proposal, since one reply cannot assign separate statements to its facts.
+Retract removes every listed criterion. Freeform replies instruct an answer session,
+including on combined proposals. They are never inserted as document text.
 Ratifying or retracting one member separately refreshes the remaining proposal.
 
 - `subjects`: the fact's node. For an attribute, the entity, the `message` naming the
@@ -315,8 +315,9 @@ Ratifying or retracting one member separately refreshes the remaining proposal.
 - `reasoning`: for a derived fact, the session's reasoning and its `from`; for a decree,
   the author, the time, and the note.
 - `prompt`: the question, one `edit` option that inserts the proposed sentence, and one
-  `answer` option labeled retract, with `freeform: true`. A freeform reply that rewords
-  the sentence is the accepted sentence.
+  `answer` option labeled retract, with `freeform: true`. A freeform reply instructs
+  an answer session, as for other questions. The reply is never inserted as document
+  text.
 
 E.g.:
 

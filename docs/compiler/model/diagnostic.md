@@ -37,7 +37,11 @@ lands a `derived` or `decree` fact, generation, and decompilation.
 A diagnostic keeps its semantic `subjects`. File locations are a read projection,
 never a second source of truth. All frontends use the same resolver.
 
-- A requirement resolves to its source. An entity resolves to every mention.
+- A requirement resolves to its source. An entity resolves to its defining mention:
+  the first of its `mentions`, written mentions first, then the ones its requirements
+  add, in document order ([node files](../graph.md#node-files)). A finding about an
+  entity concerns the entity, which is defined in one place, so its other mentions
+  are not locations of the finding. An entity with no mentions resolves to nothing.
 - A criterion resolves to its own source and its owning requirement.
 - Derived provenance follows `from` references. Redirects resolve before traversal.
   Cycles stop at visited nodes.

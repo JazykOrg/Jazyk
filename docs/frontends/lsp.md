@@ -83,6 +83,12 @@ the CLI and ACP chat.
   ## Payments                       ← uncovered-section lands here
   A payment is captured when its order ships.
   ```
+- A finding about an entity (an entity subject, e.g. a parked `review-entity` goal)
+  is published on the entity's defining mention only, the sentence
+  [go to definition](#capabilities) lands on, never on every sentence that names
+  the entity. When that sentence no longer locates in the current text, the finding
+  sits on its section's heading. Other documents that mention the entity show
+  nothing for it.
   Prompt code actions use those same ranges, including related context.
   Related document locations identify the affected context without inventing a quote.
 - Go to definition: entity → its defining mention.

@@ -200,7 +200,8 @@ the CLI and ACP chat.
   hint with the requirement's [status word](../consumers/gen.md#status-words), e.g.
   `· verified`. Its tooltip names the requirement id, the derived status, and its
   reason. A hint is emitted only where the quote locates, the code lens rule, and only
-  inside the requested range.
+  inside the requested range. A project that never generated shows no `not built`
+  hint: every sentence would carry it. Questions still show.
 - Semantic tokens (`full`): every whole-word, case-insensitive occurrence of an entity
   name or alias, the same occurrences completion offers, is one token, so themes color
   entity mentions. The legend has one token type, `type`, and one modifier,

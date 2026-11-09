@@ -1463,6 +1463,11 @@ impl Lsp {
         let to = at(&params["range"]["end"], usize::MAX);
         let text = self.doc_text(&doc);
         let statuses = self.requirement_statuses();
+        // A project that never generated has nothing to tell apart: every hint would
+        // read `not built`. Only questions show there.
+        let built = statuses
+            .values()
+            .any(|s| !(s.status == "missing" && s.reason == "not-generated"));
         let mut hints: Vec<Value> = Vec::new();
         for (rid, (_, _, el, ec)) in self.located_requirements(&doc, &text) {
             if (el, ec) < from || (el, ec) > to {
@@ -1471,6 +1476,9 @@ impl Lsp {
             let Some(st) = statuses.get(&rid) else {
                 continue;
             };
+            if !built && st.word == "not built" {
+                continue;
+            }
             hints.push(json!({
                 "position": {"line": el, "character": ec},
                 "label": format!("· {}", st.word),
@@ -3263,12 +3271,15 @@ mod tests {
         let uri = open(&mut lsp, BUILT);
         let all = json!({"textDocument": {"uri": uri},
             "range": {"start": {"line": 0, "character": 0}, "end": {"line": 9, "character": 0}}});
-        let hints = lsp.on_inlay_hints(&all);
+        // Nothing was ever generated: no `not built` hint on every sentence.
+        assert_eq!(lsp.on_inlay_hints(&all), json!([]));
+        // An open question outranks every other word, and shows even then.
+        ask(&mut lsp.store, "req:hold");
         assert_eq!(
-            hints,
+            lsp.on_inlay_hints(&all),
             json!([{
                 "position": {"line": 2, "character": 26},
-                "label": "· not built",
+                "label": "· question",
                 "paddingLeft": true,
                 "tooltip": "req:hold: missing (not-generated)",
             }])
@@ -3276,9 +3287,6 @@ mod tests {
         let outside = json!({"textDocument": {"uri": uri},
             "range": {"start": {"line": 4, "character": 0}, "end": {"line": 9, "character": 0}}});
         assert_eq!(lsp.on_inlay_hints(&outside), json!([]));
-        // An open question outranks every other word.
-        ask(&mut lsp.store, "req:hold");
-        assert_eq!(lsp.on_inlay_hints(&all)[0]["label"], "· question");
         // A suppressed question no longer counts.
         lsp.store
             .graph
@@ -3286,7 +3294,7 @@ mod tests {
             .get_mut("diag:ask")
             .unwrap()
             .triage = Some("suppressed".into());
-        assert_eq!(lsp.on_inlay_hints(&all)[0]["label"], "· not built");
+        assert_eq!(lsp.on_inlay_hints(&all), json!([]));
         lsp.store
             .graph
             .diagnostics

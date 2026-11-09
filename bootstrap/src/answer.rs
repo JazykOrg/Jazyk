@@ -69,6 +69,9 @@ pub fn answer(
             (Some(i), text, opt.edit.clone(), retract)
         }
         Reply::Text(t) => {
+            if ratify && subjects.len() > 1 {
+                return Err("A combined proposal cannot be reworded with one answer. Accept the preview or revise its individual criteria first.".into());
+            }
             let t = t.trim().to_string();
             if t.is_empty() {
                 return Err("an empty reply answers nothing".to_string());
@@ -191,6 +194,12 @@ pub fn answer(
             }
         }
         if ratify {
+            if subjects.len() > 1 {
+                ops.push(Op::ResolveDiagnostic {
+                    id: rid.clone(),
+                    reason: "combined proposal accepted".into(),
+                });
+            }
             // Accepting the proposal flips the fact's provenance to the landed
             // sentence in the same changeset; the store resolves the proposal.
             // Mirrors docs/compiler/goals/ratify.md#accept.
@@ -200,7 +209,21 @@ pub fn answer(
                 quote: prose.new_text.trim().to_string(),
             };
             for sub in &subjects {
-                ops.extend(ratify_ops(&s, &rid, sub, &source, reworded));
+                let mut fact_source = source.clone();
+                if subjects.len() > 1 {
+                    let c = s
+                        .graph
+                        .criteria
+                        .get(sub)
+                        .ok_or("combined proposal must contain only criteria")?;
+                    if !prose.new_text.contains(&c.statement) {
+                        return Err(
+                            "combined proposal is stale; a criterion's statement changed".into(),
+                        );
+                    }
+                    fact_source.quote = c.statement.clone();
+                }
+                ops.extend(ratify_ops(&s, &rid, sub, &fact_source, reworded));
             }
         }
         ops.push(Op::AnswerDiagnostic {
@@ -222,7 +245,7 @@ pub fn answer(
         // An answer lands whole or not at all: a fact change the commit gates refuse
         // puts the prose back and records no answer.
         let commit = Commit {
-            all_or_nothing: !ratify,
+            all_or_nothing: !ratify || subjects.len() > 1,
             ..Commit::store(kind)
         };
         s.dual_write(&project.root, &prose, ops, &commit, write)
@@ -247,6 +270,12 @@ pub fn answer(
         // proposal resolves with it. Mirrors docs/compiler/goals/ratify.md#retract.
         let mut s = Store::load(out);
         let mut ops = Vec::new();
+        if subjects.len() > 1 {
+            ops.push(Op::ResolveDiagnostic {
+                id: rid.clone(),
+                reason: "combined proposal retracted".into(),
+            });
+        }
         for sub in &subjects {
             ops.extend(retract_ops(&s, &rid, sub));
         }
@@ -911,6 +940,184 @@ mod tests {
             .map(|(id, _)| id.clone())
             .unwrap();
         (project, out, did)
+    }
+
+    fn seed_combined(label: &str) -> (Project, PathBuf, String, Vec<String>) {
+        let (project, out, original) = seed_decree(label);
+        answer(&project, &out, &original, Reply::Choice(0), None).unwrap();
+        let mut s = Store::load(&out);
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        s.sync_docs(&parsed);
+        let report = s.apply(
+            vec![
+                "An Order paid on day 21 is accepted.",
+                "An Order unpaid on day 22 is rejected.",
+            ]
+            .into_iter()
+            .enumerate()
+            .map(|(i, text)| Op::CreateCriterion {
+                id: format!("crit:proposal-{}", i),
+                criterion: crate::model::Criterion {
+                    requirement: "req:pay-1".into(),
+                    statement: text.into(),
+                    kind: "positive".into(),
+                    provenance: Some(Provenance::Derived {
+                        from: vec!["req:pay-1".into()],
+                        reasoning: "covers the deadline".into(),
+                    }),
+                    ..Default::default()
+                },
+            })
+            .collect(),
+            &session(),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let (id, d) = s
+            .graph
+            .diagnostics
+            .iter()
+            .find(|(_, d)| d.lifecycle == "open" && d.subjects.len() == 2)
+            .unwrap();
+        (project, out, id.clone(), d.subjects.clone())
+    }
+
+    #[test]
+    fn combined_ratification_accepts_once_with_individual_quotes() {
+        let (project, out, did, ids) = seed_combined("combined-accept");
+        let s = Store::load(&out);
+        let text = s.graph.diagnostics[&did].prompt.as_ref().unwrap().options[0]
+            .edit
+            .as_ref()
+            .unwrap()
+            .new_text
+            .clone();
+        assert!(!s.graph.diagnostics[&did].prompt.as_ref().unwrap().freeform);
+        assert!(answer(
+            &project,
+            &out,
+            &did,
+            Reply::Text("one replacement".into()),
+            None
+        )
+        .is_err());
+        answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
+        let s = Store::load(&out);
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+        let doc = crate::vfs::read_to_string(project.root.join("docs/pay.md")).unwrap();
+        assert_eq!(doc.matches(&text).count(), 1);
+        assert_eq!(s.graph.diagnostics[&did].subjects, ids);
+        for id in ids {
+            let c = &s.graph.criteria[&id];
+            assert_eq!(c.source.as_ref().unwrap().quote, c.statement);
+        }
+    }
+
+    #[test]
+    fn combined_ratification_retracts_all_and_partial_ratify_keeps_remainder() {
+        let (project, out, did, ids) = seed_combined("combined-partial");
+        let mut s = Store::load(&out);
+        let c = &s.graph.criteria[&ids[0]];
+        let source = SourceRef {
+            doc: "docs/pay.md".into(),
+            section: "/pay".into(),
+            quote: c.statement.clone(),
+        };
+        // The direct ratification path has the same provenance gates as the store.
+        crate::vfs::write(
+            project.root.join("docs/pay.md"),
+            format!(
+                "# Pay\nAn Order is paid within 30 days.\n\n{}\n",
+                source.quote
+            ),
+        )
+        .unwrap();
+        let (parsed, _) = crate::reconcile::parse_all(&project);
+        s.sync_docs(&parsed);
+        let r = s.apply(
+            vec![Op::RatifyProvenance {
+                id: ids[0].clone(),
+                source,
+            }],
+            &session(),
+        );
+        assert!(r.skipped.is_empty(), "{:?}", r.skipped);
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "open");
+        assert_eq!(s.graph.diagnostics[&did].subjects, vec![ids[1].clone()]);
+        answer(&project, &out, &did, Reply::Choice(1), None).unwrap();
+        let s = Store::load(&out);
+        assert!(s.graph.criteria.contains_key(&ids[0]));
+        assert!(!s.graph.criteria.contains_key(&ids[1]));
+    }
+
+    #[test]
+    fn combined_ratification_retracts_every_member() {
+        let (project, out, did, ids) = seed_combined("combined-retract");
+        answer(&project, &out, &did, Reply::Choice(1), None).unwrap();
+        let s = Store::load(&out);
+        for id in ids {
+            assert!(!s.graph.criteria.contains_key(&id));
+        }
+        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+    }
+
+    #[test]
+    fn combined_ratification_absorbs_later_proposals_and_refreshes_edits() {
+        let (_, out, did, ids) = seed_combined("combined-later");
+        let mut s = Store::load(&out);
+        let report = s.apply(
+            vec![Op::CreateCriterion {
+                id: "crit:later".into(),
+                criterion: crate::model::Criterion {
+                    requirement: "req:pay-1".into(),
+                    statement: "An Order paid on day 20 is accepted.".into(),
+                    kind: "positive".into(),
+                    provenance: Some(Provenance::Derived {
+                        from: vec!["req:pay-1".into()],
+                        reasoning: "another boundary".into(),
+                    }),
+                    ..Default::default()
+                },
+            }],
+            &session(),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert_eq!(s.graph.diagnostics[&did].subjects.len(), 3);
+        let before = serde_json::to_value(&s.graph.diagnostics[&did]).unwrap();
+        s.apply(Vec::new(), &session());
+        assert_eq!(
+            serde_json::to_value(&s.graph.diagnostics[&did]).unwrap(),
+            before
+        );
+        let report = s.apply(
+            vec![Op::UpdateCriterion {
+                id: ids[0].clone(),
+                statement: Some("An Order paid on day 19 is accepted.".into()),
+                kind: None,
+                measure: None,
+                given: None,
+                when: None,
+                then: None,
+                entities: None,
+            }],
+            &session(),
+        );
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        assert!(
+            s.graph.diagnostics[&did].prompt.as_ref().unwrap().options[0]
+                .edit
+                .as_ref()
+                .unwrap()
+                .new_text
+                .contains("day 19")
+        );
+        assert_eq!(
+            s.graph
+                .diagnostics
+                .values()
+                .filter(|d| d.lifecycle == "open" && d.rule == RATIFICATION)
+                .count(),
+            1
+        );
     }
 
     fn journal_kind(out: &Path, generation: u64) -> crate::model::JournalEntry {

@@ -4665,6 +4665,160 @@ impl Store {
         }
     }
 
+    // Related evidence stays atomic in the graph but shares one author decision.
+    fn combine_criterion_proposals(&mut self, build: &str) -> Vec<Op> {
+        let mut ops = Vec::new();
+        let combined: Vec<_> = self
+            .graph
+            .diagnostics
+            .iter()
+            .filter(|(_, d)| {
+                d.rule == "ratification-pending"
+                    && d.lifecycle == "open"
+                    && d.answer.is_none()
+                    && d.subjects.len() > 1
+                    && d.subjects.iter().all(|s| s.starts_with("crit:"))
+            })
+            .map(|(id, d)| (id.clone(), d.clone()))
+            .collect();
+        for (id, mut d) in combined {
+            let before = serde_json::to_value(&d).unwrap();
+            d.subjects.retain(|id| {
+                self.graph.criteria.get(id).is_some_and(|c| {
+                    c.source.is_none() && matches!(c.provenance, Some(Provenance::Derived { .. }))
+                })
+            });
+            if d.subjects.is_empty() {
+                d.lifecycle = "resolved".into();
+                d.updated = Some(build.into());
+                ops.push(Op::ResolveDiagnostic {
+                    id: id.clone(),
+                    reason: "no proposed criteria remain".into(),
+                });
+            } else {
+                let updated = d.updated.clone();
+                self.refresh_criterion_proposal(&mut d, build);
+                d.updated = updated;
+                if serde_json::to_value(&d).unwrap() == before {
+                    continue;
+                }
+                d.updated = Some(build.into());
+                ops.push(Op::ReportDiagnostic {
+                    id: id.clone(),
+                    diagnostic: d.clone(),
+                });
+            }
+            self.graph.diagnostics.insert(id, d);
+        }
+        let mut groups: BTreeMap<(String, String, String), Vec<String>> = BTreeMap::new();
+        for (id, d) in &self.graph.diagnostics {
+            if d.rule != "ratification-pending"
+                || d.lifecycle != "open"
+                || d.answer.is_some()
+                || d.triage.is_some()
+            {
+                continue;
+            }
+            let Some(p) = &d.prompt else { continue };
+            let Some(e) = p.options.iter().find_map(|o| o.edit.as_ref()) else {
+                continue;
+            };
+            if !e.old_text.is_empty() || !e.facts.is_empty() || d.subjects.is_empty() {
+                continue;
+            }
+            let criteria: Option<Vec<_>> = d
+                .subjects
+                .iter()
+                .map(|s| self.graph.criteria.get(s))
+                .collect();
+            let Some(criteria) = criteria else { continue };
+            let owner = &criteria[0].requirement;
+            if criteria.iter().any(|c| {
+                c.requirement != *owner || !matches!(c.provenance, Some(Provenance::Derived { .. }))
+            }) {
+                continue;
+            }
+            groups
+                .entry((owner.clone(), e.doc.clone(), e.section.clone()))
+                .or_default()
+                .push(id.clone());
+        }
+        for ids in groups.values_mut().filter(|ids| ids.len() > 1) {
+            ids.sort_by_key(|id| {
+                let d = &self.graph.diagnostics[id];
+                (
+                    d.created
+                        .as_deref()
+                        .and_then(|s| s.strip_prefix('g'))
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(0),
+                    id.clone(),
+                )
+            });
+            let keep = &ids[0];
+            let mut d = self.graph.diagnostics[keep].clone();
+            for id in &ids[1..] {
+                d.subjects
+                    .extend(self.graph.diagnostics[id].subjects.clone());
+                let old = self.graph.diagnostics.get_mut(id).unwrap();
+                old.lifecycle = "resolved".into();
+                old.updated = Some(build.into());
+                ops.push(Op::ResolveDiagnostic {
+                    id: id.clone(),
+                    reason: format!("combined into {}", keep),
+                });
+            }
+            d.subjects.sort();
+            d.subjects.dedup();
+            self.refresh_criterion_proposal(&mut d, build);
+            self.graph.diagnostics.insert(keep.clone(), d.clone());
+            ops.push(Op::ReportDiagnostic {
+                id: keep.clone(),
+                diagnostic: d,
+            });
+        }
+        ops
+    }
+
+    fn refresh_criterion_proposal(&self, d: &mut Diagnostic, build: &str) {
+        let criteria: Vec<_> = d
+            .subjects
+            .iter()
+            .filter_map(|id| self.graph.criteria.get(id))
+            .collect();
+        let text = criteria
+            .iter()
+            .map(|c| c.statement.as_str())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let count = criteria.len();
+        d.message = format!(
+            "Document {} proposed acceptance {} for one requirement.",
+            count,
+            if count == 1 { "criterion" } else { "criteria" }
+        );
+        d.reasoning = Some(
+            criteria
+                .iter()
+                .filter_map(|c| match &c.provenance {
+                    Some(Provenance::Derived { reasoning, .. }) => {
+                        Some(format!("{}: {}", c.statement, reasoning))
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        );
+        if let Some(p) = &mut d.prompt {
+            p.question = "Add these acceptance criteria to the document? Review the proposed text before accepting.".into();
+            p.freeform = count == 1;
+            if let Some(e) = p.options.iter_mut().find_map(|o| o.edit.as_mut()) {
+                e.new_text = text;
+            }
+        }
+        d.updated = Some(build.into());
+    }
+
     // ---- commit ----
 
     // Apply a staged changeset atomically: reconcile creates by natural key against nodes
@@ -6912,6 +7066,7 @@ impl Store {
             });
             self.graph.diagnostics.insert(did, diagnostic);
         }
+        applied.extend(self.combine_criterion_proposals(&build));
         for (id, (m, via)) in &dirt.prompts {
             batch.push(
                 *m,
@@ -7116,17 +7271,33 @@ impl Store {
     // journaled resolutions.
     fn resolve_ratification_diags(&mut self, subject: &str, build: &str, reason: &str) -> Vec<Op> {
         let mut out = Vec::new();
+        let mut refresh = Vec::new();
         for (did, d) in self.graph.diagnostics.iter_mut() {
             if d.lifecycle == "open"
                 && d.rule == "ratification-pending"
                 && d.subjects.iter().any(|s| s == subject)
             {
-                d.lifecycle = "resolved".to_string();
+                if d.subjects.len() > 1 {
+                    d.subjects.retain(|s| s != subject);
+                    refresh.push((did.clone(), d.clone()));
+                } else {
+                    d.lifecycle = "resolved".to_string();
+                    out.push(Op::ResolveDiagnostic {
+                        id: did.clone(),
+                        reason: reason.to_string(),
+                    });
+                }
                 d.updated = Some(build.to_string());
-                out.push(Op::ResolveDiagnostic {
-                    id: did.clone(),
-                    reason: reason.to_string(),
-                });
+            }
+        }
+        for (id, mut d) in refresh {
+            if d.subjects
+                .iter()
+                .all(|s| self.graph.criteria.contains_key(s))
+            {
+                self.refresh_criterion_proposal(&mut d, build);
+                self.graph.diagnostics.insert(id.clone(), d.clone());
+                out.push(Op::ReportDiagnostic { id, diagnostic: d });
             }
         }
         out

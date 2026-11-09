@@ -106,7 +106,15 @@ fn diff_map<T: serde::Serialize>(
     out: &mut Vec<Value>,
 ) {
     let to_value = |t: &T| serde_json::to_value(t).unwrap_or(Value::Null);
+    let to_text = |t: &T| serde_json::to_string(t).unwrap_or_default();
     for (id, a) in after {
+        // The common case is an unchanged node: compare its bytes before building
+        // anything. Only a changed node pays for the field-by-field record.
+        if let Some(b) = before.get(id) {
+            if to_text(a) == to_text(b) {
+                continue;
+            }
+        }
         let av = to_value(a);
         match before.get(id) {
             None => {
@@ -309,9 +317,17 @@ pub fn decorate(update: &mut Value) {
     let mut locations = Vec::new();
     for f in effects["files"].as_array().into_iter().flatten() {
         let abs = f["abs"].as_str().or(f["path"].as_str()).unwrap_or_default();
-        let mut diff = json!({"type": "diff", "path": abs, "newText": f["newText"]});
+        // A client diffs whole files, with real line numbers: rebuild both sides from
+        // the file as it stands, or keep the hunk when the file moved on since.
+        let (old_text, new_text) = whole_file(abs, f).unwrap_or_else(|| {
+            (
+                f["oldText"].as_str().unwrap_or_default().to_string(),
+                f["newText"].as_str().unwrap_or_default().to_string(),
+            )
+        });
+        let mut diff = json!({"type": "diff", "path": abs, "newText": new_text});
         if f["created"] != true {
-            diff["oldText"] = f["oldText"].clone();
+            diff["oldText"] = json!(old_text);
         }
         content.push(diff);
         let line = f["line"].as_u64().unwrap_or(1).saturating_sub(1);
@@ -331,8 +347,69 @@ pub fn decorate(update: &mut Value) {
     update["_meta"]["jazyk"]["effects"] = effects;
 }
 
+// Both sides of one file edit in full: the file's current text, when the hunk still
+// sits at its line, and that text with the hunk turned back.
+fn whole_file(abs: &str, f: &Value) -> Option<(String, String)> {
+    let current = crate::vfs::read_to_string(abs).ok()?;
+    let (old, new) = (f["oldText"].as_str()?, f["newText"].as_str()?);
+    let at = (f["line"].as_u64()? as usize).checked_sub(1)?;
+    let lines: Vec<&str> = current.split_inclusive('\n').collect();
+    let start: usize = lines.iter().take(at).map(|l| l.len()).sum();
+    if at > lines.len() || !current[start..].starts_with(new) {
+        return None;
+    }
+    let before = format!(
+        "{}{}{}",
+        &current[..start],
+        old,
+        &current[start + new.len()..]
+    );
+    Some((before, current))
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn decorate_sends_whole_files_when_the_hunk_still_sits_at_its_line() {
+        let dir = std::env::temp_dir().join(format!("jazyk-fx-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("docs")).unwrap();
+        std::fs::write(
+            dir.join("docs/a.md"),
+            "# A\n\nOrders ship in one day.\nEnd.\n",
+        )
+        .unwrap();
+        let effects = record(
+            vec![file_effect(
+                &dir,
+                "docs/a.md",
+                Some("# A\n\nOrders ship in two days.\nEnd.\n"),
+                "# A\n\nOrders ship in one day.\nEnd.\n",
+            )
+            .unwrap()],
+            vec![],
+        )
+        .unwrap();
+        let mut u = json!({"sessionUpdate":"tool_call_update","toolCallId":"1","status":"completed",
+            "rawOutput": json!({"effects": effects}).to_string()});
+        decorate(&mut u);
+        assert_eq!(
+            u["content"][0]["oldText"],
+            "# A\n\nOrders ship in two days.\nEnd.\n"
+        );
+        assert_eq!(
+            u["content"][0]["newText"],
+            "# A\n\nOrders ship in one day.\nEnd.\n"
+        );
+        assert_eq!(u["locations"][0]["line"], 2);
+        // The file moved on: the hunk is sent as it is.
+        std::fs::write(dir.join("docs/a.md"), "something else\n").unwrap();
+        let mut u2 = json!({"sessionUpdate":"tool_call_update","toolCallId":"1","status":"completed",
+            "rawOutput": json!({"effects": record(vec![file_effect(&dir, "docs/a.md", Some("x\n"), "y\n").unwrap()], vec![]).unwrap()}).to_string()});
+        decorate(&mut u2);
+        assert_eq!(u2["content"][0]["newText"], "y\n");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     use super::*;
     use crate::model::Requirement;
 

@@ -923,7 +923,12 @@ impl GoalKind for ReconcileSection {
                                     .any(|word| word.trim_end_matches('.') == id)
                                 }))
                         {
-                            out.push(Violation::new("uncovered-claim", format!("{doc}#{section}: name each requirement whose quoted reference selects this input: {linked:?}")));
+                            let message = if linked.is_empty() {
+                                format!("{doc}#{section}: no requirement quote selects this input. Repair an existing requirement in its referring section to quote the linked item, then mark coverage; naming an ID in the note alone is insufficient")
+                            } else {
+                                format!("{doc}#{section}: name each requirement whose quoted reference selects this input: {linked:?}")
+                            };
+                            out.push(Violation::new("uncovered-claim", message));
                         }
                         if state == "non-normative" && !linked.is_empty() {
                             out.push(Violation::new("referenced-input", format!("{doc}#{section}: requirements {linked:?} reference this input; reconcile it as covered")));

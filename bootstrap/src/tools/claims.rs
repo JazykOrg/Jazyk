@@ -1719,6 +1719,12 @@ impl ToolSession {
         // implicit path commits without one and the section stays unprocessed.
         if !self.implicit_done {
             for gs in self.scope.reconcile_scopes() {
+                if matches!(
+                    self.outcomes.get(&gs.goal),
+                    Some(GoalOutcome::Failed { .. })
+                ) {
+                    continue;
+                }
                 if let Some(doc) = &gs.doc {
                     let unmarked = self.unmarked_sections(doc, &gs.sections);
                     if !unmarked.is_empty() {

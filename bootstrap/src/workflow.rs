@@ -79,17 +79,41 @@ fn mandatory_graph_goal(goal: &crate::model::Goal) -> bool {
 
 // Outside a selection nothing holds the workflow (docs/compiler/workflows.md#execution).
 fn graph_complete(board: &crate::board::Board) -> Result<(), String> {
-    if board.goals.iter().any(|goal| {
-        mandatory_graph_goal(goal)
-            && !board.outside.contains(&goal.id)
-            && matches!(
-                goal.state,
-                crate::model::GoalState::Open
-                    | crate::model::GoalState::Parked
-                    | crate::model::GoalState::Failed { .. }
-            )
-    }) {
-        return Err("Mandatory graph work remains. Compile documents before continuing.".into());
+    let blockers: Vec<_> = board
+        .goals
+        .iter()
+        .filter(|goal| {
+            mandatory_graph_goal(goal)
+                && !board.outside.contains(&goal.id)
+                && matches!(
+                    goal.state,
+                    crate::model::GoalState::Open
+                        | crate::model::GoalState::Parked
+                        | crate::model::GoalState::Failed { .. }
+                )
+        })
+        .collect();
+    if !blockers.is_empty() {
+        let mut details: Vec<String> = blockers
+            .iter()
+            .take(5)
+            .map(|goal| {
+                let state = match &goal.state {
+                    crate::model::GoalState::Parked => board
+                        .parked_reasons
+                        .get(&goal.id)
+                        .map(|reason| format!("parked: {reason}"))
+                        .unwrap_or_else(|| "parked".into()),
+                    crate::model::GoalState::Failed { reason } => format!("failed: {reason}"),
+                    _ => "open".into(),
+                };
+                format!("{} ({state})", goal.id)
+            })
+            .collect();
+        if blockers.len() > details.len() {
+            details.push(format!("{} more", blockers.len() - details.len()));
+        }
+        return Err(format!("Mandatory graph work remains: {}. Inspect these goals and resolve their blockers before continuing.", details.join("; ")));
     }
     Ok(())
 }
@@ -795,8 +819,52 @@ mod tests {
                 state,
                 ..Default::default()
             }];
-            assert!(graph_complete(&board).is_err());
+            board.parked_reasons.insert(
+                "g:review-entity:ent:site".into(),
+                "reopened-after-resolve: same change twice".into(),
+            );
+            let error = graph_complete(&board).unwrap_err();
+            assert!(error.contains("g:review-entity:ent:site"), "{error}");
+            match &board.goals[0].state {
+                GoalState::Open => assert!(error.contains("(open)"), "{error}"),
+                GoalState::Parked => assert!(
+                    error.contains("parked: reopened-after-resolve: same change twice"),
+                    "{error}"
+                ),
+                GoalState::Failed { reason } => assert!(error.contains(reason), "{error}"),
+                _ => unreachable!(),
+            }
+            assert!(
+                !error.contains("Compile documents before continuing"),
+                "{error}"
+            );
         }
+        let blocker = board.goals[0].clone();
+        board.goals = (0..7)
+            .map(|i| Goal {
+                id: format!("g:review-entity:ent:site-{i}"),
+                ..blocker.clone()
+            })
+            .collect();
+        let error = graph_complete(&board).unwrap_err();
+        assert!(error.contains("2 more"), "{error}");
+        assert!(!error.contains("site-5"), "{error}");
+        // Scope, optional work, ledger work, and human waits cannot inflate this error.
+        for (i, goal) in board.goals.iter_mut().enumerate() {
+            match i {
+                0 => {
+                    board.outside.insert(goal.id.clone());
+                }
+                1 => goal.mandatory = false,
+                2 => goal.kind = "verify".into(),
+                _ => {
+                    goal.state = GoalState::Blocked {
+                        on: "human: ratification".into(),
+                    }
+                }
+            }
+        }
+        graph_complete(&board).unwrap();
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -980,6 +1048,13 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Mandatory graph work remains"));
+        let error = report["error"].as_str().unwrap();
+        assert!(error.contains("g:"), "{error}");
+        assert!(error.contains("parked"), "{error}");
+        assert!(
+            !error.contains("Compile documents before continuing"),
+            "{error}"
+        );
         assert!(calls.load(Ordering::Relaxed) > 0);
     }
 

@@ -11,7 +11,7 @@ a verdict for the pair in evidence; for an acting verdict, the mutation or diagn
 definition claimed; one backed verdict per listed lookalike, unreferenced statement, open diagnostic, and composition part
 
 <!-- derive-criteria -->
-one verdict per listed requirement (complete, stated-only, or open-question) with its criteria in evidence; every derived criterion carries from, reasoning, and a proposal
+one verdict per listed requirement (complete, stated-only, or open-question) with its criteria in evidence; every derived criterion carries from, reasoning, and a proposal; no stale criterion remains, refresh still-valid criteria explicitly or replace or delete them
 
 <!-- retrace -->
 nothing on the target points at a dead or missing node

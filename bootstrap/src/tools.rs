@@ -3122,27 +3122,36 @@ impl ToolSession {
         Ok(())
     }
 
-    // The criteria a requirement carries once the staged work applies.
-    fn criteria_after(&self, rid: &str) -> usize {
-        let r = |x: &str| self.snapshot.resolve_id(x).to_string();
-        let rid = r(rid);
-        let deleted = |id: &str| {
-            self.staged
-                .iter()
-                .any(|o| matches!(o, Op::DeleteCriterion { id: d, .. } if d == id))
-        };
-        let committed = self
+    // Criterion ids and freshness once the staged work applies, in mutation order.
+    fn criteria_after(&self, rid: &str) -> BTreeMap<String, bool> {
+        let rid = self.snapshot.resolve_id(rid);
+        let mut criteria: BTreeMap<String, bool> = self
             .snapshot
-            .criteria_of(&rid)
-            .into_iter()
-            .filter(|id| !deleted(id))
-            .count();
-        let staged = self
-            .staged
+            .graph
+            .criteria
             .iter()
-            .filter(|o| matches!(o, Op::CreateCriterion { id, criterion } if r(&criterion.requirement) == rid && !deleted(id)))
-            .count();
-        committed + staged
+            .filter(|(_, c)| c.requirement == rid)
+            .map(|(id, c)| (id.clone(), c.stale))
+            .collect();
+        for op in &self.staged {
+            match op {
+                Op::CreateCriterion { id, criterion }
+                    if self.snapshot.resolve_id(&criterion.requirement) == rid =>
+                {
+                    criteria.insert(id.clone(), criterion.stale);
+                }
+                Op::UpdateCriterion { id, .. } => {
+                    if let Some(stale) = criteria.get_mut(id) {
+                        *stale = false;
+                    }
+                }
+                Op::DeleteCriterion { id, .. } => {
+                    criteria.remove(id);
+                }
+                _ => {}
+            }
+        }
+        criteria
     }
 
     // derive-criteria: one entry per requirement, complete backed by a criterion,
@@ -3169,7 +3178,19 @@ impl ToolSession {
             };
             for e in list {
                 let rid = e["id"].as_str().unwrap_or("").to_string();
-                let has_criterion = self.criteria_after(&rid) > 0;
+                let criteria = self.criteria_after(&rid);
+                let stale: Vec<&str> = criteria
+                    .iter()
+                    .filter(|(_, stale)| **stale)
+                    .map(|(id, _)| id.as_str())
+                    .collect();
+                if !stale.is_empty() {
+                    return Err(ToolError::new(
+                        "criterion-stale",
+                        format!("{} claims {} resolved, but these criteria still need review against the revised requirement: {}. Refresh each still-valid criterion with update_criterion using its id and current or corrected statement, even if the wording is unchanged; replace or delete obsolete criteria before marking the goal done.", goal, rid, stale.join(", ")),
+                    ));
+                }
+                let has_criterion = !criteria.is_empty();
                 match e["verdict"].as_str() {
                     Some("complete") | Some("stated-only") => {
                         if !has_criterion {
@@ -11548,6 +11569,81 @@ mod tests {
         t.dispatch("delete_criterion", &delete).unwrap();
         let err = t.dispatch("done", &json!({"summary": "x"})).unwrap_err();
         assert_eq!(err.rule, "criterion-missing", "{}", err.message);
+    }
+
+    #[test]
+    fn derive_criteria_requires_refreshing_every_stale_criterion() {
+        let _fs = crate::vfs::Scope::enter(&BTreeMap::new());
+        for verdict in ["complete", "stated-only", "open-question"] {
+            for repair in ["update", "upsert", "delete"] {
+                let mut s = Store::default();
+                s.graph.entities.insert("ent:sort".into(), plain("Sort"));
+                s.graph.requirements.insert(
+                    "req:a".into(),
+                    Requirement {
+                        statement: "The utility sorts its lines.".into(),
+                        entities: vec!["ent:sort".into()],
+                        ..Default::default()
+                    },
+                );
+                for (id, stale) in [("crit:a-1", true), ("crit:a-2", false)] {
+                    s.graph.criteria.insert(
+                        id.into(),
+                        Criterion {
+                            requirement: "req:a".into(),
+                            statement: format!("Three lines come out ordered ({id})."),
+                            kind: "positive".into(),
+                            stale,
+                            ..Default::default()
+                        },
+                    );
+                }
+                s.graph.diagnostics.insert(
+                    "diag:choice".into(),
+                    open_diag("invented-choice", &["req:a"]),
+                );
+                let goals = one_goal(
+                    "derive-criteria",
+                    "ent:sort",
+                    json!({"none": [], "revised": ["req:a"]}),
+                );
+                let mut t = ToolSession::new(s, WorkScope::for_batch("b0-1", &goals), 64, 24_000);
+                let claim = json!({"goal": "g:derive-criteria:ent:sort", "justification": "The existing criteria cover the revised requirement.",
+                    "evidence": {"requirements": [{"id": "req:a", "criteria": ["crit:a-2"], "verdict": verdict}]}});
+                let err = t.dispatch("mark_goal_done", &claim).unwrap_err();
+                assert_eq!(err.rule, "criterion-stale", "{verdict}: {}", err.message);
+                assert!(err.message.contains("crit:a-1"), "{}", err.message);
+                assert!(err.message.contains("update_criterion"), "{}", err.message);
+                assert!(t.outcomes.is_empty());
+                // Refresh unchanged wording or remove the obsolete stale criterion.
+                match repair {
+                    "update" => {
+                        t.dispatch("update_criterion", &json!({"id": "crit:a-1", "statement": "Three lines come out ordered (crit:a-1)."})).unwrap();
+                    }
+                    "upsert" => {
+                        t.dispatch("upsert_criterion", &json!({"requirement": "req:a", "statement": "Three lines come out ordered (crit:a-1).", "kind": "positive", "provenance": {"derived": {"from": ["req:a"], "reasoning": "The revised rule still requires this ordering."}}})).unwrap();
+                    }
+                    "delete" => {
+                        t.dispatch("delete_criterion", &json!({"id": "crit:a-1", "reason": "The other current criterion covers this outcome."})).unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                t.dispatch("mark_goal_done", &claim).unwrap();
+                t.dispatch(
+                    "done",
+                    &json!({"summary": "Reviewed the existing criteria."}),
+                )
+                .unwrap();
+                let mut store = t.snapshot.clone();
+                store.out = format!("/project/.jazyk/{verdict}-{repair}").into();
+                let report = store.apply(t.staged.clone(), &t.commit(1, None));
+                assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+                let loaded = Store::load(&store.out);
+                assert!(!loaded.graph.criteria.is_empty());
+                assert!(loaded.graph.criteria.values().all(|c| !c.stale));
+                assert!(!crate::goals::criteria_owed(&loaded).contains_key("ent:sort"));
+            }
+        }
     }
 
     // Mirrors docs/compiler/tools.md#write-tools: remove_parent takes an entity out of

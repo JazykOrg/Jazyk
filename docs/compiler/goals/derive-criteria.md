@@ -65,6 +65,13 @@ entry is refused (`criteria-unjudged`), naming it.
   question (the 21 versus 30 day deadline is that case; filing a second question
   would be a twin; `unbacked-question` otherwise). The requirement keeps
   no criterion until the answer; `bind` stays blocked on it.
+- Every verdict requires that no criterion remaining on the requirement is stale
+  (`criterion-stale` otherwise). Read stale criteria against the revised requirement.
+  Refresh each criterion that still applies with `update_criterion`, passing its id
+  and current or corrected statement, even when the wording stays the same, or
+  replace or delete it. Citing an existing criterion in
+  evidence does not refresh it. An `open-question` verdict also removes stale
+  criteria so the unanswered requirement does not reopen the same goal.
 - Every derived criterion staged carries `from` naming the requirement, `reasoning`, and
   a ratification proposal sentence toward the requirement's section
   ([ratify](./ratify.md)).

@@ -48,3 +48,8 @@ key or source reference separately. Keep independent outcomes separate. Do not d
 an operational failure from a missing configuration value unless the requirement states
 that failure. Explain the proposed obligation in words an author can understand without
 opening the graph. The engine groups related criteria for one ratification decision.
+
+After a requirement changes, review all its stale criteria. Use `update_criterion`
+with the existing id and current or corrected statement to refresh a criterion
+that still applies, even when its wording stays the same. Replace or delete obsolete criteria. Citing a stale
+criterion in completion evidence leaves it stale and cannot complete the goal.

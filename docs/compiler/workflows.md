@@ -53,7 +53,10 @@ Compile completion and generation readiness are separate checks. A compile actio
 finishes when no mandatory graph work remains open, parked, or failed. Ledger work
 not selected by the action does not prevent compile completion. An incomplete
 compile keeps its report, including its verdict and counts, beside the reason the
-workflow stopped.
+workflow stopped. The error names up to five blocking goals, their states, and
+stored parking or failure reasons, followed by the count of further blockers.
+It directs the user to those blockers instead of asking them to run the compile
+that just failed.
 
 A ledger action checks what was committed before reporting a session error. A
 completed binding or valid generation manifest remains successful after a later

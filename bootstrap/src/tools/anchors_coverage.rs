@@ -337,6 +337,24 @@ impl ToolSession {
                 ));
             }
         }
+        if crate::input::is_blob(&self.snapshot, &doc, &sec) {
+            use crate::goals::GoalKind;
+            let candidate = Op::SetCoverage {
+                doc: doc.clone(),
+                section: sec.clone(),
+                state: state.clone(),
+                note: note.clone(),
+            };
+            let mut projected = self.staged.clone();
+            projected.retain(|op| !matches!(op, Op::SetCoverage { .. }));
+            projected.push(candidate);
+            if let Some(violation) = crate::goals::ReconcileSection
+                .gates(&self.snapshot, &projected)
+                .first()
+            {
+                return Err(ToolError::new(&violation.rule, violation.message.clone()));
+            }
+        }
         // One coverage mark per section per changeset: restaging replaces the
         // earlier mark instead of journaling contradictory states.
         self.staged

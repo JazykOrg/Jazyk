@@ -659,7 +659,21 @@ impl ToolSession {
                     .resolve_section(&section)
                     .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
                 if let Some(wd) = self.scope.reconcile_doc() {
-                    if doc != wd {
+                    let reference_repair = crate::input::is_blob(&self.snapshot, &wd, "/")
+                        && self.snapshot.graph.requirements.get(&id)
+                            .and_then(|r| r.source.as_ref())
+                            .is_some_and(|source| source.doc == doc && source.section == sec)
+                        && crate::input::staged_requirement_links(
+                            &self.snapshot,
+                            &wd,
+                            &[Op::UpdateRequirement {
+                                id: id.clone(),
+                                source: Some(SourceRef { doc: doc.clone(), section: sec.clone(), quote: q.clone() }),
+                                statement: None, entities: None, edges: None,
+                                transition: None, facets: None, provenance: None,
+                            }],
+                        ).contains(&id);
+                    if doc != wd && !reference_repair {
                         return Err(ToolError::new(
                             "wrong-document",
                             format!(

@@ -163,8 +163,8 @@ affected bindings and checks. They never silently preserve a clean verdict.
   local/                       project machine state: project.lock, ide.json,
                                removed-sets/, archive/
   <set-id>/
-    status.yaml changes/ parked/ failed/ alignment/ lookalikes/
-    graph/ docs/ gen/          committed: the set's state
+    store.yaml graph/ sources/ gen/   committed: the current graph, its decisions,
+                               its sources, the ledger
     local/                     this checkout's machine state
     derived/                   rebuilt output
 ```
@@ -217,32 +217,11 @@ The generated file ignores everything, then keeps the committed paths:
 !/.gitattributes
 !/README.md
 !/ds_*/
-!/ds_*/status.yaml
-!/ds_*/changes/
-!/ds_*/changes/**
-!/ds_*/parked/
-!/ds_*/parked/*.yaml
-!/ds_*/failed/
-!/ds_*/failed/*.yaml
-!/ds_*/alignment/
-!/ds_*/alignment/*.yaml
-!/ds_*/lookalikes/
-!/ds_*/lookalikes/*.yaml
-!/ds_*/docs/
-!/ds_*/docs/**
+!/ds_*/store.yaml
 !/ds_*/graph/
-!/ds_*/graph/entities/
-!/ds_*/graph/entities/*.yaml
-!/ds_*/graph/requirements/
-!/ds_*/graph/requirements/*.yaml
-!/ds_*/graph/criteria/
-!/ds_*/graph/criteria/*.yaml
-!/ds_*/graph/views/
-!/ds_*/graph/views/*.yaml
-!/ds_*/graph/diagnostics/
-!/ds_*/graph/diagnostics/*.yaml
-!/ds_*/graph/redirects/
-!/ds_*/graph/redirects/*.yaml
+!/ds_*/graph/**
+!/ds_*/sources/
+!/ds_*/sources/**
 !/ds_*/gen/
 !/ds_*/gen/**
 .*.tmp

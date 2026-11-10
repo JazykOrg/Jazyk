@@ -3,20 +3,21 @@ $id: https://jazyk.org/schemas/graph.json
 title: Jazyk Graph Store
 description: |-
   Definitions for the files of one set directory (.jazyk/<set-id>/), store version 5.
-  Committed, at the top of the set directory:
-  - status.yaml is one status object
-  - changes/<kind>/<subject file id>.yaml is one changeRecord
-  - parked/<goal file id>.yaml is one goal, with an optional reason
-  - failed/<goal file id>.yaml is one failedGoal
-  - alignment/<doc file id>.yaml is one docAlignment
-  - lookalikes/<pair file id>.yaml is one lookalikeVerdict
+  Committed, at the top of the set directory: the current graph, its decisions, its
+  sources, and the ledger. No work, history, or generation is committed.
+  - store.yaml is one status object (the store version)
   - graph/entities/<file id>.yaml is one entity
   - graph/requirements/<file id>.yaml is one requirement
   - graph/criteria/<file id>.yaml is one criterion
   - graph/views/<file id>.yaml is one curated view
   - graph/diagnostics/<file id>.yaml is one diagnostic
-  - graph/redirects/<file id>.yaml is one object, `to` the surviving id
-  - docs/<mirrored doc path>.yaml is one docRecord per source document
+  - graph/redirects/<file id>.yaml is one redirect
+  - graph/decisions/lookalikes/<pair>.yaml is one lookalikeVerdict
+  - graph/decisions/pairs/<pair>.yaml is one pairDecision
+  - graph/decisions/reviews/<file id>.yaml is one reviewDecision
+  - graph/decisions/conformance/<file id>.yaml is one conformanceDecision
+  - graph/decisions/structure/<file id>.yaml is one structureDecision
+  - sources/<mirrored doc path>.yaml is one docRecord per source document
   Local, under local/ (never committed):
   - local/build.yaml is one buildState object
   - local/journal/g<generation>.yaml is one journalEntry per generation
@@ -32,29 +33,31 @@ description: |-
   lowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.
   A file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the
   load then reads the full id from the file's `id`.
-  Goals are derived from these files and never stored; goal ids appear only in
-  journal entries and the parked/ and failed/ records.
+  Goals and the change records behind them are computed from these files and the
+  documents by every derivation and never stored; goal ids appear only in journal
+  entries.
 x-files:
   # File kind: the definition its file holds. The site publishes
   # https://jazyk.org/schemas/<kind>.json for each, a $ref to that definition, and
   # every file of the kind names it on its schema comment line.
-  status: status
-  change: changeRecord
-  goal: goal
-  failed-goal: failedGoal
-  alignment: docAlignment
+  store: status
   lookalike: lookalikeVerdict
+  pair: pairDecision
+  review: reviewDecision
+  conformance: conformanceDecision
+  structure: structureDecision
   entity: entity
   requirement: requirement
   criterion: criterion
   view: view
   diagnostic: diagnostic
   redirect: redirect
-  document: docRecord
+  source: docRecord
   ledger: ledgerFile
   ledger-entity: ledgerEntity
   ledger-requirement: ledgerRequirement
   build: buildState
+  control: controlFile
   journal: journalEntry
   relationship: relationship
   state-machine: stateMachine
@@ -1509,3 +1512,43 @@ definitions:
         type: string
       hashes:
         type: object
+  pairDecision:
+    description: >-
+      One graph/decisions/pairs/<pair>.yaml file: two requirements judged against each
+      other. Lapses when either statement's hash no longer matches
+    type: object
+    required: [id, verdict, statements]
+    properties:
+      id: {type: string, description: 'The pair, a~b, smaller id first'}
+      verdict: {type: string, enum: [consistent, diagnosed]}
+      statements: {type: object, description: Requirement id to the hash of its statement when judged}
+  reviewDecision:
+    description: >-
+      One graph/decisions/reviews/<id>.yaml file: an entity reviewed against its
+      requirements. Lapses when the entity's fact hash no longer matches
+    type: object
+    required: [id, facts]
+    properties:
+      id: {type: string}
+      facts: {type: string, description: The entity's fact hash when reviewed}
+  conformanceDecision:
+    description: >-
+      One graph/decisions/conformance/<id>.yaml file: an instance checked against its
+      type. Lapses when either fact hash no longer matches
+    type: object
+    required: [id, facts]
+    properties:
+      id: {type: string}
+      facts: {type: object, description: The instance and its type, each to its fact hash}
+  structureDecision:
+    description: >-
+      One graph/decisions/structure/<id>.yaml file: a requirement naming several
+      entities judged to state no structural link. Lapses when the statement changes
+    type: object
+    required: [id, statement]
+    properties:
+      id: {type: string}
+      statement: {type: string, description: The statement's hash when judged}
+  controlFile:
+    description: The local/control.yaml file, never committed. See control-plane.md
+    type: object

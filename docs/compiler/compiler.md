@@ -202,11 +202,11 @@ file is listed in [the .jazyk folder](./jazyk-folder.md).
 - Committed, at the top of the set directory:
   - `graph/`: the semantic graph, the primary output, one file per node
     ([node files](./graph.md#node-files)): `entities/`, `requirements/`, `criteria/`,
-    `views/`, `diagnostics/`, `redirects/`.
-  - `docs/`: section trees and coverage per document.
-  - The status: `status.yaml` (the store `version`, the stamped roots, the
-    re-evaluation list) and one file per record under `changes/`, `parked/`,
-    `failed/`, `alignment/`, and `lookalikes/`.
+    `views/`, `diagnostics/`, `redirects/`, and `decisions/`, the judgments made on
+    purpose so no later build asks again.
+  - `sources/`: section trees and coverage per document, as the graph last reflected
+    them.
+  - `store.yaml`: the store `version`.
   - `gen/`: generation and verification metadata: the
     [ledger](../consumers/gen.md#the-ledger) and the criteria files for llm tests. The
     deliverable itself lives outside the out directory
@@ -225,8 +225,10 @@ file is listed in [the .jazyk folder](./jazyk-folder.md).
 - Logs, outside the project ([logs](./jazyk-folder.md#logs)): session transcripts, the
   ACP session store, `report_feedback` entries, replay snapshots.
 
-A repository commits the top level of the set directory and ignores `local/` and
-`derived/` ([committed and local state](./graph.md#committed-and-local-state)).
+A repository commits the top level of the set directory, the current state of the graph
+and nothing about how it got there, and ignores `local/` and `derived/`
+([committed and local state](./graph.md#committed-and-local-state)). Work to do is
+computed by every derivation, never stored ([what needs building](./graph.md#what-needs-building)).
 
 `jazyk check` exits non-zero when open diagnostics of severity `error` exist. See
 [CLI](../frontends/cli.md#jazyk-check).

@@ -114,7 +114,7 @@ Each kind of file in a set directory has a schema of its own, which the file nam
 its schema comment line ([every file begins with what it is](compiler/jazyk-folder.md#every-file-begins-with-what-it-is)).
 The `x-files` map in [`graph.schema.yaml`](compiler/graph.schema.yaml) lists the kinds
 and the definition each file holds, e.g. `requirement: requirement`,
-`change: changeRecord`. For each, the site serves `https://jazyk.org/schemas/<kind>.json`:
+`pair: pairDecision`. For each, the site serves `https://jazyk.org/schemas/<kind>.json`:
 a schema whose `$id` is that URL and whose only rule is a `$ref` to
 `graph.json#/definitions/<definition>`. They are generated beside the others by the same
 test.

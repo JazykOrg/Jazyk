@@ -44,8 +44,8 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   whitespace-insensitively, never char offsets), `derived` (`from` + reasoning), or
   `decree` (a human write on the graph). Derived and decreed facts carry a ratification
   proposal toward prose; accepting it flips the provenance to `quote`.
-- Goals and the board: the reconciler derives goals from disk (docs, graph, ledger, the
-  change records under `changes/`) and never stores them. A goal is `g:<kind>:<target>`;
+- Goals and the board: the reconciler derives goals from disk (docs, graph, its
+  decisions and sources, ledger) and never stores them. A goal is `g:<kind>:<target>`;
   its `change` is its identity across re-derivations and its `cause` names the committed
   mutation that opened it. Compile goals bring the graph in line with the docs
   (`place-anchors`, `reconcile-section`, `rejudge-pair`, `review-entity`, `retrace`,
@@ -80,26 +80,27 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   behind `.lock`, one journal entry per generation with `opened_goals` and
   `resolved_goals` (each with its justification; a human save that dirties sections
   journals as an `edit` entry, so every ripple roots in a generation), the
-  deterministic GC sweep at commit, `version: 5` in `status.yaml` (a version 4 store
+  deterministic GC sweep at commit, `version: 5` in `store.yaml` (a version 4 store
   loads as it is and the next build opening rewrites it in the version 5 layout, ids
   kept; a newer store is never archived, it is read-only with `store-newer`; an older
   one is archived under `.jazyk/local/archive/` and the next build reconciles from
   empty; no other migration code).
 - Committed and local state (`docs/compiler/jazyk-folder.md` lists every file): a set
-  directory's top level is committed: the status (`status.yaml` plus one file per
-  record under `changes/`, `parked/`, `failed/`, `alignment/`, `lookalikes/`; only what
-  goal derivation reads; `ledger-stale` is derived, never stored), the authored node
-  files (diagnostics included), `docs/` section trees (no line numbers, no file hash),
-  and `gen/` (the ledger, one file per row), so any commit of any branch compiles
-  incrementally. `local/` holds this checkout's machine state (`build.yaml`: the
-  generation, verdict, costs, spend, document hashes; `control.yaml`; `journal/`;
-  workers, leases, locks). `derived/` holds what is rebuilt (derived graph kinds,
-  diagrams, docsgen, last-build copies, previews). Logs (transcripts, chats, feedback,
-  replay snapshots with `--record`) live in a log directory outside the project, or in
-  the host's record store when hosted. The generation is a local counter and no
-  committed file names one, so parallel branches never conflict on it. The engine
-  generates `.jazyk/.gitignore`, `.jazyk/.gitattributes` (the `jazyk merge-file`
-  driver), and `.jazyk/README.md` from this split.
+  directory's top level commits the current state of the graph and nothing about how it
+  got there: `store.yaml` (the version), the node files (diagnostics included), the
+  decisions under `graph/decisions/` (lookalikes kept apart, requirement pairs judged,
+  entities reviewed, instances conformed, requirements judged not structural; each with
+  hashes of what it judged, so it lapses by itself), `sources/` section trees, and `gen/`
+  (the ledger, one file per row). Work to do is never stored: every derivation computes
+  it from the docs, the graph, its decisions and sources, and the ledger. A build's
+  progress is in memory (`local/run.yaml` while a local build runs, the host's database
+  when hosted). A failed goal is a `goal-failed` diagnostic. `local/` holds this
+  machine's state (`build.yaml`, `control.yaml`, `journal/`, workers, leases, locks);
+  `derived/` what is rebuilt (derived graph kinds, diagrams, docsgen). Logs live in a
+  log directory outside the project, or in the host's record store. The generation is a
+  local counter and no committed file names one. The engine generates
+  `.jazyk/.gitignore`, `.jazyk/.gitattributes` (the `jazyk merge-file` driver), and
+  `.jazyk/README.md`.
 - Derived data, recomputed on every commit, no write tool: relationships from
   requirement `edges` (one node per pair, contributions grouped by direction and type,
   a typeless edge counts as `dependency`), state machines from `transition` facets (one
@@ -201,9 +202,8 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   excluded from the docs glob).
 - `.jazyk/jazyk.toml`: the live project file with named document sets.
   The dogfood graph lands in `.jazyk/ds_main/` (this repository's root `.gitignore`
-  keeps it out of git): committed-shape `graph/<kind>/<file id>.yaml` node files,
-  `docs/` section trees + coverage, `gen/`, the status (`status.yaml`, `changes/`,
-  `parked/`, `failed/`, `alignment/`, `lookalikes/`); `local/` (`build.yaml`,
+  keeps it out of git): `store.yaml`, `graph/<kind>/<file id>.yaml` node files and
+  `graph/decisions/`, `sources/` section trees + coverage, `gen/`; `local/` (`build.yaml`,
   `control.yaml`, `journal/g<N>.yaml`); `derived/` (derived graph kinds,
   `diagrams/<kind>/<slug>.puml` and `.svg`, `docsgen/`). Its logs are in the log
   directory (`jazyk status` prints it).

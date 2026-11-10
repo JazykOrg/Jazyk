@@ -21,10 +21,10 @@ changed is never read and never compiled ([glob](./project-settings.md#glob)): m
 
 A set directory has three zones:
 
-- Its top level holds committed state only: `status.yaml`, the record directories
-  (`changes/`, `parked/`, `failed/`, `alignment/`, `lookalikes/`), the authored graph
+- Its top level holds committed state only: `store.yaml`, the graph
   (`graph/entities/`, `requirements/`, `criteria/`, `views/`, `diagnostics/`,
-  `redirects/`), the section trees (`docs/`), and the ledger (`gen/`).
+  `redirects/`), its decisions (`graph/decisions/`), the sources (`sources/`), and the
+  ledger (`gen/`).
 - `local/` holds what this checkout's runs leave behind and the next run on the same
   checkout reads: `build.yaml`, `control.yaml`, `journal/`, workers, leases, drafts, and
   the locks.
@@ -43,7 +43,7 @@ The store owns the committed state, `local/build.yaml`, `local/journal/`, and
 ([output layout](./diagrams.md#output-layout)). The rest belongs to the control plane, the
 frontends, and the consumers.
 
-Each document file under `docs/` holds:
+Each source file under `sources/` holds:
 
 - `sections`: map of internal reference → `title`, `kind`, `order`, `parent`, `raw`,
   `hash`.
@@ -55,36 +55,20 @@ changes only that section's entry. A load recomputes each section's `lines` from
 `raw` texts in document order. The content hash of the source file at last reconcile is
 local, in `local/build.yaml`.
 
-The status is what goal derivation reads, and nothing that changes when the graph does
-not. It is `status.yaml` and one directory per kind of record, one file per record:
+What a set directory commits is the current state of the graph and nothing about how it
+got there: the [graph](./model.md) under `graph/`, its decisions under
+`graph/decisions/`, the sources under `sources/`, the ledger under `gen/`, and
+`store.yaml`. Work to do is never stored ([what needs building](#what-needs-building)).
 
-- `status.yaml`:
-  - `version`: the store version, `5`.
-  - `roots`: the documents matching the project [roots](./project-settings.md#roots),
-    stamped by the build after the section trees sync. Commits outside a build (edits,
-    answers, MCP sessions) read the stamp to order documents by
-    [link level](./reconciler.md#link-levels) when they recompute derived data.
-  - `reevaluate`: anchors placed with `reevaluate`, listed as stale until addressed.
-- `changes/<kind>/<subject file id>.yaml`: one open [change record](#change-records):
-  its `kind`, `subject`, `via`, and `detail`. A kind and a subject hold at most one
-  record, so the pair names the file and is the record's identity. Which commit wrote
-  it is read from the journal ([journal](#journal)), never stored, so two branches that
-  dirty the same subject the same way write the same bytes.
-- `parked/<goal file id>.yaml`: one goal left open when a budget ran out, the whole goal
-  record without its `cause`. `failed/<goal file id>.yaml`: `{goal, reason}` for one
-  goal a session marked failed. Both persist whole, `change` payload included, so a
-  parked or failed goal survives a re-derivation that would otherwise drop it. See
-  [parked and failed](./reconciler.md#parked-and-failed).
-- `alignment/<doc file id>.yaml`: one document's pending
-  [alignment proposals](./alignment.md#what-applies-and-what-is-proposed).
-- `lookalikes/<pair file id>.yaml`: one entity pair a session kept apart, `{pair,
-  verdict, score}`, the memory that keeps a judged pair off the board while its score
-  holds ([verdicts are remembered](./goals/dedupe-candidates.md#verdicts-are-remembered)).
-
-Record files are named like node files ([node files](#node-files)). A parked, failed,
-alignment, or lookalike file starts with the `id` it is named by: the goal id, the
-document path, or the pair. Two branches that dirty different subjects, park different
-goals, or judge different pairs write different files.
+- `store.yaml`: `version`, the store version, `5`.
+- `graph/decisions/<kind>/<file id>.yaml`: one judgment made on purpose so no later
+  build asks again: two similar entities kept apart (`lookalikes/`), two requirements
+  judged against each other (`pairs/`), an entity reviewed (`reviews/`), an instance
+  checked against its type (`conformance/`), a requirement judged not structural
+  (`structure/`). Each records a hash of what it judged and lapses when that changes
+  ([the .jazyk folder](./jazyk-folder.md#graphdecisionskindidyaml)).
+- `sources/<doc path>.yaml`: one document's section tree as the graph last reflected
+  it, described below.
 
 `local/build.yaml` holds what one checkout's runs leave behind:
 
@@ -102,8 +86,8 @@ goals, or judge different pairs write different files.
   changed) takes part in [alignment](./alignment.md) as changed. Its unchanged sections
   match their records exactly, so nothing dirties.
 
-Readers see one status: a load reads the status and `local/build.yaml`. Two branches
-that built without changing the graph commit the same status bytes.
+A load reads the committed files and `local/build.yaml`. Two branches that built without
+changing the graph commit the same bytes.
 
 ### Node files
 
@@ -165,9 +149,10 @@ different nodes touch different files and git merges them without a conflict.
 A repository commits the state a checkout needs to resume compiling without a rebuild.
 Everything else is local: rebuilt on demand, or what one checkout's runs leave behind.
 
-- Committed, per set: the top level of the set directory. The status, the authored
-  graph (diagnostics open and resolved, so a judgment stays sticky across checkouts),
-  `docs/`, and `gen/` ([the ledger](../consumers/gen.md#the-ledger)).
+- Committed, per set: the top level of the set directory. `store.yaml`, the graph
+  (diagnostics open and resolved, so a judgment stays sticky across checkouts), its
+  decisions, `sources/`, and `gen/` ([the ledger](../consumers/gen.md#the-ledger)). The
+  current state only: no work queue, no history.
 - Local, per set: `local/` and `derived/`.
   - `local/build.yaml`, `local/control.yaml`, workers, leases, and locks change on
     every run, so two branches would conflict on them at every merge. The workflow
@@ -194,15 +179,15 @@ A checkout carries the committed state and none of the local state. The first co
 loads it as is. Nothing starts from empty.
 
 - A document edited outside Jazyk (on GitHub, in another editor) holds sections that
-  hash differently from its committed record under `docs/`. The next sync marks those
+  hash differently from its committed record under `sources/`. The next sync marks those
   sections dirty, and only they reconcile ([dirty set](./reconciler.md#dirty-set)). A
   document without a local content hash is compared section by section; one whose
   sections all match dirties nothing.
 - The derived kinds and the by-reference mentions are recomputed at load. `derived/` is
   rewritten at the next build's tail.
 - The journal starts empty and the generation at `0`. History from before the checkout
-  is absent: `jazyk ripple` and `jazyk explain` see only local generations, a change
-  record or a parked goal has no known cause, [flip detection](./reconciler.md#flip-detection)
+  is absent: `jazyk ripple` and `jazyk explain` see only local generations, a goal about
+  work done elsewhere has no known cause, [flip detection](./reconciler.md#flip-detection)
   counts moves from the checkout on, and `retract_decree` on a decree made elsewhere
   finds no prior value. It deletes the decreed fact, and the next reconcile of its
   section extracts the quoted fact again.
@@ -223,7 +208,7 @@ mint one id for two different things.
 
 ### Writes and unreadable files
 
-Every file the store writes (a node file, a doc record, a status file, a journal entry,
+Every file the store writes (a node file, a decision, a source, a journal entry,
 `local/build.yaml`) lands through a sibling temporary file renamed into place, so a
 reader or a crash never sees a half-written file. The temporary file is flushed to disk
 (`fsync`) before the rename, and the directories the renames landed in are flushed
@@ -241,44 +226,49 @@ wrote or found there and the file's identity then (length, modification time, in
 A node whose fingerprint and file identity both still match is not serialized again;
 any other writer's replacement of the file changes its identity, so that file is
 compared byte for byte as before. The order holds: changed node files and records
-first, then the deletions of removed nodes, then the status files and the deletions of
-cleared records, then the journal entry, then `local/build.yaml`. A commit always
+first, then the deletions of removed nodes and lapsed decisions, then the journal entry,
+then `local/build.yaml`. A commit always
 changes `local/build.yaml` (its generation moves), so the commit point is always
 written after the files it covers. A reader's generation check stays sound: an
 unchanged file reads the same before and after the commit.
 
 A file that exists but does not parse makes the store read-only. The load reports the
 file and the parse error, reads continue with what did parse, and every writer
-(`apply`, the sweep, record clearing, a status write, a persisting alignment) refuses with
+(`apply`, the sweep, a verdict write, a persisting alignment) refuses with
 `store-unreadable` naming the file until it is repaired or removed. A node file is never
 read as empty because it failed to parse: that would let the next commit overwrite it,
 and the sweep would collect the requirements of a document whose record did not load.
 
 ### Store version
 
-`status.yaml` carries `version: 5`. Version 5 is the layout above: the set's top level
-committed, `local/` and `derived/` beside it, logs outside the project, header comments on
-every file, and no generation, marker, or cause in any committed file.
+`store.yaml` carries `version: 5`. Version 5 is the layout above: the set's top level
+holds the current graph, its decisions, its sources, and the ledger; `local/` and
+`derived/` sit beside it, logs outside the project; every file starts with its header
+comments; no work, no generation, no marker, and no cause is committed.
 
-- A version 4 store (generation markers in `markers.yaml`, record causes in
-  `causes.yaml`, `build.yaml`, `journal/`, and the derived and output directories at the
-  top of the set, logs inside it) loads as it is. The opening of the next build rewrites
-  it whole in the version 5 layout, under the lock, before any goal derives: local files
-  move into `local/`, output into `derived/`, logs into the log directory, markers and causes
-  are dropped (the journal holds them), and `ledger-stale` records are deleted (they are
-  derived, see [change records](#change-records)). A commit before that writes the
-  version 5 layout too. Ids stay: ids are immutable.
+- A version 4 store (`status.yaml` with change records, parked, failed, alignment, and
+  lookalike files beside it, `docs/` for the sources, markers and causes in local
+  files, output and logs inside the set) loads as it is. The opening of the next build
+  rewrites it whole in the version 5 layout, under the lock, before any goal derives:
+  `status.yaml` becomes `store.yaml`; `docs/` becomes `sources/`; lookalike verdicts
+  become `graph/decisions/lookalikes/`; the partners each requirement's records list as
+  judged become `graph/decisions/pairs/`; a failed goal becomes a `goal-failed`
+  diagnostic; the change records, parked goals, and alignment proposals are dropped,
+  since the next derivation computes the same work from the graph; local files move into
+  `local/`, output into `derived/`, logs into the log directory. A commit before that
+  writes the version 5 layout too. Ids stay: ids are immutable.
 - A store whose version is newer than the binary's is never archived and never
   written. It reads as empty and read-only, and every writer refuses with
   `store-newer`, naming both versions and asking for an upgrade of Jazyk. A project
   compiled in two places with different releases loses nothing.
-- A store of an older version than 4, or with no version, is archived whole to
+- A store of an older version than 4, or with no version (no `store.yaml` and no
+  `status.yaml`), is archived whole to
   `.jazyk/local/archive/<set-id>-v<N>/` at the start of a build (an existing archive of
   the same set and version is replaced), and the store starts empty. The next build
   reconciles from the empty graph, the same way a first build does. Outside a build,
   such a store reads as empty and read-only: a writer refuses with `store-version`
   until a build archives it.
-- A `status.yaml` that exists and does not parse is not a version mismatch. The store
+- A `store.yaml` that exists and does not parse is not a version mismatch. The store
   is read-only with `store-unreadable` naming the file, and a build does not archive
   it: a torn or hand-broken file never costs the graph.
 - When the archive itself fails (the archive cannot be replaced, the rename is refused),
@@ -358,11 +348,12 @@ Their semantics:
   `limits` survive it. `delete_view` requires a
   `reason`; on a default view it is refused, because the next commit would derive the
   view again. See [default views](./model/view.md#default-views).
-- `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given)
-  and records the anchor under `status.yaml` `reevaluate` when asked to or when the
-  quote does not locate. `orphan_anchor` records nothing; the anchor's stale state
-  stands. Both are staged only by [`place-anchors`](./goals/place-anchors.md) sessions,
-  which commit them like any changeset and clear their document's `alignment` block.
+- `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given).
+  An anchor whose quote does not locate in its new section stays stale, and its section
+  reconciles. `orphan_anchor` records nothing; the anchor's stale state stands. Both are
+  staged only by [`place-anchors`](./goals/place-anchors.md) sessions, which commit them
+  like any changeset; the document's proposals are computed again at the next
+  derivation and no longer include a placed anchor.
   Exact moves never reach a session: [alignment](./alignment.md) rewrites them in the
   store and journals one `align` entry per build.
 - `edit_doc_prose` rewrites one text run in one document section. It is never staged
@@ -625,86 +616,84 @@ from the facts because it is a function of them.
 Renderings under `derived/diagrams/` are derived too, one step further out: the renderer reads
 the committed views and facts and writes `.puml` and `.svg`, and stores nothing back.
 
-## Change records
+## What needs building
 
-A change record is the typed dirtiness one commit caused: which sections changed, which
-requirements were created, revised, or deleted, which thresholds crossed. Records live in
-`changes/`, one file per kind and subject. They are the input of [goal derivation](./reconciler.md#goal-derivation):
-the graph alone cannot say "revised since last judged", the records can, and a goal reads
-its `change` from exactly one record.
+Work to do is never stored. Every derivation computes it from what is there: the
+documents on disk, the committed graph, its decisions and sources, and the ledger. A
+build that stops anywhere loses nothing, and the next one finds the same work again; a
+merge, a clone, and a hand edit need no bookkeeping, because the next derivation looks
+at the result. The [reconciler](./reconciler.md#goal-derivation) turns each finding into
+a goal.
+
+### Change records
+
+A change record is one finding of that computation: which goal kind it feeds, its
+subject, and the evidence, which becomes the goal's `change`. It lives in memory for one
+derivation and is never written.
 
 ```yaml
-kind: requirement-revised
-subject: req:orders-holds-4k7q
-via: section             # how dirtiness reached the subject
-detail: {fields: [statement, transition]}
+kind: section-dirty
+subject: docs/system.md#/platform
+via: section
+detail:
+  doc: docs/system.md
+  section: /platform
+  addedLines:
+  - The Platform reports its uptime every hour.
+  removedLines: []
 ```
 
-- A record's identity is its `kind` and `subject`. It lives in
-  `changes/<kind>/<subject file id>.yaml`, and the file holds nothing that names the
-  commit that wrote it. The commit is found in the [journal](#journal): every entry lists
-  the records it wrote, each with the index of the mutation behind it (`0` for a
-  store-level cause: the sweep, a recompute, a check). A goal's `cause` is read from the
-  newest local entry that wrote its record; a record no local entry wrote (a fresh
-  checkout, another branch) has no known cause.
-- `subject` is a node id, a full section reference `doc.md#/ref`, or `scope:<scope>`
-  (the scope root's `threshold-crossed` record, see
-  [fan-out](./reconciler.md#fan-out)). `via` is the stored
-  reference or computation that carried the dirtiness (`section`, `entities`, `members`,
-  `parent`, `from`, `ledger`, `sweep`, and the rest of the closed list in
-  [change records](./reconciler.md#change-records)); a goal kind is never a `via`.
-  `detail` is the kind-specific evidence and becomes the goal's `change`.
-- A newer record of the same kind on the same subject supersedes the older one, and the
-  goal's `change` follows it. Resolving a goal clears the records it stood on; a failed or
-  parked goal keeps its record, so the goal derives again next build with its state.
-- `requirement-created` and `requirement-revised` records feed one pair per candidate
-  and clear differently: `detail.judged` lists the partner requirements already judged
-  against the subject. An accepted `mark_goal_done` on `g:rejudge-pair:req:a~req:b`
-  appends `req:b` to `judged` on every created or revised record of `req:a` and
-  `req:a` on every such record of `req:b`, at the commit that carries the claim; the
-  records stay. An `edit` option's answer on a diagnostic whose subjects are two
-  requirements marks that pair judged the same way, on the records its own commit
-  lands too ([answers](./model/diagnostic.md#answers)). A record's candidates are its requirement's neighbors and sticky
-  partners minus `judged` ([pairs](./reconciler.md#pairs)); the sweep clears the record
-  when no candidate remains, and a pair that leaves the board unresolved (waiting under
-  the cap, a side deleted) marks nothing judged. A newer record on the same
-  requirement supersedes the older one with an empty `judged`, so every candidate
-  derives again with the new cause. E.g. `detail: {fields: [statement], judged:
-  [req:payment-9]}` on `req:orders-6` derives no pair with `req:payment-9` until
-  `req:orders-6` changes again.
+- `subject` is a node id, a full section reference `doc.md#/ref`, a pair `a~b`, or
+  `scope:<scope>` (the scope root's `threshold-crossed` finding, see
+  [fan-out](./reconciler.md#fan-out)). `via` names the reference or computation that
+  carried it (`section`, `entities`, `members`, `parent`, `from`, `ledger`, and the rest
+  of the closed list in [change records](./reconciler.md#change-records)).
+- A goal's `cause` is the commit that made the finding true, when this machine's
+  [journal](#journal) holds it: the newest entry whose mutations touched the subject.
+  After a clone or a merge, a finding about work done elsewhere has no known cause, and
+  the goal is the same.
 
-The kinds, who writes them, and the goal each feeds:
+The kinds, what each is computed from, and the goal it feeds:
 
-| kind | written by | feeds |
+| kind | computed from | feeds |
 |---|---|---|
-| `section-dirty` | the `edit` entry of a build (a section added or changed) | `reconcile-section` |
-| `section-removed` | the `edit` entry of a build | the sweep, in the same build; the record clears when the sweep has run |
-| `anchor-stale` | the `align` entry (a quote that stops locating) or a `reevaluate` placement | `reconcile-section` |
-| `alignment-pending` | the `align` entry (a proposal a document owes a decision on) | `place-anchors` |
-| `requirement-created`, `requirement-revised` | a commit that creates or revises a requirement (a statement that changes only in case or punctuation is refreshed in place and writes no `requirement-revised`, so its judged pairs stand; an answer's edit lands the record with its diagnostic's pair already in `detail.judged`) | `rejudge-pair` per candidate not in `detail.judged`, at most `pairs-per-requirement` open per side ([pairs](./reconciler.md#pairs); `bind` reaches the requirement through the ledger comparison's `ledger-stale` record) |
-| `criterion-created`, `criterion-revised` | a commit that creates or revises a criterion, or the sweep marking a derived criterion revised because its requirement's statement changed (`via: requirement`) | nothing on the board; the ledger comparison reads them and marks the test keyed to the criterion stale ([the ledger](../consumers/gen.md#the-ledger)) |
-| `criterion-deleted` | a commit or the sweep that deletes a criterion | nothing (trail; the ledger prunes the row) |
-| `requirement-deleted`, `entity-deleted` | a commit that deletes the node (a session or the sweep); the subject is the dead node | nothing (trail; the ledger prunes on `requirement-deleted`). The `node-deleted` and `view-member-gone` records the same commit writes carry the goals |
-| `entity-changed` | a commit that changes an entity's fact set, except a `dual-write` commit and an accepting `ratify` commit: a human edit is the review, and the mention the landed sentence adds is the quote the person confirmed ([edit paths](./compilation.md#edit-paths)); a retract writes it as usual | `review-entity` |
-| `node-deleted` | a delete or the sweep, one record per live node that still referenced the dead one (`via` names the edge) | `retrace` (a view, an instance, a derived fact); `rejudge-pair` (a surviving diagnostic subject) |
-| `instance-changed` | a commit that changes an instance, its type, or the type's attributes | `conform-instance` |
-| `merged` | the [merge driver](./jazyk-folder.md#merging-through-git), when two branches changed one field of a node differently and it kept the current branch's value (`detail.fields` names them) | `reconcile-section` on the node's source section, `review-entity` on an entity |
-| `prompt-unanswered` | a commit that files a prompt on a diagnostic | `answer` |
-| `provenance-pending` | a commit that lands a derived or decreed fact | `ratify` |
-| `threshold-crossed` | the limit counts at commit | `split-view`, `abstract-entity` |
-| `reparent-flip` | a commit that moves a child back between the same two parents it moved between before (`via: parent`, `detail.between` naming the two); the sweep's dissolve counts as a move | nothing directly: [flip detection](./reconciler.md#flip-detection) at the build's tail reads it beside the journal's replay and parks the goal behind the second move |
-| `view-member-gone` | a delete that removes a curated view's member (`via` names the list: `members`, `collapse`, `excluded`) | `retrace` |
-| `edges-missing` | a commit that lands a multi-entity requirement without `edges` | `declare-edges` |
-| `lookalike` | the name index at commit (a cross-document score over the threshold) | `dedupe-candidates` |
-| `query-match` | a recompute in which a new node matches a curated view's query | `curate-view` |
-| `flow-unplaced` | the flow placement check at the end of the build | `curate-view` |
+| `section-dirty` | a section on disk whose hash differs from its `sources/` entry, or that `sources/` lacks | `reconcile-section` |
+| `section-removed` | a section in `sources/` that is gone from disk | the sweep |
+| `anchor-stale` | a fact whose quote no longer locates in its section on disk | `reconcile-section` |
+| `alignment-pending` | [alignment](./alignment.md) of `sources/` against disk proposing a move it cannot apply alone | `place-anchors` |
+| `requirement-revised` | a candidate pair of requirements ([pairs](./reconciler.md#pairs)) with no `pairs/` decision whose statement hashes match both statements now | `rejudge-pair`, at most `pairs-per-requirement` open per requirement |
+| `entity-changed` | an entity whose fact hash differs from its `reviews/` decision, or that has none | `review-entity` |
+| `instance-changed` | an instance whose own and type's fact hash differ from its `conformance/` decision | `conform-instance` |
+| `edges-missing` | a requirement naming several entities with no `edges` and no `structure/` decision on its statement | `declare-edges` |
+| `node-deleted`, `view-member-gone` | a view member, an exclusion, a collapse entry, an instance's type, a derived fact's `from`, or a diagnostic subject that names no live node | `retrace`, `rejudge-pair` for a surviving diagnostic subject |
+| `prompt-unanswered` | a diagnostic with a prompt and no answer | `answer` |
+| `provenance-pending` | a derived or decreed fact | `ratify` |
+| `threshold-crossed` | a count over its node's limit ([limits](#limits)) | `split-view`, `abstract-entity` |
+| `lookalike` | an entity pair over the score threshold with no `lookalikes/` decision at or above that score | `dedupe-candidates` |
+| `query-match`, `flow-unplaced` | a new node a curated view's query matches; a flow no view places | `curate-view` |
+| `ledger-stale` | the [ledger](../consumers/gen.md#the-ledger) comparison: a requirement unbound, changed since it was bound, or its artifact gone; an entity whose facts differ from the ledger; a row whose derived status says action | `bind`, `generate`, `verify` |
+| `reparent-flip` | the build's own journal replay of a child moved back between two parents | nothing directly: [flip detection](./reconciler.md#flip-detection) parks the goal |
 
-`bind`, `generate`, and `verify` derive from ledger state beside the records, not from a
-stored record: the ledger comparison runs as the board derives (a requirement unbound,
-changed since it was bound, or its artifact gone) and its finding is the goal's
-`change`. `generate` derives when an entity's facts differ from the ledger, `verify` when
-a row's derived status says action ([goal derivation](./reconciler.md#goal-derivation)).
-Nothing about it is written, so it never travels through git.
+What a session judged becomes a decision in the graph, so the finding stops: a
+`rejudge-pair` resolved writes `pairs/<a~b>` with both statement hashes, a
+`review-entity` writes `reviews/<entity>` with the entity's fact hash, a
+`conform-instance` writes `conformance/<instance>`, a `declare-edges` judged not
+structural writes `structure/<requirement>`, a `dedupe-candidates` kept apart writes
+`lookalikes/<a~b>` with its score. A human edit through a dual write or an accepted
+ratification writes the entity's review the same way: the person reviewed it. A goal a
+session marks failed becomes a `goal-failed` [diagnostic](./model/diagnostic.md) on its
+target, and the reconciler derives no goal on a target with an open `goal-failed`
+diagnostic until a person answers or resolves it.
+
+### A build's progress
+
+What a build is doing (its batch, the goals it parked when a budget ran out, its spend,
+its reopen counts) is not graph state. A local build keeps it in memory, and in
+`local/run.yaml` only while it runs, so an interrupted `jazyk compile` resumes; a build
+that ends deletes the file. A hosted build keeps the same in the host's database, so a
+build paused for a deploy resumes where it stopped, and the host purges it when the
+build ends ([durable execution](./hosted-runtime.md#durable-execution)). Losing it costs
+nothing but the order: the next derivation finds the same work.
 
 ## Journal
 
@@ -721,8 +710,6 @@ batch: [g:reconcile-section:docs/orders.md#/orders/holds, g:retrace:view:usecase
 mutations:
   - {op: update_requirement, id: req:orders-6, statement: "...", transition: {...}}
   - {op: update_view, id: view:usecase/holds, remove_members: [req:orders-7]}
-records:
-  - {kind: requirement-revised, subject: req:orders-6, mutation: 1}
 resolved_goals:
   - {goal: g:reconcile-section:docs/orders.md#/orders/holds, justification: "Hold expiry moved to 30 days; req:orders-6 revised, section covered."}
   - {goal: g:retrace:view:usecase/holds, justification: "Dropped the deleted member; the flow reads through."}
@@ -733,10 +720,8 @@ tokens: 9800
 cachedTokens: 6100
 ```
 
-`records` lists the change records the commit wrote, each with the index of the mutation
-behind it (`0` for a store-level cause). It is how a record or a parked goal finds its
-cause, and `mutations` is how a node finds the commits that created and changed it:
-both lookups read entries newest first and stop at the first hit.
+`mutations` is how a node finds the commits that created and changed it, and how a goal
+finds its cause: both lookups read entries newest first and stop at the first hit.
 
 The entry kinds:
 
@@ -857,13 +842,13 @@ commit swept. Nothing waits for the next build: the graph is honest between buil
   or decreed nodes: their fate is judgment.
 - Deleting a node settles the open judged diagnostics naming it as a subject: one whose
   subjects are all gone is resolved by the store, journaled; one with surviving subjects
-  writes a record on them, so a session re-judges the finding. This runs on every
+  loses the `pairs/` decision it stood on, so the next derivation re-judges the finding. This runs on every
   deleting commit, session and sweep alike.
-- Two marker diagnostics settle at every sweep, the moment their condition clears, so a
-  session never adjudicates them. An `incomplete-build` diagnostic resolves once a later
-  build has resumed its goal (the goal left `parked/`). An
-  `uncovered-section` diagnostic resolves once its section is marked `covered` or
-  `non-normative`, or the section is gone. The [checks](./compilation.md#checks) file a
+- A marker diagnostic settles at every sweep, the moment its condition clears, so a
+  session never adjudicates it. An `uncovered-section` diagnostic resolves once its
+  section is marked `covered` or `non-normative`, or the section is gone. Unfinished
+  work files no diagnostic: it is the open work the next derivation computes, and the
+  verdict counts it ([convergence](./compilation.md#convergence)). The [checks](./compilation.md#checks) file a
   marker whose condition holds again and update a standing one in place, so a target
   carries at most one open marker, the newest build's. The settle is journaled as
   `settle-diagnostics`.
@@ -990,14 +975,13 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
   first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
   commits it has not seen. The caller reloads and restages.
-- A status write outside a changeset (a build's opening, the goals a derivation lapsed,
-  parked and failed goals, the verdict) is a writer too: it takes the lock and is
-  refused the same way (`store-unreadable`, `store-version`, `store-moved`). A refused
-  status write is reported on stderr with what it wrote and why. A refused verdict write
-  (the build's last status write, or a stopped build's) also lands in the build report
-  as `unsaved`: the verdict line names it and the build does not count as converged,
-  because `build.yaml` still holds the previous verdict and the goals the build parked
-  are not on disk ([convergence](./compilation.md#convergence)).
+- A write outside a changeset (a build's opening, the verdict, a build's run file) is a
+  writer too: it takes the lock and is refused the same way (`store-unreadable`,
+  `store-version`, `store-moved`). A refused write is reported on stderr with what it
+  wrote and why. A refused verdict write also lands in the build report as `unsaved`:
+  the verdict line names it and the build does not count as converged, because
+  `local/build.yaml` still holds the previous verdict
+  ([convergence](./compilation.md#convergence)).
 - A writer puts down the commit marker `.committing` before its first file and removes
   it after `build.yaml`. A marker present while no writer holds `.lock` was left by a
   writer that stopped mid-commit; the next commit replaces it.

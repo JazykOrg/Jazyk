@@ -4,7 +4,10 @@ The goal writes the [criteria](../model/criterion.md) of one entity's requiremen
 observable evidence each requirement is met, which [bind](../../consumers/bind.md) turns
 into tests. Extraction already recorded the criteria the documents state (test cases,
 examples, thresholds); this goal reads the requirements that still have none, or whose
-statement changed since their criteria were written, and completes them.
+statement changed since their criteria were written, and completes them. It first links existing prose that states the observable
+condition and outcome, including the requirement's own quote. Rephrasing that
+observation as a test does not require a new sentence in the documents. Only
+criteria with no supporting passage enter as derived facts with proposals.
 
 ## Created when
 
@@ -97,6 +100,6 @@ The `derive-criteria` toolset ([toolsets](../tools.md#toolsets)):
   entities?, section?, quote?, provenance?})`: a stated criterion carries `section` and
   `quote`; a derived one carries `provenance: {derived: {from: [req id], reasoning}}` and
   the proposal follows at commit.
-- `update_criterion({id, statement?, kind?, measure?, given?, when?, then?})`.
+- `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?, section?, quote?})`.
 - `delete_criterion({id, reason})`.
 - `report_diagnostic` (`invented-choice`, `ambiguity`).

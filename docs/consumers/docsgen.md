@@ -295,8 +295,8 @@ it goes. Docsgen owns the composition, run in the same commit, by these rules:
   advice to split, and the proposal follows the section wherever a split moves it.
 - The options. One `edit` option that inserts the sentence at the end of the target
   section (`{doc, section, old_text, new_text}`, `old_text` empty for an insertion), and
-  one `answer` option, `retract`. Freeform is accepted: a reply that rewords the sentence
-  is the accepted sentence.
+  one `answer` option, `retract`. Freeform replies instruct an answer session. They
+  are never inserted as document text.
 
 The proposal renders on the entity page under `## Proposals`: the sentence, the target as
 `doc.md#/ref`, the upstream nodes with their reasoning (or the decree's author and note),

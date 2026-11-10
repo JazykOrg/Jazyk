@@ -291,7 +291,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_criterion",
-            description: "Record one acceptance criterion of a requirement: the observable evidence it is met, one condition and its outcome with concrete values, written from outside the system (never a function, a table, or a file). requirement is the owning requirement id. kind is positive, negative, boundary, or quality (with measure). Exactly one of section plus quote (a stated criterion: a test case's lead-in, an example sentence, a threshold bullet, copied verbatim from its own section) or provenance.derived {from, reasoning} (a criterion the documents do not state; from names the requirement). Refused when the statement restates the requirement (criterion-restates). Safe to retry: the same statement on the same requirement updates in place.",
+            description: "Record one acceptance criterion of a requirement: the observable evidence it is met, one condition and its outcome with concrete values, written from outside the system (never a function, a table, or a file). requirement is the owning requirement id. kind is positive, negative, boundary, or quality (with measure). Exactly one of section plus quote (a criterion supported by existing prose, including the requirement's own description; quote the original verbatim even when the criterion uses observer wording) or provenance.derived {from, reasoning} (a criterion the documents do not state; from names the requirement). Refused when the statement restates the requirement (criterion-restates). Safe to retry: the same statement on the same requirement updates in place.",
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -311,10 +311,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_criterion",
-            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; a field given replaces the stored one. The id and the owning requirement stay. In chat without an open compiler batch, commits immediately; no begin_goals is needed. Within a batch, remains staged until done.",
+            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; pass section and quote together to link a pending derived criterion to existing supporting prose without editing the document, clearing its ratification proposal; a field given replaces the stored one. The id and the owning requirement stay. In chat without an open compiler batch, commits immediately; no begin_goals is needed. Within a batch, remains staged until done.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
+                    "section": {"type": "string"},
+                    "quote": {"type": "string"},
                     "statement": {"type": "string"},
                     "kind": {"type": "string", "enum": crate::model::CRITERION_KINDS},
                     "measure": {"type": "string"},
@@ -7176,11 +7178,13 @@ impl ToolSession {
                     "when",
                     "then",
                     "entities",
+                    "section",
+                    "quote",
                 ]
                 .iter()
                 .any(|field| args.get(*field).is_some_and(|v| !v.is_null()))
                 {
-                    return Err(ToolError::new("bad-args", "Pass id and at least one criterion field to change: statement, kind, measure, given, when, then, entities.".into()));
+                    return Err(ToolError::new("bad-args", "Pass id and at least one criterion field to change: statement, kind, measure, given, when, then, entities, or section plus quote.".into()));
                 }
 
                 if !self.criterion_known(&id) {
@@ -7214,6 +7218,40 @@ impl ToolSession {
                     }
                     None => None,
                 };
+                let source = if Self::present(&args["section"]) || Self::present(&args["quote"]) {
+                    let criterion = self
+                        .staged
+                        .iter()
+                        .rev()
+                        .find_map(|op| match op {
+                            Op::CreateCriterion { id: cid, criterion } if cid == &id => {
+                                Some(criterion)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| self.snapshot.graph.criteria.get(&id));
+                    if criterion.is_some_and(|c| c.source.is_some())
+                        || self.staged.iter().any(
+                            |op| matches!(op, Op::RatifyProvenance { id: cid, .. } if cid == &id),
+                        )
+                    {
+                        return Err(ToolError::new("already-quoted", "This criterion already has a source quote; use upsert_criterion to re-source it.".into()));
+                    }
+                    if self.staged.len() + 2 > self.mutation_limit {
+                        return Err(ToolError::new("mutation-budget", "Linking a criterion needs room for its update and provenance change; finish this batch first.".into()));
+                    }
+                    let section = Self::str_arg(args, "section")?;
+                    let quote = Self::str_arg(args, "quote")?;
+                    let (doc, section) = self.resolve_section(&section)?;
+                    let quote = self.check_quote(&doc, &section, &quote)?;
+                    Some(SourceRef {
+                        doc,
+                        section,
+                        quote: quote.trim().into(),
+                    })
+                } else {
+                    None
+                };
                 self.stage(Op::UpdateCriterion {
                     id: id.clone(),
                     statement: Self::opt_str(args, "statement"),
@@ -7224,6 +7262,12 @@ impl ToolSession {
                     then: Self::opt_str(args, "then"),
                     entities,
                 })?;
+                if let Some(source) = source {
+                    self.stage(Op::RatifyProvenance {
+                        id: id.clone(),
+                        source,
+                    })?;
+                }
                 Ok(json!({"id": id, "updated": true}))
             }
             "delete_criterion" => {

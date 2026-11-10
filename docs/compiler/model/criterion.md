@@ -30,7 +30,11 @@ An Order paid on day 5 is never cancelled for non-payment.
 - `entities`: the entity ids the criterion is about, when they differ from the
   requirement's. Absent means the requirement's.
 - `source`: `{doc, section, quote}` for a criterion the documents state: a test case, an
-  example with values, a bullet under the rule. The quote is verbatim, located
+  example with values, a bullet under the rule, or descriptive prose that already
+  states the criterion's observable condition and outcome. The criterion may phrase
+  that observation as a test while its quote keeps the original wording. Reusing the
+  owning requirement's quote is valid when it supports the whole criterion without
+  adding an obligation or choosing an unstated value. The quote is verbatim, located
   whitespace-insensitively, and may sit in another section or document than the
   requirement's.
 - `provenance`: `{derived: {from, reasoning}}` for a criterion a session wrote because

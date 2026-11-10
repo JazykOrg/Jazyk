@@ -106,7 +106,7 @@ and its target and renders the proposal on the subject's page
   rewrites the former quote (`old_text` is the former quote), so accepted prose never
   stands beside the sentence it overrules.
 - The options: the `edit` (accept), and an `answer` option labeled retract. Freeform
-  is accepted: a reply that rewrites the sentence is the accepted sentence.
+  replies instruct an answer session. They are never accepted as literal document text.
 
 One goal per fact. Related derived criteria share a proposal as specified in
 [ratification proposals](../model/diagnostic.md#ratification-proposals). Docsgen groups the pending proposals of one
@@ -136,6 +136,18 @@ A requirement whose statement the human reworded opens `rejudge-pair` and `bind`
 it. No `review-entity` follows: the accepting commit writes no `entity-changed`
 record, because the person just read the sentence and the mention it adds is the quote
 they confirmed ([edit paths](../compilation.md#edit-paths)).
+
+### Give instructions
+
+A freeform reply records `answer.status: handling` and follows the ordinary
+[answer-session path](./answer.md#reply). Accept and retract remain deterministic.
+The reply is an instruction to the agent, not replacement prose. "This is already
+stated, link the existing text" asks the agent to find the supporting passage and
+link the pending criterion with `update_criterion`, `section`, and `quote`.
+No document edit is needed for that link. If the prose does not support the whole
+criterion, the agent explains the gap and refines the question rather than
+inserting the instruction or silently accepting the proposal. Handling a reply
+has the same approval and cost rules as other answer sessions.
 
 ### Retract
 

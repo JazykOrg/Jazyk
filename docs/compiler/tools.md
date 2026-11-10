@@ -273,15 +273,20 @@ There is no write tool for relationships, state machines, or default views. They
   → `{id, created}`: the observable evidence one requirement is met
   ([criterion](./model/criterion.md)). Keys on `requirement` plus the
   punctuation-insensitive `statement`. Exactly one of `section` plus `quote` (a stated
-  criterion: a test case, an example, a threshold bullet, quoted verbatim from its own
-  section) or `provenance: {derived: {from: [the requirement id], reasoning}}` (a
+  criterion: a test case, an example, a threshold bullet, or descriptive prose
+  supporting the whole observation, quoted verbatim from its own section) or
+  `provenance: {derived: {from: [the requirement id], reasoning}}` (a
   criterion the documents do not state, ratified toward prose). `kind` is `positive`,
   `negative`, `boundary`, or `quality` with `measure`. Refused: a `requirement` that
   does not resolve (`unknown-requirement`), a statement equal after normalization to
   the requirement's or to any other requirement's (`criterion-restates`, naming the
   requirement it restates), a quote that does not locate.
-- `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?})`:
-  a wording or kind repair; the id and the owner stay.
+- `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?, section?, quote?})`:
+  a wording or kind repair; the id and the owner stay. Pass `section` and `quote`
+  together to link a pending derived criterion to existing supporting prose without
+  editing that prose. The quote must locate verbatim. This clears derived provenance
+  and resolves its ratification proposal (or removes that member from a shared
+  proposal). Already quoted criteria must be re-sourced through `upsert_criterion`.
 - `delete_criterion({id, reason})`: a criterion the documents no longer support.
 
 ### Grouping tools

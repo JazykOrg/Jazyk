@@ -48,7 +48,6 @@ pub fn answer(
     let ratify = d.rule == RATIFICATION;
     let subjects = d.subjects.clone();
     let prompt = d.prompt.clone();
-    let mut reworded = false;
     let (choice, text, edit, retract) = match reply {
         Reply::Choice(i) => {
             let Some(p) = &prompt else {
@@ -69,28 +68,12 @@ pub fn answer(
             (Some(i), text, opt.edit.clone(), retract)
         }
         Reply::Text(t) => {
-            if ratify && subjects.len() > 1 {
-                return Err("A combined proposal cannot be reworded with one answer. Accept the preview or revise its individual criteria first.".into());
-            }
             let t = t.trim().to_string();
             if t.is_empty() {
                 return Err("an empty reply answers nothing".to_string());
             }
-            // On a ratification proposal a freeform reply that rewords the sentence
-            // is the accepted sentence: it lands where the proposal's edit would.
-            let edit = if ratify {
-                prompt
-                    .as_ref()
-                    .and_then(|p| p.options.iter().find_map(|o| o.edit.clone()))
-                    .map(|mut e| {
-                        reworded = true;
-                        e.new_text = t.clone();
-                        e
-                    })
-            } else {
-                None
-            };
-            (None, t, edit, false)
+            // Freeform is an instruction for answer handling, never document prose.
+            (None, t, None, false)
         }
     };
     let label = choice
@@ -223,7 +206,7 @@ pub fn answer(
                     }
                     fact_source.quote = c.statement.clone();
                 }
-                ops.extend(ratify_ops(&s, &rid, sub, &fact_source, reworded));
+                ops.extend(ratify_ops(&s, &rid, sub, &fact_source));
             }
         }
         ops.push(Op::AnswerDiagnostic {
@@ -523,11 +506,10 @@ fn named_attribute(s: &Store, did: &str) -> Option<String> {
 }
 
 // The mutations that ratify one subject onto the landed sentence: the fact's
-// provenance flips to the quote, and a reworded sentence becomes a requirement's
-// statement. An attribute proposal (its entity quoted through mentions) flips the
+// provenance flips to the quote. An attribute proposal (its entity quoted through mentions) flips the
 // attribute's own provenance and resolves the proposal itself, since the store's
 // ratification touches node-level provenance only.
-fn ratify_ops(s: &Store, did: &str, subject: &str, source: &SourceRef, reworded: bool) -> Vec<Op> {
+fn ratify_ops(s: &Store, did: &str, subject: &str, source: &SourceRef) -> Vec<Op> {
     let sid = s.resolve_id(subject).to_string();
     let mut ops = Vec::new();
     if let Some(e) = s.graph.entities.get(&sid) {
@@ -559,30 +541,6 @@ fn ratify_ops(s: &Store, did: &str, subject: &str, source: &SourceRef, reworded:
             }
             return ops;
         }
-    }
-    if reworded && s.graph.requirements.contains_key(&sid) {
-        ops.push(Op::UpdateRequirement {
-            id: sid.clone(),
-            statement: Some(source.quote.clone()),
-            entities: None,
-            edges: None,
-            transition: None,
-            facets: None,
-            source: None,
-            provenance: None,
-        });
-    }
-    if reworded && s.graph.criteria.contains_key(&sid) {
-        ops.push(Op::UpdateCriterion {
-            id: sid.clone(),
-            statement: Some(source.quote.clone()),
-            kind: None,
-            measure: None,
-            given: None,
-            when: None,
-            then: None,
-            entities: None,
-        });
     }
     ops.push(Op::RatifyProvenance {
         id: sid,
@@ -684,6 +642,14 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
                     ],
                 )),
             }
+        } else if let Some(c) = store.graph.criteria.get(&sid) {
+            s.push_str(&line(
+                "subject-criterion",
+                &[
+                    ("id", &sid),
+                    ("criterion", &serde_json::to_string(c).unwrap()),
+                ],
+            ));
         } else if let Some(e) = store.graph.entities.get(&sid) {
             s.push_str(&line(
                 "subject-entity",
@@ -991,15 +957,7 @@ mod tests {
             .unwrap()
             .new_text
             .clone();
-        assert!(!s.graph.diagnostics[&did].prompt.as_ref().unwrap().freeform);
-        assert!(answer(
-            &project,
-            &out,
-            &did,
-            Reply::Text("one replacement".into()),
-            None
-        )
-        .is_err());
+        assert!(s.graph.diagnostics[&did].prompt.as_ref().unwrap().freeform);
         answer(&project, &out, &did, Reply::Choice(0), None).unwrap();
         let s = Store::load(&out);
         assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
@@ -1179,20 +1137,50 @@ mod tests {
         crate::vfs::remove_dir_all(&project.root).ok();
     }
 
-    // A freeform reply on a proposal is the accepted sentence, and becomes the
-    // requirement's statement too.
+    // A custom reply instructs the follow-up agent and never becomes prose.
     #[test]
-    fn ratification_freeform_reply_is_the_accepted_sentence() {
-        let (project, out, did) = seed_decree("ratify-reword");
-        let reworded = "Every Order is paid within 21 days.";
-        answer(&project, &out, &did, Reply::Text(reworded.into()), None).unwrap();
-        let text = crate::vfs::read_to_string(project.root.join("docs/pay.md")).unwrap();
-        assert!(text.contains(reworded), "{}", text);
+    fn ratification_freeform_reply_queues_instructions_without_editing() {
+        let (project, out, did) = seed_decree("ratify-instructions");
+        let path = project.root.join("docs/pay.md");
+        let before = crate::vfs::read_to_string(&path).unwrap();
+        let instruction =
+            "This is already stated, instead just link the existing text to this criterion";
+        let v = answer(&project, &out, &did, Reply::Text(instruction.into()), None).unwrap();
+        assert_eq!(v["status"], "handling");
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), before);
         let s = Store::load(&out);
-        let r = &s.graph.requirements["req:pay-1"];
-        assert_eq!(r.statement, reworded);
-        assert_eq!(r.source.as_ref().unwrap().quote, reworded);
-        assert_eq!(s.graph.diagnostics[&did].lifecycle, "resolved");
+        assert!(s.graph.requirements["req:pay-1"].source.is_none());
+        let d = &s.graph.diagnostics[&did];
+        assert_eq!(d.lifecycle, "open");
+        assert_eq!(d.answer.as_ref().unwrap().status, "handling");
+        assert_eq!(d.answer.as_ref().unwrap().text, instruction);
+        assert!(handling_prompt(&out, &did).unwrap().contains(instruction));
+        crate::vfs::remove_dir_all(&project.root).ok();
+    }
+
+    #[test]
+    fn combined_ratification_freeform_queues_instructions_for_all_criteria() {
+        let (project, out, did, ids) = seed_combined("combined-instructions");
+        let path = project.root.join("docs/pay.md");
+        let before = crate::vfs::read_to_string(&path).unwrap();
+        let v = answer(
+            &project,
+            &out,
+            &did,
+            Reply::Text("Link existing prose for each criterion".into()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(v["status"], "handling");
+        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), before);
+        let prompt = handling_prompt(&out, &did).unwrap();
+        let s = Store::load(&out);
+        for id in ids {
+            let c = &s.graph.criteria[&id];
+            assert!(prompt.contains(&c.statement));
+            assert!(prompt.contains(&c.requirement));
+            assert!(c.source.is_none());
+        }
         crate::vfs::remove_dir_all(&project.root).ok();
     }
 

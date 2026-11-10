@@ -386,6 +386,7 @@ mod tests {
                     &["id", "statement", "doc", "section", "quote"],
                 ),
                 ("subject-derived", &["id", "statement", "provenance"]),
+                ("subject-criterion", &["id", "criterion"]),
                 ("subject-entity", &["id", "name", "definition"]),
                 ("subject", &["id"]),
                 ("act", &["id"]),

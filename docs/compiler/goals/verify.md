@@ -12,8 +12,9 @@ judgment no command can render. See
 
 ## Created when
 
-The goal derives from a `ledger-stale` [change record](../graph.md#change-records)
-whose `detail.goal` is `verify`, written whenever a row's derived status says action:
+The goal derives from a `ledger-stale` change, derived by the ledger comparison at
+derivation and never stored ([change records](../graph.md#change-records)),
+whose `detail.goal` is `verify`, present whenever a row's derived status says action:
 
 - `never-run`: the row has a current test and files and no verdict (`unverified`).
 - `test-changed`: the test artifact bytes differ from `hashes.test` (`stale-test`)

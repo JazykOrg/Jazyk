@@ -259,17 +259,17 @@ Three session kinds, all the same protocol:
 ### Session store
 
 A conversation about a project is part of that project's working state, so it is kept
-with it: one JSON-lines file per chat session under `<out>/sessions/`, a metadata line
+with it: one JSON-lines file per chat session under `<set-id>/sessions/` in the project's
+[log directory](../compiler/jazyk-folder.md#logs), a metadata line
 first (id, cwd, agent, start) and then one record per thing said. Both frontends write
 it, so a conversation started in an IDE and one started in the GUI pane are the same
 kind of object in the same place.
 
 Most agents keep sessions globally under their own home directory, keyed by the
 working directory (`~/.claude/projects/<munged cwd>/`, `~/.codex/sessions/`, a SQLite
-table with a directory column). Jazyk keeps them per project instead, because every
-other thing jazyk remembers already lives in the out directory: the graph, the
-journal, the traces. A conversation is about those documents. Deleting the project's
-out directory forgets the conversations with it, which is the honest behavior.
+table with a directory column). Jazyk keeps them per project too, in the project's own
+log directory beside its traces and feedback, never in the repository: a conversation
+is private to whoever had it, and it would conflict at every merge.
 
 What the store serves:
 

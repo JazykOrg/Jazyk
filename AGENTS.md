@@ -70,30 +70,36 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   gates; the changeset commits atomically, or the session gets up to four attempts and then parks.
 - The store: one YAML file per node under `.jazyk/<set>/graph/<kind>/`, named by a
   reversible file id (`ent:order` → `ent~order.yaml`; past 180 bytes a prefix and a
-  hash), each file starting with its `id` and holding only the node's own facts
-  (generation markers and requirement-derived entity mentions stay out), ids minted
+  hash), each file starting with two fixed comment lines (what it is, its schema) and
+  then its `id`, holding only the node's own facts (no generation markers, no record
+  causes, no requirement-derived entity mentions; the local journal holds when and
+  why), ids minted
   from natural keys with no counter (`req:<stem>-<hash>`, `crit:<stem>-<hash>`,
   `diag:<rule>-<hash>`; the slug part transliterated, collapsed to single `-`, cut to
   32 characters), natural-key upserts, changesets committed atomically
   behind `.lock`, one journal entry per generation with `opened_goals` and
   `resolved_goals` (each with its justification; a human save that dirties sections
   journals as an `edit` entry, so every ripple roots in a generation), the
-  deterministic GC sweep at commit, `version: 4` in `status.yaml` (a version 3 store
-  loads as it is and its next save writes the version 4 layout, ids kept; any other
-  mismatch archives the out directory to `<out>.bak` and the next build reconciles
-  from empty; no other migration code).
-- Committed and local state: a repository commits each set's status (`status.yaml`
-  plus one file per record under `changes/`, `parked/`, `failed/`, `alignment/`,
-  `lookalikes/`; only what goal derivation reads), the non-derived node files
-  (diagnostics included), `docs/` section trees (no line numbers, no file hash), and
-  `gen/` (the ledger, one file per row), so any commit of any branch compiles
-  incrementally. Everything else is local: derived default views, relationships and
-  state machines (recomputed at load when missing), diagrams, docsgen, the journal,
-  logs, the control plane, `markers.yaml` (generation markers), and `build.yaml` (the
-  generation, the last verdict, costs, spend, document content hashes). The generation
-  is a local counter raised at load to the highest generation the status names, so parallel branches never conflict on
-  it. The engine generates `.jazyk/.gitignore` from this split
-  (`docs/compiler/graph.md#committed-and-local-state`).
+  deterministic GC sweep at commit, `version: 5` in `status.yaml` (a version 4 store
+  loads as it is and the next build opening rewrites it in the version 5 layout, ids
+  kept; a newer store is never archived, it is read-only with `store-newer`; an older
+  one is archived under `.jazyk/local/archive/` and the next build reconciles from
+  empty; no other migration code).
+- Committed and local state (`docs/compiler/jazyk-folder.md` lists every file): a set
+  directory's top level is committed: the status (`status.yaml` plus one file per
+  record under `changes/`, `parked/`, `failed/`, `alignment/`, `lookalikes/`; only what
+  goal derivation reads; `ledger-stale` is derived, never stored), the authored node
+  files (diagnostics included), `docs/` section trees (no line numbers, no file hash),
+  and `gen/` (the ledger, one file per row), so any commit of any branch compiles
+  incrementally. `local/` holds this checkout's machine state (`build.yaml`: the
+  generation, verdict, costs, spend, document hashes; `control.yaml`; `journal/`;
+  workers, leases, locks). `derived/` holds what is rebuilt (derived graph kinds,
+  diagrams, docsgen, last-build copies, previews). Logs (transcripts, chats, feedback,
+  replay snapshots with `--record`) live in a log directory outside the project, or in
+  the host's record store when hosted. The generation is a local counter and no
+  committed file names one, so parallel branches never conflict on it. The engine
+  generates `.jazyk/.gitignore`, `.jazyk/.gitattributes` (the `jazyk merge-file`
+  driver), and `.jazyk/README.md` from this split.
 - Derived data, recomputed on every commit, no write tool: relationships from
   requirement `edges` (one node per pair, contributions grouped by direction and type,
   a typeless edge counts as `dependency`), state machines from `transition` facets (one
@@ -137,7 +143,9 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
 - `docs/main.md`: front door. `docs/compiler/`: compiler.md (division of labor,
   components, build lifecycle, outputs), parsing.md, alignment.md, model.md + `model/`
   (entity, requirement, criterion, relationship, view, state-machine, section,
-  diagnostic), graph.md (storage layout, mutations, changesets, gates, derived data, change records,
+  diagnostic), jazyk-folder.md (every file in `.jazyk/`: purpose, format, example,
+  committed or local, merging through git), graph.md (storage layout, mutations,
+  changesets, gates, derived data, change records,
   journal, GC, the limits registry, concurrency), reconciler.md (dirty set, goal
   derivation, readiness, batching, bubbling, escalation, parked and failed, flip
   detection), compilation.md (a build, compile and GC, edit paths, checks, convergence,
@@ -193,13 +201,12 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   excluded from the docs glob).
 - `.jazyk/jazyk.toml`: the live project file with named document sets.
   The dogfood graph lands in `.jazyk/ds_main/` (this repository's root `.gitignore`
-  keeps it out of git): `graph/<kind>/<file id>.yaml` node files (entities,
-  requirements, criteria, views, diagnostics, redirects; derived default-views,
-  relationships and state-machines rewritten every commit), `docs/` section trees + coverage,
-  `journal/g<N>.yaml`, `diagrams/<kind>/<slug>.puml` and `.svg`, `docsgen/`, `gen/`,
-  `trace/`, `sessions/`, the status (`status.yaml`, `changes/`, `parked/`, `failed/`,
-  `alignment/`, `lookalikes/`), `build.yaml` (generation, verdict, costs, spend),
-  `markers.yaml`.
+  keeps it out of git): committed-shape `graph/<kind>/<file id>.yaml` node files,
+  `docs/` section trees + coverage, `gen/`, the status (`status.yaml`, `changes/`,
+  `parked/`, `failed/`, `alignment/`, `lookalikes/`); `local/` (`build.yaml`,
+  `control.yaml`, `journal/g<N>.yaml`); `derived/` (derived graph kinds,
+  `diagrams/<kind>/<slug>.puml` and `.svg`, `docsgen/`). Its logs are in the log
+  directory (`jazyk status` prints it).
 - `bootstrap/src/`: lib.rs (the crate root: core modules build for both targets,
   native modules are gated off wasm32), main.rs and launcher.rs (the CLI entry and
   command dispatch), start.rs and menu.rs (bare `jazyk` and its terminal menu),

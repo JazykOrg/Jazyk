@@ -82,7 +82,7 @@ loaded set as a stub.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
   collapse list, the relationships among its members as the rendering draws them
   (`{a, b, type, cardinality?, count?}`, lifted where a member is hidden or
-  collapsed), the path of its rendering under `diagrams/`
+  collapsed), the path of its rendering under `derived/diagrams/`
   ([output layout](./diagrams.md#output-layout)), and `children`: the members that
   hold a [level](./concepts/levels.md#levels) of their own, each with the id of its
   level view. These are the drill-down links the rendering carries
@@ -542,8 +542,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
 developers. It reports that a prompt, a skill, a tool, a schema, or an error message is
 ambiguous, wrong, confusing, or missing something, not that the project's documents are.
-The channel is a local file: each call appends one line to the project's
-`<out>/feedback.jsonl`, and nothing is transmitted anywhere. The tool description and
+The channel is the project's feedback log: locally each call appends one line to
+`<set-id>/feedback.jsonl` in the project's [log directory](./jazyk-folder.md#logs), and
+nothing is transmitted anywhere; a hosted project's log is kept by its host
+([host records](./hosted-runtime.md#host-records)). The tool description and
 the serving instructions say so, since an agent whose own guard screens outbound data
 once refused the call as an export to an external destination.
 Findings about the documents are [diagnostics](./model/diagnostic.md); findings about
@@ -560,7 +562,7 @@ budget, and passes no gate beyond a non-empty `message`, so a confused model is 
 bounced while asking for help. It is in every [toolset](#toolsets), including the
 read-only MCP serving.
 
-Each call appends one JSON line to `<out>/feedback.jsonl`, with the payload plus the
+Each call appends one JSON line to the feedback log, with the payload plus the
 references that identify the caller: the timestamp, the source (`session` or `mcp`), the
 batch (the goal ids of the open batch, absent when none is open), the serving mode for an
 MCP call, the model, the codec, the store generation, the run's transcript name, and the

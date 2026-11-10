@@ -157,21 +157,25 @@ affected bindings and checks. They never silently preserve a clean verdict.
 
 ```text
 .jazyk/
-  jazyk.toml
-  .gitignore
-  project.lock                 project operation coordination
-  sessions/                    project-wide user conversations
-  runs/                        grouped job records
-  removed-sets/                 retained definitions for local recovery
+  jazyk.toml                   committed: project configuration
+  .gitignore .gitattributes    committed: generated
+  README.md                    committed: generated, the layout in brief
+  local/                       project machine state: project.lock, ide.json,
+                               removed-sets/, archive/
   <set-id>/
-    graph/ docs/ journal/ diagrams/ docsgen/ gen/ trace/ sessions/
     status.yaml changes/ parked/ failed/ alignment/ lookalikes/
-    build.yaml markers.yaml causes.yaml control.yaml workers/ leases/ .lock
+    graph/ docs/ gen/          committed: the set's state
+    local/                     this checkout's machine state
+    derived/                   rebuilt output
 ```
+
+Logs (project-wide conversations, grouped job records, transcripts) live in the project's
+[log directory](./jazyk-folder.md#logs), outside the repository. Every file is listed
+in [the .jazyk folder](./jazyk-folder.md).
 
 - Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
   and its worker session history. Set IDs require the `ds_` prefix, keeping them
-  distinct from project directories such as `sessions`, `runs`, and `removed-sets`.
+  distinct from project directories such as `local`.
   The project owns conversations that discuss several sets and records grouping jobs.
 - A native project operation explicitly unlocks when its guard ends. A duplicated
   descriptor inherited by a concurrently starting child cannot prolong that lock.
@@ -210,8 +214,9 @@ The generated file ignores everything, then keeps the committed paths:
 *
 !/jazyk.toml
 !/.gitignore
+!/.gitattributes
+!/README.md
 !/ds_*/
-/ds_*.bak/
 !/ds_*/status.yaml
 !/ds_*/changes/
 !/ds_*/changes/**
@@ -244,10 +249,11 @@ The generated file ignores everything, then keeps the committed paths:
 ```
 
 A path the file does not name is local, so a new kind of output never enters a commit
-by accident: the journal, logs, snapshots, diagrams, docsgen, the derived graph kinds
-(`default-views/`, `relationships/`, `state-machines/`), `build.yaml`, `markers.yaml`,
-`causes.yaml`,
-the control plane, and `.bak` archives all stay out.
+by accident: every set's `local/` (build state, the journal, the control plane, locks)
+and `derived/` (derived graph kinds, diagrams, docsgen), and the project's `local/`
+(locks, editor settings, archives) all stay out. Jazyk writes `.jazyk/.gitattributes`
+on the same terms, naming the [merge driver](./jazyk-folder.md#merging-through-git) for
+set files, and `.jazyk/README.md`, the layout in brief.
 
 Existing repository rules that ignore `.jazyk` itself must be removed or narrowed;
 an ignore file inside an ignored parent cannot make config trackable. Setup reports

@@ -109,7 +109,8 @@ sets. The worker and report importer resolve the same artifact paths and source
 selection. Private graph state stays under `.jazyk/ds_main`.
 
 Every case session writes its full message transcript to
-`<out>/benchmark/trace/<codec>-<case>.json`, so a failed check is diagnosed from
+`<set-id>/benchmark/trace/<codec>-<case>.json` in the
+[log directory](../compiler/jazyk-folder.md#logs), so a failed check is diagnosed from
 what the model actually saw and said, not from the score line.
 
 ## Report
@@ -164,7 +165,7 @@ rerun before concluding. The scorecard keeps history for exactly this comparison
 
 ## Results file
 
-Every run writes `<out>/benchmark/results.yaml`, one entry per graded configuration
+Every run writes `<set-id>/benchmark/results.yaml` in the log directory, one entry per graded configuration
 (agent profile, plus the model under the `embedded` profile):
 
 - the workflow verdicts, tier scores, efficiency, throughput, and each case's score,

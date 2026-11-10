@@ -98,7 +98,7 @@ the CLI and ACP chat.
   the `definition`; `Sits in`, the breadcrumb as text; the image of the view the
   entity is used in (the structural level view of the parent's level, the scope root's
   for a parentless entity), embedded as a markdown image whose source is the `file://`
-  URI of the rendered `.svg` at `<out>/diagrams/<kind>/<slug>.svg`
+  URI of the rendered `.svg` at `<out>/derived/diagrams/<kind>/<slug>.svg`
   ([output layout](../compiler/diagrams.md#output-layout)), captioned with the view id;
   under it, when the entity has a level of its own, the link to its inside view's
   [diagram page](../consumers/docsgen.md#diagram-pages) with the child count, never a
@@ -113,11 +113,11 @@ the CLI and ACP chat.
 
   Sits in: Public › Checkout › **Funds**
 
-  ![view:class/checkout](file:///home/ana/shop/.jazyk/ds_main/diagrams/class/checkout.svg)
+  ![view:class/checkout](file:///home/ana/shop/.jazyk/ds_main/derived/diagrams/class/checkout.svg)
 
-  Inside: [view:class/funds](file:///home/ana/shop/.jazyk/ds_main/docsgen/diagrams/class/funds.md) (3 children)
+  Inside: [view:class/funds](file:///home/ana/shop/.jazyk/ds_main/derived/docsgen/diagrams/class/funds.md) (3 children)
 
-  [card](file:///.../docsgen/entities/funds.md) · [requirements (0)](file:///.../docsgen/funds.md) · [level: Checkout](file:///.../docsgen/levels/checkout.md)
+  [card](file:///.../derived/docsgen/entities/funds.md) · [requirements (0)](file:///.../derived/docsgen/funds.md) · [level: Checkout](file:///.../derived/docsgen/levels/checkout.md)
   ```
 
   The image is the build output the last commit rendered; the hover never renders a
@@ -131,7 +131,7 @@ the CLI and ACP chat.
   markdown preview beside the document, and leaves the requirements document link as a
   file link so it lands on the heading's line.
 - Go to type definition on an entity: the entity's card at
-  `<out>/docsgen/entities/<slug>.md`, at line 0. Definition stays the defining mention
+  `<out>/derived/docsgen/entities/<slug>.md`, at line 0. Definition stays the defining mention
   in the prose; the type definition is the walk. From the card the reader clicks
   through levels and diagrams in the editor's markdown preview, every link relative
   under the out directory.
@@ -140,7 +140,7 @@ the CLI and ACP chat.
   - The requirement: the id, the `statement`, its facets, its edges and transition when
     it has them, its [status word](../consumers/gen.md#status-words), and a link to the
     requirement's heading in its entity's requirements document at
-    `<out>/docsgen/<slug>.md`. When a flow view lists the requirement as a member, the
+    `<out>/derived/docsgen/<slug>.md`. When a flow view lists the requirement as a member, the
     image of the smallest such view sits above the card by the same rule as for
     entities, so the step shows in its flow.
   - The code: the requirement's implementing
@@ -189,10 +189,10 @@ the CLI and ACP chat.
   shows a misplaced lens. Clicking runs `jazyk.openRequirement` (declared under
   `executeCommandProvider`); the server answers with a `window/showDocument` request
   that opens the requirement's heading in its entity's requirements document at
-  `<out>/docsgen/<slug>.md` (see [documentation generation](../consumers/docsgen.md)).
+  `<out>/derived/docsgen/<slug>.md` (see [documentation generation](../consumers/docsgen.md)).
   Navigation is server-driven, so any LSP client gets it without client-side commands.
 - Document links: every whole-word occurrence of an entity name or alias in an open
-  document links to that entity's requirements document at `<out>/docsgen/<slug>.md`
+  document links to that entity's requirements document at `<out>/derived/docsgen/<slug>.md`
   (see [documentation generation](../consumers/docsgen.md)). A reader clicks any mention
   of a concept and lands on its assembled requirements. Links are emitted only when the
   target file exists.
@@ -238,7 +238,7 @@ request.
 - `jazyk.openRequirement`: open a requirement's heading in its requirements document
   (see the code lens under [capabilities](#capabilities)).
 - `jazyk.showLastBuild`: write the document as the last build stored it to
-  `<out>/last-build/<doc path>` and answer with a `window/showDocument` request that
+  `<out>/derived/last-build/<doc path>` and answer with a `window/showDocument` request that
   opens it. The text is the stored sections'
   [raw](../compiler/model/section.md#fields) joined in document order
   ([reconstruction](../compiler/parsing.md#reconstruction)). `<out>` is the out

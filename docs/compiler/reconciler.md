@@ -121,7 +121,9 @@ g:retrace:view:usecase/holds:
   processes without being stored.
 - `cause` names the committed change that spawned the goal: the generation, the
   mutation index within it (`0` for store-level causes), and the edge or computation
-  that carried the dirtiness.
+  that carried the dirtiness. It is read from the local journal entry that wrote the
+  goal's record ([change records](./graph.md#change-records)) and is absent when no
+  local entry did (a fresh checkout, a record merged from another branch).
 - `state` is `open`, `blocked {on}` (a human answer, a ratification, a release),
   `parked`, or `failed {reason}`.
 - `hints` are computed and honest: what to load, which skill explains the shape, which
@@ -178,8 +180,8 @@ derivation, and the [checks](./compilation.md#checks).
   kinds (`section-removed`, `requirement-deleted`, `entity-deleted`), whose subject is
   the dead node by design.
 - A record whose evidence lapses on its own clears without a session: a
-  `threshold-crossed` record clears when the count falls back under its threshold, a
-  `ledger-stale` record when the row is current, an `edges-missing` record when the
+  `threshold-crossed` record clears when the count falls back under its threshold, an
+  `edges-missing` record when the
   requirement gains edges by any path.
 
 The record kinds and what derives from each:
@@ -196,7 +198,7 @@ The record kinds and what derives from each:
 | `entity-changed` | entity | commit, sweep | `review-entity` |
 | `instance-changed` | instance entity | commit | `conform-instance` |
 | `view-member-gone` | view | sweep | `retrace` |
-| `ledger-stale` | requirement (`bind`, `verify`), entity (`generate`) | the ledger comparison at derivation, `detail.goal` naming the kind | `bind`, `generate`, `verify` by `detail.goal` |
+| `ledger-stale` (derived, never stored) | requirement (`bind`, `verify`), entity (`generate`) | the ledger comparison at derivation, `detail.goal` naming the kind | `bind`, `generate`, `verify` by `detail.goal` |
 | `prompt-unanswered` | diagnostic | commit | `answer` |
 | `provenance-pending` | derived or decreed node | commit | `ratify` |
 | `threshold-crossed` | the node over a limit | commit (recompute) | `split-view`, `abstract-entity` |
@@ -225,8 +227,9 @@ page draws its values from it:
   `update_diagnostic`, `ratification` (the store filing a ratification proposal on a
   derived or decreed fact), or the rule name of a check that files a prompt.
 
-The ledger goals share one record kind. The ledger comparison at derivation writes a
-`ledger-stale` record wherever the ledger and the graph disagree, `detail.goal` naming
+The ledger goals share one change kind, `ledger-stale`, which is derived and never
+stored: the ledger comparison runs at every derivation and yields a `ledger-stale`
+change wherever the ledger and the graph disagree, `detail.goal` naming
 the kind and `detail.reason` the
 [derived status](../consumers/gen.md#status-is-derived-never-stored) behind it:
 
@@ -770,7 +773,7 @@ board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status
   silent.
 - Parked also means "the same work came back". A record the commit recomputes
   deterministically (a `threshold-crossed` count still over its limit, a `ledger-stale`
-  row the ledger still disagrees on) is written again when the measured condition still
+  row the ledger still disagrees on) is written or derived again when the measured condition still
   holds, so a goal a session just resolved derives again under the same id with the
   same `change`. The build counts these cycles per goal id and `change` across its
   sessions: a goal resolved and re-opened with the same `change` for the second time

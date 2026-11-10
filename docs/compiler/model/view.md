@@ -3,7 +3,7 @@
 A view is the stored half of a diagram: which nodes one diagram includes, never how it
 looks. A view renders its members plus every relationship among them, direct or lifted.
 Geometry, layout, and styling are never stored. The rendering is build output, recomputed
-on every commit under `<out>/diagrams/`. See [diagrams](../diagrams.md).
+on every commit under `<out>/derived/diagrams/`. See [diagrams](../diagrams.md).
 
 Views are authored nodes with one twist: default views derive on every commit, so nothing
 must be curated to get diagrams. Curated views come from the

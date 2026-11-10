@@ -184,7 +184,7 @@ change reaches exactly the nodes with a justification path through it. The
   commit.
 - Diagnostic: `diag:<rule>-<hash>`, the hash of the rule and the sorted subjects. E.g.
   `diag:contradiction-7hq2`.
-- Change record: `c<generation>-<hash>`, the hash of kind and subject. See
+- Change record: no id of its own. Its kind and subject identify it. See
   [change records](./graph.md#change-records).
 - Ids minted before store version 4 (`req:catalog-3`, `diag:contradiction-1`) keep
   resolving and are never rewritten ([store version](./graph.md#store-version)).
@@ -205,10 +205,12 @@ reliably than opaque tokens.
 - `confidence`: a number from 0 to 1 on extracted facts. High confidence facts can be acted
   on automatically. Low confidence facts drive review.
 - `reasoning`: the recorded why behind a judgment. See [judgment](./concepts/judgment.md).
-- `created` and `updated`: generation markers set by the store on commit, the generation
-  that created the node and the generation of its last mutation. They are local, in
-  `markers.yaml`, never in the node file ([node files](./graph.md#node-files)). `jazyk ripple --back`
-  walks `updated` to the edit that started a cascade.
+- `created` and `updated`: generation markers, the generation that created the node and
+  the generation of its last mutation. They are read from the local
+  [journal](./graph.md#journal) (the oldest and newest entries whose mutations name the
+  node), never stored in the node file ([node files](./graph.md#node-files)). A node no
+  local entry names has none. `jazyk ripple --back` walks `updated` to the edit that
+  started a cascade.
 - `limits`: `{<limit>: n}` on entities and views, a per-node bump above a built-in limit.
   Dismissing a size goal writes this field with decree provenance. The goal derives again
   only when the raised threshold is crossed. See [limits](./graph.md#limits).

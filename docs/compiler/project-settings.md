@@ -68,9 +68,9 @@ Some paths are never doc input, regardless of the glob:
 
 - The resolved [output directory](../frontends/cli.md) (default `.jazyk`, or the
   `--out` override). The compiler never reads its own output as source.
-- Any directory whose name starts with `.jazyk` (e.g. the `.jazyk.bak` archive
-  the [store version](./graph.md#store-version) check leaves behind) or with
-  `jazyk-out` (the out directory's old name, left where it is).
+- Any directory whose name starts with `.jazyk` (an older Jazyk left `.jazyk.bak`
+  archives beside the out directory) or with `jazyk-out` (the out directory's old
+  name, left where it is).
 - Hidden directories (name starting with `.`), `target`, and `node_modules`.
 - A file the [ledger](../consumers/gen.md#the-ledger) records as a test artifact under
   the deliverable (an `llm` row's criteria file): it is generation metadata, never a
@@ -313,7 +313,7 @@ worker = "agent"
 - `worker`: who acts on a GUI release. `internal`, `agent`, or `any` (default).
   See [dispatch](./control-plane.md#dispatch).
 
-These are defaults; the live values sit in `control.yaml` in the out directory,
+These are defaults; the live values sit in `control.yaml` in the set's `local/` directory,
 where a GUI toggle or CLI flag changes them at runtime without editing the project
 file. Deleting `control.yaml` returns to the defaults.
 

@@ -12,8 +12,9 @@ re-decides. See [generation](../../consumers/gen.md).
 
 ## Created when
 
-The goal derives from a `ledger-stale` [change record](../graph.md#change-records)
-whose `detail.goal` is `generate`, written whenever the entity's facts differ from
+The goal derives from a `ledger-stale` change, derived by the ledger comparison at
+derivation and never stored ([change records](../graph.md#change-records)),
+whose `detail.goal` is `generate`, present whenever the entity's facts differ from
 the [ledger](../../consumers/gen.md#the-ledger):
 
 - `facts-changed`: the entity has a ledger entry whose `factHash` (name, definition,

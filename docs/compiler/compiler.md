@@ -71,9 +71,10 @@ writes the [change records](./graph.md#change-records) that goal derivation read
 journals every generation, and runs the deterministic sweep half of
 [garbage collection](./graph.md#garbage-collection). The store carries a
 [version](./graph.md#store-version) in `status.yaml`. An out directory of another
-version is archived whole to the sibling directory `<out>.bak` and the build starts from
-the empty graph; there is no migration code. See
-[storage layout](./graph.md#storage-layout).
+version is upgraded in place when it is the one previous version, refused read-only
+when it is newer than the binary, and otherwise archived under `.jazyk/local/archive/`
+with the build starting from the empty graph. See
+[store version](./graph.md#store-version).
 
 ### The goal board
 
@@ -124,7 +125,7 @@ external agent given `--write`.
 
 The [renderer](./diagrams.md) draws every view on every commit: one
 [emitter](./diagrams.md#the-emitters) per view kind, each a pure function of the store
-snapshot and the view, writing `<out>/diagrams/<kind>/<slug>.puml` and `.svg`, with
+snapshot and the view, writing `<out>/derived/diagrams/<kind>/<slug>.puml` and `.svg`, with
 `.png` on request. Diagrams are projections. There are no diagram elements in the graph,
 and a rendering cannot drift from it because every build recomputes it. Rendering runs
 in process (`plantuml-little`, `resvg`): no Java, no external tool. See
@@ -195,39 +196,37 @@ free.
 
 ## Outputs
 
-Everything lives in the set's out directory (`.jazyk/<set-id>/`). See
-[storage layout](./graph.md#storage-layout).
+Everything lives in the set's out directory (`.jazyk/<set-id>/`), except logs. Every
+file is listed in [the .jazyk folder](./jazyk-folder.md).
 
-- `graph/`: the semantic graph, the primary output, one file per node
-  ([node files](./graph.md#node-files)). Authored kinds `entities/`, `requirements/`,
-  `criteria/`, `views/`, `diagnostics/`, `redirects/`. Derived kinds `relationships/`
-  and `state-machines/`, rewritten on every commit.
-- `docs/`: section trees and coverage per document.
-- `diagrams/`: one `.puml` and one `.svg` per view under `<kind>/<slug>`, `.png` beside
-  them on request. Build output, never read back. See
-  [output layout](./diagrams.md#output-layout).
-- `docsgen/`: one human-readable requirements document per entity, its diagrams
-  embedded, rendered deterministically on every build. See
-  [documentation generation](../consumers/docsgen.md#the-requirements-document).
-- `gen/`: generation and verification metadata: the
-  [ledger](../consumers/gen.md#the-ledger) and the criteria files for llm tests. The
-  deliverable itself lives outside the out directory
-  ([generation settings](./project-settings.md#generation)).
-- `journal/`: one entry per generation, the audit trail of every change and the ground
-  truth behind `jazyk ripple`.
-- `trace/` and `sessions/`: session transcripts and the ACP session store.
-- The status: `status.yaml` (the store `version`, the stamped roots, the re-evaluation
-  list) and one file per record under `changes/`, `parked/`, `failed/`, `alignment/`,
-  and `lookalikes/`.
-- `build.yaml`: the generation, the verdict with its counts, costs per goal kind and
-  class, and the document content hashes. Local. `markers.yaml`: the generation
-  markers of every node. Local.
-- `control.yaml`, `workers/`, `leases/`: the control plane. `feedback.jsonl`: what
-  sessions reported through `report_feedback`. `.lock`: the store lock.
+- Committed, at the top of the set directory:
+  - `graph/`: the semantic graph, the primary output, one file per node
+    ([node files](./graph.md#node-files)): `entities/`, `requirements/`, `criteria/`,
+    `views/`, `diagnostics/`, `redirects/`.
+  - `docs/`: section trees and coverage per document.
+  - The status: `status.yaml` (the store `version`, the stamped roots, the
+    re-evaluation list) and one file per record under `changes/`, `parked/`,
+    `failed/`, `alignment/`, and `lookalikes/`.
+  - `gen/`: generation and verification metadata: the
+    [ledger](../consumers/gen.md#the-ledger) and the criteria files for llm tests. The
+    deliverable itself lives outside the out directory
+    ([generation settings](./project-settings.md#generation)).
+- `local/`: this checkout's machine state. `build.yaml` (the generation, the verdict
+  with its counts, costs per goal kind and class, the document content hashes),
+  `journal/` (one entry per generation, the audit trail of every change and the ground
+  truth behind `jazyk ripple`), `control.yaml`, `workers/`, `leases/` (the control
+  plane), and the locks.
+- `derived/`: rebuilt from the committed files. The derived graph kinds
+  (`graph/relationships/`, `graph/state-machines/`, `graph/default-views/`),
+  `diagrams/` (one `.puml` and one `.svg` per view under `<kind>/<slug>`, `.png`
+  beside them on request, see [output layout](./diagrams.md#output-layout)), and
+  `docsgen/` (one requirements document per entity, see
+  [documentation generation](../consumers/docsgen.md#the-requirements-document)).
+- Logs, outside the project ([logs](./jazyk-folder.md#logs)): session transcripts, the
+  ACP session store, `report_feedback` entries, replay snapshots.
 
-A repository commits the status, the non-derived node files, `docs/`, and `gen/`,
-and ignores the rest
-([committed and local state](./graph.md#committed-and-local-state)).
+A repository commits the top level of the set directory and ignores `local/` and
+`derived/` ([committed and local state](./graph.md#committed-and-local-state)).
 
 `jazyk check` exits non-zero when open diagnostics of severity `error` exist. See
 [CLI](../frontends/cli.md#jazyk-check).

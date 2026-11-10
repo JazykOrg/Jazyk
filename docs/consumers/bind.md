@@ -169,8 +169,9 @@ be repaired before recording. `list_document_sets` shows the source globs;
 
 ## When binding runs
 
-The board derives a `bind` goal from a `ledger-stale` change record whose `detail.goal`
-is `bind`, written whenever the ledger and the graph disagree about a requirement
+The board derives a `bind` goal from a `ledger-stale` change whose `detail.goal` is
+`bind`, computed at derivation (never stored) whenever the ledger and the graph disagree
+about a requirement
 ([goal derivation](../compiler/reconciler.md#goal-derivation)). Nothing invokes binding
 by name; the board notices the gap, with the reason in the record:
 

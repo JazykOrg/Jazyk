@@ -21,8 +21,9 @@ the author). See [binding](../../consumers/bind.md).
 
 ## Created when
 
-The goal derives from a `ledger-stale` [change record](../graph.md#change-records)
-whose `detail.goal` is `bind`. The record is written whenever the ledger and the graph
+The goal derives from a `ledger-stale` change, derived by the ledger comparison at
+derivation and never stored ([change records](../graph.md#change-records)),
+whose `detail.goal` is `bind`. It is present whenever the ledger and the graph
 disagree about a requirement, with the reason in `detail.reason`:
 
 - `unbound`: the requirement has no row. It was just extracted, or the whole ledger is

@@ -874,7 +874,7 @@ files left Source is generation work. Its
 gate rejects the old manifest. Reclassification never deletes or rewrites a file.
 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
-change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
+change the ledger comparison computes at derivation and never stores: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
 ([when binding runs](./bind.md#when-binding-runs)), a `generate` goal for the entity of
 an `unimplemented` or `partial` row or an entity whose facts moved, a `verify` goal for `stale-test`,
 `stale-code`, and `unverified` ([the verify goal](../compiler/goals/verify.md)). A
@@ -1174,7 +1174,7 @@ predecessor cleanup. Entity ids are stable
   the journal holds the deletion, so removals are never silent.
 
 Before a run rewrites or removes a deliverable file, the previous content is
-snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
+snapshotted to `<out>/local/deliverable-baseline/` under the file's relative path, once per
 run per file. The snapshot is the diff baseline for frontends: the
 [GUI](../frontends/gui.md#editor-specification) shows what the last generation changed
 against it. A file the run creates fresh has no baseline.

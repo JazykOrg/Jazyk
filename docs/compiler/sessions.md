@@ -658,18 +658,18 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 
 ## Snapshots
 
-Every batch a session opens leaves a snapshot of the graph as it stood: the node files
-under `<out>/graph/`, the status, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
-starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
+With `jazyk compile --record`, every batch a session opens leaves a snapshot of the
+graph as it stood: the node files under `<out>/graph/`, the status, and
+`local/build.yaml`, copied to `<set-id>/snapshots/<batch id>/` in the
+[log directory](./jazyk-folder.md#logs) when the batch starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls
 against the state the model actually saw, not the state the run ended in. Snapshots are
-never read by the compiler and cost the size of the graph per batch; delete the
-directory freely.
+never read by the compiler and cost the size of the graph per batch, so a build without
+`--record` writes none; delete them freely.
 
 The [hosted runtime](./hosted-runtime.md#workspace-snapshots) writes no snapshots: nothing
-prunes a hosted workspace, so a copy per batch would grow it without bound. A hosted
-request also removes any `snapshots/` directory under a set's out directory. A local build keeps writing them.
+prunes a hosted workspace, so a copy per batch would grow it without bound.
 
 ## Trace events
 

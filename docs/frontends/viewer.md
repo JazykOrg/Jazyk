@@ -70,13 +70,13 @@ never compiles.
   cardinality, the contributing requirement ids). Derived nodes, shown as stored. See
   [derived data](../compiler/graph.md#derived-data).
 - Views: id, `kind`, `title`, ordered members, a link to the rendered `.svg` under
-  `<out>/diagrams/` when it exists, and the sections of the
+  `<out>/derived/diagrams/` when it exists, and the sections of the
   [diagram page](../consumers/docsgen.md#diagram-pages), in the file:
   - `level`: for a level view or a lifted flow view, the breadcrumb of the level it
     belongs to, each ancestor a link to its card, ending in a link to the level
     section. A view with no level (a curated view, an object or state view) says
     which entity or machine it belongs to instead.
-  - The rendering, inline. The viewer reads `<out>/diagrams/<kind>/<slug>.svg` at
+  - The rendering, inline. The viewer reads `<out>/derived/diagrams/<kind>/<slug>.svg` at
     render time and embeds it as an `<svg>` element: sanitized by an allowlist over an
     XML parse (only static drawing, text, structure, paint, and filter elements and their
     geometry and presentation attributes survive; `script`, `foreignObject`, `style`,

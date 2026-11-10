@@ -199,7 +199,7 @@ What an answer does in a tab:
 ## Workflow modes in a tab
 
 The [workflow modes](./gui.md#workflow-modes) are control-plane state in a tab too:
-`control.yaml` in the tab's out directory, read and written through
+`local/control.yaml` in the tab's out directory, read and written through
 `crate::control`, which compiles for both targets. `GET /api/watch` and
 `PUT /api/watch` answer from `crate::webapi::workers`, the server's own
 `watch_value` and `watch_write`, and a mode set in the tab is kept with the project

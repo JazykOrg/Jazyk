@@ -123,6 +123,8 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
     ] {
         w.files.insert(path.into(), text.as_bytes().to_vec());
     }
+    w.files
+        .insert("spec/product/logo.jpg".into(), vec![0xff, 0xd8, 0xff]);
     {
         let fs = crate::vfs::Scope::enter(&w.files);
         let project = crate::project::Project::load(&root());
@@ -140,7 +142,7 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
         let programmatic = |artifact| json!({"kind":"programmatic", "label":"test", "artifact":artifact, "name":"test", "run":"python test.py"});
         let ledger: crate::gen::Ledger = serde_json::from_value(json!({
             "support":["spec/product/package.json"],
-            "entities":{"alpha":{"factHash":"recorded", "requirements":[], "files":["spec/product/main.py","spec/product/build.zip","spec/product/missing.py"]}},
+            "entities":{"alpha":{"factHash":"recorded", "requirements":[], "files":["spec/product/main.py","spec/product/logo.jpg","spec/product/build.zip","spec/product/missing.py"]}},
             "build":{"run":"python build.py","produces":["spec/product/build.zip"]},
             "requirements":{"req:stable":{
                 "entity":"ent:alpha","files":["spec/product/main.py"],
@@ -224,6 +226,7 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
         projection.source["notes.txt"],
         "An existing human file, edited."
     );
+    assert!(!projection.files.contains_key("spec/product/logo.jpg"));
     assert_eq!(w.snapshot(), before);
     assert!(!crate::vfs::is_scoped());
     let other = workspace("Beta").projection(&[]).unwrap();
@@ -232,14 +235,13 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
 }
 
 #[test]
-fn projection_rejects_invalid_membership_and_selected_binary_without_mutation() {
+fn projection_keeps_binary_in_snapshot_and_rejects_invalid_membership() {
     let mut w = workspace("Alpha");
     w.files.insert("photo.png".into(), vec![0, 255]);
     let before = w.snapshot();
-    assert!(w
-        .projection(&["photo.png".into()])
-        .unwrap_err()
-        .contains("not UTF-8"));
+    let projection = w.projection(&["photo.png".into()]).unwrap();
+    assert!(!projection.source.contains_key("photo.png"));
+    assert!(!projection.files.contains_key("photo.png"));
     for path in ["../escape", "/absolute", "docs//main.md", "a\\b", "a:b"] {
         assert!(w
             .projection(&[path.into()])
@@ -588,4 +590,45 @@ fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
         .as_object()
         .unwrap()
         .is_empty());
+}
+
+#[test]
+fn hosted_image_upload_survives_projection_and_workspace_reload() {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    for selected in [false, true] {
+        let mut w = workspace("Alpha");
+        if selected {
+            let config = String::from_utf8(w.files[".jazyk/jazyk.toml"].clone()).unwrap();
+            w.files.insert(
+                ".jazyk/jazyk.toml".into(),
+                config.replace("docs/**/*.md", "docs/**/*").into_bytes(),
+            );
+        }
+        let path = "docs/setup/jazyk-web-gui.jpg";
+        let mut bytes = vec![0xff; 797_000];
+        bytes[..3].copy_from_slice(&[0xff, 0xd8, 0xff]);
+        value(
+            &mut w,
+            "PUT",
+            &format!("/api/project/file?path={path}"),
+            json!({"base64": STANDARD.encode(&bytes)}),
+            &Execution::default(),
+        );
+        let before = w.snapshot();
+        let projection = w.projection(&[path.into()]).unwrap();
+        assert!(!projection.source.contains_key(path));
+        assert!(!projection.files.contains_key(path));
+        assert_eq!(w.snapshot(), before);
+        let mut restored = Workspace::new(before).unwrap();
+        let reply = restored
+            .request_test(
+                "GET",
+                &format!("/api/project/file?path={path}"),
+                "",
+                &Execution::default(),
+            )
+            .unwrap();
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.body, bytes);
+    }
 }

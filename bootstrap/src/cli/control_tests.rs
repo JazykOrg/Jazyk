@@ -7,7 +7,7 @@ use super::control::spend_at;
 fn spend_stamps_an_unmeasured_session_and_refuses_a_measured_one() {
     let out = std::env::temp_dir().join(format!("jazyk-cli-spend-{}", crate::sys::process_id()));
     crate::vfs::remove_dir_all(&out).ok();
-    crate::vfs::create_dir_all(out.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&out)).unwrap();
     for (g, tokens) in [(7u64, None), (8, Some(9800u64))] {
         let entry = crate::model::JournalEntry {
             build: format!("g{}", g),
@@ -17,7 +17,7 @@ fn spend_stamps_an_unmeasured_session_and_refuses_a_measured_one() {
             ..Default::default()
         };
         crate::vfs::write(
-            out.join("journal").join(format!("g{}.yaml", g)),
+            crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
             serde_norway::to_string(&entry).unwrap(),
         )
         .unwrap();

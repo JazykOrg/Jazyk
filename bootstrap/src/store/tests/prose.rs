@@ -572,12 +572,9 @@ fn retracting_a_derived_grouping_dissolves_it_onto_its_parent() {
         "{:?}",
         s.status.changes
     );
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", r.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", r.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "ratify");
     assert!(entry.mutations.iter().any(|m| m["op"] == "dissolve_entity"));
     let moves = s.journaled_parent_moves();
@@ -652,9 +649,7 @@ fn retracting_a_derived_grouping_dissolves_it_onto_its_parent() {
     assert!(r.skipped[0].contains("no parent to take its requirements"));
     assert_eq!(s.status.generation, before);
     assert!(s.graph.diagnostics[&proposal].answer.is_none());
-    assert!(!s
-        .out
-        .join("journal")
+    assert!(!crate::layout::journal_dir(&s.out)
         .join(format!("g{}.yaml", before + 1))
         .vexists());
 }

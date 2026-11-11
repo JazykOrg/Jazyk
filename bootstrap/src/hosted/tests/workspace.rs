@@ -115,11 +115,11 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
         ("spec/product/build.zip", "built output"),
         (".jazyk/ds_main/gen/judge.md", "LLM judgment criteria"),
         (".jazyk/.gitignore", crate::document_sets::IGNORE),
-        (".jazyk/ds_main/journal/g1.yaml", "build: g1\n"),
-        (".jazyk/ds_main/diagrams/class/alpha.svg", "<svg/>"),
-        (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", "members: []\n"),
+        (".jazyk/ds_main/local/journal/g1.yaml", "build: g1\n"),
+        (".jazyk/ds_main/derived/diagrams/class/alpha.svg", "<svg/>"),
+        (".jazyk/ds_main/derived/graph/relationships/rel~a%7Eb.yaml", "members: []\n"),
         (".jazyk/ds_main/trace/run.jsonl", "{}"),
-        (".jazyk/ds_main/control.yaml", "compile: auto\n"),
+        (".jazyk/ds_main/local/control.yaml", "compile: auto\n"),
     ] {
         w.files.insert(path.into(), text.as_bytes().to_vec());
     }
@@ -209,7 +209,7 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
             ".jazyk/ds_main/gen/ledger.yaml",
             ".jazyk/ds_main/gen/requirements/req~stable.yaml",
             ".jazyk/ds_main/graph/criteria/crit~stable.yaml",
-            ".jazyk/ds_main/status.yaml",
+            ".jazyk/ds_main/store.yaml",
         ]
     );
     assert_eq!(
@@ -397,7 +397,7 @@ fn incomplete_model_writes_cannot_bypass_commit_gates() {
         .iter()
         .any(|e| e.contains("coverage")));
     assert!(
-        w.snapshot().contains_key(".jazyk/ds_main/status.yaml"),
+        w.snapshot().contains_key(".jazyk/ds_main/store.yaml"),
         "valid failure state should remain persistable"
     );
 }
@@ -442,7 +442,7 @@ fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
         b"name: A\n".to_vec(),
     );
     w.files.insert(
-        ".jazyk/ds_main/status.yaml".into(),
+        ".jazyk/ds_main/store.yaml".into(),
         format!("version: {}\n", crate::store::STORE_VERSION).into_bytes(),
     );
     {
@@ -469,7 +469,7 @@ fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
         files.keys()
     );
     assert!(files.contains_key(".jazyk/ds_main/graph/entities/ent~a.yaml"));
-    assert!(files.contains_key(".jazyk/ds_main/status.yaml"));
+    assert!(files.contains_key(".jazyk/ds_main/store.yaml"));
 }
 
 #[test]
@@ -554,14 +554,14 @@ fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
     let snapshot = w.snapshot();
     assert!(!snapshot
         .keys()
-        .any(|p| p.starts_with(".jazyk/ds_main/preview/")));
+        .any(|p| p.starts_with(".jazyk/ds_main/derived/preview/")));
     assert!(
         !snapshot.keys().any(|p| p.contains("/snapshots/")),
         "a hosted batch writes no graph snapshot"
     );
     assert!(snapshot
         .keys()
-        .any(|p| p.starts_with(".jazyk/ds_main/journal/")));
+        .any(|p| p.starts_with(".jazyk/ds_main/local/journal/")));
     assert!(
         snapshot.keys().any(|p| p.ends_with(".svg")),
         "hosted compilation should retain diagram output"

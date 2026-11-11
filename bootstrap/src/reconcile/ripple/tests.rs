@@ -26,7 +26,7 @@ fn ripple_walks_opened_goals_to_their_resolvers() {
         ..Default::default()
     };
     crate::vfs::write(
-        dir.join("journal/g87.yaml"),
+        crate::layout::journal_file(&dir, 87),
         serde_norway::to_string(&edit).unwrap(),
     )
     .unwrap();
@@ -55,7 +55,7 @@ fn ripple_walks_opened_goals_to_their_resolvers() {
         ..Default::default()
     };
     crate::vfs::write(
-        dir.join("journal/g88.yaml"),
+        crate::layout::journal_file(&dir, 88),
         serde_norway::to_string(&session).unwrap(),
     )
     .unwrap();
@@ -70,7 +70,7 @@ fn ripple_walks_opened_goals_to_their_resolvers() {
     }];
     session.opened_goals = Vec::new();
     crate::vfs::write(
-        dir.join("journal/g89.yaml"),
+        crate::layout::journal_file(&dir, 89),
         serde_norway::to_string(&session).unwrap(),
     )
     .unwrap();
@@ -149,7 +149,7 @@ fn ripple_walks_opened_goals_to_their_resolvers() {
         ..Default::default()
     };
     crate::vfs::write(
-        dir.join("journal/g95.yaml"),
+        crate::layout::journal_file(&dir, 95),
         serde_norway::to_string(&checks).unwrap(),
     )
     .unwrap();

@@ -201,7 +201,7 @@ fn derived(from: &[&str]) -> Provenance {
 }
 
 fn journal_entry(s: &Store, generation: u64) -> JournalEntry {
-    let path = s.out.join("journal").join(format!("g{}.yaml", generation));
+    let path = crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", generation));
     serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
 }
 

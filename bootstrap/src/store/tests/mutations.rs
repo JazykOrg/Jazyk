@@ -175,7 +175,7 @@ fn commit_writes_change_records_and_clear_changes_removes_them() {
     assert!(report.changes.iter().all(|c| c.id.starts_with("c1-")));
     assert_ne!(report.changes[0].id, report.changes[1].id);
     // The journal entry names the session's goal and the store version is stamped.
-    let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+    let entry: JournalEntry = yaml_to(&crate::layout::journal_dir(&s.out).join("g1.yaml")).unwrap();
     assert_eq!(entry.kind, "session");
     assert_eq!(entry.batch, vec!["g:reconcile-section:t.md".to_string()]);
     assert!(entry.opened_goals.is_empty());
@@ -199,7 +199,7 @@ fn commit_writes_change_records_and_clear_changes_removes_them() {
             },
         }],
     );
-    let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g2.yaml")).unwrap();
+    let entry: JournalEntry = yaml_to(&crate::layout::journal_dir(&s.out).join("g2.yaml")).unwrap();
     assert_eq!(entry.resolved_goals.len(), 1);
     assert_eq!(entry.opened_goals[0].goal, "g:review-entity:ent:cart");
     assert_eq!(entry.rounds, 2);
@@ -211,7 +211,17 @@ fn commit_writes_change_records_and_clear_changes_removes_them() {
     assert_eq!(ids.len(), 1);
     s.clear_changes(&ids);
     assert!(!s.status.has_change(CHANGE_ENTITY, "ent:cart"));
-    assert_eq!(Store::load(&s.out).status.changes.len(), 0);
+    // The section was never covered, so a load finds it dirty again; the cleared
+    // record stays cleared.
+    let back = Store::load(&s.out);
+    assert!(
+        back.status
+            .changes
+            .iter()
+            .all(|c| c.kind == CHANGE_SECTION_DIRTY),
+        "{:?}",
+        back.status.changes
+    );
 }
 
 #[test]
@@ -690,12 +700,9 @@ fn views_curate_delete_and_bump() {
         25
     );
     assert!(r.skipped[0].contains("does not apply to an entity"));
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", r.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", r.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "decree");
     assert_eq!(entry.mutations[0]["op"], "bump_limit");
     // Now deletable.

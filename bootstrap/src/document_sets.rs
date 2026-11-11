@@ -1814,8 +1814,8 @@ mod tests {
         assert_eq!(a.out, f.0.join(".jazyk/ds_a"));
         assert_ne!(a.out, b.out);
         assert_eq!(a.doc_files(), vec![f.0.join("docs/a.md")]);
-        crate::vfs::create_dir_all(a.out.join("journal")).unwrap();
-        crate::vfs::write(a.out.join("journal/keep.yaml"), "keep").unwrap();
+        crate::vfs::create_dir_all(crate::layout::journal_dir(&a.out)).unwrap();
+        crate::vfs::write(crate::layout::journal_dir(&a.out).join("keep.yaml"), "keep").unwrap();
         edit(
             &f.0,
             &json!({"baseHash":w.hash,"set":{"id":"ds_a","name":"Renamed"}}),
@@ -1827,7 +1827,9 @@ mod tests {
             .resolve(Some("Renamed"))
             .unwrap();
         assert_eq!(a.out, next.out);
-        assert!(next.out.join("journal/keep.yaml").vexists());
+        assert!(crate::layout::journal_dir(&next.out)
+            .join("keep.yaml")
+            .vexists());
         assert_eq!(b.doc_files(), vec![f.0.join("docs/b.md")]);
     }
 

@@ -3,7 +3,7 @@ use super::*;
 
 // A save rewrites only the files whose bytes changed: a second save with nothing
 // new replaces no file, and a commit leaves untouched shards in place while
-// status.yaml, the commit point, is rewritten. A rewrite renames a new file into
+// local/build.yaml, the commit point, is rewritten. A rewrite renames a new file into
 // place, so an unchanged inode means no write.
 // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
 #[cfg(unix)]
@@ -19,7 +19,13 @@ fn save_leaves_files_with_unchanged_bytes_in_place() {
     assert_eq!(r.applied, 1, "{:?}", r.skipped);
     let inodes = |dir: &Path| -> BTreeMap<PathBuf, u64> {
         let mut all = BTreeMap::new();
-        for sub in ["graph/entities", "graph/diagnostics", "docs", ""] {
+        for sub in [
+            "graph/entities",
+            "graph/diagnostics",
+            "sources",
+            "",
+            "local",
+        ] {
             let Ok(rd) = std::fs::read_dir(dir.join(sub)) else {
                 continue;
             };
@@ -33,7 +39,7 @@ fn save_leaves_files_with_unchanged_bytes_in_place() {
         all
     };
     let before = inodes(&out);
-    assert!(before.contains_key(&out.join("status.yaml")));
+    assert!(before.contains_key(&out.join("store.yaml")));
     assert!(before.contains_key(&out.join("graph/entities/ent~a.yaml")));
     let again = Store::load(&out);
     again.save();
@@ -47,12 +53,13 @@ fn save_leaves_files_with_unchanged_bytes_in_place() {
         after.contains_key(&out.join("graph/entities/ent~b.yaml")),
         "the new node is written"
     );
-    // The records live one per file: status.yaml stays, the commit point moves.
+    // store.yaml stays; the commit point, the local build file, moves.
     assert_eq!(
-        after[&out.join("status.yaml")],
-        before[&out.join("status.yaml")]
+        after[&out.join("store.yaml")],
+        before[&out.join("store.yaml")]
     );
-    assert_ne!(after[&out.join(BUILD_FILE)], before[&out.join(BUILD_FILE)]);
+    let build = crate::layout::build_file(&out);
+    assert_ne!(after[&build], before[&build]);
     let a = out.join("graph/entities/ent~a.yaml");
     assert_eq!(after[&a], before[&a], "an unchanged node file stays");
     assert_eq!(Store::load(&out).status.generation, 2);
@@ -190,7 +197,7 @@ fn an_unparseable_node_file_makes_the_store_read_only() {
     assert!(again.sweep().is_empty());
     again.save();
     assert_eq!(crate::vfs::read_to_string(&shard).unwrap(), broken);
-    assert!(!out.join("journal").join("g2.yaml").vexists());
+    assert!(!crate::layout::journal_dir(&out).join("g2.yaml").vexists());
     assert_eq!(Store::load(&out).status.generation, 1);
 }
 
@@ -241,9 +248,9 @@ fn writes_land_whole_and_leave_no_temporary_files() {
         .filter(|p| p.to_string_lossy().ends_with(".tmp"))
         .collect();
     assert!(leftover.is_empty(), "{:?}", leftover);
-    assert!(out.join("status.yaml").vexists());
+    assert!(out.join("store.yaml").vexists());
     assert!(out.join("graph/entities/ent~a.yaml").vexists());
-    assert!(out.join("journal").join("g1.yaml").vexists());
+    assert!(crate::layout::journal_dir(&out).join("g1.yaml").vexists());
 }
 
 // File ids: `:` as `~`, `/` as `+`, everything outside the plain set as `%XX`, and
@@ -293,9 +300,9 @@ fn node_files_round_trip_every_kind() {
         "graph/views/view~class+shop.yaml",
         "graph/diagnostics/diag~lint-1.yaml",
         "graph/redirects/ent~purchase.yaml",
-        "graph/relationships/rel~order%7Epayment.yaml",
-        "graph/state-machines/sm~order.yaml",
-        "status.yaml",
+        "derived/graph/relationships/rel~order%7Epayment.yaml",
+        "derived/graph/state-machines/sm~order.yaml",
+        "store.yaml",
     ] {
         assert!(
             files.contains_key(name),
@@ -304,27 +311,34 @@ fn node_files_round_trip_every_kind() {
         );
     }
     assert_eq!(
-        files["graph/redirects/ent~purchase.yaml"],
-        b"id: ent:purchase\nto: ent:order\n"
+        body(&files["graph/redirects/ent~purchase.yaml"]),
+        "id: ent:purchase\nto: ent:order\n"
     );
     assert!(files.values().all(|b| b.ends_with(b"\n")));
     // Every node file starts with its id and holds only the node's own facts: no
     // generation markers, no mention a requirement adds by reference.
-    let order = String::from_utf8(files["graph/entities/ent~order.yaml"].clone()).unwrap();
+    let order = body(&files["graph/entities/ent~order.yaml"]);
     assert!(order.starts_with("id: ent:order\n"), "{order}");
     assert!(
         !order.contains("mentions") && !order.contains("created"),
         "{order}"
     );
-    let req = String::from_utf8(files["graph/requirements/req~orders-1.yaml"].clone()).unwrap();
+    let req = body(&files["graph/requirements/req~orders-1.yaml"]);
     assert!(
         req.starts_with("id: req:orders-1\n") && !req.contains("updated:"),
         "{req}"
     );
-    assert!(files.contains_key("markers.yaml"));
+    // Every file begins with the two comment lines that say what it is.
+    let raw = String::from_utf8(files["graph/entities/ent~order.yaml"].clone()).unwrap();
+    assert!(raw.starts_with("# Jazyk entity: "), "{raw}");
     let back = Store::load(&out);
     assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
-    let json = |g: &Graph| serde_json::to_value(g).unwrap();
+    // The generation markers stay in memory: a load comes back without them.
+    let json = |g: &Graph| {
+        let mut v = serde_json::to_value(g).unwrap();
+        strip_markers(&mut v);
+        v
+    };
     assert_eq!(json(&back.graph), json(&s.graph));
 }
 
@@ -342,7 +356,20 @@ fn two_saves_of_one_graph_write_identical_bytes() {
     let mut again = Store::load(&one);
     again.out = two.clone();
     again.save();
-    assert_eq!(tree_bytes(&two), first);
+    let second = tree_bytes(&two);
+    for (k, v) in &first {
+        assert_eq!(
+            second
+                .get(k)
+                .map(|b| String::from_utf8_lossy(b).to_string()),
+            Some(String::from_utf8_lossy(v).to_string()),
+            "{k}"
+        );
+    }
+    assert_eq!(
+        second.keys().collect::<Vec<_>>(),
+        first.keys().collect::<Vec<_>>()
+    );
 }
 
 // A node that leaves the graph takes its file along; the others stay.
@@ -405,20 +432,9 @@ fn a_fresh_checkout_loads_committed_state_and_dirties_only_the_edited_document()
     let derived = serde_json::to_value((&s.graph.relationships, &s.graph.state_machines)).unwrap();
     assert!(!s.graph.relationships.is_empty() && !s.graph.state_machines.is_empty());
     // What a clone carries: the committed paths only.
-    for local in [
-        "graph/default-views",
-        "graph/relationships",
-        "graph/state-machines",
-        "journal",
-        "diagrams",
-        "trace",
-    ] {
+    for local in ["derived", "local"] {
         crate::vfs::remove_dir_all(out.join(local)).ok();
     }
-    crate::vfs::remove_file(out.join(".lock")).ok();
-    crate::vfs::remove_file(out.join(BUILD_FILE)).ok();
-    crate::vfs::remove_file(out.join(MARKERS_FILE)).ok();
-    crate::vfs::remove_file(out.join(CAUSES_FILE)).ok();
     let committed: Vec<String> = tree_bytes(&out).into_keys().collect();
     assert!(
         committed
@@ -451,9 +467,11 @@ fn a_fresh_checkout_loads_committed_state_and_dirties_only_the_edited_document()
     assert_eq!(r.applied, 1, "{:?}", r.skipped);
     assert_eq!(opened.status.generation, generation + 1);
     assert!(out
-        .join("graph/relationships/rel~order%7Epayment.yaml")
+        .join("derived/graph/relationships/rel~order%7Epayment.yaml")
         .vexists());
-    assert!(out.join("graph/state-machines/sm~order.yaml").vexists());
+    assert!(out
+        .join("derived/graph/state-machines/sm~order.yaml")
+        .vexists());
 }
 
 // Ids past the cap shorten to a prefix and a hash, carry the full id inside, load
@@ -495,10 +513,17 @@ fn long_ids_shorten_carry_their_id_and_never_collide() {
     s.save();
     let stem = node_stem(&ids[0]).0;
     let text = crate::vfs::read_to_string(out.join(format!("graph/entities/{stem}.yaml"))).unwrap();
-    assert!(text.starts_with(&format!("id: {}\n", ids[0])), "{text}");
+    assert!(
+        body(text.as_bytes()).starts_with(&format!("id: {}\n", ids[0])),
+        "{text}"
+    );
     let back = Store::load(&out);
     assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
-    let json = |g: &Graph| serde_json::to_value(g).unwrap();
+    let json = |g: &Graph| {
+        let mut v = serde_json::to_value(g).unwrap();
+        strip_markers(&mut v);
+        v
+    };
     assert_eq!(json(&back.graph), json(&s.graph));
     // Removing a long node removes its file.
     let mut s = back;
@@ -531,7 +556,7 @@ fn the_generation_starts_at_the_committed_floor() {
         "name",
     ));
     s.save();
-    let status = crate::vfs::read_to_string(out.join("status.yaml")).unwrap();
+    let status = crate::vfs::read_to_string(out.join("store.yaml")).unwrap();
     for key in ["generation:", "verdict:", "costs:", "spent:"] {
         assert!(
             !status.lines().any(|l| l.starts_with(key)),
@@ -539,13 +564,13 @@ fn the_generation_starts_at_the_committed_floor() {
         );
     }
     assert_eq!(read_generation(&out), 12);
-    crate::vfs::remove_file(out.join(BUILD_FILE)).unwrap();
+    crate::vfs::remove_file(crate::layout::build_file(&out)).unwrap();
     assert_eq!(
         Store::load(&out).status.generation,
         12,
-        "a checkout starts at the floor"
+        "the counter starts at the floor this machine's records name"
     );
-    crate::vfs::write(out.join(BUILD_FILE), "generation: 3\n").unwrap();
+    crate::vfs::write(crate::layout::build_file(&out), "generation: 3\n").unwrap();
     let mut low = Store::load(&out);
     assert_eq!(
         low.status.generation, 12,
@@ -558,14 +583,14 @@ fn the_generation_starts_at_the_committed_floor() {
         low.status.generation,
         "the commit wrote the raised counter"
     );
-    crate::vfs::write(out.join(BUILD_FILE), "generation: 20\n").unwrap();
+    crate::vfs::write(crate::layout::build_file(&out), "generation: 20\n").unwrap();
     assert_eq!(Store::load(&out).status.generation, 20);
 }
 
-// Two branches from one base each commit and build. The committed status.yaml
-// merges as text with no conflict, where the local build.yaml (both bumped the
-// generation) would conflict. A run that changes nothing in the graph leaves the
-// committed status.yaml bytes alone. Mirrors docs/compiler/graph.md#the-generation.
+// Two branches from one base each commit and build. Nothing committed names a
+// generation, a cost, or open work: store.yaml stays byte for byte, and what both
+// branches bumped lives under the local folder git never sees.
+// Mirrors docs/compiler/graph.md#the-generation.
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn parallel_branches_merge_status_without_conflict() {
@@ -574,71 +599,38 @@ fn parallel_branches_merge_status_without_conflict() {
     let mut s = every_kind_graph();
     s.out = base.clone();
     s.save();
-    let base_status = std::fs::read(base.join("status.yaml")).unwrap();
+    let base_store = std::fs::read(base.join("store.yaml")).unwrap();
     // A run that only spends and judges convergence.
     let mut run = Store::load(&base);
     run.status.costs.sessions = 3;
-    run.status.costs.tokens = 9000;
     run.status.spent.rounds = 7;
     run.status.verdict.state = "converged".into();
     run.save_status();
-    assert_eq!(
-        std::fs::read(base.join("status.yaml")).unwrap(),
-        base_status
-    );
+    assert_eq!(std::fs::read(base.join("store.yaml")).unwrap(), base_store);
     copy_dir(&base, &a);
     copy_dir(&base, &b);
-    // Branch a commits once and keeps its open change records.
     let mut sa = Store::load(&a);
     assert_eq!(
         sa.apply(vec![create("ent:alpha", "Alpha")], &session())
             .applied,
         1
     );
-    sa.status.costs.tokens = 111;
-    sa.save_status();
-    // Branch b commits twice, then converges: its records clear.
     let mut sb = Store::load(&b);
-    assert_eq!(
-        sb.apply(vec![create("ent:beta", "Beta")], &session())
-            .applied,
-        1
-    );
-    assert_eq!(
-        sb.apply(vec![create("ent:gamma", "Gamma")], &session())
-            .applied,
-        1
-    );
-    let ids: Vec<String> = sb.status.changes.iter().map(|c| c.id.clone()).collect();
-    sb.clear_changes(&ids);
-    sb.status.costs.tokens = 222;
-    sb.save_status();
-    let merge = |file: &str| {
-        std::process::Command::new("git")
-            .args(["merge-file", "-p"])
-            .arg(a.join(file))
-            .arg(base.join(file))
-            .arg(b.join(file))
-            .output()
-    };
-    let Ok(merged) = merge("status.yaml") else {
-        eprintln!("no git binary; the status split was checked without a text merge");
-        return;
-    };
-    assert!(
-        merged.status.success(),
-        "status.yaml conflicts:\n{}",
-        String::from_utf8_lossy(&merged.stdout)
-    );
-    // b ended where the base was, so the merge is a's status.
-    assert_eq!(merged.stdout, std::fs::read(a.join("status.yaml")).unwrap());
-    assert_eq!(std::fs::read(b.join("status.yaml")).unwrap(), base_status);
-    // The local half both branches bumped is exactly what would have conflicted.
-    let local = merge(BUILD_FILE).unwrap();
-    assert!(!local.status.success(), "build.yaml merged cleanly");
-    // The merged checkout: a's tree, b's nodes, the merged status, a's local file.
+    for (id, name) in [("ent:beta", "Beta"), ("ent:gamma", "Gamma")] {
+        assert_eq!(sb.apply(vec![create(id, name)], &session()).applied, 1);
+    }
+    for dir in [&a, &b] {
+        assert_eq!(std::fs::read(dir.join("store.yaml")).unwrap(), base_store);
+        for committed in tree_bytes(dir).keys() {
+            assert!(
+                !committed.starts_with("local/")
+                    || !crate::document_sets::committed(&format!(".jazyk/ds_main/{committed}")),
+                "{committed} is local and committed"
+            );
+        }
+    }
+    // The merged checkout: a's tree, b's nodes, a's local folder.
     copy_dir(&b.join("graph"), &a.join("graph"));
-    std::fs::write(a.join("status.yaml"), &merged.stdout).unwrap();
     let m = Store::load(&a);
     assert!(m.load_errors.is_empty(), "{:?}", m.load_errors);
     for id in ["ent:alpha", "ent:beta", "ent:gamma"] {
@@ -845,111 +837,145 @@ fn parallel_branches_merge_the_whole_store_through_git() {
     );
     let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
     assert!(!order.contains("mentions"), "{order}");
-    // Each branch's change records survive the merge.
-    for id in &ids {
-        assert!(
-            m.status.has_change(CHANGE_REQ_CREATED, id),
-            "{id}: {:?}",
-            m.status.changes
-        );
-    }
+    // Open work is local to each machine: the merged checkout finds what the other
+    // branch's facts need from the committed files, here the review of the entity
+    // both branches named.
+    assert!(
+        m.status.has_change(CHANGE_ENTITY, "ent:order"),
+        "{:?}",
+        m.status.changes
+    );
     // Nothing local was committed.
     let tracked = git(&["ls-files"]).unwrap();
     let tracked = String::from_utf8_lossy(&tracked.stdout);
-    for local in [
-        "build.yaml",
-        "markers.yaml",
-        "causes.yaml",
-        "journal/",
-        "relationships/",
-        "default-views/",
-    ] {
+    for local in ["/local/", "/derived/", "build.yaml", "run.yaml", "journal/"] {
         assert!(!tracked.contains(local), "{local} tracked:\n{tracked}");
     }
-    assert!(tracked.contains(".jazyk/ds_main/changes/"), "{tracked}");
+    assert!(tracked.contains(".jazyk/ds_main/store.yaml"), "{tracked}");
 }
 
-// A version 3 store loads as it is, and its next save writes the version 4 layout
-// with every id and fact kept. Mirrors docs/compiler/graph.md#store-version.
+// A version 4 store loads as it is, and the build that opens it writes the version 5
+// layout with every id, fact, open record, and lookalike verdict kept, and retires the
+// version 4 files. Mirrors docs/compiler/graph.md#store-version.
 #[test]
-fn a_version_3_store_upgrades_in_place_at_its_next_save() {
-    let out = own_dir("v3-upgrade");
+fn a_version_4_store_upgrades_in_place_when_a_build_opens_it() {
+    let out = own_dir("v4-upgrade");
     let w = |rel: &str, text: &str| {
         let p = out.join(rel);
         crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
         crate::vfs::write(p, text).unwrap();
     };
-    w("status.yaml", "version: 3\nchanges:\n- id: c4-1\n  generation: 4\n  mutation: 1\n  kind: entity-changed\n  subject: ent:order\n  via: name\nlookalikes:\n- pair: ent:order~ent:purchase\n  verdict: separate\n  score: 0.6\n  generation: 3\nroots:\n- shop.md\n");
-    w("build.yaml", "generation: 4\n");
-    w("graph/entities/ent~order.yaml", "name: Order\nmentions:\n- doc: shop.md\n  section: /shop\n  quote: An order holds items.\ncreated: g1\nupdated: g4\n");
-    w("graph/requirements/req~shop-1.yaml", "statement: An order holds items.\nentities:\n- ent:order\nfacets:\n- facet: behavior\n  reasoning: stated\nsource:\n  doc: shop.md\n  section: /shop\n  quote: An order holds items.\ncreated: g2\nupdated: g2\n");
-    w("graph/views/view~class+shop.yaml", "kind: class\ntitle: Shop\nmembers:\n- ent:order\nprovenance:\n  derived:\n    from:\n    - ent:order\n    reasoning: 'default view: x'\ndefault: true\n");
-    w("graph/diagnostics/diag~lint-1.yaml", "rule: lint\nseverity: info\nsubjects:\n- req:shop-1\nmessage: m\nlifecycle: open\ncreated: g3\nupdated: g3\n");
-    w("docs/shop.md.yaml", "contentHash: abc\nsections:\n  /shop:\n    title: Shop\n    kind: root\n    order: 0\n    raw: |-\n      # Shop\n      An order holds items.\n    hash: h1\n    lines:\n    - 0\n    - 2\n");
+    w("status.yaml", "version: 4\nroots:\n- shop.md\n");
     w(
-        "gen/ledger.yaml",
-        "entities:\n  order:\n    factHash: f\n    requirements:\n    - req:shop-1\n",
+        "changes/entity-changed/ent~order.yaml",
+        "kind: entity-changed\nsubject: ent:order\nvia: name\n",
+    );
+    w(
+        "causes.yaml",
+        "entity-changed ent:order:\n- - c4-1\n  - 4\n  - 1\n",
+    );
+    w(
+        "lookalikes/ent~order%7Eent~purchase.yaml",
+        "id: ent:order~ent:purchase\npair: ent:order~ent:purchase\nverdict: separate\nscore: 0.6\n",
+    );
+    w("build.yaml", "generation: 4\ndocs:\n  shop.md: abc\n");
+    w("markers.yaml", "ent:order:\n- g1\n- g4\n");
+    w("graph/entities/ent~order.yaml", "id: ent:order\nname: Order\nmentions:\n- doc: shop.md\n  section: /shop\n  quote: An order holds items.\n");
+    w("graph/requirements/req~shop-1.yaml", "id: req:shop-1\nstatement: An order holds items.\nentities:\n- ent:order\nfacets:\n- facet: behavior\n  reasoning: stated\nsource:\n  doc: shop.md\n  section: /shop\n  quote: An order holds items.\n");
+    w("graph/diagnostics/diag~lint-1.yaml", "id: diag:lint-1\nrule: lint\nseverity: info\nsubjects:\n- req:shop-1\nmessage: m\nlifecycle: open\n");
+    w("graph/relationships/.keep", "");
+    w("docs/shop.md.yaml", "sections:\n  /shop:\n    title: Shop\n    kind: root\n    order: 0\n    raw: |-\n      # Shop\n      An order holds items.\n    hash: h1\n");
+    w("journal/g4.yaml", "generation: 4\n");
+    w(
+        "gen/entities/order.yaml",
+        "id: order\nfactHash: f\nrequirements:\n- req:shop-1\n",
     );
     let s = Store::load(&out);
     assert!(s.load_errors.is_empty(), "{:?}", s.load_errors);
     assert_eq!(s.graph.entities["ent:order"].updated.as_deref(), Some("g4"));
-    assert_eq!(s.graph.entities["ent:order"].mentions.len(), 1);
     assert!(s.status.has_change(CHANGE_ENTITY, "ent:order"));
     assert_eq!(s.status.lookalikes.len(), 1);
     assert_eq!(s.docs["shop.md"].content_hash, "abc");
-    assert_eq!(s.docs["shop.md"].sections["/shop"].lines, [0, 2]);
-    let ledger = crate::gen::Ledger::load(&out);
-    assert!(ledger.entities.contains_key("order"));
-    let before = serde_json::to_value((&s.graph, &s.status.changes, &s.status.lookalikes)).unwrap();
-    s.save();
-    ledger.save(&out).unwrap();
-    let status = std::fs::read_to_string(out.join("status.yaml")).unwrap();
-    assert!(
-        status.contains("version: 4")
-            && !status.contains("changes")
-            && !status.contains("lookalikes"),
-        "{status}"
+    let strip = |v: serde_json::Value| {
+        let mut v = v;
+        strip_markers(&mut v);
+        v
+    };
+    let before_graph = strip(
+        serde_json::to_value((
+            &s.graph.entities,
+            &s.graph.requirements,
+            &s.graph.diagnostics,
+        ))
+        .unwrap(),
     );
-    assert!(out.join("changes/entity-changed/ent~order.yaml").vexists());
-    assert!(out
-        .join("lookalikes/ent~order%7Eent~purchase.yaml")
+    let before_changes: Vec<(String, String)> = s
+        .status
+        .changes
+        .iter()
+        .map(|c| (c.kind.clone(), c.subject.clone()))
+        .collect();
+
+    let opened = Store::open_for_build(&out);
+    assert!(opened.load_errors.is_empty(), "{:?}", opened.load_errors);
+    let store = std::fs::read_to_string(out.join("store.yaml")).unwrap();
+    assert!(store.contains("version: 5"), "{store}");
+    for gone in [
+        "status.yaml",
+        "causes.yaml",
+        "markers.yaml",
+        "build.yaml",
+        "changes",
+        "lookalikes",
+        "docs",
+        "journal",
+        "graph/relationships",
+    ] {
+        assert!(!out.join(gone).exists(), "{gone} survived the upgrade");
+    }
+    assert!(
+        crate::layout::journal_file(&out, 4).vexists(),
+        "the journal moves to local/"
+    );
+    assert!(crate::layout::decisions_dir(&out, "lookalikes")
+        .join("ent~order%7Eent~purchase.yaml")
         .vexists());
+    assert!(crate::layout::source_file(&out, "shop.md").vexists());
+    assert!(out.join("gen/entities/order.yaml").vexists());
     let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
-    assert_eq!(order, "id: ent:order\nname: Order\n");
-    // A default view is never committed: the recompute at load owns it.
-    assert!(!out.join("graph/views/view~class+shop.yaml").vexists());
-    let doc = std::fs::read_to_string(out.join("docs/shop.md.yaml")).unwrap();
-    assert!(
-        !doc.contains("contentHash") && !doc.contains("lines"),
-        "{doc}"
-    );
-    assert!(std::fs::read_to_string(out.join(BUILD_FILE))
-        .unwrap()
-        .contains("shop.md: abc"));
-    let wide = std::fs::read_to_string(out.join("gen/ledger.yaml")).unwrap();
-    assert!(!wide.contains("factHash"), "{wide}");
-    assert!(std::fs::read_to_string(out.join("gen/entities/order.yaml"))
-        .unwrap()
-        .starts_with("id: order\n"));
-    // The upgraded store reads back the same graph, markers and all.
+    assert_eq!(body(order.as_bytes()), "id: ent:order\nname: Order\n");
+
     let back = Store::load(&out);
     assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
     assert_eq!(back.status.version, STORE_VERSION);
+    assert!(back.status.generation >= 4);
     assert_eq!(
-        serde_json::to_value((&back.graph, &back.status.changes, &back.status.lookalikes)).unwrap(),
-        before
+        strip(
+            serde_json::to_value((
+                &back.graph.entities,
+                &back.graph.requirements,
+                &back.graph.diagnostics
+            ))
+            .unwrap()
+        ),
+        before_graph
     );
-    assert_eq!(back.docs["shop.md"].sections["/shop"].lines, [0, 2]);
+    let after_changes: Vec<(String, String)> = back
+        .status
+        .changes
+        .iter()
+        .map(|c| (c.kind.clone(), c.subject.clone()))
+        .collect();
+    for c in &before_changes {
+        assert!(after_changes.contains(c), "{c:?} lost: {after_changes:?}");
+    }
+    assert_eq!(back.status.lookalikes.len(), 1);
+    assert_eq!(back.status.lookalikes[0].verdict, "separate");
     assert_eq!(back.docs["shop.md"].content_hash, "abc");
     assert_eq!(
         crate::gen::Ledger::load(&out).entities["order"].fact_hash,
         "f"
     );
-    // A cleared record deletes its file.
-    let mut s = back;
-    s.status.changes.clear();
-    s.save_status();
-    assert!(!out.join("changes/entity-changed/ent~order.yaml").vexists());
 }
 
 // A status.yaml that does not parse is a broken file, not another version: a build
@@ -1001,9 +1027,10 @@ fn section_lines_recompute_from_raw_texts() {
     }
 }
 
-// The store version: a build archives an out directory of another version to
-// `<out>.bak` and starts empty; a reader treats it as empty without touching it.
-// Mirrors docs/compiler/graph.md#store-version.
+// The store version: a build archives an out directory of an older version under
+// `.jazyk/local/archive/` (a `<out>.v<N>` sibling outside a `.jazyk` folder) and starts
+// empty; a reader treats it as empty without touching it. A newer store is never
+// archived: it stays byte for byte and read-only. Mirrors docs/compiler/graph.md#store-version.
 #[test]
 fn store_version_archives_on_build_and_reads_as_empty() {
     let dir = own_dir("version");
@@ -1014,24 +1041,21 @@ fn store_version_archives_on_build_and_reads_as_empty() {
     seed_doc(&mut s, "t.md", "# T\ncart\n");
     s.apply(vec![create("ent:cart", "Cart")], &session());
     assert_eq!(Store::open_for_build(&dir).graph.entities.len(), 1);
-    // Rewrite status.yaml without a version, as an older store would have it.
-    crate::vfs::write(dir.join("status.yaml"), "generation: 7\n").unwrap();
+    // A store file without a version, as an older store would have it.
+    crate::vfs::write(dir.join("store.yaml"), "generation: 7\n").unwrap();
     let read = Store::load(&dir);
     assert!(read.graph.entities.is_empty());
     assert_eq!(read.status.generation, 0);
     assert!(dir.join("graph/entities/ent~cart.yaml").vexists());
-    let bak = dir.with_file_name(format!(
-        "{}.bak",
-        dir.file_name().unwrap().to_string_lossy()
-    ));
+    let bak = crate::layout::archive_dir(&dir, 0);
     crate::vfs::remove_dir_all(&bak).ok();
     let fresh = Store::open_for_build(&dir);
     assert!(fresh.graph.entities.is_empty());
-    assert!(!dir.join("status.yaml").vexists());
+    assert!(!dir.join("store.yaml").vexists());
     assert!(bak.join("graph/entities/ent~cart.yaml").vexists());
-    // A second archive replaces the first.
+    // A second archive of one version replaces the first.
     crate::vfs::create_dir_all(&dir).unwrap();
-    crate::vfs::write(dir.join("status.yaml"), "version: 1\ngeneration: 2\n").unwrap();
+    crate::vfs::write(dir.join("store.yaml"), "version: 0\n").unwrap();
     crate::vfs::write(dir.join("marker"), "second").unwrap();
     let fresh = Store::open_for_build(&dir);
     assert!(fresh.graph.entities.is_empty());
@@ -1040,5 +1064,99 @@ fn store_version_archives_on_build_and_reads_as_empty() {
     // A fresh directory is simply empty: nothing to archive.
     crate::vfs::remove_dir_all(&dir).ok();
     assert!(Store::open_for_build(&dir).graph.entities.is_empty());
-    assert!(!dir.join("status.yaml").vexists());
+    assert!(!dir.join("store.yaml").vexists());
+}
+
+// A store a newer jazyk wrote is never archived or written: a build opens it read-only
+// with every byte in place. Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_newer_store_stays_byte_identical_and_read_only() {
+    let dir = own_dir("newer");
+    let w = |rel: &str, text: &str| {
+        let p = dir.join(rel);
+        crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
+        crate::vfs::write(p, text).unwrap();
+    };
+    w("store.yaml", "version: 6\n");
+    w(
+        "graph/entities/ent~x.yaml",
+        "id: ent:x\nname: X\nfuture: true\n",
+    );
+    w("local/build.yaml", "generation: 9\n");
+    let before = tree_bytes(&dir);
+    let s = Store::open_for_build(&dir);
+    assert!(
+        s.load_errors.iter().any(|e| e.contains("store-newer")),
+        "{:?}",
+        s.load_errors
+    );
+    assert!(s.graph.entities.is_empty());
+    s.save();
+    let mut s = s;
+    let r = s.apply(vec![create("ent:y", "Y")], &session());
+    assert_eq!(r.applied, 0);
+    let mut after = tree_bytes(&dir);
+    after.remove("local/.lock");
+    assert_eq!(after, before);
+    assert!(!crate::layout::archive_dir(&dir, 6).exists());
+}
+
+// A file's body: its bytes past the leading comment lines.
+fn body(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes)
+        .lines()
+        .skip_while(|l| l.starts_with('#'))
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
+fn strip_markers(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(m) => {
+            m.remove("created");
+            m.remove("updated");
+            m.values_mut().for_each(strip_markers);
+        }
+        serde_json::Value::Array(a) => a.iter_mut().for_each(strip_markers),
+        _ => {}
+    }
+}
+
+// A section the git merge driver listed in `local/merged.yaml` reads as changed until
+// the next save writes `sources/`, which deletes the list.
+// Mirrors docs/compiler/jazyk-folder.md#merging-through-git.
+#[test]
+fn sections_a_merge_left_read_as_changed_until_the_next_save() {
+    let out = own_dir("merged-sections");
+    let mut s = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    seed_doc(&mut s, "t.md", "# T\ncart\n");
+    for rec in s.docs.values_mut() {
+        let keys: Vec<String> = rec.sections.keys().cloned().collect();
+        for k in keys {
+            rec.coverage.insert(
+                k,
+                Coverage {
+                    state: "covered".into(),
+                    note: None,
+                    claimed_by: None,
+                },
+            );
+        }
+    }
+    s.save();
+    assert!(!Store::load(&out)
+        .status
+        .has_change(CHANGE_SECTION_DIRTY, "t.md#/t"));
+    crate::vfs::write(crate::layout::merged_file(&out), "- t.md#/t\n").unwrap();
+    let m = Store::load(&out);
+    assert!(m.load_errors.is_empty(), "{:?}", m.load_errors);
+    assert!(m.status.has_change(CHANGE_SECTION_DIRTY, "t.md#/t"));
+    m.save();
+    assert!(!crate::layout::merged_file(&out).vexists());
+    assert!(Store::load(&out)
+        .status
+        .has_change(CHANGE_SECTION_DIRTY, "t.md#/t"));
 }

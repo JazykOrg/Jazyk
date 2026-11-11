@@ -138,9 +138,19 @@ pub fn entity_fact_hash(store: &Store, id: &str) -> String {
     };
     let mut aliases = e.aliases.clone();
     aliases.sort();
+    // Only the mentions the entity's file states: a mention that is the source of a
+    // requirement naming the entity comes back at load, so it is covered by `reqs`.
+    let by_reference: Vec<&SourceRef> = store
+        .graph
+        .requirements
+        .values()
+        .filter(|r| r.entities.iter().any(|x| x == id))
+        .filter_map(|r| r.source.as_ref())
+        .collect();
     let mut mentions: Vec<String> = e
         .mentions
         .iter()
+        .filter(|m| !by_reference.contains(m))
         .map(|m| format!("{}#{}\n{}", m.doc, m.section, m.quote))
         .collect();
     mentions.sort();
@@ -233,12 +243,19 @@ fn read_decision_files(dir: &Path, errors: &mut Vec<String>) -> Vec<(String, ser
     out
 }
 
-pub(super) fn load_decisions(out: &Path, errors: &mut Vec<String>) -> (Decisions, Vec<LookalikeVerdict>) {
+pub(super) fn load_decisions(
+    out: &Path,
+    errors: &mut Vec<String>,
+) -> (Decisions, Vec<LookalikeVerdict>) {
     let mut d = Decisions::default();
     let mut lookalikes = Vec::new();
     for (id, v) in read_decision_files(&layout::decisions_dir(out, "lookalikes"), errors) {
         lookalikes.push(LookalikeVerdict {
-            pair: v.get("pair").and_then(|x| x.as_str()).unwrap_or(&id).to_string(),
+            pair: v
+                .get("pair")
+                .and_then(|x| x.as_str())
+                .unwrap_or(&id)
+                .to_string(),
             verdict: v
                 .get("verdict")
                 .and_then(|x| x.as_str())
@@ -277,7 +294,9 @@ pub(super) fn load_decisions(out: &Path, errors: &mut Vec<String>) -> (Decisions
         if let Some(a) = v.get("matched").and_then(|x| x.as_array()) {
             d.curation.insert(
                 id,
-                a.iter().filter_map(|x| x.as_str().map(String::from)).collect(),
+                a.iter()
+                    .filter_map(|x| x.as_str().map(String::from))
+                    .collect(),
             );
         }
     }
@@ -306,16 +325,32 @@ pub(super) fn save_decisions(out: &Path, d: &Decisions, lookalikes: &[LookalikeV
         put("pairs", id, decision_value(id, p));
     }
     for (id, h) in &d.reviews {
-        put("reviews", id, decision_value(id, &serde_json::json!({ "facts": h })));
+        put(
+            "reviews",
+            id,
+            decision_value(id, &serde_json::json!({ "facts": h })),
+        );
     }
     for (id, m) in &d.conformance {
-        put("conformance", id, decision_value(id, &serde_json::json!({ "facts": m })));
+        put(
+            "conformance",
+            id,
+            decision_value(id, &serde_json::json!({ "facts": m })),
+        );
     }
     for (id, h) in &d.structure {
-        put("structure", id, decision_value(id, &serde_json::json!({ "statement": h })));
+        put(
+            "structure",
+            id,
+            decision_value(id, &serde_json::json!({ "statement": h })),
+        );
     }
     for (id, m) in &d.curation {
-        put("curation", id, decision_value(id, &serde_json::json!({ "matched": m })));
+        put(
+            "curation",
+            id,
+            decision_value(id, &serde_json::json!({ "matched": m })),
+        );
     }
     for kind in DECISION_KINDS {
         let mut files = Vec::new();
@@ -352,9 +387,16 @@ pub(super) struct RunFile {
     pub(super) roots: Vec<String>,
 }
 
+// A finding (generation 0, never caused by a commit here) stays out: the next load
+// derives it again from the committed files.
 pub(super) fn save_run(out: &Path, status: &Status) {
     let run = RunFile {
-        changes: status.changes.clone(),
+        changes: status
+            .changes
+            .iter()
+            .filter(|c| c.generation != 0)
+            .cloned()
+            .collect(),
         parked: status.parked.clone(),
         alignment: status.alignment.clone(),
         reevaluate: status.reevaluate.clone(),
@@ -401,7 +443,9 @@ impl Store {
                 if waiting {
                     continue;
                 }
-                let Some(o) = self.graph.requirements.get(&other) else { continue };
+                let Some(o) = self.graph.requirements.get(&other) else {
+                    continue;
+                };
                 let key = pair_key(rid, &other);
                 let verdict = self
                     .decisions
@@ -413,7 +457,13 @@ impl Store {
                     (rid.clone(), statement_hash(&r.statement)),
                     (other.clone(), statement_hash(&o.statement)),
                 ]);
-                pairs.insert(key, PairDecision { verdict, statements });
+                pairs.insert(
+                    key,
+                    PairDecision {
+                        verdict,
+                        statements,
+                    },
+                );
             }
         }
         self.decisions.pairs = pairs;
@@ -446,7 +496,10 @@ impl Store {
         // edges-missing record was judged not structural.
         let mut structure = BTreeMap::new();
         for (rid, r) in &self.graph.requirements {
-            if r.entities.len() >= 2 && r.edges.is_empty() && !open(&[CHANGE_EDGES_MISSING], rid, &changes) {
+            if r.entities.len() >= 2
+                && r.edges.is_empty()
+                && !open(&[CHANGE_EDGES_MISSING], rid, &changes)
+            {
                 structure.insert(rid.clone(), statement_hash(&r.statement));
             }
         }
@@ -496,7 +549,9 @@ impl Store {
                 updated: None,
             };
             let same = self.graph.diagnostics.get(&did).is_some_and(|d| {
-                d.lifecycle == "open" && d.goal == diagnostic.goal && d.reasoning == diagnostic.reasoning
+                d.lifecycle == "open"
+                    && d.goal == diagnostic.goal
+                    && d.reasoning == diagnostic.reasoning
             });
             if !same {
                 self.graph.diagnostics.insert(did, diagnostic);
@@ -557,7 +612,8 @@ impl Store {
         let mut stale: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (rid, r) in &self.graph.requirements {
             if let Some(src) = &r.source {
-                if self.docs.contains_key(&src.doc) && !locates(&src.doc, &src.section, &src.quote) {
+                if self.docs.contains_key(&src.doc) && !locates(&src.doc, &src.section, &src.quote)
+                {
                     stale
                         .entry(self.surviving_section(&src.doc, &src.section))
                         .or_default()
@@ -595,11 +651,16 @@ impl Store {
             let judged: Vec<String> = nbrs
                 .iter()
                 .filter(|o| {
-                    let Some(other) = self.graph.requirements.get(*o) else { return false };
-                    self.decisions.pairs.get(&pair_key(rid, o)).is_some_and(|d| {
-                        d.statements.get(rid) == Some(&mine)
-                            && d.statements.get(*o) == Some(&statement_hash(&other.statement))
-                    })
+                    let Some(other) = self.graph.requirements.get(*o) else {
+                        return false;
+                    };
+                    self.decisions
+                        .pairs
+                        .get(&pair_key(rid, o))
+                        .is_some_and(|d| {
+                            d.statements.get(rid) == Some(&mine)
+                                && d.statements.get(*o) == Some(&statement_hash(&other.statement))
+                        })
                 })
                 .cloned()
                 .collect();
@@ -642,15 +703,27 @@ impl Store {
                 && r.edges.is_empty()
                 && self.decisions.structure.get(rid) != Some(&statement_hash(&r.statement))
             {
-                found.push(rec(CHANGE_EDGES_MISSING, rid, "entities", serde_json::Value::Null));
+                found.push(rec(
+                    CHANGE_EDGES_MISSING,
+                    rid,
+                    "entities",
+                    serde_json::Value::Null,
+                ));
             }
         }
 
         // Curated views whose query matches a node the curation decision does not list.
         let instances = crate::derive::instance_types(self);
         for (vid, v) in &self.graph.views {
-            let (false, Some(q)) = (v.default, &v.query) else { continue };
-            let seen = self.decisions.curation.get(vid).cloned().unwrap_or_default();
+            let (false, Some(q)) = (v.default, &v.query) else {
+                continue;
+            };
+            let seen = self
+                .decisions
+                .curation
+                .get(vid)
+                .cloned()
+                .unwrap_or_default();
             let added: Vec<String> = crate::derive::query_matches(self, q, &v.excluded, &instances)
                 .into_iter()
                 .filter(|m| !seen.contains(m))
@@ -698,7 +771,12 @@ impl Store {
                 && d.answer.is_none()
                 && !matches!(d.triage.as_deref(), Some("suppressed") | Some("wontfix"))
             {
-                found.push(rec(CHANGE_PROMPT_UNANSWERED, did, "prompt", serde_json::Value::Null));
+                found.push(rec(
+                    CHANGE_PROMPT_UNANSWERED,
+                    did,
+                    "prompt",
+                    serde_json::Value::Null,
+                ));
             }
         }
         for (id, p) in self
@@ -793,13 +871,26 @@ pub(super) fn retire_v4_layout(out: &Path) {
     let remove_file = |p: PathBuf| {
         crate::vfs::remove_file(&p).ok();
     };
-    for d in ["changes", "parked", "failed", "alignment", "lookalikes", "docs"] {
+    for d in [
+        "changes",
+        "parked",
+        "failed",
+        "alignment",
+        "lookalikes",
+        "docs",
+    ] {
         remove_dir(out.join(d));
     }
     for d in ["default-views", "relationships", "state-machines"] {
         remove_dir(out.join("graph").join(d));
     }
-    for f in ["status.yaml", "build.yaml", "markers.yaml", "causes.yaml", "feedback.jsonl"] {
+    for f in [
+        "status.yaml",
+        "build.yaml",
+        "markers.yaml",
+        "causes.yaml",
+        "feedback.jsonl",
+    ] {
         remove_file(out.join(f));
     }
     // The journal and the control plane move into local/; rebuilt output and logs go:
@@ -810,7 +901,10 @@ pub(super) fn retire_v4_layout(out: &Path) {
         (out.join("workers"), layout::workers_dir(out)),
         (out.join("leases"), layout::leases_dir(out)),
         (out.join("decompile"), layout::decompile_dir(out)),
-        (out.join("deliverable-baseline"), layout::deliverable_baseline_dir(out)),
+        (
+            out.join("deliverable-baseline"),
+            layout::deliverable_baseline_dir(out),
+        ),
     ];
     for (from, to) in moves {
         if from.vexists() && !to.vexists() {
@@ -820,7 +914,15 @@ pub(super) fn retire_v4_layout(out: &Path) {
             crate::vfs::rename(&from, &to).ok();
         }
     }
-    for d in ["diagrams", "docsgen", "last-build", "preview", "snapshots", "trace", "sessions"] {
+    for d in [
+        "diagrams",
+        "docsgen",
+        "last-build",
+        "preview",
+        "snapshots",
+        "trace",
+        "sessions",
+    ] {
         remove_dir(out.join(d));
     }
     for f in [".lock", ".leases.lock", ".committing"] {

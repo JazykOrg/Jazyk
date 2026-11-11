@@ -658,12 +658,12 @@ The kinds, what each is computed from, and the goal it feeds:
 
 | kind | computed from | feeds |
 |---|---|---|
-| `section-dirty` | a section on disk whose hash differs from its `sources/` entry, or that `sources/` lacks | `reconcile-section` |
+| `section-dirty` | a section on disk whose hash differs from its `sources/` entry, that `sources/` lacks or marks with no coverage, or that a git merge listed in `local/merged.yaml` ([merging through git](./jazyk-folder.md#merging-through-git)) | `reconcile-section` |
 | `section-removed` | a section in `sources/` that is gone from disk | the sweep |
 | `anchor-stale` | a fact whose quote no longer locates in its section on disk | `reconcile-section` |
 | `alignment-pending` | [alignment](./alignment.md) of `sources/` against disk proposing a move it cannot apply alone | `place-anchors` |
 | `requirement-revised` | a candidate pair of requirements ([pairs](./reconciler.md#pairs)) with no `pairs/` decision whose statement hashes match both statements now | `rejudge-pair`, at most `pairs-per-requirement` open per requirement |
-| `entity-changed` | an entity whose fact hash differs from its `reviews/` decision, or that has none | `review-entity` |
+| `entity-changed` | an entity whose fact hash differs from its `reviews/` decision, or that has none. The fact hash covers the entity's name, aliases, definition, stereotype, parent, attributes, the mentions its file states, its children, the requirements naming it, and their edges touching it, all order-insensitive | `review-entity` |
 | `instance-changed` | an instance whose own and type's fact hash differ from its `conformance/` decision | `conform-instance` |
 | `edges-missing` | a requirement naming several entities with no `edges` and no `structure/` decision on its statement | `declare-edges` |
 | `node-deleted`, `view-member-gone` | a view member, an exclusion, a collapse entry, an instance's type, a derived fact's `from`, or a diagnostic subject that names no live node | `retrace`, `rejudge-pair` for a surviving diagnostic subject |
@@ -690,12 +690,23 @@ diagnostic until a person answers or resolves it.
 ### A build's progress
 
 What a build is doing (its batch, the goals it parked when a budget ran out, its spend,
-its reopen counts) is not graph state. A local build keeps it in memory, and in
-`local/run.yaml` only while it runs, so an interrupted `jazyk compile` resumes; a build
-that ends deletes the file. A hosted build keeps the same in the host's database, so a
-build paused for a deploy resumes where it stopped, and the host purges it when the
-build ends ([durable execution](./hosted-runtime.md#durable-execution)). Losing it costs
-nothing but the order: the next derivation finds the same work.
+its reopen counts) is not graph state. A local build keeps it in memory and in the
+machine-local `local/run.yaml`:
+
+- the change records this machine's commits opened, each with its cause (generation and
+  mutation), so `jazyk explain` and `ripple` can name it;
+- the goals it parked;
+- the anchor moves [alignment](./alignment.md) proposed and a person has not placed yet;
+- the requirements a `place_anchor` marked for re-evaluation;
+- the document set's resolved roots.
+
+A record stays until its work resolves, so an interrupted `jazyk compile` resumes where
+it stopped. A finding computed from the committed files is never written there: the
+next load computes it again. The generation never falls below one a record in the file
+names. A hosted build keeps the same in the host's database, so a build paused for a
+deploy resumes where it stopped, and the host purges it when the build ends
+([durable execution](./hosted-runtime.md#durable-execution)). Losing it costs nothing
+but the order and the causes: the next derivation finds the same work.
 
 ## Journal
 

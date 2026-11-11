@@ -755,12 +755,12 @@ attempts no model made, 302 in its last minutes.
 Parked is a build's progress, failed is the graph's. Neither is a stored work queue.
 
 - Parked goals live in the build that parked them
-  ([a build's progress](./graph.md#a-builds-progress)): in memory, in `local/run.yaml`
-  while a local build runs so an interrupted `jazyk compile` resumes them first, or in
-  the host's database for a hosted build paused and resumed. The build that ends drops
-  them. The next build derives the same goals again from the same findings, and they
-  count as open in the verdict meanwhile (`incomplete`). Unfinished work is never
-  silent, and it needs no record.
+  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the
+  machine-local `local/run.yaml`, so the next `jazyk compile` on that machine resumes
+  them, or in the host's database for a hosted build paused and resumed. They count as
+  open in the verdict meanwhile (`incomplete`). Another checkout, which has no
+  `run.yaml`, derives the same goals again from the same findings. Unfinished work is
+  never silent, and it needs no committed record.
 - A goal a session marks failed becomes a `goal-failed`
   [diagnostic](./model/diagnostic.md) on its target, with the goal kind and the reason in
   its message. It is graph state: committed, seen by every checkout, answered by a

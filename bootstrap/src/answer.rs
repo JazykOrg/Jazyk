@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     fn journal_kind(out: &Path, generation: u64) -> crate::model::JournalEntry {
-        let path = out.join("journal").join(format!("g{}.yaml", generation));
+        let path = crate::layout::journal_dir(out).join(format!("g{}.yaml", generation));
         serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
     }
 

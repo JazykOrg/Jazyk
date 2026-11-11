@@ -245,39 +245,36 @@ pub fn read_node_values(dir: &Path) -> serde_json::Map<String, serde_json::Value
         .collect()
 }
 
-// A node as its file holds it: `id` first, then its own fields, the generation markers
-// taken out into `markers`. Mirrors docs/compiler/graph.md#node-files.
-fn node_value<T: Serialize>(id: &str, node: &T, markers: &mut Markers) -> serde_norway::Value {
+// A node as its file holds it: `id` first, then its own fields.
+// Mirrors docs/compiler/graph.md#node-files.
+fn node_value<T: Serialize>(id: &str, node: &T) -> serde_norway::Value {
     let mut m = serde_norway::Mapping::new();
     m.insert("id".into(), id.into());
     if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
-        let mut fields = fields;
-        let created = fields
-            .shift_remove("created")
-            .and_then(|v| v.as_str().map(String::from));
-        let updated = fields
-            .shift_remove("updated")
-            .and_then(|v| v.as_str().map(String::from));
-        if created.is_some() || updated.is_some() {
-            markers.insert(id.to_string(), (created, updated));
-        }
         m.extend(fields);
     }
     serde_norway::Value::Mapping(m)
 }
 
-// The generation markers a node file leaves to `markers.yaml`.
-trait Marked {
-    fn marks(&self) -> (Option<&String>, Option<&String>) {
-        (None, None)
+// A node without its generation markers: what its file holds, so what its write
+// fingerprints. The markers stay in memory. Mirrors docs/compiler/graph.md#node-files.
+trait Marked: Clone {
+    fn unmarked(&self) -> Cow<'_, Self> {
+        Cow::Borrowed(self)
     }
 }
 
 macro_rules! marked {
     ($($t:ty),*) => {$(
         impl Marked for $t {
-            fn marks(&self) -> (Option<&String>, Option<&String>) {
-                (self.created.as_ref(), self.updated.as_ref())
+            fn unmarked(&self) -> Cow<'_, Self> {
+                if self.created.is_none() && self.updated.is_none() {
+                    return Cow::Borrowed(self);
+                }
+                let mut n = self.clone();
+                n.created = None;
+                n.updated = None;
+                Cow::Owned(n)
             }
         }
     )*};
@@ -290,21 +287,15 @@ impl Marked for RedirectFile {}
 // Write every node of one kind whose bytes changed; return the files of nodes that
 // left the graph, for the caller to delete after every write landed. The markers are
 // taken out as `node_value` takes them.
-fn save_kind<'a, T: Serialize + Marked + Clone + 'a>(
+fn save_kind<'a, T: Serialize + Marked + 'a>(
     dir: &Path,
     nodes: impl Iterator<Item = (&'a String, std::borrow::Cow<'a, T>)>,
-    markers: &mut Markers,
 ) -> Vec<PathBuf> {
     let mut ids: BTreeSet<&String> = BTreeSet::new();
     for (id, node) in nodes {
-        let (created, updated) = node.marks();
-        if created.is_some() || updated.is_some() {
-            markers.insert(id.clone(), (created.cloned(), updated.cloned()));
-        }
+        let node = node.as_ref().unmarked();
         let path = dir.join(format!("{}.yaml", node_stem(id).0));
-        write_tracked(&path, id, node.as_ref(), || {
-            node_value(id, node.as_ref(), &mut Markers::new())
-        });
+        write_tracked(&path, id, node.as_ref(), || node_value(id, node.as_ref()));
         ids.insert(id);
     }
     node_files(dir, &mut Vec::new())
@@ -812,8 +803,8 @@ impl Store {
                 ..Default::default()
             };
         }
-        let legacy_files = version.is_none()
-            && (out.join("graph").vis_dir() || out.join("status.yaml").vexists());
+        let legacy_files =
+            version.is_none() && (out.join("graph").vis_dir() || out.join("status.yaml").vexists());
         if version.is_some_and(|v| !readable_version(v)) || legacy_files {
             let v = version.unwrap_or(0);
             let archive = crate::layout::archive_dir(out, v);
@@ -893,13 +884,14 @@ impl Store {
         let status = if legacy {
             read_status(out, &mut errors)
         } else {
-            let version = match yaml_read::<super::status::StoreFile>(&crate::layout::store_file(out)) {
-                Ok(v) => v.map(|f| f.version).unwrap_or(STORE_VERSION),
-                Err(e) => {
-                    errors.push(e);
-                    0
-                }
-            };
+            let version =
+                match yaml_read::<super::status::StoreFile>(&crate::layout::store_file(out)) {
+                    Ok(v) => v.map(|f| f.version).unwrap_or(STORE_VERSION),
+                    Err(e) => {
+                        errors.push(e);
+                        0
+                    }
+                };
             Status {
                 version,
                 ..Default::default()
@@ -967,11 +959,27 @@ impl Store {
                 }
             }
         }
-        store.status.generation = if legacy {
-            build.generation.max(generation_floor(&store.status))
-        } else {
-            build.generation
-        };
+        // Sections a git merge could not settle: the driver listed them in
+        // `local/merged.yaml`, and they read as changed until a save writes `sources/`.
+        // Mirrors docs/compiler/jazyk-folder.md#merging-through-git.
+        if !legacy {
+            let merged: Vec<String> = shard(&crate::layout::merged_file(out), &mut errors);
+            for key in merged {
+                let Some((doc, section)) = key.split_once("#/") else {
+                    continue;
+                };
+                let section = format!("/{}", section);
+                if let Some(rec) = store.docs.get_mut(doc) {
+                    if let Some(sec) = rec.sections.get_mut(&section) {
+                        sec.hash.clear();
+                    }
+                    rec.coverage.remove(&section);
+                    rec.content_hash.clear();
+                }
+            }
+        }
+        // The counter never falls below a generation this machine's own records name.
+        store.status.generation = build.generation.max(generation_floor(&store.status));
         store.status.verdict = build.verdict;
         store.status.costs = build.costs;
         store.status.spent = build.spent;
@@ -1090,7 +1098,6 @@ impl Store {
 
     pub(super) fn save_nodes(&self) {
         let g = self.out.join("graph");
-        let mut markers = Markers::new();
         let redirects: BTreeMap<String, RedirectFile> = self
             .graph
             .redirects
@@ -1114,16 +1121,14 @@ impl Store {
                 _ => (id, Cow::Borrowed(e)),
             });
         let mut gone = Vec::new();
-        gone.extend(save_kind(&g.join("entities"), entities, &mut markers));
+        gone.extend(save_kind(&g.join("entities"), entities));
         gone.extend(save_kind(
             &g.join("requirements"),
             self.graph.requirements.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("criteria"),
             self.graph.criteria.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("views"),
@@ -1132,7 +1137,6 @@ impl Store {
                 .iter()
                 .filter(|(_, v)| !v.default)
                 .map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &crate::layout::derived_node_dir(&self.out, "default-views"),
@@ -1141,27 +1145,22 @@ impl Store {
                 .iter()
                 .filter(|(_, v)| v.default)
                 .map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("diagnostics"),
             self.graph.diagnostics.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("redirects"),
             redirects.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         gone.extend(save_kind(
             &crate::layout::derived_node_dir(&self.out, "relationships"),
             self.graph.relationships.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         gone.extend(save_kind(
             &crate::layout::derived_node_dir(&self.out, "state-machines"),
             self.graph.state_machines.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         // A derived directory exists once saved, even empty, so a load recomputes the
         // derived kinds only on a checkout that lacks them.
@@ -1171,6 +1170,11 @@ impl Store {
         for (doc, rec) in &self.docs {
             let p = crate::layout::source_file(&self.out, doc);
             write_tracked(&p, doc, rec, || doc_record_value(rec));
+        }
+        // The sources now carry the merge's leftovers themselves.
+        let merged = crate::layout::merged_file(&self.out);
+        if merged.vexists() {
+            crate::vfs::remove_file(&merged).ok();
         }
         for p in gone {
             if let Err(e) = crate::vfs::remove_file(&p) {

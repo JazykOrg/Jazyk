@@ -2094,7 +2094,7 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
 
 // The store version: outside a build, a version-2 out directory (one shard per kind)
 // reads as empty and refuses a commit with `store-version`; a build archives it whole
-// to `<out>.bak` (the old shard included), reconciles from empty to converged in node
+// under `.jazyk/local/archive/` (the old shard included), reconciles from empty to converged in node
 // files, and stamps the current version. Mirrors docs/compiler/graph.md#store-version.
 #[test]
 fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty() {
@@ -2147,10 +2147,7 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
         report.verdict
     );
     assert_clean_build(&report, &events);
-    let bak = out.with_file_name(format!(
-        "{}.bak",
-        out.file_name().unwrap().to_string_lossy()
-    ));
+    let bak = crate::layout::archive_dir(&out, 2);
     assert!(
         bak.join("graph").join("entities.yaml").exists(),
         "{} not archived whole",
@@ -2164,12 +2161,12 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 4);
+    assert_eq!(store.status.version, 5);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
-    assert!(crate::vfs::read_to_string(out.join("status.yaml"))
+    assert!(crate::vfs::read_to_string(out.join("store.yaml"))
         .unwrap()
-        .contains("version: 4"));
+        .contains("version: 5"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }

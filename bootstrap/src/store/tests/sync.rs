@@ -15,7 +15,7 @@ fn sync_docs_journals_an_edit_entry_with_section_records() {
     );
     s.sync_docs(&parsed);
     assert_eq!(s.status.generation, 1);
-    let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+    let entry: JournalEntry = yaml_to(&crate::layout::journal_dir(&s.out).join("g1.yaml")).unwrap();
     assert_eq!(entry.kind, "edit");
     assert_eq!(entry.dirtied.len(), 3);
     assert!(entry
@@ -71,7 +71,7 @@ fn sync_docs_journals_an_edit_entry_with_section_records() {
         .map(|c| c.generation)
         .expect("section-removed");
     let entry: JournalEntry =
-        yaml_to(&s.out.join("journal").join(format!("g{}.yaml", edit_gen))).unwrap();
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", edit_gen))).unwrap();
     assert_eq!(entry.kind, "edit");
     assert!(entry.dirtied.contains(&"t.md#/t/beta".to_string()));
     assert!(entry
@@ -297,12 +297,9 @@ fn sync_docs_proposes_for_a_moved_and_edited_section_and_gc_waits() {
         .iter()
         .any(|c| c.op == "moved" && c.to == vec!["t.md#/t/basket"]));
     // The align entry carries the proposals.
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", s.status.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", s.status.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "align");
     assert!(entry
         .mutations
@@ -537,20 +534,14 @@ fn exact_moves_are_journaled_and_survive_a_level_change() {
     assert!(s.docs["t.md"].coverage.contains_key("/t/group/cart"));
     // The edit entry, then the align entry.
     assert_eq!(s.status.generation, gen_before + 2);
-    let edit: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", gen_before + 1)),
-    )
-    .unwrap();
+    let edit: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", gen_before + 1)))
+            .unwrap();
     assert_eq!(edit.kind, "edit");
     assert_eq!(edit.dirtied, vec!["t.md#/t/group".to_string()]);
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", gen_before + 2)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", gen_before + 2)))
+            .unwrap();
     assert_eq!(entry.kind, "align");
     assert!(entry.batch.is_empty());
     assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");
@@ -610,20 +601,14 @@ fn renamed_heading_carries_anchors_and_dirties_the_section() {
     // The edit entry dirties the renamed section only; the align entry records
     // the rename, no section-removed record for the old reference.
     assert_eq!(s.status.generation, gen_before + 2);
-    let edit: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", gen_before + 1)),
-    )
-    .unwrap();
+    let edit: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", gen_before + 1)))
+            .unwrap();
     assert_eq!(edit.kind, "edit");
     assert_eq!(edit.dirtied, vec!["t.md#/t/basket".to_string()]);
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", gen_before + 2)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", gen_before + 2)))
+            .unwrap();
     assert_eq!(entry.kind, "align");
     assert_eq!(entry.mutations[0]["op"], "rename");
     assert_eq!(entry.mutations[0]["from"], "t.md#/t/cart");

@@ -729,7 +729,17 @@ mod tests {
                 1
             );
             assert_eq!(board.counts().blocked, 63);
-            assert!(board.verdict().converged());
+            assert!(
+                board.verdict().converged(),
+                "{:?} {:?}",
+                board.verdict(),
+                board
+                    .goals
+                    .iter()
+                    .filter(|g| g.kind != "ratify" && !board.gated.contains(&g.id))
+                    .map(|g| g.id.clone())
+                    .collect::<Vec<_>>()
+            );
             graph_ready(&project, &store).unwrap();
         }
         let (result, _) = workflow_request(

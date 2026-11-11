@@ -240,7 +240,7 @@ pub fn set_dir_of(path: &Path) -> Option<PathBuf> {
 /// as changed: a merge cannot edit `sources/` safely, since git writes the merged tree
 /// after the driver runs. Mirrors docs/compiler/jazyk-folder.md#merging-through-git.
 pub fn merged_sections_file(set_dir: &Path) -> PathBuf {
-    crate::layout::local_dir(set_dir).join("merged.yaml")
+    crate::layout::merged_file(set_dir)
 }
 
 /// Add sections to the set's merged-sections file.

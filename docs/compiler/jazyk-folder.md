@@ -383,7 +383,7 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | File | What it is | Format |
 |---|---|---|
 | `build.yaml` | The commit counter, the last build's verdict, costs, spend, open diagnostic counts, and each document's content hash at last reconcile (a fast check before comparing sections). Its counter is the commit point readers check. | YAML |
-| `run.yaml` | An interrupted build: its batch, the goals it parked, its spend so far. A build that ends deletes it; the next one resumes from it or starts over. Hosted builds keep the same in the host's database. | YAML |
+| `run.yaml` | The open work this machine's commits recorded, with causes, the goals it parked, pending anchor moves, and the resolved roots ([a build's progress](./graph.md#a-builds-progress)). A record leaves when its work resolves. Hosted builds keep the same in the host's database. | YAML |
 | `control.yaml` | Workflow modes and the releases this operator approved ([control plane](./control-plane.md#modes-and-releases)). | YAML |
 | `journal/g<N>.yaml` | One entry per commit on this machine: its mutations, the goals it resolved, its cost ([journal](./graph.md#journal)). What `jazyk explain`, `ripple`, and the cost report read. | YAML |
 | `workers/<id>.yaml`, `leases/<batch>.yaml` | Who is attached and which goal batch each holds ([workers and leases](./control-plane.md#workers-and-leases)). | YAML |

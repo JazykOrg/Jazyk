@@ -582,7 +582,7 @@ pub(crate) async fn request_scoped(
             let mut entries: Vec<Value> = Vec::new();
             let mut g = to;
             while g >= from && (entries.len() as u64) < limit {
-                let f = out.join("journal").join(format!("g{}.yaml", g));
+                let f = crate::layout::journal_dir(&out).join(format!("g{}.yaml", g));
                 if let Ok(text) = crate::vfs::read_to_string(&f) {
                     if let Ok(mut v) = serde_norway::from_str::<Value>(&text) {
                         v["generation"] = json!(g);

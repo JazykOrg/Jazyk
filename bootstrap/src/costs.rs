@@ -464,10 +464,10 @@ mod tests {
         // came from an endpoint that reports none, and add 0 cached.
         entries[1].cached_tokens = Some(400);
         entries[4].cached_tokens = Some(50);
-        crate::vfs::create_dir_all(out.join("journal")).unwrap();
+        crate::vfs::create_dir_all(crate::layout::journal_dir(&out)).unwrap();
         for e in &entries {
             crate::vfs::write(
-                out.join("journal").join(format!("g{}.yaml", e.generation)),
+                crate::layout::journal_dir(&out).join(format!("g{}.yaml", e.generation)),
                 serde_norway::to_string(e).unwrap(),
             )
             .unwrap();

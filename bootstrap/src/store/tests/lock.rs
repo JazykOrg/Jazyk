@@ -48,7 +48,7 @@ fn a_reader_waits_for_a_commit_in_progress() {
     // A writer mid-commit: the lock held, the marker down, one node file rewritten,
     // the commit point not yet moved.
     let held = FileLock::acquire(&out);
-    crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+    crate::vfs::write(crate::layout::committing_file(&out), "1").unwrap();
     let mut next = Store::load(&out);
     next.graph
         .entities
@@ -65,14 +65,14 @@ fn a_reader_waits_for_a_commit_in_progress() {
         "a reader accepted a half-committed store"
     );
     next.save_status_files();
-    crate::vfs::remove_file(out.join(COMMIT_MARKER)).unwrap();
+    crate::vfs::remove_file(crate::layout::committing_file(&out)).unwrap();
     drop(held);
     let read = reader.join().unwrap();
     assert!(read.load_errors.is_empty(), "{:?}", read.load_errors);
     assert_eq!(read.status.generation, 2);
     assert!(read.graph.entities.contains_key("ent:b"));
     // A marker left by a writer that stopped: no lock is held, nothing waits.
-    crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+    crate::vfs::write(crate::layout::committing_file(&out), "1").unwrap();
     let started = std::time::Instant::now();
     let read = Store::load(&out);
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
@@ -80,7 +80,7 @@ fn a_reader_waits_for_a_commit_in_progress() {
     // The next commit replaces the leftover and removes it.
     let mut w = Store::load(&out);
     assert_eq!(w.apply(vec![create("ent:c", "C")], &session()).applied, 1);
-    assert!(!out.join(COMMIT_MARKER).vexists());
+    assert!(!crate::layout::committing_file(&out).vexists());
 }
 
 // A store that never holds still within the wait loads read-only with `store-busy`
@@ -95,7 +95,7 @@ fn a_reader_that_never_reads_a_still_store_reports_store_busy() {
     };
     assert_eq!(s.apply(vec![create("ent:a", "A")], &session()).applied, 1);
     let held = FileLock::acquire(&out);
-    crate::vfs::write(out.join(COMMIT_MARKER), "1").unwrap();
+    crate::vfs::write(crate::layout::committing_file(&out), "1").unwrap();
     let reader = {
         let out = out.clone();
         std::thread::spawn(move || {
@@ -113,7 +113,7 @@ fn a_reader_that_never_reads_a_still_store_reports_store_busy() {
     let r = busy.apply(vec![create("ent:b", "B")], &session());
     assert_eq!(r.applied, 0);
     assert!(r.skipped[0].starts_with("store-busy:"), "{:?}", r.skipped);
-    crate::vfs::remove_file(out.join(COMMIT_MARKER)).unwrap();
+    crate::vfs::remove_file(crate::layout::committing_file(&out)).unwrap();
 }
 
 // Every committed file reaches the disk before its rename: no temporary file is
@@ -161,7 +161,7 @@ fn a_scoped_lock_takes_over_a_stale_marker_and_keeps_a_live_one() {
     files.insert(".jazyk/ds/.lock".to_string(), b"999".to_vec());
     let _scope = crate::vfs::Scope::enter(&files);
     let out = PathBuf::from("/project/.jazyk/ds");
-    let marker = out.join(".lock");
+    let marker = crate::layout::lock_file(&out);
     let started = std::time::Instant::now();
     let outer = FileLock::acquire(&out);
     assert!(
@@ -186,7 +186,7 @@ fn a_scoped_lock_takes_over_a_stale_marker_and_keeps_a_live_one() {
 #[test]
 fn spend_stamps_wait_for_the_store_lock() {
     let out = own_dir("stamp-lock");
-    crate::vfs::create_dir_all(out.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&out)).unwrap();
     for g in [1, 2] {
         let entry = JournalEntry {
             build: format!("g{}", g),
@@ -195,14 +195,17 @@ fn spend_stamps_wait_for_the_store_lock() {
             ..Default::default()
         };
         crate::vfs::write(
-            out.join("journal").join(format!("g{}.yaml", g)),
+            crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
             serde_norway::to_string(&entry).unwrap(),
         )
         .unwrap();
     }
     let read = |g: u64| -> JournalEntry {
         serde_norway::from_str(
-            &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g))).unwrap(),
+            &crate::vfs::read_to_string(
+                crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
+            )
+            .unwrap(),
         )
         .unwrap()
     };
@@ -218,7 +221,7 @@ fn spend_stamps_wait_for_the_store_lock() {
     measured.join().unwrap();
     assert_eq!(read(1).tokens, Some(700));
     assert_eq!(read(2).tokens, Some(500));
-    let leftovers: Vec<String> = crate::vfs::read_dir(out.join("journal"))
+    let leftovers: Vec<String> = crate::vfs::read_dir(crate::layout::journal_dir(&out))
         .unwrap()
         .flatten()
         .map(|e| e.file_name().to_string_lossy().to_string())

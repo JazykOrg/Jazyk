@@ -95,6 +95,11 @@ pub fn committing_file(out: &Path) -> PathBuf {
     local_dir(out).join(".committing")
 }
 
+/// Source sections a git merge left for the next build: `local/merged.yaml`.
+pub fn merged_file(out: &Path) -> PathBuf {
+    local_dir(out).join("merged.yaml")
+}
+
 pub fn decompile_dir(out: &Path) -> PathBuf {
     local_dir(out).join("decompile")
 }

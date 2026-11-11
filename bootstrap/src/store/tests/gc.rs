@@ -227,12 +227,9 @@ fn gc_removes_unanchored_and_spares_derived() {
         .status
         .has_change(CHANGE_VIEW_MEMBER_GONE, "view:class/kept"));
     assert!(s.status.has_change(CHANGE_ENTITY_DELETED, "ent:x"));
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", s.status.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", s.status.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "gc");
     // A second sweep is a no-op: the standing record is not rewritten.
     let gen = s.status.generation;
@@ -305,7 +302,7 @@ fn check_diags_reconcile_not_regenerate() {
     )]);
     assert_eq!(s.graph.diagnostics.len(), 1);
     assert_eq!(s.status.generation, 1);
-    let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g1.yaml")).unwrap();
+    let entry: JournalEntry = yaml_to(&crate::layout::journal_dir(&s.out).join("g1.yaml")).unwrap();
     assert_eq!(entry.kind, "checks");
     assert_eq!(entry.mutations[0]["op"], "report_diagnostic");
     let id = s.graph.diagnostics.keys().next().unwrap().clone();
@@ -613,12 +610,9 @@ fn settle_dangling_diags_heals_a_stranded_graph() {
         "{:?}",
         actions
     );
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", s.status.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", s.status.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "settle-diagnostics");
     // A survivor remains: the diagnostic stands and the survivor owes a judgment.
     assert_eq!(
@@ -716,12 +710,9 @@ fn sweep_settles_cleared_markers() {
     assert_eq!(lc(&s, "diag:incomplete-build-1"), "open");
     assert_eq!(lc(&s, "diag:incomplete-build-2"), "resolved");
     assert_eq!(actions.len(), 4, "{:?}", actions);
-    let entry: JournalEntry = yaml_to(
-        &s.out
-            .join("journal")
-            .join(format!("g{}.yaml", s.status.generation)),
-    )
-    .unwrap();
+    let entry: JournalEntry =
+        yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", s.status.generation)))
+            .unwrap();
     assert_eq!(entry.kind, "settle-diagnostics");
     assert_eq!(entry.mutations.len(), 4);
     // Idempotent, and the goal leaving parked clears the last marker next sweep.
@@ -800,7 +791,7 @@ fn resolving_a_pair_marks_judged_and_opens_the_next_waiting_pair() {
     assert_eq!(plan.waiting.len(), 3);
     assert!(plan.waiting.contains_key(&pair("req:p09")));
     // The journal entry carries the resolution and the persisted status agrees.
-    let entry: JournalEntry = yaml_to(&s.out.join("journal").join("g7.yaml")).unwrap();
+    let entry: JournalEntry = yaml_to(&crate::layout::journal_dir(&s.out).join("g7.yaml")).unwrap();
     assert_eq!(entry.resolved_goals.len(), 1);
     assert!(!Store::load(&s.out)
         .status

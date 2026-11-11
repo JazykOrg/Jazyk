@@ -389,6 +389,7 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | `workers/<id>.yaml`, `leases/<batch>.yaml` | Who is attached and which goal batch each holds ([workers and leases](./control-plane.md#workers-and-leases)). | YAML |
 | `decompile/drafts.yaml` | Draft documents awaiting the owner ([decompile](../consumers/decompile.md)). | YAML |
 | `deliverable-baseline/` | Deliverable files as they were before a generation run touched them ([gen](../consumers/gen.md)). | files |
+| `merged.yaml` | Source sections a git merge left for the next build to reconcile, written by the [merge driver](#merging-through-git); the next load drops their hashes in `sources/` and deletes the file. | YAML |
 | `.lock`, `.leases.lock`, `.committing` | The commit lock, the lease lock, and the marker present while a commit writes. | empty |
 
 ```yaml
@@ -498,13 +499,17 @@ field by field:
 
 - Fields only one side changed take that side.
 - Lists that are sets (`aliases`, `entities`, `members`) take the union.
-- A decision takes the side whose hashes match the merged graph; a ledger row takes the
-  side with the newer verdict.
-- A source takes the side whose `raw` matches the merged document on disk.
+- A ledger row takes the side with the newer verdict (`lastRun`).
+- A decision both sides changed differently keeps the current branch's value. A
+  decision whose hashes no longer match the merged graph simply lapses, and its
+  question comes back.
+- A source section both sides changed differently keeps the current branch's text and
+  is listed for the next build to reconcile, as below.
 - Any other field both sides changed differently keeps the current branch's value, and
-  the driver drops the `hash` of the node's source section in `sources/`, so the next
-  build sees that section as changed and reconciles it again. Nothing is chosen
-  silently.
+  the driver lists the node's source sections in the set's `local/merged.yaml`. The
+  next load drops those sections' `hash` in `sources/`, so the build sees them as
+  changed and reconciles them again. Nothing is chosen silently. (The driver cannot
+  edit `sources/` itself: git writes the merged tree after every driver has run.)
 
 Two rules keep places from fighting:
 

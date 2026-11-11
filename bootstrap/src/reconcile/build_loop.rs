@@ -121,6 +121,9 @@ pub(crate) async fn compile_under(
     if let Err(e) = crate::document_sets::ensure_ignore(&proj.root) {
         trace.line("build", &format!("cannot write .jazyk/.gitignore: {}", e));
     }
+    // and registers the merge driver `.jazyk/.gitattributes` names
+    // (docs/compiler/jazyk-folder.md#gitattributes).
+    crate::document_sets::register_merge_driver(&proj.root);
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();

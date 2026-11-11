@@ -237,6 +237,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
         "replay" => (None, &[]),
+        "merge-file" => (Some(4), &[]),
         "tasks" | "runs" => (Some(0), &[]),
         "run" | "run-status" | "run-log" | "run-cancel" => (Some(1), &[]),
         _ => return None,
@@ -615,6 +616,11 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             cmd,
             match cmd { "run-status" => "Inspect", "run-log" => "Read the log of", _ => "Cancel" }
         ),
+        "merge-file" => "usage: jazyk merge-file <base> <ours> <theirs> <path>\n\n\
+             The git merge driver for committed set files: merges one file field by\n\
+             field and writes the result over <ours>. Git runs it; `jazyk setup`\n\
+             registers it.\n\n\
+             exit: 0 when merged, 1 when a version does not parse, 2 on a usage error".to_string(),
         "replay" => "usage: jazyk replay [file|dir...]\n       jazyk replay extract <trace.jsonl> <label>\n\n\
              Run replays: cases whose tool calls are scripted, graded against the\n\
              harness without a model. No argument runs docs/benchmark/replays.\n\
@@ -838,6 +844,7 @@ pub fn run() {
         "compile",
         "status",
         "replay",
+        "merge-file",
         "tasks",
         "runs",
         "run",
@@ -1003,6 +1010,8 @@ pub fn run() {
         // Replays: scripted sessions against the harness, no model
         // (docs/benchmark/replays.md).
         "replay" => replay::run_cli(&positional),
+        // The git merge driver for set files (docs/frontends/cli.md#jazyk-merge-file).
+        "merge-file" => crate::merge_file::run_cli(&positional),
         // Project task commands (docs/frontends/cli.md#project-task-commands).
         "tasks" | "runs" | "run" | "run-status" | "run-log" | "run-cancel" => {
             if cmd.starts_with("run") && cmd != "runs" && positional.is_empty() {

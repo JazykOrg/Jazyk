@@ -10,9 +10,86 @@ use std::path::{Path, PathBuf};
 pub const CONFIG: &str = ".jazyk/jazyk.toml";
 pub const EMPTY_CONFIG: &str = "version = 1\nsets = []\n";
 // The generated `.jazyk/.gitignore`: everything ignored, then the configuration and
-// each set's committed state kept. Mirrors docs/compiler/document-sets.md#persistence-and-identity
-// and docs/compiler/graph.md#committed-and-local-state; `committed` is the same rule.
+// each set's committed state kept by name. Mirrors docs/compiler/document-sets.md#persistence-and-identity
+// and docs/compiler/jazyk-folder.md; `committed` is the same rule.
 pub const IGNORE: &str = "*
+!/jazyk.toml
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/*/
+/local/
+/*/*
+!/*/store.yaml
+!/*/graph/
+!/*/graph/**
+!/*/sources/
+!/*/sources/**
+!/*/gen/
+!/*/gen/**
+.*.tmp
+";
+
+// The generated `.jazyk/.gitattributes`: the merge driver for every committed set file.
+// Mirrors docs/compiler/jazyk-folder.md#gitattributes.
+pub const ATTRIBUTES: &str = "/*/store.yaml merge=jazyk
+/*/graph/** merge=jazyk
+/*/sources/** merge=jazyk
+/*/gen/** merge=jazyk
+";
+
+// The generated `.jazyk/README.md`: the layout in brief.
+// Mirrors docs/compiler/jazyk-folder.md#readmemd.
+pub const README: &str = "# .jazyk
+
+Jazyk keeps this project's compiled state here. Jazyk writes every file; edit the
+documents, not these files. See https://jazyk.org for the full reference.
+
+- `jazyk.toml`: the project configuration. Committed.
+- `<set>/` (one folder per document set, e.g. `my-set-ks8mf/`): the current graph.
+  Committed: `store.yaml`, `graph/` (the nodes and the decisions), `sources/` (each
+  document as the graph reflects it), and `gen/` (the ledger).
+- `<set>/local/` and `local/`: what this machine's runs leave behind: build state, the
+  journal, locks. Never committed.
+- `<set>/derived/`: rebuilt from the committed files: diagrams, generated docs. Never
+  committed, safe to delete.
+
+Logs (transcripts, chats, feedback) live outside the project; `jazyk status` prints
+where. `.gitignore` and `.gitattributes` here are generated: keep them committed.
+";
+
+// Ignore files an earlier Jazyk generated: replaced by `IGNORE` on the next write.
+const EARLIER_IGNORES: [&str; 3] = ["*\n!jazyk.toml\n!.gitignore\n", IGNORE_V3, IGNORE_V4];
+
+// The file store version 3 generated, before the status split into record files.
+const IGNORE_V3: &str = "*
+!/jazyk.toml
+!/.gitignore
+!/ds_*/
+/ds_*.bak/
+!/ds_*/status.yaml
+!/ds_*/docs/
+!/ds_*/docs/**
+!/ds_*/graph/
+!/ds_*/graph/entities/
+!/ds_*/graph/entities/*.yaml
+!/ds_*/graph/requirements/
+!/ds_*/graph/requirements/*.yaml
+!/ds_*/graph/criteria/
+!/ds_*/graph/criteria/*.yaml
+!/ds_*/graph/views/
+!/ds_*/graph/views/*.yaml
+!/ds_*/graph/diagnostics/
+!/ds_*/graph/diagnostics/*.yaml
+!/ds_*/graph/redirects/
+!/ds_*/graph/redirects/*.yaml
+!/ds_*/gen/
+!/ds_*/gen/**
+.*.tmp
+";
+
+// The file store version 4 generated, before the store committed only the current graph.
+const IGNORE_V4: &str = "*
 !/jazyk.toml
 !/.gitignore
 !/ds_*/
@@ -48,83 +125,110 @@ pub const IGNORE: &str = "*
 .*.tmp
 ";
 
-// Ignore files an earlier Jazyk generated: replaced by `IGNORE` on the next write.
-const EARLIER_IGNORES: [&str; 2] = ["*\n!jazyk.toml\n!.gitignore\n", IGNORE_V3];
-
-// The file store version 3 generated, before the status split into record files.
-const IGNORE_V3: &str = "*
-!/jazyk.toml
-!/.gitignore
-!/ds_*/
-/ds_*.bak/
-!/ds_*/status.yaml
-!/ds_*/docs/
-!/ds_*/docs/**
-!/ds_*/graph/
-!/ds_*/graph/entities/
-!/ds_*/graph/entities/*.yaml
-!/ds_*/graph/requirements/
-!/ds_*/graph/requirements/*.yaml
-!/ds_*/graph/criteria/
-!/ds_*/graph/criteria/*.yaml
-!/ds_*/graph/views/
-!/ds_*/graph/views/*.yaml
-!/ds_*/graph/diagnostics/
-!/ds_*/graph/diagnostics/*.yaml
-!/ds_*/graph/redirects/
-!/ds_*/graph/redirects/*.yaml
-!/ds_*/gen/
-!/ds_*/gen/**
-.*.tmp
-";
-
-// Write `.jazyk/.gitignore` when it is absent or still an earlier generated one. A
-// file with other content is the owner's and stays. Returns whether it wrote.
-pub fn ensure_ignore(root: &Path) -> std::io::Result<bool> {
-    let path = root.join(".jazyk/.gitignore");
+// Write one generated file when it is absent or still holds an earlier generated text.
+// A file with other content is the owner's and stays. Returns whether it wrote.
+fn ensure_generated(
+    root: &Path,
+    name: &str,
+    text: &str,
+    earlier: &[&str],
+) -> std::io::Result<bool> {
+    let path = root.join(".jazyk").join(name);
     match crate::vfs::read_to_string(&path) {
-        Ok(text) if text == IGNORE || !EARLIER_IGNORES.contains(&text.as_str()) => Ok(false),
-        Ok(_) => crate::vfs::write(&path, IGNORE).map(|()| true),
+        Ok(current) if current == text || !earlier.contains(&current.as_str()) => Ok(false),
+        Ok(_) => crate::vfs::write(&path, text).map(|()| true),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             crate::vfs::create_dir_all(root.join(".jazyk"))?;
-            crate::vfs::write(&path, IGNORE).map(|()| true)
+            crate::vfs::write(&path, text).map(|()| true)
         }
         Err(e) => Err(e),
     }
 }
+
+// Write `.jazyk/.gitignore`, `.jazyk/.gitattributes`, and `.jazyk/README.md` when each is
+// absent or still an earlier generated one. Returns whether `.gitignore` was written.
+pub fn ensure_ignore(root: &Path) -> std::io::Result<bool> {
+    let wrote = ensure_generated(root, ".gitignore", IGNORE, &EARLIER_IGNORES)?;
+    ensure_generated(root, ".gitattributes", ATTRIBUTES, &[])?;
+    ensure_generated(root, "README.md", README, &[])?;
+    Ok(wrote)
+}
+
+// Register the `jazyk` merge driver in the repository's local git configuration when the
+// project sits in a git work tree and the driver is missing. A no-op without git, in a
+// scoped file system, or outside a work tree. Mirrors docs/compiler/jazyk-folder.md#gitattributes.
+pub fn register_merge_driver(root: &Path) {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        if crate::vfs::is_scoped() {
+            return;
+        }
+        let git = |args: &[&str]| {
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .stdin(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .output()
+                .ok()
+        };
+        let Some(inside) = git(&["rev-parse", "--is-inside-work-tree"]) else {
+            return;
+        };
+        if !inside.status.success() || String::from_utf8_lossy(&inside.stdout).trim() != "true" {
+            return;
+        }
+        let present = git(&["config", "--local", "--get", "merge.jazyk.driver"])
+            .is_some_and(|o| o.status.success() && !o.stdout.is_empty());
+        if present {
+            return;
+        }
+        git(&[
+            "config",
+            "--local",
+            "merge.jazyk.name",
+            "Jazyk set files, merged field by field",
+        ]);
+        git(&["config", "--local", "merge.jazyk.driver", MERGE_DRIVER]);
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = root;
+}
+
+// The command git runs for a set file both sides changed.
+pub const MERGE_DRIVER: &str = "jazyk merge-file %O %A %B %P";
 
 // Whether a project-relative path is committed state, by the rule `IGNORE` states.
 pub fn committed(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(".jazyk/") else {
         return false;
     };
-    if matches!(rest, "jazyk.toml" | ".gitignore") {
+    if matches!(
+        rest,
+        "jazyk.toml" | ".gitignore" | ".gitattributes" | "README.md"
+    ) {
         return true;
     }
     let mut parts = rest.split('/');
     let Some(set) = parts.next() else {
         return false;
     };
-    if !set.starts_with("ds_") || set.ends_with(".bak") {
+    if set.is_empty() || set == "local" {
         return false;
     }
     let inner: Vec<&str> = parts.collect();
-    if inner
-        .iter()
-        .any(|c| c.is_empty() || (c.len() > 4 && c.starts_with('.') && c.ends_with(".tmp")))
+    if inner.is_empty()
+        || inner
+            .iter()
+            .any(|c| c.is_empty() || (c.len() > 4 && c.starts_with('.') && c.ends_with(".tmp")))
     {
         return false;
     }
-    match inner.as_slice() {
-        ["status.yaml"] => true,
-        ["changes", _, ..] => inner.last().is_some_and(|f| f.ends_with(".yaml")),
-        ["parked" | "failed" | "alignment" | "lookalikes", file] => file.ends_with(".yaml"),
-        ["docs", _, ..] | ["gen", _, ..] => true,
-        ["graph", kind, file] => {
-            crate::store::COMMITTED_KINDS.contains(kind) && file.ends_with(".yaml")
-        }
-        _ => false,
-    }
+    matches!(
+        inner.as_slice(),
+        ["store.yaml"] | ["graph" | "sources" | "gen", _, ..]
+    )
 }
 pub type Result<T> = std::result::Result<T, (u16, String)>;
 
@@ -363,13 +467,27 @@ fn merge(base: &mut toml::Value, overrides: toml::Value) {
     }
 }
 
+// A set id: an older `ds_` id, or the minted form, lowercase letters, digits, and `-`,
+// starting with a letter or digit, never `local`.
+// Mirrors docs/compiler/document-sets.md#persistence-and-identity.
 pub fn valid_id(id: &str) -> bool {
-    id.starts_with("ds_")
-        && id.len() > 3
-        && id.len() < 100
+    if id.len() >= 100 {
+        return false;
+    }
+    if let Some(rest) = id.strip_prefix("ds_") {
+        return !rest.is_empty()
+            && id
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-');
+    }
+    id != "local"
         && id
             .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+            .next()
+            .is_some_and(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && id
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
 }
 
 fn validate_pattern(pattern: &str) -> std::result::Result<(), String> {
@@ -860,9 +978,10 @@ fn walk(
     }
 }
 
+// A random token (lock names, temporary files, lease owners).
 pub fn mint_id() -> String {
     let mut bytes = [0u8; 16];
-    getrandom::fill(&mut bytes).expect("system randomness for a document set ID");
+    getrandom::fill(&mut bytes).expect("system randomness for a token");
     format!(
         "ds_{}",
         bytes
@@ -870,6 +989,58 @@ pub fn mint_id() -> String {
             .map(|b| format!("{:02x}", b))
             .collect::<String>()
     )
+}
+
+// Whether a path segment reads as a set id where a plain directory name could stand
+// instead (an out path's first segment): an older `ds_` id or the minted shape, a slug,
+// `-`, and five Crockford base 32 characters.
+pub fn looks_like_set_id(segment: &str) -> bool {
+    if segment.starts_with("ds_") {
+        return valid_id(segment);
+    }
+    match segment.rsplit_once('-') {
+        Some((slug, suffix)) => {
+            !slug.is_empty()
+                && suffix.len() == 5
+                && suffix.bytes().all(|c| CROCKFORD.contains(&c))
+                && valid_id(segment)
+        }
+        None => false,
+    }
+}
+
+// The longest slug part of a set id.
+const SET_SLUG_MAX: usize = 24;
+const CROCKFORD: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+
+// A new set's id: the id slug of its name cut to 24 characters, `-`, and five random
+// lowercase Crockford base 32 characters, drawn again while `taken` holds it. E.g.
+// `My set` -> `my-set-ks8mf`. Mirrors docs/compiler/document-sets.md#persistence-and-identity.
+pub fn mint_set_id(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let mut slug = crate::ids::slug(name);
+    if slug == "x" && !name.chars().any(|c| c.is_alphanumeric()) {
+        slug = "set".to_string();
+    }
+    if slug.len() > SET_SLUG_MAX {
+        let head = &slug[..SET_SLUG_MAX];
+        let cut = match head.rfind('-') {
+            Some(i) if i > 0 && slug.as_bytes()[SET_SLUG_MAX] != b'-' => i,
+            _ => SET_SLUG_MAX,
+        };
+        slug = slug[..cut].trim_end_matches('-').to_string();
+    }
+    loop {
+        let mut bytes = [0u8; 5];
+        getrandom::fill(&mut bytes).expect("system randomness for a document set ID");
+        let suffix: String = bytes
+            .iter()
+            .map(|b| CROCKFORD[(*b & 31) as usize] as char)
+            .collect();
+        let id = format!("{}-{}", slug, suffix);
+        if valid_id(&id) && !taken(&id) {
+            return id;
+        }
+    }
 }
 
 /// A short filesystem lock protects optimistic config replacement. Hosted callers
@@ -1073,7 +1244,18 @@ fn edit_locked(
     let id = removal
         .map(str::to_string)
         .or_else(|| data["id"].as_str().map(str::to_string))
-        .unwrap_or_else(mint_id);
+        .unwrap_or_else(|| {
+            let name = data["name"].as_str().unwrap_or("");
+            let taken: BTreeSet<String> = before.sets.iter().map(|s| s.id.clone()).collect();
+            mint_set_id(name, |id| {
+                taken.contains(id)
+                    || root.join(".jazyk").join(id).vexists()
+                    || root
+                        .join(".jazyk/removed-sets")
+                        .join(format!("{}.toml", id))
+                        .vexists()
+            })
+        });
     if !valid_id(&id) {
         return Err((400, "invalid document set ID".into()));
     }
@@ -1369,94 +1551,139 @@ mod tests {
             doc.contains(&format!("```\n{}```\n", IGNORE)),
             "docs and IGNORE disagree"
         );
-        for kind in crate::store::COMMITTED_KINDS {
-            assert!(
-                IGNORE.contains(&format!("!/ds_*/graph/{kind}/*.yaml\n")),
-                "{kind}"
-            );
-        }
+        let folder = include_str!("../../docs/compiler/jazyk-folder.md");
+        assert!(
+            folder.contains(&format!("```\n{}```\n", IGNORE)),
+            "jazyk-folder.md and IGNORE disagree"
+        );
+        assert!(
+            folder.contains(&format!("```\n{}```\n", ATTRIBUTES)),
+            "jazyk-folder.md and ATTRIBUTES disagree"
+        );
         for kind in crate::store::DERIVED_KINDS {
             assert!(!IGNORE.contains(kind), "{kind}");
         }
     }
 
     // Written when absent or still an earlier generated file; an owner's file stays.
+    // The attributes and the README are written beside it on the same terms.
     #[test]
     fn ensure_ignore_writes_absent_and_earlier_files_and_keeps_the_owners() {
         let f = Fixture::new();
         let path = f.0.join(".jazyk/.gitignore");
         assert!(ensure_ignore(&f.0).unwrap());
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join(".jazyk/.gitattributes")).unwrap(),
+            ATTRIBUTES
+        );
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join(".jazyk/README.md")).unwrap(),
+            README
+        );
         assert!(!ensure_ignore(&f.0).unwrap());
-        crate::vfs::write(&path, EARLIER_IGNORES[0]).unwrap();
-        assert!(ensure_ignore(&f.0).unwrap());
-        assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
+        for earlier in EARLIER_IGNORES {
+            crate::vfs::write(&path, earlier).unwrap();
+            assert!(ensure_ignore(&f.0).unwrap());
+            assert_eq!(crate::vfs::read_to_string(&path).unwrap(), IGNORE);
+        }
         crate::vfs::write(&path, "*\n!jazyk.toml\n").unwrap();
         assert!(!ensure_ignore(&f.0).unwrap());
         assert_eq!(
             crate::vfs::read_to_string(&path).unwrap(),
             "*\n!jazyk.toml\n"
         );
+        crate::vfs::write(f.0.join(".jazyk/README.md"), "mine\n").unwrap();
+        ensure_ignore(&f.0).unwrap();
+        assert_eq!(
+            crate::vfs::read_to_string(f.0.join(".jazyk/README.md")).unwrap(),
+            "mine\n"
+        );
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 45] = [
+    // A new set's id is its name as a slug and five random characters; older ids stay
+    // valid; `local` is never an id.
+    #[test]
+    fn set_ids_are_minted_from_the_name() {
+        let id = mint_set_id("My set", |_| false);
+        assert!(
+            id.starts_with("my-set-") && id.len() == "my-set-".len() + 5,
+            "{id}"
+        );
+        assert!(valid_id(&id));
+        assert!(mint_set_id("!!!", |_| false).starts_with("set-"));
+        let long = mint_set_id("The Very Long Name Of A Document Set", |_| false);
+        assert!(long.len() <= 24 + 6 && !long.contains("--"), "{long}");
+        let mut seen = std::collections::BTreeSet::new();
+        let first = mint_set_id("Shop", |_| false);
+        seen.insert(first.clone());
+        let second = mint_set_id("Shop", |id| seen.contains(id));
+        assert_ne!(first, second);
+        assert!(valid_id("ds_main") && valid_id("ds_7b91362a262947c0b363a30768ad419b"));
+        assert!(!valid_id("local") && !valid_id("My-Set") && !valid_id("-x") && !valid_id(""));
+        assert!(looks_like_set_id(&id) && looks_like_set_id("ds_main"));
+        assert!(!looks_like_set_id("diagrams") && !looks_like_set_id("derived"));
+    }
+
+    const CHECKOUT_PATHS: [(&str, bool); 34] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
-        (".jazyk/ds_main/status.yaml", true),
+        (".jazyk/.gitattributes", true),
+        (".jazyk/README.md", true),
+        (".jazyk/my-set-ks8mf/store.yaml", true),
+        (".jazyk/my-set-ks8mf/graph/entities/ent~order.yaml", true),
         (
-            ".jazyk/ds_main/changes/section-dirty/docs+a.md%23+a.yaml",
+            ".jazyk/my-set-ks8mf/graph/requirements/req~main-4k7q.yaml",
             true,
         ),
         (
-            ".jazyk/ds_main/parked/g~reconcile-section~docs+a.md%23+a.yaml",
+            ".jazyk/my-set-ks8mf/graph/criteria/crit~main-4k7q-m2.yaml",
             true,
         ),
-        (".jazyk/ds_main/failed/g~bind~req~a-1x2c.yaml", true),
-        (".jazyk/ds_main/alignment/docs+a.md.yaml", true),
-        (".jazyk/ds_main/lookalikes/ent~a%7Eent~b.yaml", true),
+        (".jazyk/my-set-ks8mf/graph/views/view~class+shop.yaml", true),
         (
-            ".jazyk/ds_main/graph/default-views/view~class+shop.yaml",
+            ".jazyk/my-set-ks8mf/graph/diagnostics/diag~lint-7hq2.yaml",
+            true,
+        ),
+        (".jazyk/my-set-ks8mf/graph/redirects/ent~old.yaml", true),
+        (
+            ".jazyk/my-set-ks8mf/graph/decisions/pairs/req~a%7Ereq~b.yaml",
+            true,
+        ),
+        (
+            ".jazyk/my-set-ks8mf/graph/decisions/lookalikes/ent~a%7Eent~b.yaml",
+            true,
+        ),
+        (".jazyk/my-set-ks8mf/sources/docs/main.md.yaml", true),
+        (".jazyk/my-set-ks8mf/gen/ledger.yaml", true),
+        (
+            ".jazyk/my-set-ks8mf/gen/requirements/req~main-4k7q.yaml",
+            true,
+        ),
+        (".jazyk/my-set-ks8mf/gen/criteria/crit-main-1.md", true),
+        (".jazyk/ds_main/store.yaml", true),
+        (".jazyk/ds_main/graph/entities/e.yaml", true),
+        (
+            ".jazyk/my-set-ks8mf/graph/entities/.ent~order.yaml.12.tmp",
             false,
         ),
-        (".jazyk/ds_main/markers.yaml", false),
-        (".jazyk/ds_main/gen/entities/order.yaml", true),
-        (".jazyk/ds_main/gen/requirements/req~main-1.yaml", true),
-        (".jazyk/ds_main/docs/docs/main.md.yaml", true),
-        (".jazyk/ds_main/docs/a/b/c.md.yaml", true),
-        (".jazyk/ds_main/graph/entities/ent~order.yaml", true),
-        (".jazyk/ds_main/graph/requirements/req~main-1.yaml", true),
-        (".jazyk/ds_main/graph/criteria/crit~main-1.yaml", true),
-        (".jazyk/ds_main/graph/views/view~class+shop.yaml", true),
-        (".jazyk/ds_main/graph/diagnostics/diag~lint-1.yaml", true),
-        (".jazyk/ds_main/graph/redirects/ent~old.yaml", true),
-        (".jazyk/ds_main/gen/ledger.yaml", true),
-        (".jazyk/ds_main/gen/criteria/crit-main-1.md", true),
-        (".jazyk/ds_main/gen/judge.md", true),
-        (".jazyk/ds_b/status.yaml", true),
-        (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", false),
-        (".jazyk/ds_main/graph/state-machines/sm~order.yaml", false),
+        (".jazyk/my-set-ks8mf/stray.txt", false),
+        (".jazyk/my-set-ks8mf/local/build.yaml", false),
+        (".jazyk/my-set-ks8mf/local/run.yaml", false),
+        (".jazyk/my-set-ks8mf/local/journal/g1.yaml", false),
+        (".jazyk/my-set-ks8mf/local/.lock", false),
+        (".jazyk/my-set-ks8mf/local/merged.yaml", false),
         (
-            ".jazyk/ds_main/graph/entities/.ent~order.yaml.12.tmp",
+            ".jazyk/my-set-ks8mf/derived/graph/relationships/rel~a%7Eb.yaml",
             false,
         ),
-        (".jazyk/ds_main/graph/entities/notes.txt", false),
-        (".jazyk/ds_main/journal/g1.yaml", false),
-        (".jazyk/ds_main/diagrams/class/shop.svg", false),
-        (".jazyk/ds_main/docsgen/order.md", false),
-        (".jazyk/ds_main/trace/run.jsonl", false),
-        (".jazyk/ds_main/sessions/s.jsonl", false),
-        (".jazyk/ds_main/snapshots/b_1/status.yaml", false),
-        (".jazyk/ds_main/control.yaml", false),
-        (".jazyk/ds_main/build.yaml", false),
-        (".jazyk/ds_main/workers/w.yaml", false),
-        (".jazyk/ds_main/leases/build.yaml", false),
-        (".jazyk/ds_main/.lock", false),
-        (".jazyk/ds_main/.committing", false),
-        (".jazyk/ds_main/feedback.jsonl", false),
-        (".jazyk/ds_main/decompile/drafts.yaml", false),
-        (".jazyk/ds_main.bak/status.yaml", false),
-        (".jazyk/sessions/chat.jsonl", false),
-        (".jazyk/project.lock", false),
+        (".jazyk/my-set-ks8mf/derived/diagrams/class/shop.svg", false),
+        (".jazyk/my-set-ks8mf/derived/docsgen/order.md", false),
+        (".jazyk/local/project.lock", false),
+        (".jazyk/local/ide.json", false),
+        (".jazyk/local/archive/my-set-ks8mf-v4/store.yaml", false),
+        (".jazyk/local/records/s/feedback.jsonl", false),
+        (".jazyk/my-set-ks8mf/status.yaml", false),
     ];
 
     // `committed` answers what the ignore file answers. With a git binary at hand the

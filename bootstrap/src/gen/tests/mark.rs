@@ -655,7 +655,9 @@ fn a_record_removes_the_files_its_manifest_omits() {
     );
     assert!(gs.deliverable.join("tests/cart.rs").vexists());
     assert!(
-        out.join("deliverable-baseline/src/cart_old.rs").vexists(),
+        crate::layout::deliverable_baseline_dir(&out)
+            .join("src/cart_old.rs")
+            .vexists(),
         "snapshotted before removal"
     );
     crate::vfs::remove_dir_all(&out).ok();

@@ -69,7 +69,7 @@ else:
         assert "installing the free LSP4IJ client" in output, output
         properties = (home / "installer-properties.txt").read_text()
         assert "idea.config.path=" in properties and "idea.system.path=" in properties
-        config = json.loads((project / ".jazyk/ide.json").read_text())
+        config = json.loads((project / ".jazyk/local/ide.json").read_text())
         assert Path(config["lsp"]["command"]).resolve() == binary
         output = launch(choice)
         assert "installing the free LSP4IJ client" not in output, output

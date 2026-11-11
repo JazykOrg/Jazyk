@@ -767,7 +767,7 @@ pub fn run_viewer(opts: &Options) -> i32 {
     let html = crate::viewer::render(&store, &gs);
     let path = html_target
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| out.join("graph.html"));
+        .unwrap_or_else(|| crate::layout::derived_dir(&out).join("graph.html"));
     if let Some(parent) = path.parent() {
         crate::vfs::create_dir_all(parent).ok();
     }

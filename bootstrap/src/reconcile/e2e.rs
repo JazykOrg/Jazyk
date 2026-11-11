@@ -1171,7 +1171,7 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
         for ext in ["puml", "svg"] {
-            let path = out.join("diagrams").join(format!("{}.{}", rel, ext));
+            let path = crate::layout::diagrams_dir(&out).join(format!("{}.{}", rel, ext));
             assert!(path.exists(), "{} missing", path.display());
         }
     }
@@ -1481,7 +1481,7 @@ fn assert_diagrams_rendered(store: &Store, out: &Path) {
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
         for ext in ["puml", "svg"] {
-            let path = out.join("diagrams").join(format!("{}.{}", rel, ext));
+            let path = crate::layout::diagrams_dir(out).join(format!("{}.{}", rel, ext));
             assert!(path.exists(), "{} missing", path.display());
         }
     }

@@ -212,9 +212,9 @@ fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
     let drafted = "# Cart\nThe Cart holds items.\n";
     seed_doc(&mut s, "cart.md", drafted);
     seed_doc(&mut s, "shop.md", "# Shop\nThe Shop sells.\n");
-    crate::vfs::create_dir_all(dir.join("decompile")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::decompile_dir(&dir)).unwrap();
     crate::vfs::write(
-        dir.join("decompile/drafts.yaml"),
+        crate::layout::decompile_dir(&dir).join("drafts.yaml"),
         format!("cart.md: {}\n", hash_hex(drafted)),
     )
     .unwrap();

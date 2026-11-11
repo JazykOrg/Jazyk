@@ -18,7 +18,7 @@ minimum; other versions require validation against their installed LSP4IJ.
 
 The output is `build/libs/jazyk-jetbrains.jar` and an installable ZIP under
 `build/distributions/`. Run `jazyk idea` (or the other IDE's launcher choice).
-It records the executable in `.jazyk/ide.json` and installs the built JAR into
+It records the executable in `.jazyk/local/ide.json` and installs the built JAR into
 that product's plugin directory when the product can be identified. Otherwise,
 use Settings → Plugins → Install Plugin from Disk and select the ZIP.
 Restart an already running IDE after installation.

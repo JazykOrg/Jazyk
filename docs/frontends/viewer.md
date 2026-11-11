@@ -1,7 +1,8 @@
 # Viewer
 
 `jazyk viewer [--out FILE]` renders the [graph store](../compiler/graph.md) into one
-self-contained HTML file, by default `<out>/graph.html`. No server, no external assets.
+self-contained HTML file, by default `<out>/derived/graph.html`, beside the
+renderings it links. No server, no external assets.
 The file works offline and can be attached to a review or a ticket as-is.
 
 The viewer reads the same node files every frontend reads. See

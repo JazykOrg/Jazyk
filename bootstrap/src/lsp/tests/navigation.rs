@@ -26,7 +26,7 @@ fn requirement_card_links_the_requirement_code_and_test() {
     let deliv = tmp.join("product");
     crate::vfs::create_dir_all(deliv.join("src")).unwrap();
     crate::vfs::create_dir_all(deliv.join("tests")).unwrap();
-    crate::vfs::create_dir_all(out.join("docsgen")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::docsgen_dir(&out)).unwrap();
     // The site anchored at line 1; an inserted header moved it to line 3.
     crate::vfs::write(
         deliv.join("src/cart.rs"),
@@ -39,7 +39,7 @@ fn requirement_card_links_the_requirement_code_and_test() {
     )
     .unwrap();
     crate::vfs::write(
-        out.join("docsgen").join("cart.md"),
+        crate::layout::docsgen_dir(&out).join("cart.md"),
         "# Cart\n\n### `req:shop-1`\n",
     )
     .unwrap();
@@ -180,7 +180,7 @@ fn requirement_card_without_a_ledger_row() {
 }
 
 fn write_svg(out: &std::path::Path, kind: &str, slug: &str) {
-    let dir = out.join("diagrams").join(kind);
+    let dir = crate::layout::diagrams_dir(out).join(kind);
     crate::vfs::create_dir_all(&dir).unwrap();
     crate::vfs::write(dir.join(format!("{}.svg", slug)), "<svg/>").unwrap();
 }
@@ -206,13 +206,13 @@ fn entity_hover_renders_the_card_in_short_with_its_level() {
         blocks,
         ["**Order Service** «service» · Takes and fulfils orders.".to_string(),
             "Sits in: Public › Shop › **Order Service**".to_string(),
-            format!("![view:component/shop]({}/diagrams/component/shop.svg)", o),
+            format!("![view:component/shop]({}/derived/diagrams/component/shop.svg)", o),
             format!(
-                "Inside: [view:component/order-service]({}/docsgen/diagrams/component/order-service.md) (4 children)",
+                "Inside: [view:component/order-service]({}/derived/docsgen/diagrams/component/order-service.md) (4 children)",
                 o
             ),
             format!(
-                "[card]({o}/docsgen/entities/order-service.md) · [requirements (2)]({o}/docsgen/order-service.md) · [level: Shop]({o}/docsgen/levels/shop.md)",
+                "[card]({o}/derived/docsgen/entities/order-service.md) · [requirements (2)]({o}/derived/docsgen/order-service.md) · [level: Shop]({o}/derived/docsgen/levels/shop.md)",
                 o = o
             )]
         .iter()
@@ -226,7 +226,7 @@ fn entity_hover_renders_the_card_in_short_with_its_level() {
     assert!(root.contains("Sits in: Public › **Shop**"), "{}", root);
     assert!(
         root.contains(&format!(
-            "[level: Public]({}/docsgen/levels/scope-public.md)",
+            "[level: Public]({}/derived/docsgen/levels/scope-public.md)",
             o
         )),
         "{}",
@@ -257,7 +257,7 @@ fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
     );
     assert!(
         card.contains(&format!(
-            "![view:component/order-service]({}/diagrams/component/order-service.svg)",
+            "![view:component/order-service]({}/derived/diagrams/component/order-service.svg)",
             o
         )),
         "{}",
@@ -266,18 +266,21 @@ fn entity_hover_on_a_leaf_has_no_inside_and_survives_a_missing_rendering() {
     assert!(!card.contains("Inside:"), "{}", card);
     assert!(
         card.contains(&format!(
-            "[level: Order Service]({}/docsgen/levels/order-service.md)",
+            "[level: Order Service]({}/derived/docsgen/levels/order-service.md)",
             o
         )),
         "{}",
         card
     );
-    crate::vfs::remove_file(out.join("diagrams/component/order-service.svg")).unwrap();
+    crate::vfs::remove_file(
+        crate::layout::derived_dir(&out).join("diagrams/component/order-service.svg"),
+    )
+    .unwrap();
     let card = lsp.entity_card_short("ent:order-item").unwrap();
     assert!(!card.contains("!["), "{}", card);
     assert!(
         card.contains(&format!(
-            "In context: [view:component/order-service]({}/docsgen/diagrams/component/order-service.md) (not rendered)",
+            "In context: [view:component/order-service]({}/derived/docsgen/diagrams/component/order-service.md) (not rendered)",
             o
         )),
         "{}",
@@ -386,7 +389,7 @@ fn type_definition_opens_the_card() {
     let td = String::from_utf8_lossy(&wire).to_string();
     assert!(
         td.contains(&format!(
-            "\"uri\":\"{}/docsgen/entities/order-service.md\"",
+            "\"uri\":\"{}/derived/docsgen/entities/order-service.md\"",
             path_to_uri(&out)
         )),
         "{}",

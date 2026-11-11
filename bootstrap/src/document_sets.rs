@@ -297,7 +297,7 @@ impl Workspace {
                 "state": if docs.is_empty() { "empty" } else if dirty { "dirty" } else { "clean" },
                 "generation": store.status.generation, "verdict": store.status.verdict, "counts": counts, "warnings": warnings})
         }).collect();
-        let removed: Vec<Value> = crate::vfs::read_dir(self.root.join(".jazyk/removed-sets"))
+        let removed: Vec<Value> = crate::vfs::read_dir(self.root.join(".jazyk/local/removed-sets"))
             .ok()
             .into_iter()
             .flatten()
@@ -895,14 +895,14 @@ impl ProjectLock {
         #[cfg(not(target_arch = "wasm32"))]
         {
             if !crate::vfs::is_scoped() {
-                crate::vfs::create_dir_all(root.join(".jazyk"))
-                    .map_err(|e| (500, e.to_string()))?;
+                let local = crate::layout::project_local_dir(&root.join(".jazyk"));
+                crate::vfs::create_dir_all(&local).map_err(|e| (500, e.to_string()))?;
                 let file = std::fs::OpenOptions::new()
                     .read(true)
                     .write(true)
                     .create(true)
                     .truncate(false)
-                    .open(root.join(".jazyk").join(name))
+                    .open(local.join(name))
                     .map_err(|e| (500, e.to_string()))?;
                 fs2::FileExt::try_lock_exclusive(&file)
                     .map_err(|_| (409, "another project operation is in progress".into()))?;
@@ -1015,7 +1015,7 @@ fn edit_locked(
             return Err((400, "only a removed set can be purged".into()));
         }
         let saved = root
-            .join(".jazyk/removed-sets")
+            .join(".jazyk/local/removed-sets")
             .join(format!("{}.toml", id));
         if !saved.vexists() {
             return Err((404, "unknown removed set".into()));
@@ -1058,7 +1058,7 @@ fn edit_locked(
             return Err((400, "invalid removed set".into()));
         }
         let saved = crate::vfs::read_to_string(
-            root.join(".jazyk/removed-sets")
+            root.join(".jazyk/local/removed-sets")
                 .join(format!("{}.toml", id)),
         )
         .map_err(|e| (404, e.to_string()))?;
@@ -1084,7 +1084,7 @@ fn edit_locked(
         && restore.is_none()
         && position.is_none()
         && (root
-            .join(".jazyk/removed-sets")
+            .join(".jazyk/local/removed-sets")
             .join(format!("{}.toml", id))
             .vexists()
             || root.join(".jazyk").join(&id).vexists())
@@ -1241,7 +1241,7 @@ fn edit_locked(
         };
         if removal.is_some() {
             let set = before.select(&id)?;
-            let folder = root.join(".jazyk/removed-sets");
+            let folder = root.join(".jazyk/local/removed-sets");
             crate::vfs::create_dir_all(&folder).map_err(|e| (500, e.to_string()))?;
             crate::vfs::write(
                 folder.join(format!("{}.toml", id)),
@@ -1252,7 +1252,7 @@ fn edit_locked(
         atomic_config(root, &next, &before.hash)?;
         if restore.is_some() {
             let _ = crate::vfs::remove_file(
-                root.join(".jazyk/removed-sets")
+                root.join(".jazyk/local/removed-sets")
                     .join(format!("{}.toml", id)),
             );
         }
@@ -2295,7 +2295,7 @@ mod tests {
         edit(&f.0, &json!({"baseHash":w.hash,"remove":"ds_a"}), false).unwrap();
         assert!(f.0.join("docs/a.md").vexists());
         assert!(f.0.join("src/shared.rs").vexists());
-        assert!(f.0.join(".jazyk/removed-sets/ds_a.toml").vexists());
+        assert!(f.0.join(".jazyk/local/removed-sets/ds_a.toml").vexists());
         assert_eq!(Workspace::load(&f.0).unwrap().sets.len(), 1);
     }
 

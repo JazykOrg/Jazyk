@@ -38,7 +38,7 @@ An ACP registration does not connect the language server.
   the free LSP4IJ client. This includes IntelliJ IDEA, PhpStorm, WebStorm,
   PyCharm, GoLand, RustRover, CLion, Rider, and RubyMine. The plugin attaches to
   Markdown only in a Jazyk project. Each launcher records the executable in
-  `.jazyk/ide.json`. ACP settings remain separate.
+  `.jazyk/local/ide.json`. ACP settings remain separate.
 
 Source checkouts build the editor adapters using their README instructions.
 The launcher installs available local artifacts. A missing adapter or dependency

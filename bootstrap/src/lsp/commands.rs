@@ -213,7 +213,7 @@ impl Lsp {
             .strip_prefix("ent:")
             .unwrap_or(ent)
             .to_string();
-        let path = self.out.join("docsgen").join(format!("{}.md", slug));
+        let path = crate::layout::docsgen_dir(&self.out).join(format!("{}.md", slug));
         let Ok(text) = crate::vfs::read_to_string(&path) else {
             eprintln!(
                 "[jazyk-lsp] {}: no requirements document at {}",
@@ -286,7 +286,7 @@ impl Lsp {
         if !built.is_empty() {
             built.push('\n');
         }
-        let path = self.set_out_for(&doc).join("last-build").join(&doc);
+        let path = crate::layout::last_build_dir(&self.set_out_for(&doc)).join(&doc);
         if let Some(dir) = path.parent() {
             if let Err(e) = crate::vfs::create_dir_all(dir) {
                 return json!({"error": format!("cannot create {}: {}", dir.display(), e)});

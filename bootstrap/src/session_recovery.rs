@@ -583,18 +583,23 @@ mod tests {
             let saved = capsule().unwrap();
             crate::control::release_lease(out, "batch:replaced");
             crate::control::claim(out, "batch:replaced", "worker-two").unwrap();
-            let path = out.join("leases/batch%3Arenewed.yaml");
+            let path = crate::layout::leases_dir(out).join("batch%3Arenewed.yaml");
             let mut renewed: crate::control::Lease =
                 serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap();
             renewed.claimed_at += 1;
             crate::vfs::write(&path, serde_norway::to_string(&renewed).unwrap()).unwrap();
             crate::control::claim(out, "ledger:foreign", "worker-two").unwrap();
-            let foreign = crate::vfs::read(out.join("leases/ledger%3Aforeign.yaml")).unwrap();
+            let foreign =
+                crate::vfs::read(crate::layout::leases_dir(out).join("ledger%3Aforeign.yaml"))
+                    .unwrap();
             stop_owned(&saved).unwrap();
-            assert!(!crate::vfs::exists(&out.join("leases/ledger%3Aowned.yaml")));
+            assert!(!crate::vfs::exists(
+                &crate::layout::leases_dir(out).join("ledger%3Aowned.yaml")
+            ));
             assert_eq!(crate::control::leases(out).len(), 3);
             assert_eq!(
-                crate::vfs::read(out.join("leases/ledger%3Aforeign.yaml")).unwrap(),
+                crate::vfs::read(crate::layout::leases_dir(out).join("ledger%3Aforeign.yaml"))
+                    .unwrap(),
                 foreign
             );
             assert_eq!(

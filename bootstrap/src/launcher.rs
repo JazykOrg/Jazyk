@@ -525,7 +525,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "viewer" => "usage: jazyk viewer [--out FILE]\n\n\
              Render the graph to one self-contained HTML page. An --out ending in .html\n\
-             names the file (default <out>/graph.html); otherwise --out is the out\n\
+             names the file (default <out>/derived/graph.html); otherwise --out is the out\n\
              directory."
             .to_string(),
         "gui" => format!(
@@ -980,7 +980,7 @@ pub fn run() {
             let mut line = format!(
                 "jazyk: docsgen: {} page(s) in {}; diagrams: {} drawn, {} unchanged",
                 n,
-                out.join("docsgen").display(),
+                crate::layout::docsgen_dir(&out).display(),
                 dr.rendered.len(),
                 dr.skipped.len()
             );

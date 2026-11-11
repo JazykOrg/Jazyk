@@ -319,6 +319,51 @@ pub async fn bridge_reply(
     }
 }
 
+// Preparation runs only after the human chooses a local agent. It populates npm's
+// pinned adapter cache without opening a model session or altering agent logins.
+pub async fn setup(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
+    let Some(name) = body["agent"].as_str() else {
+        return err(StatusCode::BAD_REQUEST, "Agent is required.");
+    };
+    let resolved = match profile(&st, Some(name)) {
+        Ok(a) => a,
+        Err(e) => return err(StatusCode::BAD_REQUEST, e),
+    };
+    let Some(builtin) = config::builtin_profile(name) else {
+        return Json(json!({"ready":true})).into_response();
+    };
+    if resolved != builtin || !matches!(name, "codex" | "claude") {
+        return Json(json!({"ready":true})).into_response();
+    }
+    let Some(package) = builtin
+        .args
+        .iter()
+        .find(|arg| arg.starts_with("@agentclientprotocol/"))
+    else {
+        return err(StatusCode::BAD_REQUEST, "Adapter package is unavailable.");
+    };
+    let mut command = tokio::process::Command::new("npm");
+    command
+        .args([
+            "exec",
+            "--yes",
+            &format!("--package={package}"),
+            "--",
+            "node",
+            "-e",
+            "",
+        ])
+        .current_dir(&st.root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true);
+    match tokio::time::timeout(std::time::Duration::from_secs(120),command.status()).await {
+        Ok(Ok(status)) if status.success()=>Json(json!({"ready":true,"login":"Managed by the coding agent."})).into_response(),
+        _=>err(StatusCode::BAD_GATEWAY,"Could not prepare the pinned adapter. Check npm and the agent installation, then retry.")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -366,6 +411,57 @@ mod tests {
         );
         assert_eq!(first_state.llm().model, "first");
         assert_eq!(st.jobs.get(job).unwrap()["agentSelection"]["id"], first.id);
+    }
+    #[tokio::test]
+    async fn selected_admission_namespace_dispatches_only_live_selections() {
+        use tower::ServiceExt;
+        let st = super::super::server::tests::state(None, "https://jazyk.dev");
+        let response = select(
+            State(st.clone()),
+            HeaderMap::new(),
+            Json(json!({"agent":"embedded","source":"configured"})),
+        )
+        .await;
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let selected: Value = serde_json::from_slice(&bytes).unwrap();
+        let id = selected["id"].as_str().unwrap();
+        let router = super::super::server::router(st.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/agent-selections/{id}/chat/sessions"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let chat: Value = serde_json::from_slice(&bytes).unwrap();
+        let sessions = st.chat.snapshot();
+        assert_eq!(
+            sessions.iter().find(|s| s["id"] == chat["id"]).unwrap()["agentSelection"]["id"],
+            id
+        );
+        let response = router
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/agent-selections/expired/chat/sessions")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
     }
     #[tokio::test]
     async fn unknown_selection_is_rejected_instead_of_using_defaults() {
@@ -420,50 +516,5 @@ mod tests {
             cloud_origin(&json!({"cloudOrigin":"https://api.jazyk.dev"})).unwrap(),
             "https://api.jazyk.dev"
         );
-    }
-}
-
-// Preparation runs only after the human chooses a local agent. It populates npm's
-// pinned adapter cache without opening a model session or altering agent logins.
-pub async fn setup(State(st): State<SharedState>, Json(body): Json<Value>) -> Response {
-    let Some(name) = body["agent"].as_str() else {
-        return err(StatusCode::BAD_REQUEST, "Agent is required.");
-    };
-    let resolved = match profile(&st, Some(name)) {
-        Ok(a) => a,
-        Err(e) => return err(StatusCode::BAD_REQUEST, e),
-    };
-    let Some(builtin) = config::builtin_profile(name) else {
-        return Json(json!({"ready":true})).into_response();
-    };
-    if resolved != builtin || !matches!(name, "codex" | "claude") {
-        return Json(json!({"ready":true})).into_response();
-    }
-    let Some(package) = builtin
-        .args
-        .iter()
-        .find(|arg| arg.starts_with("@agentclientprotocol/"))
-    else {
-        return err(StatusCode::BAD_REQUEST, "Adapter package is unavailable.");
-    };
-    let mut command = tokio::process::Command::new("npm");
-    command
-        .args([
-            "exec",
-            "--yes",
-            &format!("--package={package}"),
-            "--",
-            "node",
-            "-e",
-            "",
-        ])
-        .current_dir(&st.root)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .kill_on_drop(true);
-    match tokio::time::timeout(std::time::Duration::from_secs(120),command.status()).await {
-        Ok(Ok(status)) if status.success()=>Json(json!({"ready":true,"login":"Managed by the coding agent."})).into_response(),
-        _=>err(StatusCode::BAD_GATEWAY,"Could not prepare the pinned adapter. Check npm and the agent installation, then retry.")
     }
 }

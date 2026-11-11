@@ -139,6 +139,7 @@ pub(crate) const INIT_TOML: &str = crate::document_sets::EMPTY_CONFIG;
 pub(crate) fn init_scaffold(cwd: &std::path::Path) -> Result<Vec<String>, String> {
     crate::vfs::create_dir_all(cwd.join(".jazyk")).map_err(|e| e.to_string())?;
     crate::document_sets::ensure_ignore(cwd).map_err(|e| e.to_string())?;
+    crate::document_sets::register_merge_driver(cwd);
     // The jazyk section of AGENTS.md (docs/frontends/agent-context.md#when-it-is-written).
     // Warnings go to stderr, which never carries a protocol.
     let outcome = crate::agents_md::sync(cwd);

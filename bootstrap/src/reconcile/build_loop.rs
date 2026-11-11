@@ -123,6 +123,9 @@ pub(crate) async fn compile_under(
     }
     // Logs past retention go when a build starts (docs/compiler/jazyk-folder.md#logs).
     crate::logs::prune(out);
+    // The merge driver `.jazyk/.gitattributes` names is registered
+    // (docs/compiler/jazyk-folder.md#gitattributes).
+    crate::document_sets::register_merge_driver(&proj.root);
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();

@@ -1138,7 +1138,7 @@
         },
         "reevaluate": {
           "type": "boolean",
-          "description": "List the anchor as a stale anchor on the target section's reconcile-section goal"
+          "description": "Drop the target section's hash in sources/, so its reconcile-section goal derives and re-reads the anchor"
         }
       },
       "additionalProperties": false
@@ -2343,7 +2343,7 @@
       "additionalProperties": false
     },
     "feedbackEntry": {
-      "description": "One line of the feedback log at <out>/feedback.jsonl. The payload plus the references identifying the caller",
+      "description": "One line of the feedback log (<set-id>/feedback.jsonl in the log directory, or the host record store). The payload plus the references identifying the caller",
       "type": "object",
       "required": [
         "at",
@@ -2400,7 +2400,7 @@
         },
         "run": {
           "type": "string",
-          "description": "Transcript name under <out>/trace, when the call came from a traced run"
+          "description": "Transcript name under <set-id>/trace/ in the log directory, when the call came from a traced run"
         },
         "client": {
           "type": "string",

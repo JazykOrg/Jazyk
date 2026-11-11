@@ -24,6 +24,10 @@ use levels::write_level_pages;
 use walk::{write_cards, write_view_pages};
 
 pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
+    // A newer store's output is never written (docs/compiler/graph.md#store-version).
+    if crate::store::newer_version(&store.out).is_some() {
+        return 0;
+    }
     // Render the diagrams first, so every image link below resolves even when this
     // run is `jazyk docsgen` alone. Unchanged views are skipped by content.
     crate::render::render_all(store, &store.out);

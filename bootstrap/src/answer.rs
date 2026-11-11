@@ -782,6 +782,10 @@ pub fn spawn_handler(project: Project, out: PathBuf, id: String) {
 // foreground (docs/frontends/cli.md#jazyk-answer); the other frontends spawn it.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn run_handler(project: &Project, out: &Path, id: &str) -> Result<(), String> {
+    // A newer store runs no session and records nothing (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(out) {
+        return Err(why);
+    }
     let outcome = handle(project, out, id);
     if let Err(e) = &outcome {
         eprintln!("jazyk: answer session for {} failed: {}", id, e);

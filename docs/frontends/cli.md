@@ -491,6 +491,11 @@ Orders: dirty, generation 4, verdict none; 12 open, 12 ready, 0 blocked, 0 parke
   warning: No files match docs/orders/**/*.md
 ```
 
+A set whose store is newer than this Jazyk is one line with its `store-newer` refusal
+instead (its state is `store-newer` in the sets summary, with the refusal in `error`),
+and `jazyk status` exits with 1 ([store version](../compiler/graph.md#store-version)).
+With `--set` on such a set it prints that line alone and exits with 1.
+
 With `--set` it summarizes that set's `store.yaml` and `local/build.yaml` (see
 [storage layout](../compiler/graph.md#storage-layout)) and the board. Outside a project
 (no `jazyk.toml` above the working directory) it says so on stderr and reads the ad hoc

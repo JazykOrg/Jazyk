@@ -1279,3 +1279,91 @@ fn a_newer_store_loads_empty_and_read_only() {
     std::fs::remove_dir_all(&base).ok();
     std::fs::remove_dir_all(&older).ok();
 }
+
+// Nothing outside the store writes a newer store's set directory either: the control
+// state, workers, leases, the build lease, rendered output, decompile and answer
+// sessions all refuse, and the set summary reports it as `store-newer`.
+// Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn every_writer_beside_the_store_refuses_a_newer_store() {
+    let base = own_dir("newer-writers");
+    std::fs::create_dir_all(base.join("docs")).unwrap();
+    std::fs::write(base.join("docs/main.md"), "# Main\n\nA cart.\n").unwrap();
+    std::fs::create_dir_all(base.join(".jazyk")).unwrap();
+    std::fs::write(
+        base.join(".jazyk/jazyk.toml"),
+        "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = [\"docs/main.md\"]\nsource = []\n",
+    )
+    .unwrap();
+    let out = base.join(".jazyk").join("ds_main");
+    newer_fixture(&out, false);
+    let before = tree(&out);
+
+    let workspace = crate::document_sets::Workspace::load(&base).unwrap();
+    let proj = workspace.resolve(Some("ds_main")).unwrap();
+    let summary = workspace.summary();
+    let set = &summary["sets"][0];
+    assert_eq!(set["state"], "store-newer", "{set}");
+    assert!(set["error"].as_str().unwrap().starts_with("store-newer:"));
+
+    let mut control = crate::control::Control::load(&proj, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    crate::control::release(&proj, &out, None);
+    let worker = crate::control::register(&out, "mcp", "fixture");
+    assert!(crate::control::claim_goals(&out, "b1", worker.id(), &[])
+        .unwrap_err()
+        .starts_with("store-newer:"));
+    let build = crate::control::begin_internal_build(&proj, &out, "generate");
+    assert!(build.err().unwrap().starts_with("store-newer:"));
+
+    let store = Store::load(&out);
+    crate::render::render_all(&store, &out);
+    assert_eq!(
+        crate::docsgen::write_all(&store, &crate::gen::GenSettings::resolve(&proj)),
+        0
+    );
+    use crate::runner::{BatchRun, SessionReport, SessionRunner};
+    struct NoSession;
+    impl SessionRunner for NoSession {
+        fn agent_name(&self) -> String {
+            "no-session".into()
+        }
+        fn set_build_token(&self, _: Option<String>) {}
+        fn run_item(&self, _: &BatchRun, _: &crate::session::Trace) -> SessionReport {
+            panic!("a newer store runs no session")
+        }
+        fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+            panic!("a newer store runs no session")
+        }
+        fn ask_traced(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&crate::session::Trace>,
+        ) -> Result<String, String> {
+            panic!("a newer store runs no session")
+        }
+    }
+    let runner = NoSession;
+    let trace = crate::session::Trace::to_sink(
+        crate::session::TraceLevel::Normal,
+        std::sync::Arc::new(|_| {}),
+        Default::default(),
+    );
+    let gs = crate::gen::GenSettings::resolve(&proj);
+    assert!(
+        crate::decompile::run_all(&proj, &store, &runner, &gs, &[], &trace)
+            .unwrap_err()
+            .starts_with("store-newer:")
+    );
+    assert!(crate::answer::run_handler(&proj, &out, "diag:x")
+        .unwrap_err()
+        .starts_with("store-newer:"));
+    drop(worker);
+
+    assert_eq!(tree(&out), before, "every byte of the set stays");
+    std::fs::remove_dir_all(&base).ok();
+}

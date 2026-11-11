@@ -876,6 +876,33 @@ pub fn run() {
             crate::agents_md::refresh(&cwd);
         }
     }
+    // A set whose store is newer than this binary is refused before any command
+    // works on it (docs/compiler/graph.md#store-version).
+    if [
+        "compile",
+        "check",
+        "watch",
+        "preview",
+        "explain",
+        "ripple",
+        "spend",
+        "context",
+        "query",
+        "monitor",
+        "release",
+        "answer",
+        "gen",
+        "test",
+        "decompile",
+        "docsgen",
+        "viewer",
+    ]
+    .contains(&cmd.as_str())
+    {
+        if let Some(code) = cli::refuse_newer_store(&opts) {
+            std::process::exit(code);
+        }
+    }
     let code = match cmd.as_str() {
         "sets" => cli::run_sets(&positional, &opts),
         "init" => cli::run_init(&opts),

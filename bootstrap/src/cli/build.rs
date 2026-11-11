@@ -98,6 +98,13 @@ pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
             eprintln!("jazyk: {}", error);
             return 2;
         }
+        // A set holding a newer store is refused; the other sets still build
+        // (docs/compiler/graph.md#store-version).
+        if let Some(why) = crate::store::newer_store(&out) {
+            eprintln!("jazyk: {}: {}", set.name, why);
+            code = 2;
+            continue;
+        }
         println!("{}", set.name);
         if opts.verbose {
             llm::set_verbose(true);

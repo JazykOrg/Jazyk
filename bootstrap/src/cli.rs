@@ -144,6 +144,16 @@ pub fn resolve(paths: &[String], opts: &Options) -> (Project, Llm, PathBuf) {
 
 // Per-field precedence: CLI flag → env → project [llm] → global config → built-in default.
 // Mirrors docs/compiler/project-settings.md#llm. `env` is injected for testability.
+// The refusal of a command that works on one set whose store is newer than this
+// binary: printed, exit 2, before the command reads or writes anything.
+// Mirrors docs/compiler/graph.md#store-version.
+pub fn refuse_newer_store(opts: &Options) -> Option<i32> {
+    let (_proj, _llm, out) = resolve(&[], opts);
+    let why = crate::store::newer_store(&out)?;
+    eprintln!("jazyk: {}", why);
+    Some(2)
+}
+
 pub(crate) fn resolve_llm(
     opts: &Options,
     proj: &project::LlmSettings,

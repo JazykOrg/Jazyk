@@ -18,8 +18,10 @@ build with open ratifications is `converged, 2 blocked`, never silently done. Se
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 The goal derives from a `provenance-pending` [change record](../graph.md#change-records),
-written by the commit that lands a fact with `derived` or `decree` provenance:
+computed per derivation for every fact with `derived` or `decree` provenance. Such facts
+come from:
 
 - A GC session stages sub-entities and the statements it writes for them
   ([`abstract-entity`](./abstract-entity.md)): each new fact carries
@@ -36,10 +38,7 @@ written by the commit that lands a fact with `derived` or `decree` provenance:
 E.g.:
 
 ```yaml
-- id: c420-4
-  generation: 420
-  mutation: 4
-  kind: provenance-pending
+- kind: provenance-pending
   subject: ent:order-pricing
   via: provenance
   detail: {provenance: derived, from: [ent:order, req:orders-3, req:orders-9],
@@ -56,7 +55,7 @@ What derives no goal:
 - Derived data (relationships, state machines): recomputed from quoted requirements.
 
 The goal exists exactly while the fact stands with non-quote provenance. Flipping the
-provenance to `quote`, or deleting the fact, clears the record.
+provenance to `quote`, or deleting the fact, ends it.
 
 ## Gate
 
@@ -129,13 +128,13 @@ write, journaled as `ratify` ([journal](../graph.md#journal)):
 - The fact's provenance flips to `quote: {doc, section, quote}` with the landed
   sentence as the quote (`source` on a requirement); an edited sentence also becomes
   a requirement's `statement`.
-- The diagnostic resolves (`status: applied`), the change record clears, the goal is
+- The diagnostic resolves (`status: applied`), the fact is quoted, and the goal is
   gone. No session runs.
 
 A requirement whose statement the human reworded opens `rejudge-pair` and `bind` on
-it. No `review-entity` follows: the accepting commit writes no `entity-changed`
-record, because the person just read the sentence and the mention it adds is the quote
-they confirmed ([edit paths](../compilation.md#edit-paths)).
+it. No `review-entity` follows: the accepting commit writes the review decision of each
+entity it touches, because the person just read the sentence and the mention it adds is
+the quote they confirmed ([edit paths](../compilation.md#edit-paths)).
 
 ### Give instructions
 

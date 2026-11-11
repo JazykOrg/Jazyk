@@ -27,7 +27,7 @@ pub(crate) const WORKER: crate::payload::Fragments = crate::payload::Fragments(i
 // drafts.yaml: each submitted draft's path and content hash, what ratification reads.
 
 pub fn drafts_path(out: &Path) -> std::path::PathBuf {
-    out.join("decompile").join("drafts.yaml")
+    crate::layout::decompile_dir(out).join("drafts.yaml")
 }
 
 pub fn drafts(out: &Path) -> BTreeMap<String, String> {

@@ -20,6 +20,7 @@ mod prose;
 mod read_scope;
 mod status;
 mod sync;
+mod v5;
 
 use self::apply::*;
 pub use self::files::*;
@@ -294,6 +295,9 @@ pub const CHECK_RULES: [&str; 34] = [
     "incomplete-build",
 ];
 
+// The harness-owned rule a failed goal files. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
+pub const RULE_GOAL_FAILED: &str = "goal-failed";
+
 // Rules a review session may file through report_diagnostic: judged findings, settled by
 // sessions (or by deletion propagation), never by the checks.
 pub const JUDGED_RULES: [&str; 6] = [
@@ -305,13 +309,12 @@ pub const JUDGED_RULES: [&str; 6] = [
     "lint",
 ];
 
-// The store version written to status.yaml. An out directory carrying another one is
-// archived whole and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
-pub const STORE_VERSION: u32 = 4;
+// The store version written to store.yaml. Mirrors docs/compiler/graph.md#store-version.
+pub const STORE_VERSION: u32 = 5;
 
-// The one earlier version a load reads as it is: its next save writes the version 4
-// layout, ids kept. Mirrors docs/compiler/graph.md#store-version.
-pub const UPGRADABLE_VERSION: u32 = 3;
+// The one earlier version a load reads as it is: the next build's opening rewrites it
+// in the version 5 layout, ids kept. Mirrors docs/compiler/graph.md#store-version.
+pub const UPGRADABLE_VERSION: u32 = 4;
 
 pub fn readable_version(v: u32) -> bool {
     v == STORE_VERSION || v == UPGRADABLE_VERSION
@@ -680,6 +683,10 @@ pub struct Store {
     pub graph: Graph,
     pub docs: BTreeMap<String, DocRecord>,
     pub status: Status,
+    // The judgments kept so no later build asks again (graph/decisions/).
+    // Mirrors docs/compiler/jazyk-folder.md#graphdecisionskindidyaml.
+    #[serde(default)]
+    pub decisions: Decisions,
     // Alignment thresholds, registry constants (docs/compiler/graph.md#budgets-and-thresholds).
     #[serde(skip)]
     pub align: crate::align::Thresholds,

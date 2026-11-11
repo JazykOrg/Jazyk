@@ -406,7 +406,7 @@ pub(super) fn write_view_pages(store: &Store, walk: &Walk, dir: &std::path::Path
         let Some(p) = crate::card::view_page(store, walk, vid) else {
             continue;
         };
-        let file = store.out.join(&path);
+        let file = crate::layout::derived_dir(&store.out).join(&path);
         if let Some(parent) = file.parent() {
             crate::vfs::create_dir_all(parent).ok();
         }

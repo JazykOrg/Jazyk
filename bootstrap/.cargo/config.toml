@@ -1,2 +1,4 @@
 [env]
 GRAPHVIZ_ANYWHERE_ALLOW_DOWNLOAD = "1"
+# Tests and cargo run keep their logs inside the build tree, never in the user cache.
+JAZYK_LOG_DIR = { value = "target/test-logs", relative = true }

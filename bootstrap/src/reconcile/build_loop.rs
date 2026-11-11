@@ -4,7 +4,7 @@ use super::*;
 
 // A status write the build loop makes, its refusal traced (the store already reports it
 // on stderr). Returns the refusal. Mirrors docs/compiler/graph.md#concurrency.
-fn write_status_traced(s: &Store, what: &str, trace: &Trace) -> Option<String> {
+fn write_status_traced(s: &mut Store, what: &str, trace: &Trace) -> Option<String> {
     let why = s.write_status(what).err()?;
     trace.line("build", &format!("{} not saved: {}", what, why));
     Some(why)
@@ -132,10 +132,15 @@ pub(crate) async fn compile_under(
     if let Err(e) = crate::document_sets::ensure_ignore(&proj.root) {
         trace.line("build", &format!("cannot write .jazyk/.gitignore: {}", e));
     }
+    // Logs past retention go when a build starts (docs/compiler/jazyk-folder.md#logs).
+    crate::logs::prune(out);
+    // The merge driver `.jazyk/.gitattributes` names is registered
+    // (docs/compiler/jazyk-folder.md#gitattributes).
+    crate::document_sets::register_merge_driver(&proj.root);
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();
-        write_status_traced(&store, "build opening", trace);
+        write_status_traced(&mut store, "build opening", trace);
     }
     let (parsed, _links) = parse_all(proj);
     if !resuming {
@@ -151,7 +156,7 @@ pub(crate) async fn compile_under(
             .filter(|d| proj.is_root_file(d))
             .cloned()
             .collect();
-        write_status_traced(&store, "build roots", trace);
+        write_status_traced(&mut store, "build roots", trace);
         sweep(&mut store, trace);
     }
     // A typed command is an approval (docs/compiler/control-plane.md#modes-and-releases):

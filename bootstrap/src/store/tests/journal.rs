@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn measured_spend_stamps_the_entries_a_session_wrote() {
     let out = own_dir("stamp-tokens");
-    crate::vfs::create_dir_all(out.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&out)).unwrap();
     let write = |g: u64, kind: &str, tokens: Option<u64>| {
         let entry = JournalEntry {
             build: format!("g{}", g),
@@ -19,7 +19,7 @@ fn measured_spend_stamps_the_entries_a_session_wrote() {
             ..Default::default()
         };
         crate::vfs::write(
-            out.join("journal").join(format!("g{}.yaml", g)),
+            crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
             serde_norway::to_string(&entry).unwrap(),
         )
         .unwrap();
@@ -30,7 +30,10 @@ fn measured_spend_stamps_the_entries_a_session_wrote() {
     Store::stamp_tokens(&out, 1, 3, 901, 601);
     let read = |g: u64| -> JournalEntry {
         serde_norway::from_str(
-            &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g))).unwrap(),
+            &crate::vfs::read_to_string(
+                crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
+            )
+            .unwrap(),
         )
         .unwrap()
     };
@@ -53,9 +56,11 @@ fn measured_spend_stamps_the_entries_a_session_wrote() {
     Store::stamp_tokens(&out, 3, 5, 12051, 0);
     assert_eq!(read(4).tokens, Some(12051));
     assert_eq!(read(4).cached_tokens, None);
-    assert!(!crate::vfs::read_to_string(out.join("journal/g4.yaml"))
-        .unwrap()
-        .contains("cachedTokens"));
+    assert!(
+        !crate::vfs::read_to_string(crate::layout::journal_file(&out, 4))
+            .unwrap()
+            .contains("cachedTokens")
+    );
     assert_eq!(read(5).tokens, None);
 }
 
@@ -67,7 +72,7 @@ fn measured_spend_stamps_the_entries_a_session_wrote() {
 #[test]
 fn an_agent_report_stamps_one_unmeasured_session_entry_and_refuses_the_rest() {
     let out = own_dir("stamp-reported");
-    crate::vfs::create_dir_all(out.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&out)).unwrap();
     let write = |g: u64, kind: &str, tokens: Option<u64>| {
         let entry = JournalEntry {
             build: format!("g{}", g),
@@ -77,7 +82,7 @@ fn an_agent_report_stamps_one_unmeasured_session_entry_and_refuses_the_rest() {
             ..Default::default()
         };
         crate::vfs::write(
-            out.join("journal").join(format!("g{}.yaml", g)),
+            crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
             serde_norway::to_string(&entry).unwrap(),
         )
         .unwrap();
@@ -87,7 +92,10 @@ fn an_agent_report_stamps_one_unmeasured_session_entry_and_refuses_the_rest() {
     write(3, "session", Some(9800));
     let read = |g: u64| -> JournalEntry {
         serde_norway::from_str(
-            &crate::vfs::read_to_string(out.join("journal").join(format!("g{}.yaml", g))).unwrap(),
+            &crate::vfs::read_to_string(
+                crate::layout::journal_dir(&out).join(format!("g{}.yaml", g)),
+            )
+            .unwrap(),
         )
         .unwrap()
     };
@@ -97,7 +105,7 @@ fn an_agent_report_stamps_one_unmeasured_session_entry_and_refuses_the_rest() {
     assert_eq!(e.tokens, Some(18400));
     assert_eq!(e.cached_tokens, Some(9100));
     assert_eq!(e.tokens_source.as_deref(), Some("agent"));
-    let text = crate::vfs::read_to_string(out.join("journal/g2.yaml")).unwrap();
+    let text = crate::vfs::read_to_string(crate::layout::journal_file(&out, 2)).unwrap();
     assert!(
         text.contains("tokensSource: agent") && text.contains("cachedTokens: 9100"),
         "{}",
@@ -228,7 +236,7 @@ fn bounded_journal_lookups_agree_with_a_full_scan() {
             ],
         ),
     ];
-    crate::vfs::create_dir_all(s.out.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&s.out)).unwrap();
     for (g, kind, mutations) in &entries {
         let entry = JournalEntry {
             build: format!("g{}", g),

@@ -502,7 +502,8 @@ fn results_file_updates_in_place_per_model() {
             serde_json::json!({"verdict": "extraction"}),
         )],
     );
-    let s = crate::vfs::read_to_string(tmp.join("benchmark").join("results.yaml")).unwrap();
+    let s = crate::vfs::read_to_string(crate::layout::benchmark_dir(&tmp).join("results.yaml"))
+        .unwrap();
     let all: BTreeMap<String, Value> = serde_norway::from_str(&s).unwrap();
     assert_eq!(all.len(), 2);
     // The re-grade replaced model-a's entry; model-b survived untouched.

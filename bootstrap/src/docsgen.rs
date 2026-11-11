@@ -30,7 +30,7 @@ pub fn write_all(store: &Store, gs: &GenSettings) -> usize {
     let vmap = crate::verify::status_map(store, gs);
     let ledger = crate::gen::Ledger::load(&store.out);
     let instances = instance_types(store);
-    let dir = store.out.join("docsgen");
+    let dir = crate::layout::docsgen_dir(&store.out);
     crate::vfs::create_dir_all(&dir).ok();
     let mut written = write_documents(store, &dir, &instances, &ledger, &vmap);
 

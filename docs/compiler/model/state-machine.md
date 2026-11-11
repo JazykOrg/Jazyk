@@ -122,6 +122,6 @@ placed --> held : payment declined
 @enduml
 ```
 
-The output lands at `<out>/diagrams/state/<slug>.puml` with its `.svg` beside it. See
+The output lands at `<out>/derived/diagrams/state/<slug>.puml` with its `.svg` beside it. See
 [the emitters](../diagrams.md#the-emitters) and
 [output layout](../diagrams.md#output-layout).

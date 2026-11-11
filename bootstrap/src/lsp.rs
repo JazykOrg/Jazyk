@@ -330,10 +330,10 @@ enum Event {
 fn spawn_store_watcher(root: PathBuf, out: PathBuf, tx: std::sync::mpsc::Sender<Event>) {
     std::thread::spawn(move || {
         let mut last_gen = store_fingerprint(&root, &out);
-        let mut lock_seen = out.join(".lock").vexists();
+        let mut lock_seen = crate::layout::lock_file(&out).vexists();
         loop {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            let lock_now = out.join(".lock").vexists();
+            let lock_now = crate::layout::lock_file(&out).vexists();
             if lock_now != lock_seen {
                 lock_seen = lock_now;
                 eprintln!(

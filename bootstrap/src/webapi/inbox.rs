@@ -222,6 +222,7 @@ mod tests {
             .unwrap()
             .clone();
         let diag = |rule: &str, severity: &str, prompt: Option<DiagnosticPrompt>| Diagnostic {
+            goal: None,
             rule: rule.into(),
             severity: severity.into(),
             subjects: vec![format!("docs/arc.md#{}", sec)],

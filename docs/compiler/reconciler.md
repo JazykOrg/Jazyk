@@ -9,11 +9,12 @@ runs next: it resolves, fails, or parks the goals it is handed
 scheduled work is [compilation's](./compilation.md) to describe; whether anyone may act
 on it is the [control plane's](./control-plane.md).
 
-The loop is level-triggered, not edge-triggered. A document change only produces change
-records. Every derivation reads the current documents, the current graph, the
-[ledger](../consumers/gen.md#the-ledger), and the status, so a missed or duplicated
-change notification is harmless, any process computes the same board, and an
-interrupted build resumes from any consumer. Initial compilation is not a special case:
+The loop is level-triggered, not edge-triggered. Nothing about pending work is stored
+([what needs building](./graph.md#what-needs-building)). Every derivation reads the
+current documents, the current graph with its decisions and sources, and the
+[ledger](../consumers/gen.md#the-ledger), so a missed or duplicated change notification
+is harmless, any process computes the same board, an interrupted build resumes from any
+consumer, and a clone or a git merge needs no bookkeeping. Initial compilation is not a special case:
 it is reconciliation against an empty graph. A rebuild with nothing changed derives zero
 goals and makes zero LLM calls.
 
@@ -23,8 +24,9 @@ Staleness is computed, never judged:
 
 - [Parse](./parsing.md) every matched document into a section tree with per-section
   content hashes.
-- [Align](./alignment.md) the trees against the stored ones
-  ([graph store, `docs/`](./graph.md#storage-layout)), across all documents:
+- [Align](./alignment.md) the trees against the sources, the section trees the graph
+  last reflected ([graph store, `sources/`](./graph.md#storage-layout)), across all
+  documents:
   - added or changed section → dirty,
   - moved section (same title and body, new reference) → not dirty; the store
     rewrites anchored references mechanically,
@@ -32,44 +34,39 @@ Staleness is computed, never judged:
     are relocated to their best candidate as proposals for the
     [`place-anchors` goal](./goals/place-anchors.md), and anchors with no candidate
     become stale anchors.
-- Anchors a `place-anchors` session placed with `reevaluate: true`, and anchors whose
-  quote fails to locate, join the stale anchors of their document.
+- Anchors whose quote fails to locate in their section on disk join the stale anchors of
+  their document.
 - Map dirty sections to affected graph nodes through mentions and requirement sources.
 
-The dirty set is recorded, not held in memory. Two journal entries carry it, each
-journaled when it has something to record, each with a fresh generation number (see
-[journal](./graph.md#journal)), each writing one
-[change record](./graph.md#change-records) per finding under its generation with
-`mutation: 0`.
+The dirty set is computed, never stored. Each finding becomes one
+[change record](./graph.md#change-records) in memory for the derivation that found it:
 
-The `edit` entry records what a save did to the sections. A human save is a generation
-like any commit, the root of every ripple. It writes:
-
-- `section-dirty`: the subject is the section reference. `detail` carries the previous
-  hash and the line diff against the previous body: the counts `added` and `removed`
-  and the lines `addedLines` and `removedLines`
+- `section-dirty`: the subject is the section reference. `detail` carries the hash in
+  `sources/` and the line diff against that body: the counts `added` and `removed` and
+  the lines `addedLines` and `removedLines`
   ([created when](./goals/reconcile-section.md#created-when)).
-- `section-removed`: the subject is the reference the section had. `detail` lists the
-  nodes anchored there. It derives no goal of its own; the records that follow from it
-  (`anchor-stale`, `node-deleted`, `view-member-gone`) carry the trail onward.
-
-The `align` entry records what alignment did with the anchors: the exact moves it
-applied mechanically, and the proposals and stale anchors it leaves for a session. It
-writes:
-
-- `anchor-stale`: the subject is the section reference the anchor last pointed to, even
-  when that section is gone. `detail` lists the anchored nodes and why each is stale
-  (`no-candidate`, `reevaluate`, `quote-missing`).
-- `alignment-pending`: the subject is the document path. `detail` counts the proposals
-  persisted under `alignment/`
+- `section-removed`: the subject is the reference the section had in `sources/`.
+  `detail` lists the nodes anchored there. It derives no goal of its own; the sweep
+  handles the nodes anchored there.
+- `anchor-stale`: the subject is the section reference the anchor points to, even when
+  that section is gone. `detail` lists the anchored nodes and why each is stale
+  (`no-candidate`, `quote-missing`).
+- `alignment-pending`: the subject is the document path. `detail` carries the proposals
+  alignment computed for it
   ([what applies and what is proposed](./alignment.md#what-applies-and-what-is-proposed)).
+  A derivation recomputes them; a `place-anchors` session's placements change the graph,
+  so a placed anchor is no longer proposed.
 
-Sections whose coverage is still `unprocessed` need no record:
+A build writes the result of its own alignment: the exact moves it applied and the
+sections it synced land in `sources/` under one `align` generation, and a human save
+that dirtied sections journals as an `edit` generation, so every ripple roots in one
+([journal](./graph.md#journal)). Neither writes a record.
+
+Sections whose coverage is still `unprocessed` need no finding of their own:
 [coverage](./compilation.md#coverage) is graph state, and `reconcile-section` goals
-derive from it directly. A store whose version does not match the binary is archived
-whole and the build starts from an empty graph
-([storage layout](./graph.md#storage-layout)); that too is an ordinary dirty set, with
-every section dirty.
+derive from it directly. A store whose version does not match the binary is upgraded,
+refused, or archived by [store version](./graph.md#store-version); an archived one starts
+from an empty graph, which is an ordinary dirty set with every section dirty.
 
 ## Goal derivation
 
@@ -78,14 +75,14 @@ a dirty section, a revised statement, a dangling view member, a crossed limit. T
 is derived, never stored. `derive_goals` recomputes it from disk whenever it is
 consulted: at the start of a build, after every commit, on every `goals` call over
 [MCP](../frontends/mcp.md#compilation-over-mcp), and for the
-[GUI board](../frontends/gui.md#board). The inputs are the documents, the graph, the
-ledger, and the change records, parked goals, and failed goals of the
-[status](./graph.md#storage-layout). A
-derivation outside a build (`jazyk status`, `preview`, `release`, `monitor`, the GUI
-board, a `goals` call) aligns the documents in memory and derives from that, so the
-board shows the goals the next build will open; it writes nothing. The `edit` and
-`align` entries, the section trees, and the records they carry are written by the
-build that aligns for real, or by the serving's `done` before its commit. A read-only
+[GUI board](../frontends/gui.md#board). The inputs are the documents, the graph with its
+decisions and sources, the ledger, and, inside a running build, that build's progress
+([a build's progress](./graph.md#a-builds-progress)): the goals it parked and the reopen
+counts. A derivation outside a build (`jazyk status`, `preview`, `release`, `monitor`,
+the GUI board, a `goals` call) aligns the documents in memory and derives from that, so
+the board shows the goals the next build will open; it writes nothing. The synced
+sources and the `edit` and `align` journal entries are written by the build that aligns
+for real, or by the serving's `done` before its commit. A read-only
 command never moves the graph. The graph
 never stores goals, so it cannot grow with them. A derivation builds its
 [derived indices](./graph.md#derived-data) (document order, parent to children, entity
@@ -119,11 +116,14 @@ g:retrace:view:usecase/holds:
 - `change` is the attached evidence and the goal's identity: re-deriving the board
   matches a goal to its predecessor by the change, so a goal survives across builds and
   processes without being stored.
-- `cause` names the committed change that spawned the goal: the generation, the
+- `cause` names the committed change that made the finding true: the generation, the
   mutation index within it (`0` for store-level causes), and the edge or computation
-  that carried the dirtiness.
-- `state` is `open`, `blocked {on}` (a human answer, a ratification, a release),
-  `parked`, or `failed {reason}`.
+  that carried the dirtiness. It is read from this machine's journal, the newest entry
+  whose mutations touched the subject ([change records](./graph.md#change-records)), and
+  is absent when no local entry did (a fresh checkout, work merged from another branch).
+- `state` is `open`, `blocked {on}` (a human answer, a ratification, a release, a
+  `goal-failed` diagnostic on the target), or `parked {reason}` (inside the build that
+  parked it).
 - `hints` are computed and honest: what to load, which skill explains the shape, which
   tool typically resolves the kind. They are suggestions; the gate is the truth.
 
@@ -136,8 +136,8 @@ trace, and control plane are generic underneath it:
 - `kind`: the name. `class`: compile or GC. `unit`: what one target is (document,
   section, pair, entity, node, requirement, ledger row, view), so the board and the GUI
   can render it.
-- `derive_goals(store, status) -> Vec<Goal>`: this kind's goals from disk state.
-  Deterministic, idempotent, cheap.
+- `derive_goals(store, findings) -> Vec<Goal>`: this kind's goals from the store and
+  the derivation's computed change records. Deterministic, idempotent, cheap.
 - `ready(goal, board) -> Ready | Blocked(reason)`: the [readiness](#readiness) rule,
   the reason rendered as a sentence because every surface shows it.
 - `pack(store, batch)`: a batch's initially [loaded set](./context.md#the-loaded-set).
@@ -152,62 +152,65 @@ tool enqueues work: the model writes graph state, the harness derives the goals.
 
 ### Change records
 
-Current graph state alone cannot say "revised since last judged"; the change records
-can. Every commit writes the typed dirtiness its mutations caused into `changes/`
-([change records](./graph.md#change-records)): which sections changed, which
-requirements were created, revised, or deleted, which entities' fact sets changed,
-which thresholds crossed. The writers are the dirty set computation (the `edit` and
-`align` generations), the store at commit (from the changeset's mutations and the
-[derived data](./graph.md#derived-data) recompute), the deterministic sweep
-([garbage collection](./graph.md#garbage-collection)), the ledger comparison at
-derivation, and the [checks](./compilation.md#checks).
+Current graph state alone cannot say "revised since last judged". The decisions can: a
+judgment made on purpose is stored in the graph with a hash of what it judged
+([decisions](./graph.md#what-needs-building)), and a derivation compares the hash with the
+graph now. Every derivation computes its change records in memory
+([change records](./graph.md#change-records)) from the documents and the sources (the
+dirty set), the graph and its decisions, the counts and the name index, the ledger
+comparison, and the [checks](./compilation.md#checks). Nothing writes a record, so
+nothing clears one.
 
-- One record per kind and subject. A later commit that causes the same kind on the same
-  subject supersedes the record: the `cause` moves to the new commit and `detail`
-  merges.
-- `derive_goals` reads a goal's `change` from exactly its record. Several records on one
-  target with the same goal kind fold into one goal whose `change` merges their details
-  and whose `cause` is the earliest of them.
-- Resolving a goal clears its records: the commit that carries an accepted
-  `mark_goal_done` deletes them, and the goal is gone. A goal whose record is gone is
-  gone. One exception: a `requirement-created` or `requirement-revised` record feeds
-  one pair per candidate, so resolving a pair marks the partner judged in the record's
-  `detail.judged` on both sides, and the record clears when no candidate remains
-  ([pairs](#pairs)).
-- The sweep at commit drops records whose subject does not exist, except the trail
-  kinds (`section-removed`, `requirement-deleted`, `entity-deleted`), whose subject is
-  the dead node by design.
-- A record whose evidence lapses on its own clears without a session: a
-  `threshold-crossed` record clears when the count falls back under its threshold, a
-  `ledger-stale` record when the row is current, an `edges-missing` record when the
-  requirement gains edges by any path.
+- One finding per kind and subject. Several findings on one target with the same goal
+  kind fold into one goal whose `change` merges their details.
+- A goal is resolved when its finding stops: the session's commit changes the graph
+  (the section is reconciled and its source synced, the dead member is retraced) or
+  writes the decision the kind's gate asks for. The decision a resolved goal writes:
 
-The record kinds and what derives from each:
+  | goal | writes |
+  |---|---|
+  | `rejudge-pair` | `graph/decisions/pairs/<a~b>` with both statement hashes |
+  | `review-entity` | `graph/decisions/reviews/<entity>` with the entity's fact hash |
+  | `conform-instance` | `graph/decisions/conformance/<instance>` with the instance's and the type's fact hashes |
+  | `declare-edges` judged not structural | `graph/decisions/structure/<requirement>` with the statement hash |
+  | `dedupe-candidates` kept apart | `graph/decisions/lookalikes/<a~b>` with the score |
+  | `curate-view` | `graph/decisions/curation/<view>` with the nodes its query matches |
 
-| record kind | subject | written by | derives |
+- A decision lapses by itself when what it judged changes, and its finding returns.
+  The sweep deletes a decision whose subject left the graph.
+- A finding whose evidence lapses on its own goes without a session: a
+  `threshold-crossed` count falls back under its threshold, a requirement gains edges by
+  any path.
+
+The kinds, what each is computed from, and what derives from it:
+
+| kind | subject | computed from | derives |
 |---|---|---|---|
-| `alignment-pending` | document | dirty set (the `align` entry) | `place-anchors` |
-| `section-dirty` | section reference | dirty set (the `edit` entry) | `reconcile-section` |
-| `anchor-stale` | section reference | dirty set (the `align` entry) | `reconcile-section` |
-| `section-removed` | section reference | dirty set (the `edit` entry) | nothing (trail) |
-| `requirement-created`, `requirement-revised` | requirement | commit | `rejudge-pair` per [neighbor](#pairs) |
-| `requirement-deleted`, `entity-deleted` | the dead node | commit, sweep | nothing (trail; the ledger prunes on it) |
-| `node-deleted` | a live node that referenced the dead one | sweep | `retrace` (view, instance, derived fact); `rejudge-pair` (a surviving diagnostic subject) |
-| `entity-changed` | entity | commit, sweep | `review-entity` |
-| `instance-changed` | instance entity | commit | `conform-instance` |
-| `view-member-gone` | view | sweep | `retrace` |
-| `ledger-stale` | requirement (`bind`, `verify`), entity (`generate`) | the ledger comparison at derivation, `detail.goal` naming the kind | `bind`, `generate`, `verify` by `detail.goal` |
-| `prompt-unanswered` | diagnostic | commit | `answer` |
-| `provenance-pending` | derived or decreed node | commit | `ratify` |
-| `threshold-crossed` | the node over a limit | commit (recompute) | `split-view`, `abstract-entity` |
-| `edges-missing` | requirement | commit | `declare-edges` |
-| `lookalike` | entity pair | commit (name index) | `dedupe-candidates` |
-| `query-match`, `flow-unplaced` | view | commit, checks | `curate-view` |
+| `alignment-pending` | document | alignment of `sources/` against disk | `place-anchors` |
+| `section-dirty` | section reference | a section hash differing from `sources/`, or a section `sources/` lacks | `reconcile-section` |
+| `anchor-stale` | section reference | a quote that no longer locates | `reconcile-section` |
+| `section-removed` | section reference | a section in `sources/` gone from disk | nothing (the sweep) |
+| `requirement-revised` | requirement | a candidate pair with no `pairs/` decision matching both statements | `rejudge-pair` per [neighbor](#pairs) |
+| `node-deleted` | a live node naming a dead one | a reference to no live node | `retrace` (view, instance, derived fact); `rejudge-pair` (a surviving diagnostic subject) |
+| `entity-changed` | entity | a fact hash differing from the entity's `reviews/` decision, or none | `review-entity` |
+| `instance-changed` | instance entity | fact hashes differing from its `conformance/` decision, or none | `conform-instance` |
+| `view-member-gone` | view | a curated view listing a dead node | `retrace` |
+| `ledger-stale` | requirement (`bind`, `verify`), entity (`generate`) | the ledger comparison, `detail.goal` naming the kind | `bind`, `generate`, `verify` by `detail.goal` |
+| `prompt-unanswered` | diagnostic | a prompt without an answer | `answer` |
+| `provenance-pending` | derived or decreed node | the node's provenance | `ratify` |
+| `threshold-crossed` | the node over a limit | the limit counts | `split-view`, `abstract-entity` |
+| `edges-missing` | requirement | several entities, no `edges`, no `structure/` decision on the statement | `declare-edges` |
+| `lookalike` | entity pair | the name index over the threshold, no `lookalikes/` decision at or above the score | `dedupe-candidates` |
+| `query-match`, `flow-unplaced` | view | the view's query against its `curation/` decision, the flow placement check | `curate-view` |
+
+No goal derives on a target an open `goal-failed` diagnostic names
+([parked and failed](#parked-and-failed)): the derivation keeps the finding and renders
+the goal `blocked {on: goal-failed}`.
 
 `via` names how dirtiness reached the subject. The set is closed here, and every goal
 page draws its values from it:
 
-- a stored reference: `section` (a requirement created from, or a section record on,
+- a stored reference: `section` (a requirement created from, or a `sources/` entry on,
   that section), `quote` (a source quote that moved, changed, or stopped locating),
   `mentions`, `entities`, `edges`, `parent`, `members`, `collapse`, `excluded` (the
   list of a curated view a dead node sat in), `from`, `subjects` (a surviving
@@ -219,14 +222,16 @@ page draws its values from it:
   derived or decreed fact landed);
 - a computation: `alignment`, `ledger`, `limits`, `lookalike`, `query`,
   `flow-placement`, `flip-detection` (the check that parks a flipping pair or child),
-  `sweep` (a node the sweep deleted), or the rule name of the check that wrote the
-  record;
-- the path that filed a `prompt-unanswered` record: `report_diagnostic`,
-  `update_diagnostic`, `ratification` (the store filing a ratification proposal on a
-  derived or decreed fact), or the rule name of a check that files a prompt.
+  `sweep` (a node the sweep deleted), `decision` (a decision lapsed because what it
+  judged changed), or the rule name of the check that found it;
+- the path that filed the prompt behind a `prompt-unanswered` finding:
+  `report_diagnostic`, `update_diagnostic`, `ratification` (the store filing a
+  ratification proposal on a derived or decreed fact), or the rule name of a check that
+  files a prompt.
 
-The ledger goals share one record kind. The ledger comparison at derivation writes a
-`ledger-stale` record wherever the ledger and the graph disagree, `detail.goal` naming
+The ledger goals share one change kind, `ledger-stale`, which is derived and never
+stored: the ledger comparison runs at every derivation and yields a `ledger-stale`
+change wherever the ledger and the graph disagree, `detail.goal` naming
 the kind and `detail.reason` the
 [derived status](../consumers/gen.md#status-is-derived-never-stored) behind it:
 
@@ -240,16 +245,17 @@ the kind and `detail.reason` the
   `code-changed`, `runner-failed`).
 
 A `failing` row (a `fail` verdict on implementing files) is a finding for the author,
-a diagnostic and never a goal. `reconcile-section` alone derives from state beside the
-records: every section with a body of its own whose coverage is `unprocessed`.
+a diagnostic and never a goal. `reconcile-section` also derives from coverage: every
+section with a body of its own whose coverage is `unprocessed`.
 
 ### Pairs
 
 A `rejudge-pair` goal targets one pair of requirements. Neighbor selection is the
-reconciler's, never the model's. For each requirement with a `requirement-created` or
-`requirement-revised` record (revised means the `statement` changed, or the source
-`quote` changed in substance: normalized text, not punctuation), the neighbor set is
-computed deterministically:
+reconciler's, never the model's. For every requirement, the neighbor set is computed
+deterministically, and a neighbor is a candidate when no `pairs/` decision holds the
+statement hashes of both sides now (a new requirement has none; a changed statement or
+a source `quote` changed in substance, normalized text and not punctuation, no longer
+matches its hash):
 
 - candidates are requirements sharing an entity with it,
 - each is scored by overlapping content tokens (statement tokens minus stop words and
@@ -266,7 +272,7 @@ computed deterministically:
   hints' token lists (the shared tokens of a `rejudge-pair` change, the cohesion
   groups of `abstract-entity`) and the lookalike name tokens of
   [`dedupe-candidates`](./goals/dedupe-candidates.md#the-lookalike-score) stop at the suffix stage,
-  because their stems ride in change records and remembered lookalike scores,
+  because their stems ride in goal changes and remembered lookalike scores,
 - neighbors sharing at least two content tokens qualify, and so do neighbors sharing
   at least two entities and one content token: a restatement built from the same
   entities can share every noun and few other words, because the shared names leave
@@ -310,23 +316,22 @@ computed deterministically:
 The scorer's inputs over the whole graph (the hub, each entity's statement count and
 token counts, the requirements naming each entity, each requirement's content tokens)
 are computed in one walk of the requirements and shared by every requirement the pass
-scores: once per goal derivation, once per sweep of the change records. A requirement's
-candidates are then the requirements naming one of its entities, so a pass over `n`
-records costs `n` candidate sets, not `n` walks of every requirement and its tokens.
+scores, once per goal derivation. A requirement's candidates are then the requirements
+naming one of its entities, so a pass over `n` requirements costs `n` candidate sets,
+not `n` walks of every requirement and its tokens.
 
-Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a changed
+Open `contradiction` and `duplicate-requirement` diagnostics are sticky pairs: a
 requirement also pairs with every partner such a diagnostic ties it to, so editing one
-side of a known pair always re-judges the other. A record's candidates are its
-requirement's neighbors and sticky partners minus the partners its `detail.judged`
-lists. Resolving a pair appends the partner to `detail.judged` on every
-`requirement-created` and `requirement-revised` record of either side, so the pair does
-not derive again from the other side's record; the record stands while a candidate
-remains and clears at the sweep when none does. An `edit` option's answer on a pair's
-diagnostic is that pair's judgment and marks it the same way, the records its own
-commit lands included ([answers](./model/diagnostic.md#answers)). A goal that leaves the board without a
-resolution (a pair waiting under the cap below, a side deleted by another goal) marks
-nothing judged. A new record on the requirement (revised in substance again) starts
-with an empty `judged` list, so every candidate derives again with the new cause.
+side of a known pair always re-judges the other. A requirement's candidates are its
+neighbors and sticky partners without a current `pairs/` decision. Resolving a pair
+writes the decision with both statement hashes (`verdict: consistent`, or `diagnosed`
+when the session filed a diagnostic on the pair), so the pair derives from neither side
+again until one statement changes. An `edit` option's answer on a pair's diagnostic is
+that pair's judgment and writes the decision the same way
+([answers](./model/diagnostic.md#answers)). A goal that leaves the board without a
+resolution (a pair waiting under the cap below, a side deleted by another goal) writes
+no decision. A requirement revised in substance again no longer matches any of its
+decisions, so every candidate derives again.
 
 The degree is capped. Each changed requirement picks six, but a broad statement is
 picked by many (on a sixteen-document corpus one requirement sat in forty pairs and a
@@ -340,21 +345,21 @@ deterministic order and a pair opens when both sides have a slot:
 
 - Pinned pairs go first, in target order, and never wait: a pair an open
   `contradiction` or `duplicate-requirement` diagnostic ties (sticky), a pair a
-  `node-deleted` record derives for a surviving diagnostic subject, a parked pair, a
-  failed pair. A failed pair holds no slot: it is not open.
+  `node-deleted` finding derives for a surviving diagnostic subject, a pair the build
+  parked. A pair blocked on a `goal-failed` diagnostic holds no slot: it is not open.
 - The rest follow by score, highest first, ties by target. The score is the neighbor
   score above, the same from either side. A pair whose side already holds
   `pairs-per-requirement` open pairs waits; it is no goal until a slot frees, and its
-  records stand.
+  finding stands.
 - A re-derivation after a commit opens the best waiting pairs into the slots the
   resolved ones freed. A commit that brings higher-scoring candidates to a saturated
-  side can send an open pair back to waiting; nothing is lost, its record stands, and
+  side can send an open pair back to waiting; nothing is lost, its finding stands, and
   the loop treats the vanished goal as unresolved.
 
 The hints on an open pair carry the score and, per side, how many of its pairs wait.
 The cap bounds the open board and orders the judgments by lexical closeness; it never
 drops a candidate. Deletion propagates the same way: a
-`node-deleted` record on a surviving subject of an open judged diagnostic derives a
+`node-deleted` finding on a surviving subject of an open judged diagnostic derives a
 `rejudge-pair` goal for it, and that open diagnostic alone is reason enough. The session
 sees the deleted subject marked and either resolves the diagnostic or refiles it against
 the surviving statements. A diagnostic left with no existing subjects at all is resolved
@@ -363,8 +368,8 @@ it. The sweep is level-triggered: the [checks](./compilation.md#checks) settle e
 stranded diagnostic the same way, so a store deleted into a stranded state by hand edits
 heals at the next build.
 
-A changed requirement with no neighbor, no sticky partner, and no open diagnostic
-naming it derives no pair goal, and its record clears at the next sweep. A pair is one
+A requirement with no undecided neighbor, no sticky partner, and no open diagnostic
+naming it derives no pair goal. A pair is one
 goal, `g:rejudge-pair:req:a~req:b`, carried by the smaller id: judging A against B is
 judging B against A, so two changed requirements that neighbor each other derive one
 goal, not two. The reach is lexical by design: a contradiction expressible only through
@@ -382,17 +387,17 @@ parentless entities do ([levels](./concepts/levels.md#levels),
 the goal, beside the caps variant on requirement and state counts. The harness counts
 and computes coupling; the model names and judges.
 
-- The record is `threshold-crossed` with `detail.limit: children-per-entity`, written
-  by the limit counts at commit ([the registry](./graph.md#the-registry): soft 9, hard
-  15). Its subject is the node, or `scope:<scope>` for the scope root; `via` is
-  `limits`. It is level-triggered like every threshold record: crossing soft derives
-  the goal optional, hard makes it mandatory at every derivation, and a count back
-  under soft clears the record without a session ([escalation](#escalation)).
+- The finding is `threshold-crossed` with `detail.limit: children-per-entity`, computed
+  by the limit counts ([the registry](./graph.md#the-registry): soft 9, hard 15). Its
+  subject is the node, or `scope:<scope>` for the scope root; `via` is `limits`. It is
+  level-triggered like every threshold finding: crossing soft derives the goal
+  optional, hard makes it mandatory at every derivation, and a count back under soft
+  ends it without a session ([escalation](#escalation)).
 - The goal is `g:abstract-entity:<ent>` or `g:abstract-entity:scope:<scope>`. Its
   `change` is `{fan_out: n, limit: {soft, hard}, candidates: [[id, ...], ...]}`: the
   count, the thresholds in force, and the coupling partitions the hint computer
-  proposes. A record for another limit on the same node folds into the same goal, as
-  records do ([change records](#change-records)).
+  proposes. A finding for another limit on the same node folds into the same goal, as
+  findings do ([change records](#change-records)).
 - The cone is the node's subtree, the downward walk from the node ([cones](#cones)).
   The root form's cone is the whole scope. The goal is ready under the GC rule, when no
   compile goal is open or parked in the cone ([GC gating](#gc-gating)), so a level is
@@ -445,11 +450,11 @@ tools.
 |---|---|---|---|---|---|
 | [`place-anchors`](./goals/place-anchors.md) | compile | 0 | M | document | `alignment-pending` |
 | [`reconcile-section`](./goals/reconcile-section.md) | compile | 1 | M | section | `section-dirty`, `anchor-stale`, `unprocessed` coverage |
-| [`rejudge-pair`](./goals/rejudge-pair.md) | compile | 2 | M | pair | `requirement-created`, `requirement-revised`, sticky pairs, `node-deleted` |
+| [`rejudge-pair`](./goals/rejudge-pair.md) | compile | 2 | M | pair | `requirement-revised` (no current `pairs/` decision), sticky pairs, `node-deleted` |
 | [`review-entity`](./goals/review-entity.md) | compile | 2 | M | entity | `entity-changed` |
 | [`retrace`](./goals/retrace.md) | compile | 2 | M | node | `view-member-gone`, `node-deleted` |
 | [`conform-instance`](./goals/conform-instance.md) | compile | 2 | M | instance | `instance-changed` |
-| [`derive-criteria`](./goals/derive-criteria.md) | compile | 3 | M | entity | a requirement with no criterion, or a `requirement-revised` record newer than its criteria, in a set with a nonempty `source` |
+| [`derive-criteria`](./goals/derive-criteria.md) | compile | 3 | M | entity | a requirement with no criterion, or whose statement no longer matches the statement hash its derived criteria record, in a set with a nonempty `source` |
 | [`bind`](./goals/bind.md) | compile | 3 | M | requirement | `ledger-stale` (`goal: bind`: no current row) |
 | [`generate`](./goals/generate.md) | compile | 3 | M | entity | `ledger-stale` (`goal: generate`: facts differ from the ledger, `unimplemented` rows) |
 | [`verify`](./goals/verify.md) | compile | 3 | M | ledger row | `ledger-stale` (`goal: verify`: the derived status says action) |
@@ -474,14 +479,14 @@ Decompilation stays outside the board: draft work is released per scope
 One build runs one loop, sequentially: one session at a time, each with one batch.
 
 - Derive the board. Take the highest ready [tier](#readiness) that has an open goal;
-  parked goals resume first.
+  goals an interrupted run of the same build parked resume first.
 - Group the ready goals by [locality](#batching) and fill one batch under the context
   budget.
 - Run one session for the batch ([execution](./sessions.md#execution)). The session
   prompt lists exactly the batch's goals and one summary line for the rest.
-- Commit the changeset: derived data recomputes, change records land, the journal entry
-  records `resolved_goals` with their justifications and `opened_goals` with their causes
-  ([commit](./sessions.md#commit)).
+- Commit the changeset: derived data recomputes, the decisions the resolved goals asked
+  for land, the journal entry records `resolved_goals` with their justifications and
+  `opened_goals` with their causes ([commit](./sessions.md#commit)).
 - Re-derive the board. GC goals whose cone the commit quieted are ready; they run next,
   in a burst, before the loop returns to the compile tiers, unless the build budget is
   tight, in which case compile outranks GC.
@@ -506,13 +511,14 @@ and wait for their cone instead.
 | tier | kinds | ready when |
 |---|---|---|
 | 0 | `place-anchors` | always |
-| 1 | `reconcile-section` | no tier 0 goal is open or parked; the document's link level is reached; the document has no `alignment-pending` record |
+| 1 | `reconcile-section` | no tier 0 goal is open or parked; the document's link level is reached; the document has no `alignment-pending` finding |
 | 2 | `rejudge-pair`, `review-entity`, `retrace`, `conform-instance` | no tier 0 or 1 goal is open or parked |
 | 3 | `derive-criteria`, `bind`, `generate`, `verify`, `ratify`, `answer` | no tier 0, 1, or 2 goal is open or parked |
 
-- Open and parked goals hold the later tiers. Failed and blocked goals do not: a section
-  the model could not reconcile, or a document awaiting a release, must not wedge every
-  judgment behind it. They count in the [verdict](./compilation.md#convergence) instead.
+- Open and parked goals hold the later tiers. Blocked goals do not, a goal blocked on a
+  `goal-failed` diagnostic included: a section the model could not reconcile, or a
+  document awaiting a release, must not wedge every judgment behind it. They count in
+  the [verdict](./compilation.md#convergence) instead.
 - Within tier 3, `bind` on a requirement waits until the requirement carries at least
   one [criterion](./model/criterion.md) and its entity owes no `derive-criteria` (the
   evidence must exist before a test encodes it; the goal is `blocked {on: criteria}`),
@@ -529,7 +535,8 @@ and wait for their cone instead.
 ### Link levels
 
 Link levels order tier 1: breadth-first over the document link graph from the
-[roots](./project-settings.md#roots).
+[roots](./project-settings.md#roots), resolved from `jazyk.toml` against the documents
+on disk at every derivation and never stamped into the store.
 
 - The root documents are level 0. A document's level is one more than the lowest level
   of any document linking to it.
@@ -550,7 +557,8 @@ build. A session cap that parks the remaining work parks only selected goals.
 ### GC gating
 
 A GC goal is ready when no compile goal is open or parked in its target's
-[cone](#cones). Blocked and failed compile goals do not count: a ratification proposal
+[cone](#cones). Blocked compile goals do not count, a goal blocked on a `goal-failed`
+diagnostic included: a ratification proposal
 that a GC goal itself created must not hold its own cone, and a section the model could
 not reconcile is as settled as it will get. Restructuring therefore always sees settled
 content: an entity is abstracted knowing every requirement this build gives it, never a
@@ -654,7 +662,7 @@ would land the set past the mark enters as a stub instead
 ([policy](./context.md#policy)). The round budget bounds the count too: at least 8 of the session's
 24 rounds per section in the batch, so a reconcile batch holds at most three sections.
 A batch is one to a handful of goals; the count is a consequence of budget and locality,
-never a fixed number. Parked goals are batched first.
+never a fixed number. Goals the build parked are batched first.
 
 Formed is not the same as carried. A batch is formed of one class and one tier; the
 session that runs it may resolve more. A previewed goal of either class joins the
@@ -708,13 +716,13 @@ statements about one entity once read the same review line on every upsert.
 ## Escalation
 
 Every [limit](./graph.md#limits) carries a soft and a hard threshold. Crossing the soft
-threshold writes a `threshold-crossed` record and derives an optional goal (`split-view`
+threshold is a `threshold-crossed` finding and derives an optional goal (`split-view`
 for view limits, `abstract-entity` for entity limits and the state limit, the
 `children-per-entity` row on a node or on `scope:<scope>` included, see
 [fan-out](#fan-out)). Crossing the
 hard threshold escalates the same goal to mandatory: `mandatory` is recomputed at every
 derivation from the current count, so a count that drops back under the hard threshold
-de-escalates, and one that drops under the soft threshold clears the record without a
+de-escalates, and one that drops under the soft threshold ends the finding without a
 session. The build cannot report `converged` while a mandatory limit goal is open or
 failed; the diagram renders meanwhile with collapse applied and marked as such
 ([over-limit views](./diagrams.md#over-limit-views)).
@@ -725,10 +733,10 @@ raised (`limits: {<limit>: n}`) with decree provenance recorded in the journal
 it crosses `n` plus the registry's distance between soft and hard. Nothing tunes limits
 in `jazyk.toml`; the registry is built into the binary, and bumps are per node.
 
-The other escalations are states, not thresholds: a mandatory goal a session fails
-blocks convergence ([parked and failed](#parked-and-failed)); a goal that waits on a
-human is `blocked` and counted; a build that exhausts its cap parks what is open and
-files `incomplete-build`. A dead endpoint trips a breaker before the cap: five
+The other escalations are states, not thresholds: a mandatory goal a session fails files
+a `goal-failed` diagnostic and blocks convergence ([parked and failed](#parked-and-failed));
+a goal that waits on a human is `blocked` and counted; a build that exhausts its cap
+parks what is open, and the verdict counts it as open work. A dead endpoint trips a breaker before the cap: five
 consecutive failed sessions that spent no tokens park what is open the same way, the
 last error named in the reason, because an endpoint answering only errors (a rate
 limit, an outage) must not grind the session cap into hundreds of futile attempts. A
@@ -744,65 +752,70 @@ attempts no model made, 302 in its last minutes.
 
 ## Parked and failed
 
-The status carries both beside the change records, one file per goal: `parked/` (whole
-goal records, each with an optional `reason` beside the goal's fields) and `failed/`
-(`{goal, reason}`, `goal` the whole record). Both are read at derivation and stamp the
-goal's `state`. Both keep the goal whole, `change` payload included, so a parked or
-failed goal survives a re-derivation that would otherwise drop it.
+Parked is a build's progress, failed is the graph's. Neither is a stored work queue.
+
+- Parked goals live in the build that parked them
+  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the
+  machine-local `local/run.yaml`, so the next `jazyk compile` on that machine resumes
+  them, or in the host's database for a hosted build paused and resumed. They count as
+  open in the verdict meanwhile (`incomplete`). Another checkout, which has no
+  `run.yaml`, derives the same goals again from the same findings. Unfinished work is
+  never silent, and it needs no committed record.
+- A goal a session marks failed becomes a `goal-failed`
+  [diagnostic](./model/diagnostic.md) on its target, with the goal kind and the reason in
+  its message. It is graph state: committed, seen by every checkout, answered by a
+  person. While it is open, no goal of that kind derives on that target; the board
+  shows the goal `blocked {on: goal-failed}`.
 
 The park `reason` says which road ran out, in the words the trace uses: the retry
 (`left open after 4 attempts in session b12-3`), the build cap or the `--sessions`
 limit, the dead-endpoint breaker with the last error, a reopen cycle
 (`reopened-after-resolve: ...`), or a flip (`cross-class flip: ...`,
-`reparent flip: ...`). A cancelled build keeps the entries it parked before the stop
-and parks nothing for the stop itself. An entry written without one reads with no
-reason. The reason
-rides wherever a parked goal is shown: the `incomplete-build` diagnostic's message,
-`jazyk explain` (a `parked:` line), the whole-build report of `jazyk ripple`, the
-board's goal payload (`parkedReason`), and the `parked` list of `GET /api/status`.
+`reparent flip: ...`). A cancelled build keeps the goals it parked before the stop and
+parks nothing for the stop itself. The reason rides wherever a parked goal is shown
+while its build lives: `jazyk explain` (a `parked:` line), the whole-build report of
+`jazyk ripple`, the board's goal payload (`parkedReason`), and the `parked` list of
+`GET /api/status`.
 
 - Parked means "ran out of road": a session that exhausted its rounds without meeting
   the gate gets up to four attempts, each with a fresh session, then its goals park;
-  a build that hits its cap (8 × the distinct goals derived so far in the build + 64 sessions, the count
-  cumulative over every board of the build) parks every open goal. Parked goals keep
-  their records, resume first in the next build, and count as open in the verdict
-  (`incomplete`, with an `incomplete-build` diagnostic). Unfinished work is never
-  silent.
-- Parked also means "the same work came back". A record the commit recomputes
+  a build that hits its cap (8 × the distinct goals derived so far in the build + 64
+  sessions, the count cumulative over every board of the build) parks every open goal.
+- Parked also means "the same work came back". A finding the commit leaves standing
   deterministically (a `threshold-crossed` count still over its limit, a `ledger-stale`
-  row the ledger still disagrees on) is written again when the measured condition still
+  row the ledger still disagrees on) derives again when the measured condition still
   holds, so a goal a session just resolved derives again under the same id with the
   same `change`. The build counts these cycles per goal id and `change` across its
   sessions: a goal resolved and re-opened with the same `change` for the second time
-  in one build parks without spending the remaining unfinished-goal attempts, and the trace
-  names the cycle (`reopened-after-resolve`, with the count). A goal re-opened with a
-  different `change` is new work under an old id, not a cycle: its count starts over.
-  The count is the `REOPEN_CYCLES` constant of the registry
+  in one build parks without spending the remaining unfinished-goal attempts, and the
+  trace names the cycle (`reopened-after-resolve`, with the count). A goal re-opened
+  with a different `change` is new work under an old id, not a cycle: its count starts
+  over. The count is the `REOPEN_CYCLES` constant of the registry
   ([budgets](./graph.md#budgets-and-thresholds)), two. Without it only the build cap
   ends the loop (a session marks done, the board re-opens the identical goal, repeat),
   and one goal spends the whole build's budget.
 - Failed means the session said so: `mark_goal_failed({goal, reason})` is always
   available, because a goal that cannot be accomplished (documents too deeply
   contradictory, a target that makes no sense any more) must be failable, or the board
-  fills with dishonestly resolved goals. A failed goal keeps its target, so the failure
-  surfaces on the thing itself everywhere it renders. A failed mandatory goal blocks
-  convergence; a failed optional goal is recorded and stands.
-- A failed goal never re-runs by itself. It reopens when its subject changes again (a
-  new change record on the subject drops the `failed` entry at commit) or when a human
-  retries it from the board or removes its entry from `failed`. `jazyk explain <goal>`
-  shows the reason. For an [`abstract-entity`](./goals/abstract-entity.md) goal whose
-  change is a count over a limit, growth alone is not a new subject: the failure stands
-  until the count has grown by a fifth over the count at failure (or a human bumps or
-  retries), since a novel lead's goal once re-fired on every chapter's new statements
-  and failed three times, at up to fifty calls each, with the same honest reason. The
+  fills with dishonestly resolved goals. The `goal-failed` diagnostic sits on the target
+  itself, so the failure surfaces everywhere the target renders. It is a warning on a
+  mandatory goal, which blocks convergence while it is open, and info on an optional one.
+- A failed goal never re-runs by itself. Its diagnostic carries the hash of the evidence
+  it failed on (the goal's `change`); when the target changes so that the derivation
+  computes a different `change`, the store resolves the diagnostic at the next commit and
+  the goal derives again. A person can also answer or resolve it, from the board or any
+  diagnostic surface, which is a retry. `jazyk explain <goal>` shows the reason. For an
+  [`abstract-entity`](./goals/abstract-entity.md) goal whose change is a count over a
+  limit, growth alone is not a new change: the diagnostic stands until the count has
+  grown by a fifth over the count at failure (or a person bumps the limit or retries),
+  since a novel lead's goal once re-fired on every chapter's new statements and failed
+  three times, at up to fifty calls each, with the same honest reason. The
   [fan-out](#fan-out) variant's count is its child count: its coupling candidates move
-  with every requirement on the level and reopen nothing on their own.
-- Resolving a parked or failed goal clears its entry with its record. A parked
-  ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives drops too:
-  the ledger judges what landed, so a verify goal parked mid-run whose row reads
-  verified since has nothing to resume (the slides example carried two such goals
-  across every run). A failed ledger goal the ledger no longer derives drops the same
-  way: the failure was about a row or record that now reads current.
+  with every requirement on the level and change nothing on their own.
+- A ledger goal (`bind`, `generate`, `verify`) the ledger no longer derives is simply
+  gone, parked or not: the ledger judges what landed, so a verify goal parked mid-run
+  whose row reads verified since has nothing to resume. A `goal-failed` diagnostic on a
+  ledger goal resolves the same way when the ledger no longer derives it.
 
 ## Flip detection
 
@@ -821,35 +834,34 @@ stored: the journal is the history, and tombstone redirects mark deletions
   per-key event list: entity creates, deletes, merges, and decree retractions, each
   stamped with its generation, the class of the session's resolved goal, and that
   goal's justification from `resolved_goals`. Two flips of one natural key between the
-  classes park the pair: both goals move to `parked` and stay there, and one
+  classes stop the pair: both goals park for the rest of the build, and one
   `unstable-derivation` diagnostic is filed on the key's surviving node with both
   justifications side by side (the latest from each direction). The diagnostic carries a
   [prompt](./model/diagnostic.md#prompts): keep the split, keep the merge, or a
-  freeform ruling. The pair is blocked on that answer (`blocked on human:
-  unstable-derivation ruling`, so no batch takes them; a goal parked for want of road
-  resumes first, but a session cannot resolve one whose cause is the ruling owed);
-  answering it clears the parked entries and the next build resumes the chosen
+  freeform ruling. While the diagnostic is open, the derivation renders both goals
+  `blocked on human: unstable-derivation ruling` in every build, so no batch takes them.
+  Answering it records the ruling as graph state and the next build resumes the chosen
   direction.
 - A reparent flip is a child that moves between the same two parents across
-  generations: `ent:cache` moves from `ent:backend` under `ent:storage` in one
+  generations of this machine's journal: `ent:cache` moves from `ent:backend` under `ent:storage` in one
   generation (a `group_entities`, a `dissolve_entity`, an `update_entity` or
   `edit_fact` on `parent`, or the sweep's dissolve) and back in a later one. The check
   replays every journaled `parent` change, each mutation carrying the prior parent
   ([journal](./graph.md#journal)), into a per-child event list keyed on the child's
   natural key with the two parents matched by natural key too, so a grouping dissolved
-  and re-minted under a new id counts as the same parent. The second move parks like a
-  cross-class flip: the goal behind it moves to `parked` and stays there, and one
+  and re-minted under a new id counts as the same parent. The second move stops like a
+  cross-class flip: the goal behind it parks for the rest of the build, and one
   diagnostic is filed on the child with both justifications side by side and a
   [prompt](./model/diagnostic.md#prompts): keep it under the first parent, keep it
   under the second, or a freeform ruling. The goal is blocked on that answer the same
-  way, never batched (a novel's `conform-instance` goal behind a reparent flip was
+  way in every build, never batched (a novel's `conform-instance` goal behind a reparent flip was
   once batched, resolved, and re-derived six times in one build with no mutation
   between; the reopen cycle count in [parked and failed](#parked-and-failed) parks
-  such a goal at its second cycle). Answering it clears the parked entry and the next
-  build resumes the chosen direction.
+  such a goal at its second cycle). Answering it records the ruling and the next build
+  resumes the chosen direction.
 
 Flip detection and the budgets bound the alternation between the classes and the
 alternation of a child between parents. With them,
 idempotence makes convergence a fixed point rather than a loop: a session that re-derives
-an unchanged conclusion stages a no-op upsert, no mutation lands, no record is written,
+an unchanged conclusion stages a no-op upsert, no mutation lands, no finding changes,
 and that branch of the cascade dies.

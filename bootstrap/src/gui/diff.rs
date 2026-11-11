@@ -161,7 +161,7 @@ fn replay_to(
                 **slot = Some(r.clone());
             }
         }
-        let f = out.join("journal").join(format!("g{}.yaml", g));
+        let f = crate::layout::journal_dir(out).join(format!("g{}.yaml", g));
         let Ok(text) = crate::vfs::read_to_string(&f) else {
             continue;
         };

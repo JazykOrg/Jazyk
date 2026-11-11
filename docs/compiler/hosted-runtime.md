@@ -29,9 +29,9 @@ rolls back the entire request snapshot and returns a distinct failure. Staged
 changes still pass the existing commit gates before they enter a snapshot.
 
 A hosted workspace keeps no per-batch replay state. A batch writes no
-[graph snapshot](./sessions.md#snapshots) and no trace transcript. Every request
-removes `<out>/snapshots/` for each document set, so a workspace holding snapshots
-sheds them on its next request.
+[graph snapshot](./sessions.md#snapshots) and no trace transcript into the snapshot. A
+version 4 workspace's `snapshots/` directories are removed when its store is upgraded
+([store version](./graph.md#store-version)).
 
 ## Source and delivery projections
 
@@ -104,9 +104,9 @@ through the same tool gates. See [task runtimes](./task-runtime.md).
 Hosted conversations use the existing in-process chat loop and MCP chat tools,
 including guarded project file tools and the scoped `release_work` action for
 explicitly requested compilation or generation.
-The snapshot stores their history and numbered updates in
-`.jazyk/conversations.json`. Each new request reopens the loaded graph context and
-instructs the model to reload handles. Conversation ids belong to the workspace.
+Their history and numbered updates are [host records](#host-records), never part of the
+snapshot. Each new request reopens the loaded graph context and instructs the model to
+reload handles. Conversation ids belong to the workspace.
 Chat events use the editor's `chat.sessions` and `chat.update` shapes.
 
 Stopping a protected chat restores its accepted model history from the execution
@@ -190,6 +190,37 @@ tool validation. A body-only transport remains supported. Streamed tool argument
 never execute before a complete validated response. The host bounds and cancels
 model calls and coalesces small deltas before persistence.
 
+## Host records
+
+Some engine data is a log, not project state: chat conversations (the timeline the
+editor shows and the history the model reads), `report_feedback` entries, and session
+transcripts. Nothing reads it to compile, it grows with use, and it is private to whoever
+produced it. A host keeps it in a record store of its own, never in the workspace
+snapshot and never in git.
+
+The execution carries an optional record store. It knows nothing of databases: it
+stores records in named streams, each record a JSON value.
+
+- Streams: `chat-updates` (a conversation's numbered timeline), `chat-history` (the
+  messages the model reads, in generations), `feedback` (one set's feedback log), and
+  `trace` (one run's transcript). A stream is keyed by conversation id, set id, or run.
+- Operations: list a stream's keys with their metadata, read one key's metadata, write
+  it, append records from a given number (idempotent: a number already stored is
+  skipped), replace a key's records under the next generation (dropping older
+  generations), read records after a number up to a limit, and delete a key.
+- A conversation is read lazily: a request reads the conversation index, and loads one
+  conversation's records when it touches it. A save appends what is new since the load,
+  or replaces the history under the next generation when compaction or a stop
+  restored it. A checkpoint commits the conversation's records before it saves the
+  capsule, so a capsule never carries a copy of the history.
+- Without a record store (a test, a host that provides none), the workspace keeps the
+  streams as files under `.jazyk/local/records/` in its snapshot. A local run writes
+  them to the [log directory](./jazyk-folder.md#logs), a browser run to the page's
+  storage.
+
+The host chooses retention and compression. The engine only requires that a stream it
+reads back holds what it appended, in order, and treats a missing key as empty.
+
 ## Durable execution
 
 Hosted execution supplies a versioned resume capsule, a suspension signal distinct
@@ -201,3 +232,10 @@ The [shared runtime](./agent-runtime.md#checkpoints) defines model and tool rece
 MCP restoration and parent continuation. The private host owns storage, tenant
 policy, job reclaim and idempotent accounting reconciliation. Internal transport
 metadata identifies model requests and is removed before provider dispatch.
+
+A hosted build's progress (its batch, the goals it parked, its spend, its reopen
+counts) is part of the resume capsule, not of the workspace snapshot: the snapshot holds
+only the committed graph and the set's local files. A build suspended for a deploy
+resumes from the capsule where it stopped. The host deletes the capsule when the build
+ends. A build whose capsule is lost starts over, and its first derivation finds the same
+work ([a build's progress](./graph.md#a-builds-progress)).

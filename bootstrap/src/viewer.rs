@@ -647,9 +647,7 @@ fn sanitize_svg(raw: &str) -> Option<String> {
 // the file.
 fn svg_path(store: &Store, view_id: &str) -> Option<(String, String, std::path::PathBuf)> {
     let (kind, slug) = view_id.strip_prefix("view:")?.split_once('/')?;
-    let path = store
-        .out
-        .join("diagrams")
+    let path = crate::layout::diagrams_dir(&store.out)
         .join(kind)
         .join(format!("{}.svg", slug));
     path.vexists()
@@ -1600,8 +1598,13 @@ mod tests {
         let out =
             std::env::temp_dir().join(format!("jazyk-viewer-test-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
-        crate::vfs::create_dir_all(out.join("diagrams/class")).unwrap();
-        crate::vfs::write(out.join("diagrams/class/public.svg"), "<svg/>").unwrap();
+        crate::vfs::create_dir_all(crate::layout::derived_dir(&out).join("diagrams/class"))
+            .unwrap();
+        crate::vfs::write(
+            crate::layout::derived_dir(&out).join("diagrams/class/public.svg"),
+            "<svg/>",
+        )
+        .unwrap();
         let mut s = Store {
             out: out.clone(),
             ..Default::default()
@@ -2036,9 +2039,10 @@ mod tests {
         let out =
             std::env::temp_dir().join(format!("jazyk-viewer-walk-{}", crate::sys::process_id()));
         crate::vfs::remove_dir_all(&out).ok();
-        crate::vfs::create_dir_all(out.join("diagrams/component")).unwrap();
+        crate::vfs::create_dir_all(crate::layout::derived_dir(&out).join("diagrams/component"))
+            .unwrap();
         crate::vfs::write(
-            out.join("diagrams/component/shop.svg"),
+            crate::layout::derived_dir(&out).join("diagrams/component/shop.svg"),
             concat!(
                 "<?xml version=\"1.0\" encoding=\"us-ascii\"?><?plantuml 1.2026.2?>",
                 "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\"",

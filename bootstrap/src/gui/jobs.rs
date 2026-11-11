@@ -638,8 +638,8 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             format!("{}-{}-j{}", compact, kind.name(), id)
         };
         st.jobs.set_stem(id, &stem);
-        let trace_path = st.out.join("trace").join(format!("{}.jsonl", stem));
-        crate::vfs::create_dir_all(st.out.join("trace")).ok();
+        let trace_path = crate::layout::trace_dir(&st.out).join(format!("{}.jsonl", stem));
+        crate::vfs::create_dir_all(crate::layout::trace_dir(&st.out)).ok();
         let writer: Arc<Mutex<Option<std::fs::File>>> = Arc::new(Mutex::new(
             std::fs::OpenOptions::new()
                 .create(true)
@@ -1150,7 +1150,7 @@ pub async fn get_job(State(st): State<SharedState>, UrlPath(id): UrlPath<u64>) -
         other => other,
     };
     // Out of memory: the transcript holds the whole job (docs/frontends/gui.md#jobs).
-    let dir = st.out.join("trace");
+    let dir = crate::layout::trace_dir(&st.out);
     let from_file = tokio::task::spawn_blocking(move || job_from_transcript(&dir, id))
         .await
         .expect("job transcript read");
@@ -1245,7 +1245,7 @@ fn write_line(writer: &Arc<Mutex<Option<std::fs::File>>>, v: &Value) {
 
 // Remove transcripts past the retention window. Runs once per server start.
 pub fn sweep_traces(out: &std::path::Path) {
-    let dir = out.join("trace");
+    let dir = crate::layout::trace_dir(out);
     let Ok(rd) = crate::vfs::read_dir(&dir) else {
         return;
     };
@@ -1273,7 +1273,7 @@ pub fn sweep_traces(out: &std::path::Path) {
 // Only the first line of every transcript is read to order them; the newest 200
 // are read whole for their outcome and event count.
 pub async fn list_traces(State(st): State<SharedState>) -> Json<Value> {
-    let dir = st.out.join("trace");
+    let dir = crate::layout::trace_dir(&st.out);
     let list = tokio::task::spawn_blocking(move || {
         let first_line = |p: &std::path::Path| -> Option<String> {
             use std::io::BufRead;
@@ -1353,7 +1353,7 @@ fn trace_path(st: &SharedState, stem: &str) -> Option<std::path::PathBuf> {
     {
         return None;
     }
-    Some(st.out.join("trace").join(format!("{}.jsonl", stem)))
+    Some(crate::layout::trace_dir(&st.out).join(format!("{}.jsonl", stem)))
 }
 
 pub async fn get_trace(State(st): State<SharedState>, UrlPath(stem): UrlPath<String>) -> Response {
@@ -1492,8 +1492,10 @@ mod tests {
             full: crate::session::full_payload(&payload),
         });
 
-        let stored =
-            std::fs::read_to_string(state.out.join("trace").join(format!("{stem}.jsonl"))).unwrap();
+        let stored = std::fs::read_to_string(
+            crate::layout::trace_dir(&state.out).join(format!("{stem}.jsonl")),
+        )
+        .unwrap();
         let event: Value = serde_json::from_str(stored.lines().nth(1).unwrap()).unwrap();
         let full = event["event"]["full"].as_str().unwrap();
         assert_eq!(serde_json::from_str::<Value>(full).unwrap(), payload);

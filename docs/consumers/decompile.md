@@ -65,7 +65,7 @@ still equals the hash recorded at submission), so a scope drafted again replaces
 own earlier draft and nothing else; any other existing file is rejected naming the
 path, and the session picks another.
 
-The out directory records each draft in `decompile/drafts.yaml` (written through a
+The out directory records each draft in `local/decompile/drafts.yaml` (written through a
 sibling temporary file renamed into place; a file that does not parse is reported and
 no draft is recorded over it): the document path and
 the content hash as submitted. That record is what ratification reads.

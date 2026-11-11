@@ -148,7 +148,7 @@ pub fn route(path: &str, body: Value) -> Result<Route> {
         }
         if key == "path" && path.starts_with("/out/") {
             if let Some((set, local)) = value.split_once('/') {
-                if crate::document_sets::valid_id(set) {
+                if crate::document_sets::looks_like_set_id(set) {
                     choose(&mut selector, Some(set.to_string()))?;
                     query_out.append_pair(&key, local);
                     continue;

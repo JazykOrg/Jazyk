@@ -950,6 +950,8 @@ pub fn run(positional: &[String], opts: &crate::cli::Options) -> i32 {
         Some("trust") => return run_trust(&cwd),
         _ => {}
     }
+    // Setup registers the merge driver for set files (docs/frontends/cli.md#jazyk-setup).
+    crate::document_sets::register_merge_driver(&cwd);
     let (host, ide_name) = match positional.first() {
         None => (None, None),
         Some(id) => match host_of(id) {

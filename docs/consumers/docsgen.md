@@ -12,7 +12,7 @@ work alike.
 ## The requirements document
 
 Every committed changeset renders one human-readable document per entity into
-`<out>/docsgen/<entity-slug>.md`. `jazyk docsgen` renders the same pages on demand
+`<out>/derived/docsgen/<entity-slug>.md`. `jazyk docsgen` renders the same pages on demand
 ([CLI](../frontends/cli.md#jazyk-docsgen)). A page whose entity is absent from the graph
 is pruned, so a link never lands on a dead page; a merged entity's page is pruned with it
 and the redirect names the survivor ([mutations](../compiler/graph.md#mutations)).
@@ -90,10 +90,10 @@ shows a stored stale flag.
 
 ## Diagrams on entity pages
 
-Every view renders on every commit to `<out>/diagrams/<kind>/<slug>.svg` beside its
+Every view renders on every commit to `<out>/derived/diagrams/<kind>/<slug>.svg` beside its
 `.puml` ([output layout](../compiler/diagrams.md#output-layout)). An entity page embeds
 the renderings of the views relevant to the entity as relative image links from
-`<out>/docsgen/` into `<out>/diagrams/` (`../diagrams/<kind>/<slug>.svg`), so the whole
+`<out>/derived/docsgen/` into `<out>/derived/diagrams/` (`../diagrams/<kind>/<slug>.svg`), so the whole
 out directory can be copied or served anywhere and the links still resolve. Docsgen uses
 the `.svg`; it never requests a `.png`. E.g.:
 
@@ -163,7 +163,7 @@ scope. The pages nest as the containment tree does: a reader starts at the scope
 reads one level, and digs into a member to read the level below it
 ([drill-down](../compiler/concepts/levels.md#drill-down)). The pages render with the
 entity pages, on every commit and on `jazyk docsgen`, into
-`<out>/docsgen/levels/<slug>.md` with the node's slug; the scope root's page is
+`<out>/derived/docsgen/levels/<slug>.md` with the node's slug; the scope root's page is
 `levels/scope-<scope>.md` (`levels/scope-public.md` for the default scope). A level
 page whose node lost its level (fewer than two children, or the node dissolved) is
 pruned like an entity page.
@@ -197,7 +197,7 @@ entity page shows the statements.
 ## Entity cards
 
 The requirements document is the long read. The card is where a reader lands: one
-small page per entity at `<out>/docsgen/entities/<entity-slug>.md`, rendered with the
+small page per entity at `<out>/derived/docsgen/entities/<entity-slug>.md`, rendered with the
 other pages on every commit and on `jazyk docsgen`, pruned with the entity. Every link
 from a diagram, a hover, or another card points at a card, and the card lets the reader
 pick a direction: up, down, sideways, or into the detail. The card carries no
@@ -247,7 +247,7 @@ deep.
 
 ## Diagram pages
 
-Every view has a page at `<out>/docsgen/diagrams/<kind>/<view-slug>.md`, rendered and
+Every view has a page at `<out>/derived/docsgen/diagrams/<kind>/<view-slug>.md`, rendered and
 pruned with the view. A diagram page is the same size as a card and is the other node
 of the walk: cards link to diagrams, diagrams link to cards.
 
@@ -320,7 +320,7 @@ matches. The compiler never writes a source document without an accepted proposa
 
 ## Relationships view
 
-The index (`<out>/docsgen/index.md`) opens with the walk: for each scope, a `Start
+The index (`<out>/derived/docsgen/index.md`) opens with the walk: for each scope, a `Start
 here` line linking the scope root's [level page](#level-pages) (when the root has one,
 two or more members; a one-member scope starts at that member's card) and listing the
 top level's members as links to their [cards](#entity-cards), each with its child count
@@ -347,7 +347,7 @@ and the two reports below, each a file of its own beside it.
 
 ## Glossary
 
-The glossary, `<out>/docsgen/glossary.md`, is generated from the graph: every entity's
+The glossary, `<out>/derived/docsgen/glossary.md`, is generated from the graph: every entity's
 name, aliases, `stereotype`, and `definition`, sorted by name, each linked to its
 [card](#entity-cards) and to its defining sections through its mentions (relative links
 into the source documents, anchored by GitHub's slug of the heading text:
@@ -359,7 +359,7 @@ missing from the graph. The index links the glossary.
 ## Fragmentation reports
 
 An entity whose mentions span many documents may deserve its own page. The report,
-`<out>/docsgen/fragmentation.md`, ranks entities by mention spread (documents touched,
+`<out>/derived/docsgen/fragmentation.md`, ranks entities by mention spread (documents touched,
 then sections touched), most spread first, one line per entity with the counts and the
 documents, so an owner can decide what to consolidate. Fragmentation is a query over
 the `mentions` [axis](../compiler/context.md#axes), nothing more. Entities mentioned in
@@ -368,7 +368,7 @@ one document only are left out; an empty report says so. The index links it.
 ## Staleness reports
 
 Open [diagnostics](../compiler/model/diagnostic.md) grouped by section give a staleness
-map of the docs: `<out>/docsgen/staleness.md` lists, per section that any open
+map of the docs: `<out>/derived/docsgen/staleness.md` lists, per section that any open
 diagnostic's subjects anchor in (a requirement through its source, an entity through its
 first mention), the count per rule, most burdened first, so a reader sees which pages
 accumulate contradictions, stale anchors, and low-confidence facts. Below it, sections

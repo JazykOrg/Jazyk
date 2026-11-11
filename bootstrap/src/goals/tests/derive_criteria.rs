@@ -66,6 +66,7 @@ fn derive_criteria_goals_follow_the_leading_entity_and_the_deliverable() {
     waiting.graph.diagnostics.insert(
         "diag:invented-choice-1".into(),
         Diagnostic {
+            goal: None,
             rule: "invented-choice".into(),
             severity: "warning".into(),
             subjects: vec!["req:a-2".into()],

@@ -245,39 +245,36 @@ pub fn read_node_values(dir: &Path) -> serde_json::Map<String, serde_json::Value
         .collect()
 }
 
-// A node as its file holds it: `id` first, then its own fields, the generation markers
-// taken out into `markers`. Mirrors docs/compiler/graph.md#node-files.
-fn node_value<T: Serialize>(id: &str, node: &T, markers: &mut Markers) -> serde_norway::Value {
+// A node as its file holds it: `id` first, then its own fields.
+// Mirrors docs/compiler/graph.md#node-files.
+fn node_value<T: Serialize>(id: &str, node: &T) -> serde_norway::Value {
     let mut m = serde_norway::Mapping::new();
     m.insert("id".into(), id.into());
     if let Ok(serde_norway::Value::Mapping(fields)) = serde_norway::to_value(node) {
-        let mut fields = fields;
-        let created = fields
-            .shift_remove("created")
-            .and_then(|v| v.as_str().map(String::from));
-        let updated = fields
-            .shift_remove("updated")
-            .and_then(|v| v.as_str().map(String::from));
-        if created.is_some() || updated.is_some() {
-            markers.insert(id.to_string(), (created, updated));
-        }
         m.extend(fields);
     }
     serde_norway::Value::Mapping(m)
 }
 
-// The generation markers a node file leaves to `markers.yaml`.
-trait Marked {
-    fn marks(&self) -> (Option<&String>, Option<&String>) {
-        (None, None)
+// A node without its generation markers: what its file holds, so what its write
+// fingerprints. The markers stay in memory. Mirrors docs/compiler/graph.md#node-files.
+trait Marked: Clone {
+    fn unmarked(&self) -> Cow<'_, Self> {
+        Cow::Borrowed(self)
     }
 }
 
 macro_rules! marked {
     ($($t:ty),*) => {$(
         impl Marked for $t {
-            fn marks(&self) -> (Option<&String>, Option<&String>) {
-                (self.created.as_ref(), self.updated.as_ref())
+            fn unmarked(&self) -> Cow<'_, Self> {
+                if self.created.is_none() && self.updated.is_none() {
+                    return Cow::Borrowed(self);
+                }
+                let mut n = self.clone();
+                n.created = None;
+                n.updated = None;
+                Cow::Owned(n)
             }
         }
     )*};
@@ -290,21 +287,15 @@ impl Marked for RedirectFile {}
 // Write every node of one kind whose bytes changed; return the files of nodes that
 // left the graph, for the caller to delete after every write landed. The markers are
 // taken out as `node_value` takes them.
-fn save_kind<'a, T: Serialize + Marked + Clone + 'a>(
+fn save_kind<'a, T: Serialize + Marked + 'a>(
     dir: &Path,
     nodes: impl Iterator<Item = (&'a String, std::borrow::Cow<'a, T>)>,
-    markers: &mut Markers,
 ) -> Vec<PathBuf> {
     let mut ids: BTreeSet<&String> = BTreeSet::new();
     for (id, node) in nodes {
-        let (created, updated) = node.marks();
-        if created.is_some() || updated.is_some() {
-            markers.insert(id.clone(), (created.cloned(), updated.cloned()));
-        }
+        let node = node.as_ref().unmarked();
         let path = dir.join(format!("{}.yaml", node_stem(id).0));
-        write_tracked(&path, id, node.as_ref(), || {
-            node_value(id, node.as_ref(), &mut Markers::new())
-        });
+        write_tracked(&path, id, node.as_ref(), || node_value(id, node.as_ref()));
         ids.insert(id);
     }
     node_files(dir, &mut Vec::new())
@@ -456,8 +447,11 @@ fn copy_tree(from: &Path, to: &Path) {
 // A file whose bytes already match is left in place, so a save rewrites only what
 // changed. The bytes end in one newline. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
 pub(super) fn write_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
-    let mut text = serde_norway::to_string(value)
+    let body = serde_norway::to_string(value)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+    // Every file says what it is: two fixed comment lines chosen by its path.
+    // Mirrors docs/compiler/jazyk-folder.md#every-file-begins-with-what-it-is.
+    let mut text = super::v5::header_for(path).unwrap_or_default() + &body;
     if !text.ends_with('\n') {
         text.push('\n');
     }
@@ -561,8 +555,9 @@ pub(super) fn sync_touched_dirs() {
 // The stored record of one document, as the last build left it; None when the
 // document never reconciled or its record does not read.
 pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
-    let mut rec: DocRecord = yaml_to(&out.join("docs").join(format!("{}.yaml", rel)))?;
-    if let Ok(Some(build)) = yaml_read::<BuildFile>(&out.join(BUILD_FILE)) {
+    let mut rec: DocRecord = yaml_to(&crate::layout::source_file(out, rel))
+        .or_else(|| yaml_to(&out.join("docs").join(format!("{}.yaml", rel))))?;
+    if let Ok(Some(build)) = yaml_read::<BuildFile>(&crate::layout::build_file(out)) {
         if let Some(h) = build.docs.get(rel) {
             rec.content_hash = h.clone();
         }
@@ -674,15 +669,15 @@ pub(super) fn report_write(path: &Path, r: std::io::Result<()>) {
     }
 }
 
-// The graph as a batch saw it: the shards and status.yaml copied under
-// <out>/snapshots/<label>/ once per batch, for replays to seed from.
-// Mirrors docs/compiler/sessions.md#snapshots. A hosted workspace keeps none
-// (docs/compiler/hosted-runtime.md#workspace-snapshots).
+// The graph as a batch saw it: the shards and status.yaml copied under the set's log
+// directory, snapshots/<label>/, once per batch, for replays to seed from. Written only
+// when `jazyk compile --record` asked for it. Mirrors docs/compiler/sessions.md#snapshots.
+// A hosted workspace keeps none (docs/compiler/hosted-runtime.md#workspace-snapshots).
 pub fn snapshot_graph(out: &Path, label: &str) {
-    if crate::vfs::is_scoped() {
+    if crate::vfs::is_scoped() || !crate::logs::recording() {
         return;
     }
-    let dir = out.join("snapshots").join(label.replace(['/', ':'], "_"));
+    let dir = crate::layout::snapshots_dir(out).join(label.replace(['/', ':'], "_"));
     if dir.vexists() {
         return;
     }
@@ -793,83 +788,82 @@ impl Store {
     // carries another one is archived whole to `<out>.bak` (an earlier archive is
     // replaced) and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
     pub fn open_for_build(out: &Path) -> Store {
-        // A newer store is never archived: it opens read-only.
+        // A store file that does not parse is a broken file, not another version: the
+        // store is read-only and nothing is archived. A newer store is never archived
+        // either: this binary cannot read it and must not lose it.
         // Mirrors docs/compiler/graph.md#store-version.
-        if let Some(why) = newer_store(out) {
-            eprintln!("[jazyk] error: {}; the store stays read-only", why);
+        let version = match disk_version(out) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[jazyk] error: {}; the store stays read-only", e);
+                return Store {
+                    out: out.to_path_buf(),
+                    load_errors: vec![e],
+                    ..Default::default()
+                };
+            }
+        };
+        if version.is_some_and(|v| v > STORE_VERSION) {
+            let why = newer_refusal(out, version.unwrap_or(0));
+            eprintln!("[jazyk] error: {}", why);
             return Store {
                 out: out.to_path_buf(),
                 load_errors: vec![why],
                 ..Default::default()
             };
         }
-        let status_path = out.join("status.yaml");
-        if status_path.vexists() {
-            // A status.yaml that does not parse is a broken file, not another version:
-            // the store is read-only and nothing is archived.
-            // Mirrors docs/compiler/graph.md#store-version.
-            let version = match yaml_read::<Status>(&status_path) {
-                Ok(Some(s)) => s.version,
-                Ok(None) => 0,
+        let legacy_files =
+            version.is_none() && (out.join("graph").vis_dir() || out.join("status.yaml").vexists());
+        if version.is_some_and(|v| !readable_version(v)) || legacy_files {
+            let v = version.unwrap_or(0);
+            let archive = crate::layout::archive_dir(out, v);
+            crate::vfs::remove_dir_all(&archive).ok();
+            if let Some(parent) = archive.parent() {
+                crate::vfs::create_dir_all(parent).ok();
+            }
+            match crate::vfs::rename(out, &archive) {
+                Ok(()) => eprintln!(
+                    "[jazyk] store version {} is not {}; archived {} to {} and starting empty",
+                    v,
+                    STORE_VERSION,
+                    out.display(),
+                    archive.display()
+                ),
                 Err(e) => {
-                    eprintln!("[jazyk] error: {}; the store stays read-only", e);
+                    let why = format!(
+                        "could not archive {} to {}: {}",
+                        out.display(),
+                        archive.display(),
+                        e
+                    );
+                    eprintln!("[jazyk] error: {}; the store stays read-only", why);
                     return Store {
                         out: out.to_path_buf(),
-                        load_errors: vec![e],
+                        load_errors: vec![why],
                         ..Default::default()
                     };
                 }
-            };
-            if !readable_version(version) {
-                let name = out
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| ".jazyk".to_string());
-                let bak = out.with_file_name(format!("{}.bak", name));
-                crate::vfs::remove_dir_all(&bak).ok();
-                match crate::vfs::rename(out, &bak) {
-                    Ok(()) => eprintln!(
-                        "[jazyk] store version {} is not {}; archived {} to {} and starting empty",
-                        version,
-                        STORE_VERSION,
-                        out.display(),
-                        bak.display()
-                    ),
-                    Err(e) => {
-                        let why = format!(
-                            "could not archive {} to {}: {}",
-                            out.display(),
-                            bak.display(),
-                            e
-                        );
-                        eprintln!("[jazyk] error: {}; the store stays read-only", why);
-                        return Store {
-                            out: out.to_path_buf(),
-                            load_errors: vec![why],
-                            ..Default::default()
-                        };
-                    }
-                }
-                return Store {
-                    out: out.to_path_buf(),
-                    ..Default::default()
-                };
             }
+            return Store {
+                out: out.to_path_buf(),
+                ..Default::default()
+            };
         }
         let mut store = Self::load(out);
-        // A version 3 store is rewritten whole in the version 4 layout before the build
-        // begins, ids and facts kept, so even a build with nothing to do leaves no file
-        // in the old form. Mirrors docs/compiler/graph.md#store-version.
+        // A version 4 store is rewritten whole in the version 5 layout before the build
+        // begins, ids and facts kept: its open records become decisions and build
+        // progress, and nothing of the old layout stays. Mirrors
+        // docs/compiler/graph.md#store-version.
         if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
             let _flock = FileLock::acquire(out);
-            store.save();
+            store.status.version = STORE_VERSION;
+            store.persist();
             let _ledger_lock = crate::gen::Ledger::lock(out);
             let ledger = crate::gen::Ledger::load(out);
             if ledger.unreadable.is_none() {
-                // A failed split is reported by save; the inline ledger still loads.
                 let _ = ledger.save(out);
             }
-            store.status.version = STORE_VERSION;
+            super::v5::retire_v4_layout(out);
             eprintln!(
                 "[jazyk] upgraded {} from store version {} to {}",
                 out.display(),
@@ -883,8 +877,35 @@ impl Store {
     fn load_once(out: &Path) -> Store {
         let g = out.join("graph");
         let mut errors: Vec<String> = Vec::new();
+        // A version 4 store keeps its status in status.yaml and its files at the top of
+        // the set; it loads as it is and the next build's opening rewrites it.
+        let legacy = !crate::layout::store_file(out).vexists()
+            && crate::layout::legacy_status_file(out).vexists();
+        let derived = |kind: &str| {
+            if legacy {
+                g.join(kind)
+            } else {
+                crate::layout::derived_node_dir(out, kind)
+            }
+        };
         let mut views: BTreeMap<String, View> = load_nodes(&g.join("views"), &mut errors);
-        views.extend(load_nodes::<View>(&g.join("default-views"), &mut errors));
+        views.extend(load_nodes::<View>(&derived("default-views"), &mut errors));
+        let status = if legacy {
+            read_status(out, &mut errors)
+        } else {
+            let version =
+                match yaml_read::<super::status::StoreFile>(&crate::layout::store_file(out)) {
+                    Ok(v) => v.map(|f| f.version).unwrap_or(STORE_VERSION),
+                    Err(e) => {
+                        errors.push(e);
+                        0
+                    }
+                };
+            Status {
+                version,
+                ..Default::default()
+            }
+        };
         let mut store = Store {
             out: out.to_path_buf(),
             graph: Graph {
@@ -892,8 +913,8 @@ impl Store {
                 requirements: load_nodes(&g.join("requirements"), &mut errors),
                 criteria: load_nodes(&g.join("criteria"), &mut errors),
                 views,
-                relationships: load_nodes(&g.join("relationships"), &mut errors),
-                state_machines: load_nodes(&g.join("state-machines"), &mut errors),
+                relationships: load_nodes(&derived("relationships"), &mut errors),
+                state_machines: load_nodes(&derived("state-machines"), &mut errors),
                 diagnostics: load_nodes(&g.join("diagnostics"), &mut errors),
                 redirects: load_nodes::<RedirectFile>(&g.join("redirects"), &mut errors)
                     .into_iter()
@@ -901,14 +922,33 @@ impl Store {
                     .collect(),
             },
             docs: BTreeMap::new(),
-            status: read_status(out, &mut errors),
+            status,
+            decisions: Decisions::default(),
             align: Default::default(),
             load_errors: Vec::new(),
         };
-        // The local half of the status, raised to the committed floor.
-        // Mirrors docs/compiler/graph.md#the-generation.
-        let build: BuildFile = shard(&out.join(BUILD_FILE), &mut errors);
-        let docs_dir = out.join("docs");
+        if !legacy {
+            let (decisions, lookalikes) = super::v5::load_decisions(out, &mut errors);
+            store.decisions = decisions;
+            store.status.lookalikes = lookalikes;
+            let run: super::v5::RunFile = shard(&crate::layout::run_file(out), &mut errors);
+            store.status.changes = run.changes;
+            store.status.parked = run.parked;
+            store.status.alignment = run.alignment;
+            store.status.reevaluate = run.reevaluate;
+            store.status.roots = run.roots;
+        }
+        // The local half of the status. Mirrors docs/compiler/graph.md#the-generation.
+        let build: BuildFile = if legacy {
+            shard(&out.join(BUILD_FILE), &mut errors)
+        } else {
+            shard(&crate::layout::build_file(out), &mut errors)
+        };
+        let docs_dir = if legacy {
+            out.join("docs")
+        } else {
+            crate::layout::sources_dir(out)
+        };
         let mut files = Vec::new();
         collect_yaml(&docs_dir, &mut files);
         for f in files {
@@ -917,7 +957,6 @@ impl Store {
                 let doc = doc.strip_suffix(".yaml").unwrap_or(&doc).to_string();
                 match yaml_read::<DocRecord>(&f) {
                     Ok(Some(mut rec)) => {
-                        // The content hash is local; a version 3 record still carries one.
                         if let Some(h) = build.docs.get(&doc) {
                             rec.content_hash = h.clone();
                         }
@@ -929,26 +968,52 @@ impl Store {
                 }
             }
         }
+        // Sections a git merge could not settle: the driver listed them in
+        // `local/merged.yaml`, and they read as changed until a save writes `sources/`.
+        // Mirrors docs/compiler/jazyk-folder.md#merging-through-git.
+        if !legacy {
+            let merged: Vec<String> = shard(&crate::layout::merged_file(out), &mut errors);
+            for key in merged {
+                let Some((doc, section)) = key.split_once("#/") else {
+                    continue;
+                };
+                let section = format!("/{}", section);
+                if let Some(rec) = store.docs.get_mut(doc) {
+                    if let Some(sec) = rec.sections.get_mut(&section) {
+                        sec.hash.clear();
+                    }
+                    rec.coverage.remove(&section);
+                    rec.content_hash.clear();
+                }
+            }
+        }
+        // The counter never falls below a generation this machine's own records name.
         store.status.generation = build.generation.max(generation_floor(&store.status));
         store.status.verdict = build.verdict;
         store.status.costs = build.costs;
         store.status.spent = build.spent;
         store.status.diagnostics = build.diagnostics;
-        // The generation markers are local; a version 3 node file still carries its own.
-        // Mirrors docs/compiler/graph.md#storage-layout.
-        let markers: Markers = shard(&out.join(MARKERS_FILE), &mut errors);
-        apply_markers(&mut store.graph, &markers);
+        if legacy {
+            // A version 4 store kept its generation markers in markers.yaml.
+            let markers: Markers = shard(&out.join(MARKERS_FILE), &mut errors);
+            apply_markers(&mut store.graph, &markers);
+        }
         let roots = store.status.roots.clone();
         normalize_mentions(&mut store.graph, &store.docs, &roots, true);
         // The derived kinds are local: a checkout carries none, so a load that finds
         // any of their directories missing recomputes them in memory and the next
         // commit writes them. Mirrors docs/compiler/graph.md#a-fresh-checkout.
-        if DERIVED_KINDS.iter().any(|k| !g.join(k).vis_dir()) {
+        if DERIVED_KINDS.iter().any(|k| !derived(k).vis_dir()) {
             crate::derive::recompute_relationships(&mut store);
             crate::derive::recompute_state_machines(&mut store);
             let build = format!("g{}", store.status.generation);
             let mut batch = RecordBatch::new(store.status.generation);
             crate::derive::recompute_default_views(&mut store, &build, &mut batch);
+        }
+        // The work the committed state shows, beside what this machine already holds.
+        // Mirrors docs/compiler/graph.md#what-needs-building.
+        if !legacy {
+            store.add_findings();
         }
         store.load_errors = errors;
         store
@@ -975,14 +1040,12 @@ impl Store {
         if let Some(why) = self.unreadable() {
             return Some(why);
         }
-        if let Some(why) = newer_store(&self.out) {
-            return Some(why);
-        }
-        match yaml_read::<Status>(&self.out.join("status.yaml")) {
-            Ok(Some(disk)) if !readable_version(disk.version) => Some(format!(
+        match disk_version(&self.out) {
+            Ok(Some(v)) if v > STORE_VERSION => Some(newer_refusal(&self.out, v)),
+            Ok(Some(v)) if !readable_version(v) => Some(format!(
                 "store-version: {} holds a version {} store and this is version {}; a build archives it",
                 self.out.display(),
-                disk.version,
+                v,
                 STORE_VERSION
             )),
             Err(e) => Some(format!(
@@ -1034,12 +1097,16 @@ impl Store {
     // A test's seed of a store on disk, written as a commit writes it.
     #[cfg(test)]
     pub(crate) fn save_for_test(&self) {
-        self.save();
+        // Written as a commit writes it: the decisions follow what is open in memory.
+        let mut s = self.clone();
+        if s.unreadable().is_none() {
+            s.project_decisions();
+        }
+        s.save();
     }
 
     pub(super) fn save_nodes(&self) {
         let g = self.out.join("graph");
-        let mut markers = Markers::new();
         let redirects: BTreeMap<String, RedirectFile> = self
             .graph
             .redirects
@@ -1063,16 +1130,14 @@ impl Store {
                 _ => (id, Cow::Borrowed(e)),
             });
         let mut gone = Vec::new();
-        gone.extend(save_kind(&g.join("entities"), entities, &mut markers));
+        gone.extend(save_kind(&g.join("entities"), entities));
         gone.extend(save_kind(
             &g.join("requirements"),
             self.graph.requirements.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("criteria"),
             self.graph.criteria.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("views"),
@@ -1081,45 +1146,44 @@ impl Store {
                 .iter()
                 .filter(|(_, v)| !v.default)
                 .map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
-            &g.join("default-views"),
+            &crate::layout::derived_node_dir(&self.out, "default-views"),
             self.graph
                 .views
                 .iter()
                 .filter(|(_, v)| v.default)
                 .map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("diagnostics"),
             self.graph.diagnostics.iter().map(borrowed),
-            &mut markers,
         ));
         gone.extend(save_kind(
             &g.join("redirects"),
             redirects.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         gone.extend(save_kind(
-            &g.join("relationships"),
+            &crate::layout::derived_node_dir(&self.out, "relationships"),
             self.graph.relationships.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         gone.extend(save_kind(
-            &g.join("state-machines"),
+            &crate::layout::derived_node_dir(&self.out, "state-machines"),
             self.graph.state_machines.iter().map(borrowed),
-            &mut Markers::new(),
         ));
         // A derived directory exists once saved, even empty, so a load recomputes the
         // derived kinds only on a checkout that lacks them.
         for kind in DERIVED_KINDS {
-            crate::vfs::create_dir_all(g.join(kind)).ok();
+            crate::vfs::create_dir_all(crate::layout::derived_node_dir(&self.out, kind)).ok();
         }
         for (doc, rec) in &self.docs {
-            let p = self.out.join("docs").join(format!("{}.yaml", doc));
+            let p = crate::layout::source_file(&self.out, doc);
             write_tracked(&p, doc, rec, || doc_record_value(rec));
+        }
+        // The sources now carry the merge's leftovers themselves.
+        let merged = crate::layout::merged_file(&self.out);
+        if merged.vexists() {
+            crate::vfs::remove_file(&merged).ok();
         }
         for p in gone {
             if let Err(e) = crate::vfs::remove_file(&p) {
@@ -1128,8 +1192,6 @@ impl Store {
                 }
             }
         }
-        let path = self.out.join(MARKERS_FILE);
-        report_write(&path, write_yaml(&path, &markers));
         // A `.jazyk` folder never exists without its ignore file.
         // Mirrors docs/compiler/document-sets.md#persistence-and-identity.
         if let Some(jazyk) = self
@@ -1153,6 +1215,9 @@ impl Store {
     pub(super) fn persist(&mut self) {
         let roots = self.status.roots.clone();
         normalize_mentions(&mut self.graph, &self.docs, &roots, false);
+        if self.unreadable().is_none() {
+            self.project_decisions();
+        }
         self.save();
     }
 }
@@ -1168,4 +1233,15 @@ pub(super) fn collect_yaml(dir: &Path, out: &mut Vec<PathBuf>) {
             }
         }
     }
+}
+
+// The refusal for a store written by a newer Jazyk: never archived, never written.
+// Mirrors docs/compiler/graph.md#store-version.
+fn newer_refusal(out: &Path, version: u32) -> String {
+    format!(
+        "store-newer: {} holds a version {} store and this jazyk writes version {}; upgrade jazyk to open it",
+        out.display(),
+        version,
+        STORE_VERSION
+    )
 }

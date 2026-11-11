@@ -601,8 +601,9 @@ impl Trace {
     pub fn run(&self) -> Option<String> {
         self.run.clone()
     }
-    // Persist this trace as a transcript under <out>/trace/, the same format the GUI
-    // job runner writes, so a CLI build shows up in the Build view.
+    // Persist this trace as a transcript under the set's log directory (trace/), the
+    // same format the GUI job runner writes, so a CLI build shows up in the Build view.
+    // Mirrors docs/compiler/jazyk-folder.md#logs.
     pub fn with_transcript(self, out: &std::path::Path, kind: &str) -> Trace {
         self.with_transcript_goals(out, kind, &[])
     }
@@ -618,7 +619,7 @@ impl Trace {
             return self;
         }
         use std::io::Write;
-        let dir = out.join("trace");
+        let dir = crate::layout::trace_dir(out);
         crate::vfs::create_dir_all(&dir).ok();
         let started = crate::verify::now_iso();
         let compact: String = started

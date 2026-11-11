@@ -17,49 +17,52 @@ the net for conflicts the [pairwise judgment](./rejudge-pair.md) cannot pair lex
 
 ## Created when
 
-The goal derives from an `entity-changed` [change record](../graph.md#change-records)
-on the entity. A commit or the sweep writes one when the entity's fact set changed,
-`via` naming how:
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+The goal derives for an entity whose fact hash differs from its
+[`reviews/` decision](../jazyk-folder.md#graphdecisionskindidyaml), or that has none: a
+new entity, or one whose facts changed since its last review. The finding is an
+`entity-changed` [change record](../graph.md#change-records), computed per derivation,
+`via` naming what differs.
 
-- `entities`, `edges`, `transition`: a requirement referencing the entity was created,
-  revised, or deleted, including the requirements the sweep prunes when their quotes
-  die. An update that changes only the `entities` list writes the record for the
-  entities it added or removed, never for the ones already listed (their fact set did
-  not change); an update that changes only `edges` writes it for the two ends of a
-  newly declared `composition` edge alone (the part may need its `parent` set) and for
-  nothing else, since an arrow's type is declare-edges' and review-entity's own output
-  and re-reviewing every entity of the statement for it made a quarter of a run's
-  batches empty re-reviews.
-- `fields`: the entity's own `definition`, `aliases`, `stereotype`, `scope`, or
-  `attributes` changed, or the entity was created. A move alone (`parent` or
-  `remove_parent`, and nothing else) is the parents' business: it writes `parent` on the
-  parent it leaves and on the one it joins, if any, and never `fields` on the child, so
-  a grouping of twelve children opens one review, the grouping's own, not thirteen.
-- `mentions`: a mention was added or pruned.
-- `merge`: another entity was merged into it; its requirements, aliases, attributes,
-  children, and edges arrived.
-- `parent`: a child was re-parented under it or away from it.
+The fact hash covers what a review judges, and nothing else:
 
-`detail` lists the requirements and fields that changed. A later commit that changes
-the same entity again supersedes the record and merges the detail, so one review sees
-everything since the last one. The commit that resolves a `review-entity` goal writes
-no `entity-changed` record for its target from that session's own mutations: the review
-saw the result it staged, and a definition refresh must not re-open the review that
-made it. Mutations on other entities (a neighbor added to a statement's `entities`)
-open their own goals as usual. A `dual-write` commit and an accepting `ratify` commit
-write no `entity-changed` record at all: a human edit is the review, and the mention
-the landed sentence adds to each entity it names is the quote the person confirmed
-([edit paths](../compilation.md#edit-paths)). A revised statement still writes
-`requirement-revised`, so its pairs are judged; a retract writes `entity-changed` as
+- The entity's own `definition`, `aliases`, `stereotype`, `scope`, and `attributes`
+  (`via: fields`).
+- The requirements naming it in `entities`, each with its statement hash, and its
+  `transition`s (`via: entities`, `transition`). A requirement that adds or drops the
+  entity changes it; one already naming it whose other entities change does not.
+- Its `composition` edges, as whole or part (`via: edges`): the part may need its
+  `parent` set. Other edge types are declare-edges' and the review's own output, and
+  re-reviewing every entity of a statement for them made a quarter of a run's batches
+  empty re-reviews.
+- Its children (`via: parent`). A move is the parents' business: it changes the parent
+  it leaves and the one it joins, never the child, so a grouping of twelve children
+  opens one review, the grouping's own, not thirteen.
+- Its mentions (`via: mentions`), and what a merge brought into it (`via: merge`).
+
+`detail` lists the requirements and fields that differ from the review. Resolving the
+goal writes the entity's decision, `graph/decisions/reviews/<entity>.yaml`, with the
+fact hash the commit leaves, so the session's own repairs do not reopen it:
+
+```yaml
+# Jazyk decision: an entity reviewed against its requirements. Written by jazyk.
+# yaml-language-server: $schema=https://jazyk.org/schemas/review.json
+id: ent:order
+facts: 554cea9f27e74ea7
+```
+
+Mutations on other entities (a neighbor added to a statement's `entities`) change their
+own hashes as usual. A `dual-write` commit and an accepting `ratify` commit write the
+review decision of each entity they touch: a human edit is the review, and the mention
+the landed sentence adds is the quote the person confirmed
+([edit paths](../compilation.md#edit-paths)). A revised statement still changes its pair
+decisions' hashes, so its pairs are judged; a retract changes the entity's hash as
 usual.
 
 E.g.:
 
 ```yaml
-- id: c413-4
-  generation: 413
-  mutation: 4
-  kind: entity-changed
+- kind: entity-changed
   subject: ent:order
   via: entities
   detail: {requirements: [req:orders-6, req:orders-9], fields: []}
@@ -69,7 +72,7 @@ Lookalike candidates are not stored: they are computed at derivation from the na
 index and rendered as hints. A cross-document lookalike whose score is high derives a
 `dedupe-candidates` GC goal as well ([dedupe-candidates](./dedupe-candidates.md)); the
 review runs first, because its cone is not quiet until it does, and a merge it stages
-clears the lookalike record.
+removes the pair.
 
 ## Readiness
 
@@ -167,15 +170,16 @@ Staging nothing is a correct outcome when everything is coherent: `evidence` wit
 the skill and enforced by nothing but judgment: a wrong merge or delete destroys
 information, a missed duplicate only leaves a finding for the next build; when in doubt,
 keep both and file a diagnostic. `mark_goal_failed({goal, reason})` is for an entity
-whose statement set is too contradictory to say what the entity is. A failed goal keeps
-its record and surfaces on the entity; it blocks convergence.
+whose statement set is too contradictory to say what the entity is. A failed goal
+becomes a `goal-failed` [diagnostic](../model/diagnostic.md) on the entity; no review
+derives on it while that is open, and it blocks convergence.
 
 ## Hints
 
 Computed by the harness and rendered under the goal block:
 
-- The changed requirements (ids and statements) and the fields that changed, from the
-  record.
+- The changed requirements (ids and statements) and the fields that changed since the
+  last review, from the finding's `detail`.
 - Lookalike candidates from the name index, partitioned: name-similar (`ent:<slug>
   (<name>): <definition>`, a variant or a synonym, a merge when they are one concept),
   and related but separate (a name that extends this one or that this one extends: a
@@ -198,7 +202,7 @@ Computed by the harness and rendered under the goal block:
   stale hint.
 - Open diagnostics naming the entity's requirements, with `(deleted)` markers; those
   naming the entity itself ride in the loaded set. Harness-owned rules
-  (`incomplete-build`, `ratification-pending`, `criterion-missing`, `unstable-*`) are
+  (`goal-failed`, `ratification-pending`, `criterion-missing`, `unstable-*`) are
   left out: a review can neither add a criterion nor clear the check that refiles it,
   and listing them once made every review recite seven "stands" entries and write a
   three-sentence justification the gate refused. The build

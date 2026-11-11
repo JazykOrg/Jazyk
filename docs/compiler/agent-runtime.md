@@ -90,8 +90,10 @@ inference already admitted before the update.
 
 ## Checkpoints
 
-An execution checkpoint is protected operational state. It is separate from graph
-`status.yaml`, diagnostic exports and project files. Its format has its own version.
+An execution checkpoint is protected operational state. It is separate from the
+committed graph (`store.yaml`, node files, decisions, sources), diagnostic exports, and
+project files, and like a build's progress it is never committed
+([a build's progress](./graph.md#a-builds-progress)). Its format has its own version.
 The `jazyk-gdk-3` operation set requires the complete generation contract in every
 owned generation opening. Earlier operation sets may lack that contract and cannot
 resume under this guarantee. Release preflight refuses incompatible active capsules.

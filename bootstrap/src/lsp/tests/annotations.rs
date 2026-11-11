@@ -102,6 +102,7 @@ fn ask(lsp: &mut Store, rid: &str) {
     lsp.graph.diagnostics.insert(
         "diag:ask".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "ambiguity".into(),
             severity: "warning".into(),
             subjects: vec![rid.into()],
@@ -297,7 +298,7 @@ fn changed_sections_lens_and_show_the_last_build() {
             "command": "jazyk.showLastBuild", "arguments": [{"uri": uri}]}}),
         &mut sink,
     );
-    let projection = tmp.join(".jazyk/last-build/shop.md");
+    let projection = tmp.join(".jazyk/derived/last-build/shop.md");
     assert_eq!(crate::vfs::read_to_string(&projection).unwrap(), BUILT);
     let wire = String::from_utf8(sink).unwrap();
     assert!(

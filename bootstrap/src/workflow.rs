@@ -598,6 +598,7 @@ mod tests {
             store.graph.diagnostics.insert(
                 format!("diag:ratification-pending-{index}"),
                 Diagnostic {
+                    goal: None,
                     rule: "ratification-pending".into(),
                     severity: "info".into(),
                     lifecycle: "open".into(),
@@ -621,6 +622,7 @@ mod tests {
             store.graph.diagnostics.insert(
                 id.into(),
                 Diagnostic {
+                    goal: None,
                     rule: "contradiction".into(),
                     severity: "error".into(),
                     lifecycle: "open".into(),
@@ -661,7 +663,7 @@ mod tests {
         .save(&project.out)
         .unwrap();
         crate::vfs::write(
-            project.out.join("control.yaml"),
+            crate::control::Control::path(&project.out),
             "compile: manual\ngenerate: manual\nreleased:\n  compile: {}\n  generate: 0\n",
         )
         .unwrap();
@@ -727,7 +729,17 @@ mod tests {
                 1
             );
             assert_eq!(board.counts().blocked, 63);
-            assert!(board.verdict().converged());
+            assert!(
+                board.verdict().converged(),
+                "{:?} {:?}",
+                board.verdict(),
+                board
+                    .goals
+                    .iter()
+                    .filter(|g| g.kind != "ratify" && !board.gated.contains(&g.id))
+                    .map(|g| g.id.clone())
+                    .collect::<Vec<_>>()
+            );
             graph_ready(&project, &store).unwrap();
         }
         let (result, _) = workflow_request(

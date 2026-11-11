@@ -38,7 +38,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
-        ("compile [path...] [--sessions N] [--select PATH]", "run one build: sessions resolve goals until the board converges"),
+        ("compile [path...] [--sessions N] [--select PATH] [--record]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
     ("actions on the project", &[
@@ -187,7 +187,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
-        "compile" => (None, &["--sessions", "--select"]),
+        "compile" => (None, &["--sessions", "--select", "--record"]),
         "sets" => (
             Some(2),
             &["--docs", "--source", "--roots", "--name", "--json"],
@@ -237,6 +237,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "acp" => (Some(2), &["--ide"]),
         "benchmark" => (None, &["--project", "--goal", "--force"]),
         "replay" => (None, &[]),
+        "merge-file" => (Some(4), &[]),
         "tasks" | "runs" => (Some(0), &[]),
         "run" | "run-status" | "run-log" | "run-cancel" => (Some(1), &[]),
         _ => return None,
@@ -295,7 +296,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--set ID] [--sessions N] [--select PATH[:A-B]]...\n\n\
+            "usage: jazyk compile [path...] [--set ID] [--sessions N] [--select PATH[:A-B]]... [--record]\n\n\
              Run one build per document set: the set --set names, else every set\n\
              claiming one of the paths (a path no set claims is a usage error), else\n\
              every dirty set. The reconciler derives the goal board from the documents\n\
@@ -307,7 +308,8 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              --sessions N    run at most N sessions, then stop with an honest incomplete\n  \
              \x20               (0 derives the board and parks every goal without an LLM call)\n  \
              --verbose, -v   every session's prompt, the goal cascade, raw payloads\n  \
-             --quiet, -q     only the board summary, gc bursts, and the verdict\n\
+             --quiet, -q     only the board summary, gc bursts, and the verdict\n  \
+             --record        write a graph snapshot per batch to the log directory, for replays\n\
              {}\n\n\
              exit: 0 on converged, 1 on incomplete, 2 on a usage error",
             COMMON_LLM
@@ -525,7 +527,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
         ),
         "viewer" => "usage: jazyk viewer [--out FILE]\n\n\
              Render the graph to one self-contained HTML page. An --out ending in .html\n\
-             names the file (default <out>/graph.html); otherwise --out is the out\n\
+             names the file (default <out>/derived/graph.html); otherwise --out is the out\n\
              directory."
             .to_string(),
         "gui" => format!(
@@ -615,6 +617,11 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
             cmd,
             match cmd { "run-status" => "Inspect", "run-log" => "Read the log of", _ => "Cancel" }
         ),
+        "merge-file" => "usage: jazyk merge-file <base> <ours> <theirs> <path>\n\n\
+             The git merge driver for committed set files: merges one file field by\n\
+             field and writes the result over <ours>. Git runs it; `jazyk setup`\n\
+             registers it.\n\n\
+             exit: 0 when merged, 1 when a version does not parse, 2 on a usage error".to_string(),
         "replay" => "usage: jazyk replay [file|dir...]\n       jazyk replay extract <trace.jsonl> <label>\n\n\
              Run replays: cases whose tool calls are scripted, graded against the\n\
              harness without a model. No argument runs docs/benchmark/replays.\n\
@@ -735,6 +742,7 @@ pub fn run() {
             "--dev" => opts.dev = true,
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
+            "--record" => opts.record = true,
             "--write" => opts.write = true,
             "--json" => opts.json = true,
             "--once" => opts.once = true,
@@ -838,6 +846,7 @@ pub fn run() {
         "compile",
         "status",
         "replay",
+        "merge-file",
         "tasks",
         "runs",
         "run",
@@ -980,7 +989,7 @@ pub fn run() {
             let mut line = format!(
                 "jazyk: docsgen: {} page(s) in {}; diagrams: {} drawn, {} unchanged",
                 n,
-                out.join("docsgen").display(),
+                crate::layout::docsgen_dir(&out).display(),
                 dr.rendered.len(),
                 dr.skipped.len()
             );
@@ -1003,6 +1012,8 @@ pub fn run() {
         // Replays: scripted sessions against the harness, no model
         // (docs/benchmark/replays.md).
         "replay" => replay::run_cli(&positional),
+        // The git merge driver for set files (docs/frontends/cli.md#jazyk-merge-file).
+        "merge-file" => crate::merge_file::run_cli(&positional),
         // Project task commands (docs/frontends/cli.md#project-task-commands).
         "tasks" | "runs" | "run" | "run-status" | "run-log" | "run-cancel" => {
             if cmd.starts_with("run") && cmd != "runs" && positional.is_empty() {

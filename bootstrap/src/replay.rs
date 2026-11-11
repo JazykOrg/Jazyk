@@ -483,13 +483,36 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
         .and_then(|rest| rest.split_once(':'))
         .map(|(k, t)| (k.to_string(), t.to_string()))
         .unwrap_or((String::new(), String::new()));
-    // The project: the trace lives under <root>/.jazyk/trace.
-    let root = trace
+    // The project: the one holding the working directory, its set named by the folder
+    // the trace's log directory sits in (<log dir>/<set-id>/trace/<run>.jsonl). A trace
+    // left inside an old project (<root>/.jazyk/trace) still finds its root by path.
+    // Mirrors docs/compiler/jazyk-folder.md#logs.
+    let set_id = trace
         .parent()
         .and_then(|p| p.parent())
-        .and_then(|p| p.parent())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().to_string());
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let (root, out) = match crate::project::find_root(&cwd) {
+        Some(root) => {
+            let out = set_id
+                .as_deref()
+                .map(|id| root.join(".jazyk").join(id))
+                .filter(|o| o.is_dir())
+                .unwrap_or_else(|| root.join(".jazyk"));
+            (root, out)
+        }
+        None => {
+            let root = trace
+                .parent()
+                .and_then(|p| p.parent())
+                .and_then(|p| p.parent())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| PathBuf::from("."));
+            let out = root.join(".jazyk");
+            (root, out)
+        }
+    };
     let mut docs = serde_json::Map::new();
     let mut files: Vec<PathBuf> = Vec::new();
     collect_md(&root, &mut files);
@@ -507,16 +530,14 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
     // The graph the session saw: the batch's snapshot when the run left one, else the
     // current graph, trimmed to the nodes the goal and the calls name
     // (docs/benchmark/replays.md#where-replays-come-from).
-    let snap = root
-        .join(".jazyk")
-        .join("snapshots")
+    let snap = crate::layout::snapshots_dir(&out)
         .join(label.replace(['/', ':'], "_"))
         .join("graph");
     let (graph_dir, seeded_from) = if snap.is_dir() {
         (snap, "the batch's snapshot")
     } else {
         (
-            root.join(".jazyk").join("graph"),
+            out.join("graph"),
             "the project's current graph (no snapshot for this batch)",
         )
     };

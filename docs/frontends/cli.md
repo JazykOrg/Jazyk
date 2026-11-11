@@ -158,6 +158,11 @@ jazyk: started IntelliJ IDEA
 `idea`) it covers that IDE's rows, as in [IDE agents](#ide-agents); without one, every
 installed IDE and every detected agent, as in [`jazyk init`](#jazyk-init).
 
+In a git repository, setup also registers the `jazyk` merge driver in the repository's
+git configuration (`merge.jazyk.driver` set to `jazyk merge-file %O %A %B %P`), which
+`.jazyk/.gitattributes` names for set files. Every build registers it too when it is
+missing. See [merging through git](../compiler/jazyk-folder.md#merging-through-git).
+
 - Bare, on a terminal: the checklist, each row ticked when its setup is `installed`
   or `stale` and labeled with its state. When nothing is set up yet every row starts
   ticked. Enter applies the difference: a ticked row that is `missing` or `stale` is
@@ -305,9 +310,12 @@ Live trace:
   for the request (messages, size) and its answer (elapsed, completion tokens), and the
   section each accepted call names.
 - `--quiet`: prints the board summary, the `gc burst:` lines, and the verdict only.
+- `--record`: writes a [graph snapshot](../compiler/sessions.md#snapshots) per batch to
+  the log directory, for `jazyk replay extract`. Without it no snapshot is written.
 
 Every build leaves a transcript: `compile`, `check`, `gen`, and `test` persist their
-trace as one JSON-lines file under `<out>/trace/`, the same format the
+trace as one JSON-lines file under `<set-id>/trace/` in the
+[log directory](../compiler/jazyk-folder.md#logs), the same format the
 [GUI](./gui.md#jobs) writes and lists, so a CLI build shows up in the GUI's activity
 panel. The metadata line carries `source: cli` and no job id. `--quiet` still
 persists the transcript; only the terminal rendering is quiet. After the build,
@@ -465,7 +473,8 @@ refused retract with its reason, a failed answer session), `2` on a usage error.
 
 ### jazyk status
 
-`jazyk status [--set ID] [--json] [--costs]` reads only and takes no arguments.
+`jazyk status [--set ID] [--json] [--costs]` reads only and takes no arguments. Its
+last line names the project's [log directory](../compiler/jazyk-folder.md#logs).
 
 Without `--set` it is the aggregate read over every
 [document set](../compiler/document-sets.md#cli-and-lsp): one line per set with its
@@ -482,7 +491,7 @@ Orders: dirty, generation 4, verdict none; 12 open, 12 ready, 0 blocked, 0 parke
   warning: No files match docs/orders/**/*.md
 ```
 
-With `--set` it summarizes that set's `status.yaml` and `build.yaml` (see
+With `--set` it summarizes that set's `store.yaml` and `local/build.yaml` (see
 [storage layout](../compiler/graph.md#storage-layout)) and the board. Outside a project
 (no `jazyk.toml` above the working directory) it says so on stderr and reads the ad hoc
 store at the working directory. The lines, in order:
@@ -868,13 +877,13 @@ decompile action are the only triggers.
 
 ### jazyk docsgen
 
-`jazyk docsgen` renders the documentation pages into `<out>/docsgen/` on demand, without
+`jazyk docsgen` renders the documentation pages into `<out>/derived/docsgen/` on demand, without
 compiling: the per-entity requirements documents (each entity's definition, its
 requirements with their quotes, its relationships, and the rendered images of its
 relevant views), the [entity cards](../consumers/docsgen.md#entity-cards) under
 `entities/`, the [level pages](../consumers/docsgen.md#level-pages) under `levels/`,
 and the [diagram pages](../consumers/docsgen.md#diagram-pages) under
-`diagrams/<kind>/`, every image linked relatively into `<out>/diagrams/`
+`diagrams/<kind>/`, every image linked relatively into `<out>/derived/diagrams/`
 ([output layout](../compiler/diagrams.md#output-layout)). The summary line counts every
 page written, all four kinds together. The [diagrams](../compiler/diagrams.md#rendering)
 render with it, skipped for unchanged `.puml` content, so every image link resolves.
@@ -884,7 +893,7 @@ The same render runs after every committed changeset. See
 ### jazyk viewer
 
 `jazyk viewer [--out FILE]` renders the graph into one self-contained HTML file
-(default `<out>/graph.html`). See [viewer](./viewer.md).
+(default `<out>/derived/graph.html`). See [viewer](./viewer.md).
 
 ### jazyk gui
 
@@ -941,6 +950,14 @@ settings this command resolved. `--stdio` is accepted and changes nothing: LSP c
 to name the transport (the VS Code client library does), and a server that refused it
 would crash on every start.
 
+### jazyk merge-file
+
+`jazyk merge-file <base> <ours> <theirs> <path>` is the git merge driver for set files,
+run by git, not by hand. It merges one committed file of a set field by field and
+writes the result over `<ours>`, exiting zero, or leaves conflict markers and exits
+non-zero when the file does not parse. The rules are in
+[merging through git](../compiler/jazyk-folder.md#merging-through-git).
+
 ### jazyk replay
 
 `jazyk replay [file|dir...]` runs [replays](../benchmark/replays.md): cases whose tool
@@ -955,8 +972,9 @@ as its expectations, for the author to trim and correct.
 Grade whether the configured [agent](../compiler/project-settings.md#acp) and model
 can drive jazyk's [sessions](../compiler/sessions.md). See
 [benchmark](../benchmark/benchmark.md); cases per goal kind are deferred there. Results
-land in `<out>/benchmark/results.yaml`, per-case transcripts under
-`<out>/benchmark/trace/`. `jazyk benchmark [case...]` grades
+land in `<set-id>/benchmark/results.yaml` in the
+[log directory](../compiler/jazyk-folder.md#logs), per-case transcripts under
+`<set-id>/benchmark/trace/`. `jazyk benchmark [case...]` grades
 [a subset](../benchmark/benchmark.md#running-a-subset) for iterating on one failure.
 `jazyk benchmark --project <dir> --goal <goal-id>` runs one goal's session from a
 copy of a real project, prints the outcome and the transcript path, and touches

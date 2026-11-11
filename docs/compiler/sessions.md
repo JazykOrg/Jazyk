@@ -370,7 +370,8 @@ A session runs as one [ACP worker session](../frontends/acp.md#worker-sessions):
   session, and waits for the teardown so a session that ended with staged work still
   lands it through the implicit finish.
 - Success is read from the store, never from the agent's word: every goal in the batch
-  is resolved (`mark_goal_done` accepted at commit), failed with a reason, or parked.
+  is resolved (`mark_goal_done` accepted at commit), failed with a reason (a
+  `goal-failed` diagnostic), or parked.
 - Read tools answer immediately. Write tools stage mutations. How the agent drives its
   model between calls is the agent's business.
 
@@ -477,8 +478,8 @@ delete for does not conclude the delete was lost.
 A session that fails (the agent's session ends without landing its batch, is cancelled by
 the idle timeout, or exhausts its repair rounds) leaves no trace: the changeset is
 dropped and the graph is untouched. Its goals return to `open`, and the batch is retried
-once with a fresh session; a second failure parks the goals with an `incomplete-build`
-diagnostic ([parked and failed](./reconciler.md#parked-and-failed)). The
+once with a fresh session; a second failure parks the goals for this build
+([parked and failed](./reconciler.md#parked-and-failed)). The
 [embedded agent](../frontends/acp.md#the-embedded-agent) additionally stops at its
 [failed-call limit](#repeated-calls), so a stuck weak model fails fast instead of
 spending the budget.
@@ -510,16 +511,20 @@ Every goal in the batch ends in one of three states, and the session says which.
 - `mark_goal_failed({goal, reason})` is always accepted. A goal that cannot honestly be
   accomplished (documents too deeply contradictory, a target that stopped making
   sense, a repair the tools cannot express) must be failable, or the board fills with
-  dishonestly resolved goals. A failed goal keeps its target, so the failure surfaces on
-  the thing itself everywhere it renders. A failed mandatory goal blocks convergence; a
-  failed optional goal is recorded and stands. It reopens when its subject changes again
-  or a human retries it.
+  dishonestly resolved goals. Failure files a `goal-failed`
+  [diagnostic](./model/diagnostic.md) on the goal's target with the reason, so the
+  failure surfaces on the thing itself everywhere it renders, and no goal derives on that
+  target while the diagnostic is open. A failed mandatory goal blocks convergence; a
+  failed optional goal is recorded and stands. A change to the target resolves the
+  diagnostic, and so does a person retrying it.
 - Parking is neither. A goal the session neither resolved nor failed when it finished
   (out of rounds, the implicit finish, a claim the gate refused) stays open, gets one
   fresh session in the same build, and parks when that session leaves it open too.
-  Parked goals persist by id under `parked/` with their change payloads, count as open
-  in the verdict (`incomplete`, with an `incomplete-build` diagnostic), and resume first
-  in the next build. Unfinished work is never silent.
+  Parking is the build's own progress, never committed: the goal stays in memory, and in
+  the build's run file while a local build runs
+  ([a build's progress](./graph.md#a-builds-progress)). A parked goal counts as open in
+  the verdict (`incomplete`), and the next build derives the same work and resumes it.
+  Unfinished work is never silent.
 
 A goal a staged mutation opens joins the running session when it lies in the batch's
 locality, the toolset covers its kind, and the remaining budget fits it; the reply lists
@@ -549,8 +554,8 @@ The batch gates check:
 
 A failure names the repair, and the model gets up to two repair rounds. A clean batch
 commits atomically ([changesets](./graph.md#changesets)): the mutations apply, derived
-data recomputes, the change records the mutations caused are written and the resolved
-goals' records cleared, the journal entry lands with `kind: session`, `batch`,
+data recomputes, the resolved goals' decisions land under `graph/decisions/` where their
+kind has one, the journal entry lands with `kind: session`, `batch`,
 `mutations`, `resolved_goals`, `opened_goals`, `rounds`, and `tokens`
 ([journal](./graph.md#journal)), the generation bumps, the renderer redraws the views
 the commit touched, and the board re-derives.
@@ -658,18 +663,18 @@ the spend ([status](../frontends/cli.md#jazyk-status)).
 
 ## Snapshots
 
-Every batch a session opens leaves a snapshot of the graph as it stood: the node files
-under `<out>/graph/`, the status, and `build.yaml`, copied to `<out>/snapshots/<batch id>/` when the batch
-starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
+With `jazyk compile --record`, every batch a session opens leaves a snapshot of the
+graph as it stood: the node files under `<out>/graph/`, the status, and
+`local/build.yaml`, copied to `<set-id>/snapshots/<batch id>/` in the
+[log directory](./jazyk-folder.md#logs) when the batch starts (the build loop at `batchStart`, the MCP serving at `begin_goals`). A snapshot is
 what makes a session reproducible after the fact: `jazyk replay extract` seeds a
 [replay](../benchmark/replays.md) from it, so the harness answers the recorded calls
 against the state the model actually saw, not the state the run ended in. Snapshots are
-never read by the compiler and cost the size of the graph per batch; delete the
-directory freely.
+never read by the compiler and cost the size of the graph per batch, so a build without
+`--record` writes none; delete them freely.
 
 The [hosted runtime](./hosted-runtime.md#workspace-snapshots) writes no snapshots: nothing
-prunes a hosted workspace, so a copy per batch would grow it without bound. A hosted
-request also removes any `snapshots/` directory under a set's out directory. A local build keeps writing them.
+prunes a hosted workspace, so a copy per batch would grow it without bound.
 
 ## Trace events
 
@@ -717,7 +722,7 @@ The event kinds:
   ride on their own `toolError` and `modelText` events under the same label, so a
   reader says why a batch did not land.
 - `goal`: a goal changed state. `opened` carries the `cause` (generation, mutation,
-  `via`); `resolved` carries the `justification`; `failed` the `reason`; `parked` the
+  `via`, when the local journal holds the commit that made the finding true); `resolved` carries the `justification`; `failed` the `reason`; `parked` the
   session that left it, or the reopen cycle that parked it; `reopened` the cycle count
   of a goal re-derived with the same `change` after its resolution
   ([parked and failed](./reconciler.md#parked-and-failed)). Resolved and failed events

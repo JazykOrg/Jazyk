@@ -163,7 +163,7 @@ fn compute_derives_from_changed_documents_without_writing() {
     s.sync_docs(&parsed);
     let generation = s.status.generation;
     let journal = |out: &Path| {
-        crate::vfs::read_dir(out.join("journal"))
+        crate::vfs::read_dir(crate::layout::journal_dir(out))
             .map(|d| d.count())
             .unwrap_or(0)
     };

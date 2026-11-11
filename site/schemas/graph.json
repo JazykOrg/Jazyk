@@ -2,7 +2,31 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://jazyk.org/schemas/graph.json",
   "title": "Jazyk Graph Store",
-  "description": "Definitions for the graph store files in the out directory:\n- graph/entities/<file id>.yaml is one entity\n- graph/requirements/<file id>.yaml is one requirement\n- graph/criteria/<file id>.yaml is one criterion\n- graph/views/<file id>.yaml is one curated view\n- graph/default-views/<file id>.yaml is one default view (derived, local, rewritten on every commit)\n- graph/diagnostics/<file id>.yaml is one diagnostic\n- graph/redirects/<file id>.yaml is one object, `to` the surviving id\n- graph/relationships/<file id>.yaml is one relationship (derived, local, rewritten on every commit)\n- graph/state-machines/<file id>.yaml is one stateMachine (derived, local, rewritten on every commit)\nEvery node file starts with the node's `id`. Generation markers (`created`,\n`updated`) and the mentions an entity gains from requirements are not written.\nA file id is the node id, `:` written as `~` and `/` as `+`, every byte outside\nlowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.\nA file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the\nload then reads the full id from the file's `id`.\n- docs/<mirrored doc path>.yaml is one docRecord per source document\n- journal/g<generation>.yaml is one journalEntry per generation\n- status.yaml is one status object\n- changes/<kind>/<subject file id>.yaml is one changeRecord\n- parked/<goal file id>.yaml is one goal, with an optional reason\n- failed/<goal file id>.yaml is one failedGoal\n- alignment/<doc file id>.yaml is one docAlignment\n- lookalikes/<pair file id>.yaml is one lookalikeVerdict\n- build.yaml is one buildState object (local, never committed)\n- markers.yaml maps each node id to [created, updated] (local, never committed)\n- causes.yaml maps each change record's kind and subject to its id, generation, and\n  mutation (local, never committed)\nGoals are derived from these files and never stored; goal ids appear only in\njournal entries and the parked/ and failed/ records.",
+  "description": "Definitions for the files of one set directory (.jazyk/<set-id>/), store version 5.\nCommitted, at the top of the set directory: the current graph, its decisions, its\nsources, and the ledger. No work, history, or generation is committed.\n- store.yaml is one status object (the store version)\n- graph/entities/<file id>.yaml is one entity\n- graph/requirements/<file id>.yaml is one requirement\n- graph/criteria/<file id>.yaml is one criterion\n- graph/views/<file id>.yaml is one curated view\n- graph/diagnostics/<file id>.yaml is one diagnostic\n- graph/redirects/<file id>.yaml is one redirect\n- graph/decisions/lookalikes/<pair>.yaml is one lookalikeVerdict\n- graph/decisions/pairs/<pair>.yaml is one pairDecision\n- graph/decisions/reviews/<file id>.yaml is one reviewDecision\n- graph/decisions/conformance/<file id>.yaml is one conformanceDecision\n- graph/decisions/structure/<file id>.yaml is one structureDecision\n- sources/<mirrored doc path>.yaml is one docRecord per source document\nLocal, under local/ (never committed):\n- local/build.yaml is one buildState object\n- local/journal/g<generation>.yaml is one journalEntry per generation\nDerived, under derived/ (never committed, rebuilt from the committed files):\n- derived/graph/default-views/<file id>.yaml is one default view\n- derived/graph/relationships/<file id>.yaml is one relationship\n- derived/graph/state-machines/<file id>.yaml is one stateMachine\nEvery file starts with two comment lines naming its kind and its schema. Every node\nfile then starts with the node's `id`. No committed file holds a generation, a\ngeneration marker, or a record cause: those are read from the local journal. An\nentity file omits the mentions requirements add by reference.\nA file id is the node id, `:` written as `~` and `/` as `+`, every byte outside\nlowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.\nA file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the\nload then reads the full id from the file's `id`.\nGoals and the change records behind them are computed from these files and the\ndocuments by every derivation and never stored; goal ids appear only in journal\nentries.",
+  "x-files": {
+    "store": "status",
+    "lookalike": "lookalikeVerdict",
+    "pair": "pairDecision",
+    "review": "reviewDecision",
+    "conformance": "conformanceDecision",
+    "structure": "structureDecision",
+    "curation": "curationDecision",
+    "entity": "entity",
+    "requirement": "requirement",
+    "criterion": "criterion",
+    "view": "view",
+    "diagnostic": "diagnostic",
+    "redirect": "redirect",
+    "source": "docRecord",
+    "ledger": "ledgerFile",
+    "ledger-entity": "ledgerEntity",
+    "ledger-requirement": "ledgerRequirement",
+    "build": "buildState",
+    "control": "controlFile",
+    "journal": "journalEntry",
+    "relationship": "relationship",
+    "state-machine": "stateMachine"
+  },
   "definitions": {
     "severity": {
       "description": "Diagnostic severity. 'none' is a recorded judgment that is not surfaced",
@@ -395,11 +419,11 @@
         },
         "created": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         },
         "updated": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         }
       }
     },
@@ -490,11 +514,11 @@
         },
         "created": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         },
         "updated": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         }
       }
     },
@@ -675,11 +699,11 @@
         },
         "created": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         },
         "updated": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         }
       }
     },
@@ -911,11 +935,11 @@
         },
         "created": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         },
         "updated": {
           "type": "string",
-          "description": "Generation marker (g<N>) set by the store on commit. Local, in markers.yaml, never in the node file"
+          "description": "Generation marker (g<N>), read from the local journal; never written to the node file"
         }
       }
     },
@@ -1120,7 +1144,7 @@
         "entity-deleted",
         "node-deleted",
         "instance-changed",
-        "ledger-stale",
+        "merged",
         "prompt-unanswered",
         "provenance-pending",
         "threshold-crossed",
@@ -1133,27 +1157,13 @@
       ]
     },
     "changeRecord": {
-      "description": "One file under changes/<kind>/, named by its subject, holding kind, subject, via, and detail; id, generation, and mutation are local in causes.yaml. Written at commit, read by goal derivation as a goal's change, cleared when the goal resolves",
+      "description": "One finding of a derivation: the kind of work, its subject, and the evidence that becomes a goal's change. Computed in memory from the documents, the graph, its decisions and sources, and the ledger; never stored",
       "type": "object",
       "required": [
         "kind",
         "subject"
       ],
       "properties": {
-        "id": {
-          "type": "string",
-          "description": "c<generation>-<hash>, the generation that wrote it and the id hash of its kind and subject. A version 3 record keeps its c<generation>-<index> id",
-          "pattern": "^c[0-9]+-[0-9a-z]+$"
-        },
-        "generation": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "mutation": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Index in the journal entry, 0 for store-level causes"
-        },
         "kind": {
           "$ref": "#/definitions/changeKind"
         },
@@ -1172,7 +1182,7 @@
       }
     },
     "goalCause": {
-      "description": "The committed change that spawned a goal",
+      "description": "The committed change that spawned a goal, read from the local journal entry that wrote its record. Absent when no local entry did",
       "type": "object",
       "required": [
         "generation",
@@ -1288,7 +1298,7 @@
       ]
     },
     "goal": {
-      "description": "A derived goal, persisted whole in the parked/ and failed/ records so a re-derivation keeps it",
+      "description": "A derived goal. Never committed; a running build keeps the goals it parked in its progress (local/run.yaml, or the host's database) until it ends. Its cause is read from the local journal",
       "type": "object",
       "required": [
         "id",
@@ -1350,6 +1360,10 @@
         "reason"
       ],
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "The goal id, the name of the file"
+        },
         "goal": {
           "$ref": "#/definitions/goal"
         },
@@ -1377,7 +1391,7 @@
       ]
     },
     "journalEntry": {
-      "description": "One file under journal/, one per generation",
+      "description": "One file under local/journal/, one per generation",
       "type": "object",
       "required": [
         "build",
@@ -1416,6 +1430,30 @@
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "records": {
+          "description": "The change records this commit wrote, each with the index of the mutation behind it (0 for a store-level cause). How a record or a parked goal finds its cause",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "kind",
+              "subject",
+              "mutation"
+            ],
+            "properties": {
+              "kind": {
+                "$ref": "#/definitions/changeKind"
+              },
+              "subject": {
+                "type": "string"
+              },
+              "mutation": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
           }
         },
         "mutations": {
@@ -1548,16 +1586,16 @@
       "additionalProperties": false
     },
     "status": {
-      "description": "The status.yaml file, committed. The rest of the status is one file per record under changes/, parked/, failed/, alignment/, and lookalikes/",
+      "description": "The store.yaml file, committed: the store version. Nothing else of the store's state is in it",
       "type": "object",
       "required": [
         "version"
       ],
       "properties": {
         "version": {
-          "description": "The store version. A version 3 store loads and is written in this layout by its next save. An out directory whose status.yaml lacks it or carries another one is archived whole and the store starts empty",
+          "description": "The store version. A version 4 store loads and the next build opening rewrites it in this layout. A newer version is never archived: the store is read-only. An older version, or none, is archived and the store starts empty",
           "type": "integer",
-          "const": 4
+          "const": 5
         },
         "reevaluate": {
           "description": "Anchors a place-anchors session placed with reevaluate, listed as stale anchors until addressed",
@@ -1581,10 +1619,13 @@
       "required": [
         "pair",
         "verdict",
-        "score",
-        "generation"
+        "score"
       ],
       "properties": {
+        "id": {
+          "type": "string",
+          "description": "The pair, the name of the file"
+        },
         "pair": {
           "type": "string"
         },
@@ -1596,22 +1637,18 @@
         },
         "score": {
           "type": "number"
-        },
-        "generation": {
-          "type": "integer",
-          "minimum": 0
         }
       },
       "additionalProperties": false
     },
     "buildState": {
-      "description": "The build.yaml file, local: the generation and what the last run left behind",
+      "description": "The local/build.yaml file, never committed: the generation and what the last run left behind",
       "type": "object",
       "properties": {
         "generation": {
           "type": "integer",
           "minimum": 0,
-          "description": "Bumped on every commit. A load takes the larger of this and the highest generation status.yaml names"
+          "description": "Bumped on every commit. Local to this machine; no committed file names a generation"
         },
         "verdict": {
           "$ref": "#/definitions/verdict"
@@ -1778,6 +1815,210 @@
           "items": {
             "$ref": "#/definitions/anchorProposal"
           }
+        }
+      }
+    },
+    "redirect": {
+      "description": "One graph/redirects/<file id>.yaml file, an absorbed id and its survivor",
+      "type": "object",
+      "required": [
+        "id",
+        "to"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The absorbed id, the name of the file"
+        },
+        "to": {
+          "type": "string",
+          "description": "The surviving id, one hop. Empty for a tombstone"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ledgerFile": {
+      "description": "The gen/ledger.yaml file: the deliverable-wide keys of the ledger. See consumers/gen.md#the-ledger",
+      "type": "object",
+      "properties": {
+        "support": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "medium": {
+          "type": "object"
+        },
+        "build": {
+          "type": "object"
+        },
+        "contradicted": {
+          "type": "object"
+        },
+        "tasks": {
+          "type": "object"
+        }
+      }
+    },
+    "ledgerEntity": {
+      "description": "One gen/entities/<slug>.yaml file: an entity's generation state, the fact hash and the requirements it was generated against. See consumers/gen.md#the-ledger",
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The entity slug, the name of the file"
+        },
+        "factHash": {
+          "type": "string"
+        },
+        "requirements": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ledgerRequirement": {
+      "description": "One gen/requirements/<file id>.yaml file: how one requirement is implemented and verified, one test per criterion. See consumers/gen.md#the-ledger",
+      "type": "object",
+      "required": [
+        "id",
+        "entity"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The requirement id, the name of the file"
+        },
+        "entity": {
+          "type": "string"
+        },
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "tests": {
+          "type": "object",
+          "description": "Criterion id to its test"
+        },
+        "verdict": {
+          "type": "string"
+        },
+        "evidence": {
+          "type": "string"
+        },
+        "hashes": {
+          "type": "object"
+        }
+      }
+    },
+    "pairDecision": {
+      "description": "One graph/decisions/pairs/<pair>.yaml file: two requirements judged against each other. Lapses when either statement's hash no longer matches",
+      "type": "object",
+      "required": [
+        "id",
+        "verdict",
+        "statements"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The pair, a~b, smaller id first"
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "consistent",
+            "diagnosed"
+          ]
+        },
+        "statements": {
+          "type": "object",
+          "description": "Requirement id to the hash of its statement when judged"
+        }
+      }
+    },
+    "reviewDecision": {
+      "description": "One graph/decisions/reviews/<id>.yaml file: an entity reviewed against its requirements. Lapses when the entity's fact hash no longer matches",
+      "type": "object",
+      "required": [
+        "id",
+        "facts"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "string",
+          "description": "The entity's fact hash when reviewed"
+        }
+      }
+    },
+    "conformanceDecision": {
+      "description": "One graph/decisions/conformance/<id>.yaml file: an instance checked against its type. Lapses when either fact hash no longer matches",
+      "type": "object",
+      "required": [
+        "id",
+        "facts"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "facts": {
+          "type": "object",
+          "description": "The instance and its type",
+          "each to its fact hash": null
+        }
+      }
+    },
+    "structureDecision": {
+      "description": "One graph/decisions/structure/<id>.yaml file: a requirement naming several entities judged to state no structural link. Lapses when the statement changes",
+      "type": "object",
+      "required": [
+        "id",
+        "statement"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "statement": {
+          "type": "string",
+          "description": "The statement's hash when judged"
+        }
+      }
+    },
+    "controlFile": {
+      "description": "The local/control.yaml file, never committed. See control-plane.md",
+      "type": "object"
+    },
+    "curationDecision": {
+      "description": "One graph/decisions/curation/<id>.yaml file: the nodes a curated view's query matched when a session last reviewed it. A match it does not list derives curate-view",
+      "type": "object",
+      "required": [
+        "id",
+        "matched"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The view id"
+        },
+        "matched": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Node ids the query matched when reviewed"
         }
       }
     }

@@ -128,7 +128,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
         .collect();
     let item = WorkItem::from_goal(&goal);
     let gs = crate::gen::GenSettings::resolve(&proj);
-    let trace_dir = proj.out.join("benchmark").join("trace");
+    let trace_dir = crate::layout::benchmark_dir(&proj.out).join("trace");
     crate::vfs::create_dir_all(&trace_dir).ok();
     let transcript = trace_dir.join(format!("snippet-{}.json", crate::md::slug(goal_id)));
     println!("snippet: {} in {}", goal_id, tmp.display());
@@ -406,7 +406,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                     &case.lint,
                     &gs,
                     Some(
-                        &out.join("benchmark")
+                        &crate::layout::benchmark_dir(out)
                             .join("trace")
                             .join(format!("{}-{}.json", codec_name, case.name)),
                     ),

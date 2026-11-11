@@ -102,8 +102,7 @@ fn racing_writers_from_one_generation_land_exactly_one_commit() {
         .collect();
     assert_eq!(written, vec![&format!("ent:w{}", winners[0])]);
     assert!(disk.graph.entities.contains_key("ent:seed"));
-    assert!(!out
-        .join("journal")
+    assert!(!crate::layout::journal_dir(&out)
         .join(format!("g{}.yaml", start + 2))
         .vexists());
     crate::vfs::remove_dir_all(&out).ok();
@@ -160,7 +159,9 @@ fn writers_that_reload_after_store_moved_all_land_in_turn() {
     }
     for g in (start + 1)..=(start + WRITERS as u64) {
         assert!(
-            out.join("journal").join(format!("g{g}.yaml")).vexists(),
+            crate::layout::journal_dir(&out)
+                .join(format!("g{g}.yaml"))
+                .vexists(),
             "no journal entry for g{g}"
         );
     }

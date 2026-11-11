@@ -75,7 +75,7 @@ fn quoted_links_relink_and_section_anchors_take_the_heading() {
             ..Default::default()
         },
     );
-    let dir = out.join("docsgen");
+    let dir = crate::layout::docsgen_dir(&out);
     crate::vfs::create_dir_all(&dir).unwrap();
     write_reports(&s, &dir);
     let glossary = crate::vfs::read_to_string(dir.join("glossary.md")).unwrap();
@@ -144,20 +144,37 @@ fn renders_and_prunes() {
         },
     );
     // A stale file for an entity that no longer exists must be pruned.
-    crate::vfs::create_dir_all(out.join("docsgen")).ok();
-    crate::vfs::write(out.join("docsgen/ghost.md"), "old").ok();
+    crate::vfs::create_dir_all(crate::layout::docsgen_dir(&out)).ok();
+    crate::vfs::write(
+        crate::layout::derived_dir(&out).join("docsgen/ghost.md"),
+        "old",
+    )
+    .ok();
     // A stale card and a stale diagram page are pruned with it.
-    crate::vfs::create_dir_all(out.join("docsgen/entities")).ok();
-    crate::vfs::write(out.join("docsgen/entities/ghost.md"), "old").ok();
-    crate::vfs::create_dir_all(out.join("docsgen/diagrams/class")).ok();
-    crate::vfs::write(out.join("docsgen/diagrams/class/ghost.md"), "old").ok();
+    crate::vfs::create_dir_all(crate::layout::derived_dir(&out).join("docsgen/entities")).ok();
+    crate::vfs::write(
+        crate::layout::derived_dir(&out).join("docsgen/entities/ghost.md"),
+        "old",
+    )
+    .ok();
+    crate::vfs::create_dir_all(crate::layout::derived_dir(&out).join("docsgen/diagrams/class"))
+        .ok();
+    crate::vfs::write(
+        crate::layout::derived_dir(&out).join("docsgen/diagrams/class/ghost.md"),
+        "old",
+    )
+    .ok();
     // The document, the card, and the three reports: five pages.
     let n = write_all(&s, &gs(&out));
     assert_eq!(n, 5);
-    let doc = crate::vfs::read_to_string(out.join("docsgen/cart.md")).unwrap();
+    let doc = crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/cart.md"))
+        .unwrap();
     assert!(doc.contains("# Cart"));
     // A one-member scope has no level page: the card's breadcrumb names it plain.
-    let card = crate::vfs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+    let card = crate::vfs::read_to_string(
+        crate::layout::derived_dir(&out).join("docsgen/entities/cart.md"),
+    )
+    .unwrap();
     assert!(card.contains("## Sits in\n\nPublic › Cart\n"), "{}", card);
     assert!(doc.contains("req:shop-1"));
     assert!(
@@ -171,10 +188,19 @@ fn renders_and_prunes() {
         "a quote equal to its statement but for the modal is omitted: {}",
         doc
     );
-    assert!(!out.join("docsgen/ghost.md").vexists());
-    assert!(!out.join("docsgen/entities/ghost.md").vexists());
-    assert!(!out.join("docsgen/diagrams/class/ghost.md").vexists());
-    let card = crate::vfs::read_to_string(out.join("docsgen/entities/cart.md")).unwrap();
+    assert!(!crate::layout::derived_dir(&out)
+        .join("docsgen/ghost.md")
+        .vexists());
+    assert!(!crate::layout::derived_dir(&out)
+        .join("docsgen/entities/ghost.md")
+        .vexists());
+    assert!(!crate::layout::derived_dir(&out)
+        .join("docsgen/diagrams/class/ghost.md")
+        .vexists());
+    let card = crate::vfs::read_to_string(
+        crate::layout::derived_dir(&out).join("docsgen/entities/cart.md"),
+    )
+    .unwrap();
     assert!(
         card.contains("# Cart\n\n`ent:cart` · holds items\n"),
         "{}",
@@ -206,7 +232,9 @@ fn showcase_page_embeds_images_and_cross_links() {
     crate::derive::recompute(&mut s, "g1", &mut batch);
     write_all(&s, &gs(&out));
 
-    let page = crate::vfs::read_to_string(out.join("docsgen/order.md")).unwrap();
+    let page =
+        crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/order.md"))
+            .unwrap();
     // The images, in the stated order: the level neighborhood (the parent's level
     // view, order-service holding four children; the order itself holds none), own
     // state view, the flow view naming the order. The scope root's level view and
@@ -270,12 +298,15 @@ fn showcase_page_embeds_images_and_cross_links() {
         page
     );
     // The rendered files exist, so the links resolve.
-    assert!(out.join("diagrams/state/order.svg").vexists());
+    assert!(crate::layout::derived_dir(&out)
+        .join("diagrams/state/order.svg")
+        .vexists());
 
     // The index embeds the structural level views as images (no mermaid), the
     // scope root's (view:component/public: shop is a system, customer an actor)
     // and the shop's, lists every view, and cross-links the pages.
-    let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
+    let idx = crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/index.md"))
+        .unwrap();
     assert!(
         idx.contains("](../diagrams/component/public.svg)"),
         "{}",
@@ -305,10 +336,14 @@ fn level_pages_nest_as_the_containment_tree() {
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
     // A stale page for a node that lost its level is pruned.
-    crate::vfs::create_dir_all(out.join("docsgen/levels")).unwrap();
-    crate::vfs::write(out.join("docsgen/levels/ghost.md"), "old").unwrap();
+    crate::vfs::create_dir_all(crate::layout::derived_dir(&out).join("docsgen/levels")).unwrap();
+    crate::vfs::write(
+        crate::layout::derived_dir(&out).join("docsgen/levels/ghost.md"),
+        "old",
+    )
+    .unwrap();
     write_all(&s, &gs(&out));
-    let levels = out.join("docsgen/levels");
+    let levels = crate::layout::derived_dir(&out).join("docsgen/levels");
 
     // A page per level: the scope root, the shop (two services), the order
     // service (four children). No page for the inventory service (one child)
@@ -416,7 +451,8 @@ fn level_pages_nest_as_the_containment_tree() {
     );
 
     // The index links the root level page from the scope's caption.
-    let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
+    let idx = crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/index.md"))
+        .unwrap();
     assert!(
         idx.contains("level page: [Public](./levels/scope-public.md)"),
         "{}",
@@ -440,8 +476,8 @@ fn cards_and_diagram_pages_walk_the_graph() {
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
     write_all(&s, &gs(&out));
-    let cards = out.join("docsgen/entities");
-    let pages = out.join("docsgen/diagrams");
+    let cards = crate::layout::derived_dir(&out).join("docsgen/entities");
+    let pages = crate::layout::derived_dir(&out).join("docsgen/diagrams");
 
     // The order service's card: the header, the breadcrumb up (the scope root to
     // its level page, the shop to its card), the context and inside views embedded
@@ -487,7 +523,7 @@ fn cards_and_diagram_pages_walk_the_graph() {
         card
     );
     // The three reports the index links.
-    let out_dir = out.join("docsgen");
+    let out_dir = crate::layout::docsgen_dir(&out);
     let glossary = crate::vfs::read_to_string(out_dir.join("glossary.md")).unwrap();
     assert!(glossary.contains("- **Customer**"), "{}", glossary);
     assert!(
@@ -655,6 +691,7 @@ fn ratification_proposal_renders_as_a_prompt() {
     s.graph.diagnostics.insert(
         "diag:ratification-pending-1".into(),
         Diagnostic {
+            goal: None,
             rule: "ratification-pending".into(),
             severity: "warning".into(),
             subjects: vec!["ent:pricing".into()],
@@ -690,7 +727,9 @@ fn ratification_proposal_renders_as_a_prompt() {
         },
     );
     write_all(&s, &gs(&out));
-    let page = crate::vfs::read_to_string(out.join("docsgen/pricing.md")).unwrap();
+    let page =
+        crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/pricing.md"))
+            .unwrap();
     assert!(page.contains("## Proposals"), "{}", page);
     assert!(
         page.contains("> The order service contains a pricing module."),
@@ -708,7 +747,8 @@ fn ratification_proposal_renders_as_a_prompt() {
         "the header names the provenance: {}",
         page
     );
-    let idx = crate::vfs::read_to_string(out.join("docsgen/index.md")).unwrap();
+    let idx = crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/index.md"))
+        .unwrap();
     assert!(idx.contains("## Ratification"), "{}", idx);
     assert!(idx.contains("### `docs/orders.md`"), "{}", idx);
     crate::vfs::remove_dir_all(&out).ok();

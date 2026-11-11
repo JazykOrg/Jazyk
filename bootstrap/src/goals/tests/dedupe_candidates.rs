@@ -260,6 +260,12 @@ fn a_separate_dedupe_verdict_is_remembered_and_the_pair_is_not_asked_again() {
             generation: 2
         }]
     );
+    // The generation is local and never written: a load reads the verdict without it.
+    let unstamped = |v: &[LookalikeVerdict]| -> Vec<(String, String)> {
+        v.iter()
+            .map(|l| (l.pair.clone(), l.verdict.clone()))
+            .collect()
+    };
     assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
     assert!(DedupeCandidates
         .derive_goals(&s, &gen_settings())
@@ -268,7 +274,10 @@ fn a_separate_dedupe_verdict_is_remembered_and_the_pair_is_not_asked_again() {
     s.apply(vec![], &store::Commit::store("edit"));
     assert!(!s.status.has_change(CHANGE_LOOKALIKE, PAIR));
     let loaded = Store::load(&s.out);
-    assert_eq!(loaded.status.lookalikes, s.status.lookalikes);
+    assert_eq!(
+        unstamped(&loaded.status.lookalikes),
+        unstamped(&s.status.lookalikes)
+    );
     assert!(DedupeCandidates
         .derive_goals(&loaded, &gen_settings())
         .is_empty());

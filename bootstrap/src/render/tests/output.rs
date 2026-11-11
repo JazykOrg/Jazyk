@@ -6,13 +6,17 @@ use super::*;
 fn the_rendering_on_disk_serves_only_when_its_puml_is_the_emission() {
     let dir = std::env::temp_dir().join(format!("jazyk-ondisk-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(dir.join("diagrams/class")).unwrap();
+    std::fs::create_dir_all(crate::layout::derived_dir(&dir).join("diagrams/class")).unwrap();
     std::fs::write(
-        dir.join("diagrams/class/shop.puml"),
+        crate::layout::derived_dir(&dir).join("diagrams/class/shop.puml"),
         "@startuml\nA\n@enduml\n",
     )
     .unwrap();
-    std::fs::write(dir.join("diagrams/class/shop.svg"), "<svg>seeded</svg>").unwrap();
+    std::fs::write(
+        crate::layout::derived_dir(&dir).join("diagrams/class/shop.svg"),
+        "<svg>seeded</svg>",
+    )
+    .unwrap();
     assert_eq!(
         rendered_on_disk(&dir, "view:class/shop", "@startuml\nA\n@enduml\n").as_deref(),
         Some("<svg>seeded</svg>")
@@ -54,12 +58,16 @@ fn render_all_writes_paths_and_skips_unchanged() {
     assert!(expected.contains(&root_view(&s)[5..].to_string()));
     for rel in &expected {
         assert!(
-            out.join("diagrams").join(format!("{}.puml", rel)).vexists(),
+            crate::layout::diagrams_dir(&out)
+                .join(format!("{}.puml", rel))
+                .vexists(),
             "{}",
             rel
         );
         assert!(
-            out.join("diagrams").join(format!("{}.svg", rel)).vexists(),
+            crate::layout::diagrams_dir(&out)
+                .join(format!("{}.svg", rel))
+                .vexists(),
             "{}",
             rel
         );
@@ -86,8 +94,12 @@ fn render_all_writes_paths_and_skips_unchanged() {
         .title = "Checkout flow".into();
     let third = render_all(&s, &out);
     assert_eq!(third.removed, vec!["sequence/checkout".to_string()]);
-    assert!(!out.join("diagrams/sequence/checkout.svg").vexists());
-    assert!(out.join("diagrams/state/order.svg").vexists());
+    assert!(!crate::layout::derived_dir(&out)
+        .join("diagrams/sequence/checkout.svg")
+        .vexists());
+    assert!(crate::layout::derived_dir(&out)
+        .join("diagrams/state/order.svg")
+        .vexists());
     assert!(third
         .rendered
         .contains(&"view:usecase/checkout".to_string()));

@@ -25,17 +25,19 @@ membership recomputes with them.
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 The goal derives from two [change record](../graph.md#change-records) kinds, both
-written on the deletion path ([garbage collection](../graph.md#garbage-collection)):
+computed per derivation from references that name no live node
+([garbage collection](../graph.md#garbage-collection)):
 
-- `view-member-gone`: a delete removes a node listed in a curated view's `members`,
-  `excluded`, or `collapse`. The subject is the view; `via` is the list
-  (`members`, `excluded`, `collapse`); `detail` names the dead node, the reason, the
-  generation, and the position in the list. Only a listed member derives the goal: a
+- `view-member-gone`: a node listed in a curated view's `members`, `excluded`, or
+  `collapse` no longer exists. The subject is the view; `via` is the list (`members`,
+  `excluded`, `collapse`); `detail` names the dead node and its position in the list,
+  and the reason and generation of its deletion when this machine's journal holds them. Only a listed member derives the goal: a
   default view is recomputed and a query re-matched at the same commit
   ([membership](../model/view.md#membership)).
-- `node-deleted`: the sweep writes one per live node that still points at the dead
-  node, `via` naming the reference: `from` on derived provenance (an entity, view, or
+- `node-deleted`: a live node still points at a node that no longer exists, `via`
+  naming the reference: `from` on derived provenance (an entity, view, or
   requirement synthesized from the dead node), `edges` on the requirement that stated
   an instance's `instantiation` (the instance lost its type), `attributes` (an
   attribute whose provenance quote died with its section).
@@ -43,19 +45,16 @@ written on the deletion path ([garbage collection](../graph.md#garbage-collectio
 Deleting an entity still referenced by requirements or named as a `parent` is refused
 ([mutations](../graph.md#mutations)), so `entities`, `transition`, and `parent` never
 dangle. A requirement deleted while entities reference it is the ordinary case: those
-entities get `entity-changed` records and a [`review-entity`](./review-entity.md) goal,
+entities' fact hashes change, which derives [`review-entity`](./review-entity.md),
 not a retrace; `retrace` derives only where a stored reference or a provenance on the
 live node names the dead one. A merge rewrites every reference mechanically and derives
 no retrace. A section removed from a document kills its quotes, the sweep deletes the
-requirements they anchored, and the records above follow from those deletions.
+requirements they anchored, and the findings above follow from those deletions.
 
 E.g.:
 
 ```yaml
-- id: c409-2
-  generation: 409
-  mutation: 2
-  kind: view-member-gone
+- kind: view-member-gone
   subject: view:usecase/holds
   via: members
   detail: {deleted: req:orders-6, reason: duplicate, in: g409, position: 3}
@@ -79,8 +78,9 @@ g:retrace:view:usecase/holds:
 ```
 
 Several dead references on one target fold into one goal
-([change records](../reconciler.md#change-records)). The record clears when the goal
-resolves or when the target itself is deleted.
+([change records](../reconciler.md#change-records)). The commit that resolves the goal
+removes every dead reference the session did not re-point, so the finding ends; deleting
+the target ends it too.
 
 ## Readiness
 
@@ -121,7 +121,7 @@ locate); one deleted as a duplicate from a live section could be, and the sessio
 not. `mark_goal_failed({goal, reason})` is for a target the loss leaves meaningless but
 that a human should see before it is deleted: a curated flow whose surviving members
 are branches without a step, an instance whose type the documents stopped stating. A
-failed goal keeps its record and surfaces on the target; it blocks convergence.
+failed goal becomes a `goal-failed` [diagnostic](../model/diagnostic.md) on the target; it blocks convergence.
 
 ## Hints
 

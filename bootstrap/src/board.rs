@@ -26,7 +26,6 @@ pub use batching::estimate;
 pub use cones::{
     cone, cone_with, level_members, scope_root, scope_target, Cone, Refs, SCOPE_TARGET_PREFIX,
 };
-pub(crate) use derivation::flip_subject;
 pub use derivation::{doc_levels, target_doc};
 pub use explain::{opened_by_change, recomputed_by_change, staged_opens};
 

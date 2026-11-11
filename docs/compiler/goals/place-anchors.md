@@ -19,40 +19,41 @@ diagnostics: it moves provenance and sets a flag, and the
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 The goal derives from an `alignment-pending` [change record](../graph.md#change-records)
-on the document. The [dirty set](../reconciler.md#dirty-set) computation writes it in
-the `align` journal entry when the deterministic pass leaves at least one proposal for
-the document: an anchor whose section was edited, split, merged, or deleted, with
-candidates ranked by similarity, or with no candidate at all (`homeless`). The proposals
-themselves live under `alignment/`, one file per document; the
-record's `detail` counts them, and the goal's `change` is that block.
+on the document, computed per derivation: [alignment](../alignment.md) of the document's
+[`sources/` file](../jazyk-folder.md#sourcesdoc-pathyaml) against the document on disk
+leaves at least one proposal it cannot apply alone: an anchor whose section was edited,
+split, merged, or deleted, with candidates ranked by similarity, or with no candidate at
+all (`homeless`). The proposals are computed again by every derivation, the same while
+the document and the graph stand; the finding's `detail` counts them, and the goal's
+`change` is the document's proposals.
 
 E.g.:
 
 ```yaml
-- id: c412-0
-  generation: 412
-  mutation: 0
-  kind: alignment-pending
+- kind: alignment-pending
   subject: docs/orders.md
   via: alignment
   detail: {proposals: 3, ops: {edited: 1, split: 1, deleted: 1}}
 ```
 
-`cause` is the `align` generation that persisted the proposals, the record's own
-generation, with `mutation: 0` because the cause is store-level
-([goal derivation](../reconciler.md#goal-derivation)). The document edit behind it is one
-of the [edit paths](../compilation.md#edit-paths). One goal per document, whatever the
-proposal count: the proposals of one document are decided together because the section
-changes block that explains them is one computation. The record clears when the goal
-resolves, which empties the document's `alignment` block. A document that gains
-proposals again on a later edit derives the goal again with a new cause.
+`cause` is the build's `edit` journal entry that first saw the document change, when
+this machine's journal holds one ([goal derivation](../reconciler.md#goal-derivation)).
+The document edit behind it is one of the [edit paths](../compilation.md#edit-paths).
+One goal per document, whatever the proposal count: the proposals of one document are
+decided together because the section changes block that explains them is one
+computation. The commit that resolves the goal rewrites the document's tree in
+`sources/` to its new shape, each section under its new reference with its old text,
+so no proposal remains and the edits inside the sections still derive
+[`reconcile-section`](./reconcile-section.md). A document that gains proposals again on
+a later edit derives the goal again.
 
 ## Readiness
 
 - Tier 0: always ready ([readiness](../reconciler.md#readiness)). Alignment runs before
   ingest because a `reconcile-section` goal on the document is not ready while the
-  document carries an `alignment-pending` record: extraction over a section whose
+  document has an `alignment-pending` finding: extraction over a section whose
   anchors are undecided would re-extract statements that exist under another section
   and mint duplicates.
 - Locality is the document ([batching](../reconciler.md#batching)). A batch is one
@@ -63,7 +64,7 @@ proposals again on a later edit derives the goal again with a new cause.
 
 ## Gate
 
-Every proposal in the document's `alignment` block is decided, by a `place_anchor` or
+Every proposal computed for the document is decided, by a `place_anchor` or
 `orphan_anchor` staged in the session or already committed:
 
 - `mark_goal_done({goal, justification})` is validated against the block plus what the
@@ -78,19 +79,20 @@ Every proposal in the document's `alignment` block is decided, by a `place_ancho
   discarded over a missing call, and an undecided proposal is never decided by the
   harness ([commit](../sessions.md#commit)).
 - `mark_goal_failed({goal, reason})` is for a document whose candidates make no sense
-  together (the text was replaced wholesale). A failed goal keeps its record and
-  surfaces on the document; the anchors stay where they were, their quotes do not
+  together (the text was replaced wholesale). A failed goal becomes a `goal-failed`
+  [diagnostic](../model/diagnostic.md) on the document; the anchors stay where they were, their quotes do not
   locate, and the `stale-provenance` [check](../compilation.md#checks) reports them
   until a human edits the document or a later session decides.
 
-At commit the document's `alignment` block is cleared and the record with it. A
-`reevaluate: true` placement, and a placement whose stored quote does not locate in its
-new section, write an `anchor-stale` record on the target section, so that section's
-`reconcile-section` goal lists the anchor as stale
-([created when](./reconcile-section.md#created-when)). An orphaned anchor writes
-`anchor-stale` on the nearest surviving ancestor of its old section, the document's
-root section at worst, so the fact is re-recorded or deleted by a session that reads
-the document.
+At commit the document's tree in `sources/` takes its new shape, so no proposal
+remains. A placement whose stored quote does not locate in its new section is an
+`anchor-stale` finding on the target section, so that section's `reconcile-section` goal
+lists the anchor as stale ([created when](./reconcile-section.md#created-when)). A
+`reevaluate: true` placement drops the target section's hash in `sources/`, so the
+section derives `reconcile-section` like an edited one; nothing else records it. An
+orphaned anchor is stale on the nearest surviving ancestor of its old section, the
+document's root section at worst, so the fact is re-recorded or deleted by a session
+that reads the document.
 
 ## Hints
 
@@ -169,9 +171,9 @@ The `place-anchors` toolset ([toolsets](../tools.md#toolsets)):
 - `place_anchor({id, section, quote?, reevaluate})`: moves the anchor to `section`. A
   `quote` must locate there and becomes the stored quote; without one the stored quote
   stays. An entity listed with several mentions is decided once; all of them move.
-  `reevaluate: true` lists the anchor as stale on the target section's
-  `reconcile-section` goal; a stored quote that does not locate in the new section has
-  the same effect whatever the flag says.
+  `reevaluate: true` drops the target section's hash in `sources/`, so its
+  `reconcile-section` goal derives and re-reads the anchor; a stored quote that does not
+  locate in the new section makes the anchor stale whatever the flag says.
 - `orphan_anchor({id})`: no home. The anchor stays where it was, listed as stale for the
   document, and the `reconcile-section` goal that sees it re-records or deletes the
   fact.

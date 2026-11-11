@@ -305,7 +305,7 @@ fn jetbrains_plugins(home: &Path, profile: &str) -> PathBuf {
 }
 
 pub fn jetbrains(root: &Path, launch: Option<(PathBuf, Vec<String>)>) -> Result<(), String> {
-    let config = root.join(".jazyk/ide.json");
+    let config = root.join(".jazyk/local/ide.json");
     read_jsonc(&config)?;
     if matches!(
         merge_into(&config, "lsp", "command", &json!(executable()?))?,
@@ -407,7 +407,7 @@ fn installer_properties(
         .map_err(|e| e.to_string())?
         .as_nanos();
     let dir = root
-        .join(".jazyk/ide-installer")
+        .join(".jazyk/local/ide-installer")
         .join(format!("{}-{nonce}", std::process::id()));
     let mut properties = String::new();
     for (key, path) in [

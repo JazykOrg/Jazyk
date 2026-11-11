@@ -147,6 +147,7 @@ fn prompted_diagnostic_publishes_offers_actions_and_applies() {
         vec![Op::ReportDiagnostic {
             id: String::new(),
             diagnostic: Diagnostic {
+                goal: None,
                 rule: "contradiction".into(),
                 severity: "warning".into(),
                 subjects: vec![format!("docs/pay.md#{}", sec)],

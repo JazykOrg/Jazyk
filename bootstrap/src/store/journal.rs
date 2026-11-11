@@ -110,7 +110,7 @@ impl Store {
         // the spend: a checks or settle entry between them bills nothing.
         let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
             .filter_map(|g| {
-                let p = out.join("journal").join(format!("g{}.yaml", g));
+                let p = crate::layout::journal_file(out, g);
                 let text = crate::vfs::read_to_string(&p).ok()?;
                 let entry = serde_norway::from_str::<JournalEntry>(&text).ok()?;
                 (entry.kind == "session" && entry.tokens.is_none()).then_some((p, entry))
@@ -160,7 +160,7 @@ impl Store {
         if let Some(why) = newer_store(out) {
             return Err(why);
         }
-        let p = out.join("journal").join(format!("g{}.yaml", generation));
+        let p = crate::layout::journal_file(out, generation);
         if !p.vis_file() {
             return Err(format!(
                 "no journal entry g{} under {}",
@@ -206,6 +206,7 @@ impl Store {
 
     pub(super) fn journal_path(&self, generation: u64) -> PathBuf {
         self.out
+            .join("local")
             .join("journal")
             .join(format!("g{}.yaml", generation))
     }
@@ -237,7 +238,7 @@ impl Store {
 
     // The generations the journal holds on disk, newest first.
     fn journal_generations(&self) -> Vec<u64> {
-        let dir = self.out.join("journal");
+        let dir = crate::layout::journal_dir(&self.out);
         let Ok(read) = crate::vfs::read_dir(&dir) else {
             return Vec::new();
         };

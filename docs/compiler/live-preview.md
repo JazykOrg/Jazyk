@@ -21,7 +21,7 @@ The preview is not a graph read, a persisted mutation, or a successful build.
   remain provisional to its clients until the adapter publishes the durable
   generation and terminal job event.
 - The native ACP bridge exchanges preview snapshots through a bounded sidecar
-  under that project's private `.jazyk/preview/` directory. Its filename is derived
+  under the set's `derived/preview/` directory. Its filename is derived
   from the session identity. Starting an attempt removes an old sidecar; finishing
   removes it. It is neither authored source nor an exported project artifact.
   Browser and hosted runners read the same preview directly in process.

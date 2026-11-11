@@ -7,7 +7,7 @@ A diagram has three layers. The graph stores the first two:
   ([relationships](./model/relationship.md), [state machines](./model/state-machine.md)).
   The only editable truth.
 - The [view](./model/view.md): which facts one diagram includes, never how it looks.
-- The rendering: build output under `<out>/diagrams/`, diffable, never hand-edited,
+- The rendering: build output under `<out>/derived/diagrams/`, diffable, never hand-edited,
   never read back. Deleting it loses nothing.
 
 There are no diagram elements in the graph. Geometry, layout, and styling are stored
@@ -390,9 +390,9 @@ the goal stands. The renderer never truncates silently:
 ## Output layout
 
 ```
-<out>/diagrams/<kind>/<slug>.puml    the emitted PlantUML
-<out>/diagrams/<kind>/<slug>.svg     the rendering
-<out>/diagrams/<kind>/<slug>.png     on request only
+<out>/derived/diagrams/<kind>/<slug>.puml    the emitted PlantUML
+<out>/derived/diagrams/<kind>/<slug>.svg     the rendering
+<out>/derived/diagrams/<kind>/<slug>.png     on request only
 ```
 
 - The path is the view id with the `view:` prefix removed: `view:usecase/checkout`
@@ -482,5 +482,5 @@ declare. The block is never rendered back or compared to the graph's own renderi
 the graph then draws is a projection of the extracted facts, and the two pictures agree
 exactly as far as the extraction did.
 
-Renderings under `<out>/diagrams/` are never input. The out directory is excluded from the
+Renderings under `<out>/derived/diagrams/` are never input. The out directory is excluded from the
 docs glob by construction, so a diagram the compiler drew cannot become a quote.

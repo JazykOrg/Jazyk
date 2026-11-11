@@ -1009,6 +1009,7 @@ pub fn choice_ops(
         ops.push(crate::store::Op::ReportDiagnostic {
             id: String::new(),
             diagnostic: Diagnostic {
+                goal: None,
                 rule: "invented-choice".into(),
                 severity: severity_for_scope(&c.scope).into(),
                 subjects,

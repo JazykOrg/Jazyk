@@ -454,7 +454,7 @@ fn per_call_sessions_keep_the_guard_and_the_feedback_cap() {
             json!({"kind":"other","message":format!("note {n}")}),
         );
     }
-    let log = crate::vfs::read_to_string(project.out.join("feedback.jsonl")).unwrap_or_default();
+    let log = crate::vfs::read_to_string(crate::feedback::path(&project.out)).unwrap_or_default();
     assert_eq!(log.lines().count(), crate::tools::FEEDBACK_LIMIT, "{log}");
     crate::vfs::remove_dir_all(dir).ok();
 }

@@ -420,8 +420,8 @@ impl Store {
             .collect()
     }
 
-    // The marker diagnostics whose condition cleared: an incomplete-build marker whose
-    // goal left `parked`, an uncovered-section marker whose section is marked covered
+    // The marker diagnostics whose condition cleared: an incomplete-build marker an
+    // earlier store version filed, an uncovered-section marker whose section is marked covered
     // or non-normative, or is gone. Each with the reason its resolution records.
     // Mirrors docs/compiler/graph.md#the-sweep.
     fn cleared_markers(&self) -> Vec<(String, String)> {
@@ -432,13 +432,16 @@ impl Store {
             }
             let subject = &d.subjects[0];
             match d.rule.as_str() {
+                // A marker an earlier store version filed for a parked goal: parked
+                // goals are build progress, not graph state, so it settles.
                 "incomplete-build" => {
-                    if !self.status.parked.iter().any(|p| &p.goal.target == subject) {
-                        out.push((
-                            id.clone(),
-                            format!("{} is no longer parked; a later build resumed it", subject),
-                        ));
-                    }
+                    out.push((
+                        id.clone(),
+                        format!(
+                            "{} parked work is build progress, not a diagnostic",
+                            subject
+                        ),
+                    ));
                 }
                 "uncovered-section" => {
                     let Some((doc, r)) = subject.split_once('#') else {
@@ -921,6 +924,7 @@ impl Store {
                     self.graph.diagnostics.insert(
                         id,
                         Diagnostic {
+                            goal: None,
                             rule,
                             severity,
                             subjects,

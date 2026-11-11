@@ -37,6 +37,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
     };
     Json(json!({
         "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
+        "agentSelectionProtocol": 1,
         "backend": "server",
         "projects": "list",
         "docs": "write",

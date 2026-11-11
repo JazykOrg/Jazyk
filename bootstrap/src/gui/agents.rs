@@ -368,6 +368,57 @@ mod tests {
         assert_eq!(st.jobs.get(job).unwrap()["agentSelection"]["id"], first.id);
     }
     #[tokio::test]
+    async fn selected_admission_namespace_dispatches_only_live_selections() {
+        use tower::ServiceExt;
+        let st = super::super::server::tests::state(None, "https://jazyk.dev");
+        let response = select(
+            State(st.clone()),
+            HeaderMap::new(),
+            Json(json!({"agent":"embedded","source":"configured"})),
+        )
+        .await;
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let selected: Value = serde_json::from_slice(&bytes).unwrap();
+        let id = selected["id"].as_str().unwrap();
+        let router = super::super::server::router(st.clone());
+        let response = router
+            .clone()
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri(format!("/api/agent-selections/{id}/chat/sessions"))
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let chat: Value = serde_json::from_slice(&bytes).unwrap();
+        let sessions = st.chat.snapshot();
+        assert_eq!(
+            sessions.iter().find(|s| s["id"] == chat["id"]).unwrap()["agentSelection"]["id"],
+            id
+        );
+        let response = router
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("POST")
+                    .uri("/api/agent-selections/expired/chat/sessions")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+    }
+    #[tokio::test]
     async fn unknown_selection_is_rejected_instead_of_using_defaults() {
         use tower::ServiceExt;
         let st = super::super::server::tests::state(None, "https://jazyk.dev");

@@ -269,6 +269,31 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
     use serde_json::{json, Value};
     use tower::ServiceExt;
     let (mut parts, body) = req.into_parts();
+    if let Some(selected) = parts.uri.path().strip_prefix("/api/agent-selections/") {
+        let Some((id, path)) = selected.split_once('/') else {
+            return api::err(StatusCode::BAD_REQUEST, "Missing selected API route.");
+        };
+        if st.agent_choices.get(id).is_none() {
+            return api::err(
+                StatusCode::CONFLICT,
+                "Agent selection expired. Choose an agent again.",
+            );
+        }
+        let id = id.to_string();
+        let uri = format!(
+            "/api/{path}{}",
+            parts
+                .uri
+                .query()
+                .map(|q| format!("?{q}"))
+                .unwrap_or_default()
+        );
+        parts.headers.insert(
+            HeaderName::from_static("x-jazyk-agent-selection"),
+            HeaderValue::from_str(&id).unwrap(),
+        );
+        parts.uri = uri.parse().unwrap();
+    }
     let limit = if parts.uri.path().ends_with("/docs/document")
         || parts.uri.path().ends_with("/project/file")
     {

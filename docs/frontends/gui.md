@@ -942,3 +942,11 @@ preserving document editing. Choosing a source never starts a build or model pro
 Selected credentials live only for the connector process. A restored conversation
 that depended on a process-local selection requires a new conversation after the
 user chooses its agent again. It never resumes through the default provider.
+
+AI admission through a tab selection uses
+`/api/agent-selections/<id>/<route>` instead of `/api/<route>`. The gateway
+validates the selection and dispatches the original API route. This namespace
+makes an older connector reject the operation instead of ignoring the selection
+header and using its configured provider. Capabilities advertise
+`agentSelectionProtocol: 1`. Cancellation and deterministic reads retain their
+ordinary routes so expired selections cannot prevent Stop.

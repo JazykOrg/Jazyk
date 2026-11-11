@@ -19,3 +19,7 @@ No Goose application code or private operations are included.
 This is a temporary source dependency until an upstream published release includes
 the portability change. Replace it with that exact registry release after running
 Jazyk native, hosted and browser acceptance checks.
+
+The patched source is published as `jazyk-goose-context-management` version
+`0.1.0-alpha.13-jazyk.1`. Its Rust library retains `goose_context_management`.
+The upstream copyright and Apache-2.0 license are preserved.

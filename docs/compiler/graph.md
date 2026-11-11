@@ -873,13 +873,11 @@ commit swept. Nothing waits for the next build: the graph is honest between buil
   subjects are all gone is resolved by the store, journaled; one with surviving subjects
   loses the `pairs/` decision it stood on, so the next derivation re-judges the finding. This runs on every
   deleting commit, session and sweep alike.
-- A marker diagnostic settles at every sweep, the moment its condition clears, so a
-  session never adjudicates it. An `uncovered-section` diagnostic resolves once its
-  section is marked `covered` or `non-normative`, or the section is gone. Unfinished
-  work files no diagnostic: it is the open work the next derivation computes, and the
-  verdict counts it ([convergence](./compilation.md#convergence)). The [checks](./compilation.md#checks) file a
-  marker whose condition holds again and update a standing one in place, so a target
-  carries at most one open marker, the newest build's. The settle is journaled as
+- Legacy `uncovered-section` and `incomplete-build` marker diagnostics resolve at
+  every sweep, even when their sections still await processing. A session never
+  adjudicates them. Unfinished work files no diagnostic: it is the open work the next
+  derivation computes, and the verdict counts it
+  ([convergence](./compilation.md#convergence)). The settle is journaled as
   `settle-diagnostics`.
 
 Deletion runs the edit paths in reverse: dead prose kills quotes, which kills quoted

@@ -71,8 +71,8 @@ the CLI and ACP chat.
   A stored suppression for that source-target pair remains respected.
 - Diagnostic ranges use the shared [location resolver](../compiler/model/diagnostic.md#locations).
   Every located quote in the document is published once per finding and range.
-- A finding about a whole section (a section subject, e.g. `uncovered-section`, or
-  a parked `reconcile-section` goal) is published on the section's heading text,
+- A finding about a whole section (e.g. `suspicious-non-normative`) is published on
+  the section's heading text,
   never across its body. A section without a heading (the text before a
   document's first heading, a document with none) anchors on its first sentence: the
   text up to the first `.`, `!`, or `?` that ends a word in its first paragraph, or
@@ -80,7 +80,7 @@ the CLI and ACP chat.
   anchor is located in the current text, so it follows edits above it. E.g.:
 
   ```markdown
-  ## Payments                       ← uncovered-section lands here
+  ## Payments                       ← suspicious-non-normative lands here
   A payment is captured when its order ships.
   ```
 - A finding about an entity (an entity subject, e.g. a parked `review-entity` goal)

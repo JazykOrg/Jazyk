@@ -877,3 +877,19 @@ trace, model selection, and evidence paths. Older engines do not advertise the
 capability, so an editor must not submit this selector to them.
 
 See [test artifact selection](../consumers/gen.md#test-artifact-selection).
+
+## File management
+
+`GET /api/project/files` advertises `fileActions: true` when file management is
+available. `POST /api/project/rename` with `{from, to}` moves or renames one file.
+`DELETE /api/project/file?path=` deletes one file. Both use the project write
+path rules. They refuse directories, protected paths and destination collisions.
+The graph stays unchanged until the next authorized build.
+
+A move updates Markdown link and image destinations in writable project Markdown
+files, including reference definitions. Incoming links follow the new path.
+Relative outgoing links in a moved Markdown file keep their original targets.
+Fragments and queries are retained. Absolute web URLs, code examples and prose
+mentions are unchanged. Documents outside the project and binary document links
+cannot be rewritten. The response lists updated files and these limits are shown
+before a move. Deleting a file does not delete references to it.

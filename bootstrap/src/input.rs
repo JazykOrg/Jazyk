@@ -437,6 +437,74 @@ mod tests {
         assert_eq!(requirement_links(&store, "logo.svg").len(), 1);
     }
     #[test]
+    fn blob_session_repairs_reference_and_rejects_invalid_coverage_before_staging() {
+        let _scope = crate::vfs::Scope::enter(&fixture());
+        let project = project();
+        let mut store = store(&project);
+        link(&mut store);
+        store
+            .graph
+            .requirements
+            .get_mut("req:logo")
+            .unwrap()
+            .source
+            .as_mut()
+            .unwrap()
+            .quote = "The site uses the supplied".into();
+        let goal = crate::model::Goal {
+            id: "g:reconcile-section:logo.svg#/".into(),
+            kind: "reconcile-section".into(),
+            target: "logo.svg#/".into(),
+            mandatory: true,
+            ..Default::default()
+        };
+        let mut session = crate::tools::ToolSession::new(
+            store,
+            crate::tools::WorkScope::for_batch("blob-repair", &[goal]),
+            64,
+            24_000,
+        );
+        let coverage = json!({"section":"logo.svg#/", "state":"covered", "note":"req:logo"});
+        let err = session.dispatch("set_coverage", &coverage).unwrap_err();
+        assert_eq!(err.rule, "uncovered-claim");
+        assert!(err.message.contains("no requirement quote selects"));
+        assert!(session.staged.is_empty());
+        let mut failed = crate::tools::ToolSession::new(
+            session.snapshot.clone(),
+            session.scope.clone(),
+            64,
+            24_000,
+        );
+        failed.dispatch("set_coverage", &coverage).unwrap_err();
+        failed.dispatch("mark_goal_failed", &json!({
+            "goal":"g:reconcile-section:logo.svg#/", "reason":"The referring requirement does not yet quote the linked input."
+        })).unwrap();
+        failed
+            .dispatch(
+                "done",
+                &json!({"summary":"Recorded the missing reference without a coverage claim."}),
+            )
+            .unwrap();
+        // Unrelated prose still cannot be quoted by this blob batch.
+        let err = session
+            .dispatch(
+                "update_requirement",
+                &json!({
+                    "id":"req:logo", "section":"main.md#/site", "quote":"The site uses the supplied"
+                }),
+            )
+            .unwrap_err();
+        assert_eq!(err.rule, "wrong-document");
+        session.dispatch("update_requirement", &json!({
+            "id":"req:logo", "section":"main.md#/site", "quote":"The site uses the supplied [logo][brand]."
+        })).unwrap();
+        session.dispatch("set_coverage", &coverage).unwrap();
+        assert!(crate::goals::ReconcileSection
+            .gates(&session.snapshot, &session.staged)
+            .is_empty());
+    }
+
+    #[test]
     fn legacy_unsupported_warning_resolves_and_missing_input_invalidates_its_requirement() {
         let _scope = crate::vfs::Scope::enter(&fixture());
         let project = project();

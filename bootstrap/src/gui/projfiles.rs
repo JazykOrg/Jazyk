@@ -82,3 +82,35 @@ pub async fn write_text(
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
+
+pub async fn remove(State(st): State<SharedState>, Query(p): Query<FileQ>) -> Response {
+    match tokio::task::spawn_blocking(move || {
+        crate::webapi::projfiles::delete_project_file(&st.root, &st.out, &p.path)
+    })
+    .await
+    {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(r)) => refused(r),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+pub async fn rename(
+    State(st): State<SharedState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    match tokio::task::spawn_blocking(move || {
+        crate::webapi::projfiles::rename_project_file(
+            &st.root,
+            &st.out,
+            body["from"].as_str().unwrap_or_default(),
+            body["to"].as_str().unwrap_or_default(),
+        )
+    })
+    .await
+    {
+        Ok(Ok(v)) => Json(v).into_response(),
+        Ok(Err(r)) => refused(r),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}

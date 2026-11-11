@@ -327,6 +327,14 @@ An opaque input has one `blob` section at `/`. Its envelope contains byte identi
 and incoming document context. The session decides its role as a whole file.
 `covered` requires an existing or staged requirement whose quoted reference names that input,
 and a coverage note naming the requirement ID. The envelope cannot source a quote.
+A blob session may re-anchor an existing requirement within its original referring
+section when the replacement quote selects this blob. Other cross-document
+requirement writes remain rejected. A list reference quote includes the linked
+item as well as its lead-in when the lead-in alone does not select the input.
+Invalid blob coverage is rejected before staging, so a failed goal can be saved
+without retaining an unsupported coverage claim. An explicitly failed goal may
+finish without marking its sections. Its failure remains visible and blocks
+convergence. Staged coverage claims still pass their normal validation.
 The blob follows prose documents in ingest order and waits for referring documents. Its coverage is invalidated when its bytes
 or referring section context changes. A `non-normative` mark requires a specific
 reason and is rejected while a requirement references the input. Delivery remains

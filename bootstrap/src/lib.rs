@@ -40,6 +40,7 @@ pub mod harness;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod hosted;
 pub mod ids;
+pub mod layout;
 pub mod inprocess;
 pub mod input;
 pub mod limits;

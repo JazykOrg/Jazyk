@@ -68,6 +68,8 @@ ureq = "2"
 url = "2"
 notify = "6"
 fs2 = "0.4"
+# The log directory's default under the operating system's cache folder (docs/compiler/jazyk-folder.md#logs).
+dirs = "6"
 # ACP bridge (docs/frontends/acp.md): the official protocol SDK. Executor-agnostic
 # (futures + async-io), driven by a block_on on a dedicated thread; no tokio outside gui/.
 agent-client-protocol = "=2.2.0"

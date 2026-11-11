@@ -44,6 +44,8 @@ pub struct Options {
     pub out: Option<String>,
     pub verbose: bool,
     pub quiet: bool,
+    // `jazyk compile --record`: a graph snapshot per batch (docs/compiler/sessions.md#snapshots).
+    pub record: bool,
     pub write: bool,
     // `jazyk context`: neighbor depth and the handles to follow before printing.
     pub depth: Option<u32>,

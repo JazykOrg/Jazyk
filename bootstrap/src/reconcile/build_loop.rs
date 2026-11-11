@@ -121,6 +121,8 @@ pub(crate) async fn compile_under(
     if let Err(e) = crate::document_sets::ensure_ignore(&proj.root) {
         trace.line("build", &format!("cannot write .jazyk/.gitignore: {}", e));
     }
+    // Logs past retention go when a build starts (docs/compiler/jazyk-folder.md#logs).
+    crate::logs::prune(out);
     let mut store = Store::open_for_build(out);
     if !resuming {
         store.status.costs = Costs::default();

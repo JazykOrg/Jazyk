@@ -187,7 +187,23 @@ pub fn project_log_dir(out: &Path) -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| out.to_path_buf());
-    let base = match crate::sys::env_var("JAZYK_LOG_DIR").ok().filter(|v| !v.is_empty()) {
+    native_log_dir(&root)
+}
+
+/// The log directory of the project at `root` (the folder holding `.jazyk/`).
+pub fn log_dir_for_root(root: &Path) -> PathBuf {
+    if crate::vfs::is_scoped() {
+        return project_local_dir(&root.join(".jazyk")).join("records");
+    }
+    native_log_dir(root)
+}
+
+fn native_log_dir(root: &Path) -> PathBuf {
+    let root = root.to_path_buf();
+    let base = match crate::sys::env_var("JAZYK_LOG_DIR")
+        .ok()
+        .filter(|v| !v.is_empty())
+    {
         Some(dir) => PathBuf::from(dir),
         None => cache_base(),
     };
@@ -196,7 +212,10 @@ pub fn project_log_dir(out: &Path) -> PathBuf {
         .file_name()
         .map(|n| crate::ids::slug(&n.to_string_lossy()))
         .unwrap_or_else(|| "project".to_string());
-    let key = format!("{:016x}", crate::ids::fnv1a64(abs.to_string_lossy().as_bytes()));
+    let key = format!(
+        "{:016x}",
+        crate::ids::fnv1a64(abs.to_string_lossy().as_bytes())
+    );
     base.join(format!("{}-{}", name, &key[..8]))
 }
 
@@ -244,21 +263,42 @@ mod tests {
     #[test]
     fn set_paths_follow_the_documented_layout() {
         let out = Path::new("/p/.jazyk/my-set-ks8mf");
-        assert_eq!(store_file(out), Path::new("/p/.jazyk/my-set-ks8mf/store.yaml"));
-        assert_eq!(build_file(out), Path::new("/p/.jazyk/my-set-ks8mf/local/build.yaml"));
-        assert_eq!(journal_file(out, 3), Path::new("/p/.jazyk/my-set-ks8mf/local/journal/g3.yaml"));
+        assert_eq!(
+            store_file(out),
+            Path::new("/p/.jazyk/my-set-ks8mf/store.yaml")
+        );
+        assert_eq!(
+            build_file(out),
+            Path::new("/p/.jazyk/my-set-ks8mf/local/build.yaml")
+        );
+        assert_eq!(
+            journal_file(out, 3),
+            Path::new("/p/.jazyk/my-set-ks8mf/local/journal/g3.yaml")
+        );
         assert_eq!(
             derived_node_dir(out, "relationships"),
             Path::new("/p/.jazyk/my-set-ks8mf/derived/graph/relationships")
         );
-        assert_eq!(diagrams_dir(out), Path::new("/p/.jazyk/my-set-ks8mf/derived/diagrams"));
-        assert_eq!(decisions_dir(out, "pairs"), Path::new("/p/.jazyk/my-set-ks8mf/graph/decisions/pairs"));
-        assert_eq!(source_file(out, "docs/a.md"), Path::new("/p/.jazyk/my-set-ks8mf/sources/docs/a.md.yaml"));
+        assert_eq!(
+            diagrams_dir(out),
+            Path::new("/p/.jazyk/my-set-ks8mf/derived/diagrams")
+        );
+        assert_eq!(
+            decisions_dir(out, "pairs"),
+            Path::new("/p/.jazyk/my-set-ks8mf/graph/decisions/pairs")
+        );
+        assert_eq!(
+            source_file(out, "docs/a.md"),
+            Path::new("/p/.jazyk/my-set-ks8mf/sources/docs/a.md.yaml")
+        );
         assert_eq!(
             archive_dir(out, 3),
             Path::new("/p/.jazyk/local/archive/my-set-ks8mf-v3")
         );
-        assert_eq!(archive_dir(Path::new("/tmp/store"), 3), Path::new("/tmp/store.v3"));
+        assert_eq!(
+            archive_dir(Path::new("/tmp/store"), 3),
+            Path::new("/tmp/store.v3")
+        );
     }
 
     #[test]
@@ -268,8 +308,20 @@ mod tests {
         assert!(!a.starts_with("/work/shop"), "{}", a.display());
         assert_ne!(a, b, "two projects of one name keep separate logs");
         assert!(a.ends_with("main-4kq7z"));
-        let project = a.parent().unwrap().file_name().unwrap().to_string_lossy().to_string();
-        assert!(project.starts_with("shop-") && project.len() == "shop-".len() + 8, "{project}");
-        assert_eq!(trace_dir(Path::new("/work/shop/.jazyk/main-4kq7z")), a.join("trace"));
+        let project = a
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        assert!(
+            project.starts_with("shop-") && project.len() == "shop-".len() + 8,
+            "{project}"
+        );
+        assert_eq!(
+            trace_dir(Path::new("/work/shop/.jazyk/main-4kq7z")),
+            a.join("trace")
+        );
     }
 }

@@ -15,8 +15,10 @@ pub struct SessionMeta {
     pub turns: u64,
 }
 
+// The session store lives in the project's log directory, outside the repository.
+// Mirrors docs/frontends/acp.md#session-store.
 fn dir(out: &Path) -> PathBuf {
-    out.join("sessions")
+    crate::layout::sessions_dir(out)
 }
 
 fn path_for(out: &Path, id: &str) -> PathBuf {

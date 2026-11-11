@@ -114,7 +114,7 @@ pub fn all_results(out: &std::path::Path) -> Value {
             }
         }
     }
-    let project = out.join("benchmark").join("results.yaml");
+    let project = crate::layout::benchmark_dir(out).join("results.yaml");
     if let Some(v) = crate::vfs::read_to_string(&project)
         .ok()
         .and_then(|s| serde_norway::from_str::<Value>(&s).ok())
@@ -136,7 +136,7 @@ pub fn all_results(out: &std::path::Path) -> Value {
     serde_json::json!({"caseSetHash": current_hash, "results": rows})
 }
 
-// One entry per model in <out>/benchmark/results.yaml, updated in place. Mirrors
+// One entry per model in the set's log directory, benchmark/results.yaml, updated in place. Mirrors
 // docs/benchmark/benchmark.md#results-file.
 // A tier score is a number only when at least one of its cases ran; a filtered
 // run leaves the rest null instead of a fake 0.0.
@@ -153,7 +153,7 @@ pub(super) fn score_json(
 }
 
 pub(super) fn write_results(out: &std::path::Path, model: &str, codec_reports: &[(String, Value)]) {
-    let path = out.join("benchmark").join("results.yaml");
+    let path = crate::layout::benchmark_dir(out).join("results.yaml");
     let mut all: BTreeMap<String, Value> = crate::vfs::read_to_string(&path)
         .ok()
         .and_then(|s| serde_norway::from_str(&s).ok())

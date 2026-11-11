@@ -69,8 +69,10 @@ pub fn normalize_kind(raw: &str) -> String {
     }
 }
 
+// The set's feedback log, in the project's log directory, never in the repository.
+// Mirrors docs/compiler/tools.md#feedback-tool and docs/compiler/jazyk-folder.md#logs.
 pub fn path(out: &Path) -> PathBuf {
-    out.join("feedback.jsonl")
+    crate::layout::feedback_file(out)
 }
 
 // Append one record. Best effort: a feedback write never fails a session.
@@ -80,16 +82,58 @@ pub fn append(out: &Path, entry: &Entry) {
     if out.as_os_str().is_empty() {
         return;
     }
-    crate::vfs::create_dir_all(out).ok();
     let Ok(line) = serde_json::to_string(entry) else {
         return;
     };
-    let _ = crate::vfs::append_line(path(out), &line);
+    // A host with a record store keeps the log there, one stream per set
+    // (docs/compiler/hosted-runtime.md#host-records).
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = crate::hosted::host_record_store() {
+        use crate::hosted::records::Stream;
+        let key = set_key(out);
+        let next = store
+            .read(Stream::Feedback, &key, None, usize::MAX)
+            .map(|items| items.last().map(|(n, _)| n + 1).unwrap_or(0))
+            .unwrap_or(0);
+        if let Ok(value) = serde_json::to_value(entry) {
+            if store.meta(Stream::Feedback, &key).ok().flatten().is_none() {
+                let _ = store.put_meta(Stream::Feedback, &key, &serde_json::json!({}));
+            }
+            let _ = store.append(Stream::Feedback, &key, 0, next, &[value]);
+        }
+        return;
+    }
+    let file = path(out);
+    if let Some(parent) = file.parent() {
+        crate::vfs::create_dir_all(parent).ok();
+    }
+    let _ = crate::vfs::append_line(file, &line);
+}
+
+// The set a feedback log belongs to: the set directory's name.
+#[cfg(not(target_arch = "wasm32"))]
+fn set_key(out: &Path) -> String {
+    out.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "store".to_string())
 }
 
 // The log newest first, capped. Malformed lines are skipped, not fatal: the file is
 // appended by concurrent processes.
 pub fn read(out: &Path, limit: usize) -> Vec<Value> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(store) = crate::hosted::host_record_store() {
+        use crate::hosted::records::Stream;
+        let mut entries: Vec<Value> = store
+            .read(Stream::Feedback, &set_key(out), None, usize::MAX)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect();
+        entries.reverse();
+        entries.truncate(limit);
+        return entries;
+    }
     let Ok(text) = crate::vfs::read_to_string(path(out)) else {
         return Vec::new();
     };

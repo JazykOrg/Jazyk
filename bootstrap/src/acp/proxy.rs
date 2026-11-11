@@ -671,7 +671,7 @@ fn sid_of(s: &str) -> SessionId {
 // Mirrors docs/frontends/acp.md#session-store.
 fn runtime_fence(st: &Arc<ProxyState>) -> std::path::PathBuf {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    st.out.join("sessions").join(format!(
+    crate::layout::local_dir(&st.out).join(format!(
         "runtime-cancel-{}-{}-{}",
         crate::sys::process_id(),
         crate::sys::now_millis(),
@@ -1503,7 +1503,7 @@ fn narrated_trace(
     crate::session::Trace::to_sink(crate::session::TraceLevel::Normal, sink, Default::default())
 }
 
-// Recorded runs as read-only sessions: one per transcript under <out>/trace, newest
+// Recorded runs as read-only sessions: one per transcript under the set's log directory (trace/), newest
 // first. Mirrors docs/frontends/acp.md#mirroring-into-ides.
 fn mirrored_sessions(
     root: &std::path::Path,
@@ -1511,7 +1511,7 @@ fn mirrored_sessions(
 ) -> Vec<agent_client_protocol::schema::v1::SessionInfo> {
     use agent_client_protocol::schema::v1::SessionInfo;
     let mut entries: Vec<(String, String, String)> = Vec::new();
-    if let Ok(rd) = crate::vfs::read_dir(out.join("trace")) {
+    if let Ok(rd) = crate::vfs::read_dir(crate::layout::trace_dir(out)) {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let Some(stem) = name.strip_suffix(".jsonl") else {
@@ -1553,7 +1553,7 @@ fn mirrored_sessions(
 // One transcript replayed as session updates, capped to the recent tail.
 fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
     use agent_client_protocol::schema::v1::{ToolCall, ToolCallStatus};
-    let path = out.join("trace").join(format!("{}.jsonl", stem));
+    let path = crate::layout::trace_dir(out).join(format!("{}.jsonl", stem));
     let Ok(text) = crate::vfs::read_to_string(&path) else {
         return Vec::new();
     };
@@ -1649,7 +1649,7 @@ fn replay_transcript(out: &std::path::Path, stem: &str) -> Vec<SessionUpdate> {
 fn watch_runs(state: &Arc<ProxyState>) {
     let st = state.clone();
     std::thread::spawn(move || {
-        let dir = st.out.join("trace");
+        let dir = crate::layout::trace_dir(&st.out);
         let mut last: usize = crate::vfs::read_dir(&dir).map(|r| r.count()).unwrap_or(0);
         loop {
             std::thread::sleep(std::time::Duration::from_secs(5));

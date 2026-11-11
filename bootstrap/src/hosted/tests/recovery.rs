@@ -98,7 +98,7 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
         b"An earlier accepted edit.\n"
     );
     for (path, bytes) in &files {
-        if !path.contains("/leases/") && path != ".jazyk/conversations.json" {
+        if !path.contains("/leases/") && !path.starts_with(".jazyk/local/records/") {
             assert_eq!(
                 stopped.get(path),
                 Some(bytes),
@@ -644,8 +644,7 @@ fn old_amnesic_chat_recovers_its_own_timeline_in_the_next_provider_request_once(
             json!({}),
             &Execution::default(),
         );
-        let mut book: Value =
-            serde_json::from_slice(&w.files[".jazyk/conversations.json"]).unwrap();
+        let mut book = stored_book(&w.files);
         let chat = &mut book["chats"]["chat-1"];
         chat["state"] = json!("idle");
         chat["titled"] = json!(true);
@@ -855,7 +854,7 @@ fn owned_build_steering_recovers_cursor_and_preserves_conversation() {
         .any(|v| v["type"] == "chat.input"
             && v["messageId"] == "build-steer-1"
             && v["state"] == "delivered"));
-    let history = String::from_utf8(w.snapshot()[".jazyk/conversations.json"].clone()).unwrap();
+    let history = stored_book(&w.snapshot()).to_string();
     assert!(history.contains("Stop changing coverage. Inspect the source first."));
     assert!(!history.contains("stale proposal"));
     assert!(!w

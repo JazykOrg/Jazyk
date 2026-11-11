@@ -22,6 +22,9 @@ pub fn run_status(opts: &Options) -> i32 {
         return match crate::document_sets::Workspace::load(&root) {
             Ok(workspace) => {
                 print!("{}", render_sets_overview(&workspace.summary()));
+                // The last line names where this project's logs live
+                // (docs/frontends/cli.md#jazyk-status).
+                println!("logs: {}", crate::layout::log_dir_for_root(&root).display());
                 0
             }
             Err((_, e)) => {
@@ -66,6 +69,7 @@ pub fn run_status(opts: &Options) -> i32 {
         );
     } else {
         print!("{}", render_status(&report));
+        println!("logs: {}", crate::layout::project_log_dir(&out).display());
     }
     0
 }

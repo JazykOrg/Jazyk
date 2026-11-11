@@ -61,6 +61,7 @@ jobs:
           }
           JS
       - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
+      - run: python3 scripts/release/publish-source.test.py
       - run: python3 scripts/release/package-managers.test.py
       - run: python3 scripts/release/source-package.test.py
       - run: python3 scripts/release/publish-github.test.py

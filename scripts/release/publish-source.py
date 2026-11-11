@@ -2,8 +2,11 @@
 import argparse
 import hashlib
 import io
+import json
 from pathlib import Path
 import subprocess
+import sys
+import tempfile
 import tarfile
 import tomllib
 
@@ -22,22 +25,33 @@ def publish(manifest):
     name, version = package['name'], package['version']
     subprocess.run(['cargo', 'package', '--locked', '--manifest-path', str(manifest)], check=True)
     local = manifest.parent / 'target/package' / f'{name}-{version}.crate'
-    url = f'https://crates.io/api/v1/crates/{name}/{version}/download'
-    # curl uses the platform trust store on macOS, matching the other release tools.
-    with __import__('tempfile').TemporaryDirectory() as tmp:
+    base = f'https://crates.io/api/v1/crates/{name}/{version}'
+    with tempfile.TemporaryDirectory() as tmp:
+        metadata = Path(tmp) / 'version.json'
         dest = Path(tmp) / 'existing.crate'
-        curl = '/usr/bin/curl' if __import__('sys').platform == 'darwin' else 'curl'
-        status = subprocess.check_output([curl, '--silent', '--show-error', '--location',
-            '--retry', '3', '--output', str(dest), '--write-out', '%{http_code}',
-            '--user-agent', 'jazyk-release (jazyk.org)', url], text=True)
-        if status == '200':
-            if files(local.read_bytes()) != files(dest.read_bytes()):
-                raise ValueError(f'Published {name} {version} has different contents')
-            print(f'{name} {version} already published with matching contents')
-        elif status == '404':
+        curl = '/usr/bin/curl' if sys.platform == 'darwin' else 'curl'
+
+        def fetch(url, output):
+            return subprocess.check_output([curl, '--silent', '--show-error', '--location',
+                '--retry', '3', '--output', str(output), '--write-out', '%{http_code}',
+                '--user-agent', 'jazyk-release (jazyk.org)', url], text=True)
+
+        # Missing static downloads can return 403. The registry metadata uses 404.
+        status = fetch(base, metadata)
+        if status == '404':
             subprocess.run(['cargo', 'publish', '--locked', '--manifest-path', str(manifest)], check=True)
-        else:
+            return
+        if status != '200':
             raise RuntimeError(f'Registry lookup failed: HTTP {status}')
+        status = fetch(base + '/download', dest)
+        if status != '200':
+            raise RuntimeError(f'Registry download failed: HTTP {status}')
+        expected = json.loads(metadata.read_text())['version']['checksum']
+        if hashlib.sha256(dest.read_bytes()).hexdigest() != expected:
+            raise ValueError(f'Registry checksum mismatch: {name} {version}')
+        if files(local.read_bytes()) != files(dest.read_bytes()):
+            raise ValueError(f'Published {name} {version} has different contents')
+        print(f'{name} {version} already published with matching contents')
 
 
 if __name__ == '__main__':

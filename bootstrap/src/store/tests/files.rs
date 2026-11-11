@@ -1042,3 +1042,122 @@ fn store_version_archives_on_build_and_reads_as_empty() {
     assert!(Store::open_for_build(&dir).graph.entities.is_empty());
     assert!(!dir.join("status.yaml").vexists());
 }
+
+// A version 5 set directory, as a newer jazyk leaves it: `store.yaml`, a node file, a
+// local build file, and a `status.yaml` sentinel carrying only the version.
+fn newer_fixture(out: &Path, sentinel: bool) -> Vec<(PathBuf, Vec<u8>)> {
+    let mut files = vec![
+        (out.join("store.yaml"), b"version: 5\n".to_vec()),
+        (
+            out.join("graph/entities/x.yaml"),
+            b"# Jazyk entity\nid: ent:x\nname: X\n".to_vec(),
+        ),
+        (out.join("local/build.yaml"), b"generation: 9\n".to_vec()),
+    ];
+    if sentinel {
+        files.push((out.join("status.yaml"), b"version: 5\n".to_vec()));
+    }
+    for (p, b) in &files {
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, b).unwrap();
+    }
+    files
+}
+
+fn tree(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut all = BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for e in std::fs::read_dir(&d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else {
+                all.insert(p.clone(), std::fs::read(&p).unwrap());
+            }
+        }
+    }
+    all
+}
+
+// A newer store is never archived or written: a build's opening leaves every byte in
+// place and makes no `.bak`, and every writer refuses with `store-newer`.
+// Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_build_never_archives_or_writes_a_newer_store() {
+    for sentinel in [true, false] {
+        let base = own_dir(if sentinel {
+            "newer-sentinel"
+        } else {
+            "newer-bare"
+        });
+        let out = base.join(".jazyk").join("main");
+        newer_fixture(&out, sentinel);
+        let before = tree(&base);
+        assert_eq!(crate::store::newer_version(&out), Some(5));
+
+        let mut s = Store::open_for_build(&out);
+        assert!(s.graph.entities.is_empty());
+        let why = s.write_status("build opening").unwrap_err();
+        assert!(
+            why.starts_with("store-newer:") && why.contains("version 5"),
+            "{why}"
+        );
+        let r = s.apply(vec![create("ent:y", "Y")], &session());
+        assert_eq!(r.applied, 0, "a newer store takes no write");
+        let ledger = crate::gen::Ledger::load(&out);
+        assert!(ledger.save(&out).unwrap_err().starts_with("store-newer:"));
+
+        // A build stops at its opening, before any file or session.
+        let proj = crate::project::Project {
+            root: base.clone(),
+            out: out.clone(),
+            ..Default::default()
+        };
+        let trace = crate::session::Trace::to_sink(
+            crate::session::TraceLevel::Normal,
+            std::sync::Arc::new(|_| {}),
+            Default::default(),
+        );
+        let llm = crate::llm::Llm {
+            api: "chat_completions".into(),
+            reasoning_summary: None,
+            base_url: "unused".into(),
+            model: "fixture".into(),
+            api_key: String::new(),
+            temperature: None,
+            trace: None,
+        };
+        let report = crate::reconcile::compile_with(&proj, &llm, &out, &trace, None);
+        assert_eq!(report.verdict, "incomplete");
+
+        assert_eq!(tree(&base), before, "every byte stays");
+        assert!(
+            !base.join(".jazyk/main.bak").exists(),
+            "nothing is archived"
+        );
+        std::fs::remove_dir_all(&base).ok();
+    }
+}
+
+// Outside a build a newer store reads as empty and read-only.
+// Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_newer_store_loads_empty_and_read_only() {
+    let base = own_dir("newer-load");
+    let out = base.join(".jazyk").join("main");
+    newer_fixture(&out, true);
+    let s = Store::load(&out);
+    assert!(s.graph.entities.is_empty());
+    let why = s.unreadable().unwrap();
+    assert!(
+        why.starts_with("store-newer:") && why.contains("upgrade jazyk"),
+        "{why}"
+    );
+    // An older or matching version is not newer.
+    let older = own_dir("older-load");
+    std::fs::write(older.join("status.yaml"), "version: 2\n").unwrap();
+    assert_eq!(crate::store::newer_version(&older), None);
+    std::fs::remove_dir_all(&base).ok();
+    std::fs::remove_dir_all(&older).ok();
+}

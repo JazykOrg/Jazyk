@@ -331,8 +331,16 @@ and the ledger split per row ([the ledger](../consumers/gen.md#the-ledger)).
   so a build with nothing to do still leaves no file in the old form; a commit before
   that writes the version 4 layout too. Its ids stay: ids are immutable, and a version
   3 id keeps resolving. Only ids minted from then on take the version 4 form.
-- An out directory whose `status.yaml` carries any other version, or none, is archived
-  whole to `<out>.bak` (a sibling directory; an existing `.bak` is replaced) at the
+- A store of a newer version is never archived and never written. Its version is the
+  higher of the `version` in `status.yaml` and the `version` in `store.yaml` (the file a
+  version 5 store keeps); an out directory with `store.yaml` and no `status.yaml` counts
+  as newer. Such a store reads as empty and read-only, every writer refuses with
+  `store-newer` (naming the store's version and this one's, and asking to upgrade
+  jazyk), and a build stops at its opening, before it writes any file or runs any
+  session. An older jazyk left running against a newer project, e.g. after a rollback,
+  therefore loses nothing.
+- An out directory whose `status.yaml` carries any other older version, or none, is
+  archived whole to `<out>.bak` (a sibling directory; an existing `.bak` is replaced) at the
   start of a build, and the store starts empty. The next build reconciles from the
   empty graph, the same way a first build does. Outside a build, such a store reads as
   empty and read-only: a writer refuses with `store-version` until a build archives it.

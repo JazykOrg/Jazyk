@@ -258,7 +258,7 @@ pub fn locations(
                     for test in tests {
                         let artifact = crate::gen::artifact_path(&store.out, gs, test);
                         if let Ok(rel) = artifact.strip_prefix(root) {
-                            file(root, &rel.to_string_lossy(), None);
+                            file(root, &rel.to_string_lossy().replace('\\', "/"), None);
                         }
                     }
                 }

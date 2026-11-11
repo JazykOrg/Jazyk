@@ -1211,7 +1211,7 @@ mod tests {
                     .strip_prefix(root)
                     .unwrap()
                     .to_string_lossy()
-                    .into_owned()
+                    .replace('\\', "/")
             })
             .collect::<Vec<_>>();
         ledger.save(&store.out).unwrap();

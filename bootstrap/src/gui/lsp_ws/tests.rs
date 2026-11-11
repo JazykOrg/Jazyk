@@ -288,7 +288,9 @@ async fn a_session_speaks_one_message_per_text_frame_until_close() {
     let st = super::super::server::tests::state(None, "https://jazyk.dev");
     let root = st.root.clone();
     let (port, server) = listen(st).await;
-    let uri = format!("file://{}/docs/big.md", root.display());
+    let uri = url::Url::from_file_path(root.join("docs/big.md"))
+        .unwrap()
+        .to_string();
     let outcome = tokio::task::spawn_blocking(move || {
         let (mut c, head) =
             Client::connect(port, "/lsp", &[("Origin", "https://jazyk.dev")]).unwrap();

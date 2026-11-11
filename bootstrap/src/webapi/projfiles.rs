@@ -135,11 +135,12 @@ pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[S
                 && !root.join(&path).starts_with(out)
                 && (crate::task_runtime::matches(&products, &path)
                     || (!input && root.join(&path).starts_with(deliverable)));
-            json!({ "path": path, "size": size, "memberships":memberships, "product":product })
+            json!({ "path": path, "size": size, "memberships":memberships, "product":product, "writable": writable_path(root, out, &path).is_ok() })
         })
         .collect();
     json!({
         "files": files,
+        "fileActions": true,
         "deliverable": rel_dir(root, deliverable),
         "out": rel_dir(root, out),
         "docsGlob": docs_glob,
@@ -337,6 +338,85 @@ pub fn write_project_text(
     }
     crate::vfs::write(&abs, text).map_err(|e| (500, e.to_string()))?;
     Ok(serde_json::json!({ "path": rel, "hash": crate::model::hash_hex(text) }))
+}
+
+// File management shares the write boundary with project text edits.
+pub fn delete_project_file(root: &Path, out: &Path, rel: &str) -> Result<Value, Refusal> {
+    let abs = writable_path(root, out, rel)?;
+    if !abs.vis_file() {
+        return Err((404, format!("no file {rel}")));
+    }
+    crate::vfs::remove_file(abs).map_err(|e| (500, e.to_string()))?;
+    Ok(json!({"deleted": rel}))
+}
+
+pub fn rename_project_file(
+    root: &Path,
+    out: &Path,
+    from: &str,
+    to: &str,
+) -> Result<Value, Refusal> {
+    let old = writable_path(root, out, from)?;
+    let new = writable_path(root, out, to)?;
+    if !old.vis_file() {
+        return Err((404, format!("no file {from}")));
+    }
+    if new.vexists() {
+        return Err((409, format!("{to} already exists")));
+    }
+    let listing = project_files(root, root, out, &[]);
+    let mut changes = Vec::new();
+    for file in listing["files"].as_array().into_iter().flatten() {
+        let path = file["path"].as_str().unwrap_or_default();
+        if !matches!(
+            Path::new(path).extension().and_then(|e| e.to_str()),
+            Some("md" | "markdown" | "MD")
+        ) {
+            continue;
+        }
+        let Ok(abs) = writable_path(root, out, path) else {
+            continue;
+        };
+        let before = crate::vfs::read_to_string(&abs).map_err(|e| (500, e.to_string()))?;
+        let target = if path == from { to } else { path };
+        let after = super::file_links::rewrite(&before, path, target, from, to);
+        if before != after {
+            changes.push((path.to_string(), before, after));
+        }
+    }
+    if let Some(parent) = new.parent() {
+        crate::vfs::create_dir_all(parent).map_err(|e| (500, e.to_string()))?;
+    }
+    crate::vfs::rename(&old, &new).map_err(|e| (500, e.to_string()))?;
+    let mut written: Vec<(PathBuf, String)> = Vec::new();
+    for (path, before, after) in &changes {
+        let abs = root.join(if path == from { to } else { path });
+        let result = crate::vfs::read_to_string(&abs).and_then(|current| {
+            if current != *before {
+                return Err(std::io::Error::other("file changed during move"));
+            }
+            crate::store::write_atomic(&abs, after.as_bytes())
+        });
+        if let Err(error) = result {
+            let mut rollback = Vec::new();
+            for (path, text) in written.iter().rev() {
+                if let Err(e) = crate::store::write_atomic(path, text.as_bytes()) {
+                    rollback.push(e.to_string());
+                }
+            }
+            if let Err(e) = crate::vfs::rename(&new, &old) {
+                rollback.push(e.to_string());
+            }
+            return Err((
+                500,
+                format!("move failed: {error}; rollback errors: {rollback:?}"),
+            ));
+        }
+        written.push((abs, before.clone()));
+    }
+    Ok(
+        json!({"from": from, "to": to, "updated": changes.iter().map(|(p,_,_)| if p == from { to } else { p }).collect::<Vec<_>>()}),
+    )
 }
 
 #[cfg(test)]
@@ -611,5 +691,59 @@ mod tests {
         );
         assert!(served.contains("model = \"m1\""), "{}", served);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod file_action_tests {
+    use super::*;
+    #[test]
+    fn move_preserves_bytes_updates_links_and_refuses_collisions_and_protected_paths() {
+        let root = std::env::temp_dir().join(format!("jazyk-file-actions-{}", std::process::id()));
+        crate::vfs::remove_dir_all(&root).ok();
+        crate::vfs::create_dir_all(root.join("docs")).unwrap();
+        let out = root.join(".jazyk");
+        crate::vfs::write(root.join("docs/a.md"), "# A\n[x](image.png)").unwrap();
+        crate::vfs::write(
+            root.join("docs/b.md"),
+            "[A](a.md#intro)\n[code](https://example.com/a.md)",
+        )
+        .unwrap();
+        let v = rename_project_file(&root, &out, "docs/a.md", "guide/a.md").unwrap();
+        assert_eq!(v["updated"].as_array().unwrap().len(), 2);
+        assert!(!root.join("docs/a.md").vexists());
+        assert_eq!(
+            crate::vfs::read_to_string(root.join("guide/a.md")).unwrap(),
+            "# A\n[x](../docs/image.png)"
+        );
+        assert!(crate::vfs::read_to_string(root.join("docs/b.md"))
+            .unwrap()
+            .contains("../guide/a.md#intro"));
+        assert_eq!(
+            rename_project_file(&root, &out, "guide/a.md", "docs/b.md")
+                .unwrap_err()
+                .0,
+            409
+        );
+        for bad in [
+            "../outside",
+            ".env",
+            ".jazyk/status.yaml",
+            "node_modules/a",
+            "jazyk.toml",
+        ] {
+            assert!(rename_project_file(&root, &out, "guide/a.md", bad).is_err());
+            assert!(delete_project_file(&root, &out, bad).is_err());
+        }
+        assert!(delete_project_file(&root, &out, "docs").is_err());
+        crate::vfs::write(root.join("image.png"), [0, 255, 13]).unwrap();
+        rename_project_file(&root, &out, "image.png", "guide/image.png").unwrap();
+        assert_eq!(
+            crate::vfs::read(root.join("guide/image.png")).unwrap(),
+            [0, 255, 13]
+        );
+        delete_project_file(&root, &out, "guide/a.md").unwrap();
+        assert!(!root.join("guide/a.md").vexists());
+        crate::vfs::remove_dir_all(root).unwrap();
     }
 }

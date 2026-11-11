@@ -228,6 +228,7 @@ pub async fn request_at(root: &std::path::Path, method: &str, path: &str, body: 
             | "/project/file"
             | "/project/raw"
             | "/project/text"
+            | "/project/rename"
             | "/deliverable/raw"
             | "/docs/content"
             | "/docs/document"
@@ -835,6 +836,23 @@ pub(crate) async fn request_scoped(
                 &p.out,
                 &param(&q, "path").unwrap_or_default(),
                 body,
+            ))
+        }
+        ("DELETE", "/project/file") => {
+            let p = project();
+            answer(super::projfiles::delete_project_file(
+                &p.root,
+                &p.out,
+                &param(&q, "path").unwrap_or_default(),
+            ))
+        }
+        ("POST", "/project/rename") => {
+            let p = project();
+            answer(super::projfiles::rename_project_file(
+                &p.root,
+                &p.out,
+                body["from"].as_str().unwrap_or_default(),
+                body["to"].as_str().unwrap_or_default(),
             ))
         }
         ("PUT", "/project/file") => {

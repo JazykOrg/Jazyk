@@ -41,3 +41,6 @@ __pycache__/
 
 # Node dependencies (root tooling, the VS Code extension).
 node_modules/
+
+# Standalone validation of the published compaction fork.
+/bootstrap/vendor/goose-context-management/target/

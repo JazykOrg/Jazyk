@@ -307,6 +307,7 @@ fn diagnostics_count_bookkeeping_unless_its_rule_is_asked() {
         t.snapshot.graph.diagnostics.insert(
             id.into(),
             Diagnostic {
+                goal: None,
                 rule: rule.into(),
                 severity: "info".into(),
                 lifecycle: "open".into(),

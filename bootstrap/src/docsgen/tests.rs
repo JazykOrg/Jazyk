@@ -655,6 +655,7 @@ fn ratification_proposal_renders_as_a_prompt() {
     s.graph.diagnostics.insert(
         "diag:ratification-pending-1".into(),
         Diagnostic {
+            goal: None,
             rule: "ratification-pending".into(),
             severity: "warning".into(),
             subjects: vec!["ent:pricing".into()],

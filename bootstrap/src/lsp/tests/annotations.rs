@@ -102,6 +102,7 @@ fn ask(lsp: &mut Store, rid: &str) {
     lsp.graph.diagnostics.insert(
         "diag:ask".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "ambiguity".into(),
             severity: "warning".into(),
             subjects: vec![rid.into()],

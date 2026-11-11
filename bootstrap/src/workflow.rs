@@ -598,6 +598,7 @@ mod tests {
             store.graph.diagnostics.insert(
                 format!("diag:ratification-pending-{index}"),
                 Diagnostic {
+                    goal: None,
                     rule: "ratification-pending".into(),
                     severity: "info".into(),
                     lifecycle: "open".into(),
@@ -621,6 +622,7 @@ mod tests {
             store.graph.diagnostics.insert(
                 id.into(),
                 Diagnostic {
+                    goal: None,
                     rule: "contradiction".into(),
                     severity: "error".into(),
                     lifecycle: "open".into(),

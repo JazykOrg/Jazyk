@@ -256,6 +256,7 @@ impl Store {
             answer: Some("retract".to_string()),
         });
         Diagnostic {
+            goal: None,
             rule: "ratification-pending".to_string(),
             severity: "info".to_string(),
             subjects: vec![subject.to_string()],

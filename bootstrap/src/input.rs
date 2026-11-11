@@ -111,6 +111,7 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
         // Context participates in dirtiness, but sha256 remains the exact byte digest.
         let revision = crate::task_runtime::digest(raw.as_bytes());
         let section = Section {
+            reflected: None,
             title: path.clone(),
             kind: "blob".into(),
             order: 0,

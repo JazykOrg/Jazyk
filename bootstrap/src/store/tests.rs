@@ -246,6 +246,7 @@ fn move_to(id: &str, parent: &str) -> Op {
 
 fn diag(rule: &str, subjects: Vec<&str>) -> Diagnostic {
     Diagnostic {
+        goal: None,
         rule: rule.into(),
         severity: "error".into(),
         subjects: subjects.into_iter().map(String::from).collect(),

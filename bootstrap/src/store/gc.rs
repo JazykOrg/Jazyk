@@ -921,6 +921,7 @@ impl Store {
                     self.graph.diagnostics.insert(
                         id,
                         Diagnostic {
+                            goal: None,
                             rule,
                             severity,
                             subjects,

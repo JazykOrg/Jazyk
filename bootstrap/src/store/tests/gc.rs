@@ -347,6 +347,7 @@ fn pair_diagnostic_sticky_regardless_of_subject_order() {
         ..Default::default()
     };
     let d = |subjects: Vec<String>| Diagnostic {
+        goal: None,
         rule: "contradiction".into(),
         severity: "warning".into(),
         subjects,
@@ -401,6 +402,7 @@ fn answered_prompt_is_never_reasked_and_resolve_marks_handled() {
         freeform: true,
     };
     let with_prompt = |q: Option<&str>| Diagnostic {
+        goal: None,
         rule: "contradiction".into(),
         severity: "warning".into(),
         subjects: vec!["req:a".into(), "req:b".into()],
@@ -660,6 +662,7 @@ fn sweep_settles_cleared_markers() {
     mark(&mut s, &refs[1], "covered");
     mark(&mut s, &refs[2], "non-normative");
     let marker = |rule: &str, subject: &str| Diagnostic {
+        goal: None,
         rule: rule.into(),
         severity: "warning".into(),
         subjects: vec![subject.into()],

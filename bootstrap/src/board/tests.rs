@@ -81,6 +81,7 @@ pub(crate) fn settled_store() -> Store {
 
 fn unstable_ruling(subject: &str) -> crate::model::Diagnostic {
     crate::model::Diagnostic {
+        goal: None,
         rule: "unstable-derivation".into(),
         severity: "warning".into(),
         subjects: vec![subject.into()],

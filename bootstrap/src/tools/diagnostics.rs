@@ -405,6 +405,7 @@ impl ToolSession {
             }
         };
         let diagnostic = Diagnostic {
+            goal: None,
             rule,
             severity,
             subjects,

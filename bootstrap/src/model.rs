@@ -562,6 +562,12 @@ pub struct Diagnostic {
     // and it survives rebuilds. Mirrors docs/compiler/model/diagnostic.md#answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub answer: Option<DiagnosticAnswer>,
+    // On a `goal-failed` diagnostic: the goal that failed, whole, without its state,
+    // cause, or hints. No goal of its kind derives on its target while the diagnostic
+    // is open and the goal's computed change is the same.
+    // Mirrors docs/compiler/model/diagnostic.md#lifecycle-and-triage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal: Option<Box<Goal>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -654,9 +660,14 @@ pub struct Section {
     pub parent: Option<String>,
     pub raw: String,
     pub hash: String,
-    // Recomputed at load from the raw texts; never written to a docs/ record.
+    // Recomputed at load from the raw texts; never written to a sources/ record.
     #[serde(default)]
     pub lines: [usize; 2],
+    // The text the graph reflected before an edit the graph does not reflect yet:
+    // present while the section has no coverage mark, the evidence a reconcile shows.
+    // Mirrors docs/compiler/jazyk-folder.md#sourcesdoc-pathyaml.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reflected: Option<String>,
 }
 
 // A section's coverage mark. Mirrors docs/compiler/model/section.md#coverage.
@@ -1303,10 +1314,49 @@ pub struct LookalikeVerdict {
     pub pair: String,
     pub verdict: String,
     pub score: f64,
+    // Local: the generation that judged it on this machine; never written.
+    #[serde(default, skip_serializing)]
     pub generation: u64,
 }
 
 pub const LOOKALIKE_SEPARATE: &str = "separate";
+
+// The judgments a session or a person made on purpose, kept in the graph so no later
+// build asks again. Each records hashes of what it judged and lapses when they change.
+// Mirrors docs/compiler/jazyk-folder.md#graphdecisionskindidyaml.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Decisions {
+    // `a~b` (smaller id first) to the pair's verdict and both statement hashes.
+    #[serde(default)]
+    pub pairs: BTreeMap<String, PairDecision>,
+    // Entity id to its fact hash when reviewed.
+    #[serde(default)]
+    pub reviews: BTreeMap<String, String>,
+    // Instance id to the instance's and its type's fact hashes when checked.
+    #[serde(default)]
+    pub conformance: BTreeMap<String, BTreeMap<String, String>>,
+    // Requirement id to its statement hash when judged not structural.
+    #[serde(default)]
+    pub structure: BTreeMap<String, String>,
+    // Curated view id to the nodes its query matched when reviewed.
+    #[serde(default)]
+    pub curation: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PairDecision {
+    pub verdict: String,
+    pub statements: BTreeMap<String, String>,
+}
+
+pub const DECISION_KINDS: [&str; 6] = [
+    "lookalikes",
+    "pairs",
+    "reviews",
+    "conformance",
+    "structure",
+    "curation",
+];
 
 // The whole of status.yaml. Mirrors docs/compiler/graph.md#storage-layout.
 #[derive(Clone, Debug, Serialize, Deserialize)]

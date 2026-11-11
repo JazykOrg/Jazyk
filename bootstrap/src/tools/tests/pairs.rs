@@ -85,6 +85,7 @@ fn settle_pairs_carried_by_reuses_a_one_sided_contradiction() {
     t.snapshot.graph.diagnostics.insert(
         "diag:contradiction-5".into(),
         Diagnostic {
+            goal: None,
             rule: "contradiction".into(),
             severity: "error".into(),
             subjects: vec!["req:c".into(), "req:zzz".into()],
@@ -122,6 +123,7 @@ fn settle_pairs_lets_a_standing_contradiction_carry_the_verdict() {
     t.snapshot.graph.diagnostics.insert(
         "diag:contradiction-3".into(),
         Diagnostic {
+            goal: None,
             rule: "contradiction".into(),
             severity: "error".into(),
             subjects: vec!["req:a".into(), "req:c".into()],
@@ -173,6 +175,7 @@ fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
     t.snapshot.graph.diagnostics.insert(
         "diag:contradiction-7".into(),
         Diagnostic {
+            goal: None,
             rule: "contradiction".into(),
             severity: "warning".into(),
             subjects: vec!["req:b".into(), "req:c".into()],

@@ -664,6 +664,7 @@ fn duplicate_requirement_splits_warning_and_info() {
     s.graph.diagnostics.insert(
         "diag:duplicate-requirement-9".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "duplicate-requirement".into(),
             severity: "info".into(),
             subjects: vec!["req:b-1".into(), "req:b-2".into()],

@@ -128,6 +128,7 @@ fn defining_section_prefers_the_document_headed_with_the_name() {
     });
     s.graph.entities.insert("ent:api-server".into(), e);
     let root = |title: &str| Section {
+        reflected: None,
         title: title.into(),
         kind: "root".into(),
         order: 0,

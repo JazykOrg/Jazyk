@@ -6,7 +6,9 @@ use super::*;
 // build.yaml reads 0 here until its first commit writes the floor
 // (docs/compiler/graph.md#the-generation).
 pub fn read_generation(out: &Path) -> u64 {
-    crate::vfs::read_to_string(out.join(BUILD_FILE))
+    let local = crate::layout::build_file(out);
+    let path = if local.vexists() { local } else { out.join(BUILD_FILE) };
+    crate::vfs::read_to_string(path)
         .ok()
         .and_then(|t| {
             t.lines()
@@ -66,10 +68,30 @@ fn committed_status(status: &Status) -> serde_norway::Value {
     v
 }
 
-// The generation on disk as a load computes it: build.yaml raised to the floor of
-// status.yaml; None for a directory holding neither. Errors name a file that exists
-// and does not parse.
+// The store version on disk: `store.yaml`, else a version 4 `status.yaml`; None for a
+// directory holding neither. An error names a file that exists and does not parse.
+// Mirrors docs/compiler/graph.md#store-version.
+pub(super) fn disk_version(out: &Path) -> Result<Option<u32>, String> {
+    if let Some(v) = yaml_read::<StoreFile>(&crate::layout::store_file(out))? {
+        return Ok(Some(v.version));
+    }
+    Ok(yaml_read::<Status>(&crate::layout::legacy_status_file(out))?.map(|s| s.version))
+}
+
+// `store.yaml`: the store version, the only committed status.
+#[derive(Serialize, Deserialize, Default)]
+pub(super) struct StoreFile {
+    #[serde(default)]
+    pub(super) version: u32,
+}
+
+// The generation on disk as a load computes it: `local/build.yaml` for a version 5
+// store; a version 4 store's build.yaml raised to the floor its status names. None for
+// a directory holding none of them. Errors name a file that exists and does not parse.
 pub(super) fn disk_generation(out: &Path) -> Result<Option<u64>, String> {
+    if crate::layout::store_file(out).vexists() {
+        return Ok(yaml_read::<BuildFile>(&crate::layout::build_file(out))?.map(|b| b.generation));
+    }
     let local = yaml_read::<BuildFile>(&out.join(BUILD_FILE))?.map(|b| b.generation);
     let floor = match yaml_read::<Status>(&out.join("status.yaml"))? {
         Some(_) => {
@@ -385,26 +407,21 @@ pub fn fill_section_lines(rec: &mut DocRecord) {
 }
 
 impl Store {
-    // The status alone, inside the commit marker. Callers hold the lock and checked
-    // the refusal. Every status write stamps the store version.
-    pub(super) fn save_status(&self) {
-        if let Some(why) = self.unreadable() {
-            eprintln!(
-                "[jazyk] error: refusing to write {}: {}",
-                self.out.display(),
-                why
-            );
-            return;
+    // A status write is a whole save: what is open in memory decides the decisions
+    // and the goal-failed diagnostics, which are graph files. Callers hold the lock
+    // and checked the refusal.
+    pub(super) fn save_status(&mut self) {
+        if self.unreadable().is_none() {
+            self.project_decisions();
         }
-        let _marker = CommitMarker::begin(&self.out);
-        self.save_status_files();
+        self.save();
     }
 
     // A status write outside a changeset (a build's opening, absorbed derivations,
     // parked and failed goals, the verdict): under the lock and refused like a commit,
     // so a store that is unreadable, of another version, or behind the disk never
     // overwrites what it has not seen. Mirrors docs/compiler/graph.md#concurrency.
-    pub fn write_status(&self, what: &str) -> Result<(), String> {
+    pub fn write_status(&mut self, what: &str) -> Result<(), String> {
         let _flock = FileLock::acquire(&self.out);
         if let Some(why) = self.refuse(what) {
             return Err(why);
@@ -414,19 +431,23 @@ impl Store {
     }
 
     pub(super) fn save_status_files(&self) {
-        // status.yaml, then build.yaml: the generation there is the commit point.
+        // store.yaml, the decisions, this machine's build progress, then build.yaml:
+        // the generation there is the commit point.
         // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
-        let mut status = self.status.clone();
-        status.version = STORE_VERSION;
-        save_status_records(&self.out, &status);
-        let path = self.out.join("status.yaml");
-        report_write(&path, write_yaml(&path, &committed_status(&status)));
+        let status = &self.status;
+        let path = crate::layout::store_file(&self.out);
+        report_write(
+            &path,
+            write_yaml(&path, &StoreFile { version: STORE_VERSION }),
+        );
+        super::v5::save_decisions(&self.out, &self.decisions, &status.lookalikes);
+        super::v5::save_run(&self.out, status);
         let build = BuildFile {
             generation: status.generation,
-            verdict: status.verdict,
-            costs: status.costs,
-            spent: status.spent,
-            diagnostics: status.diagnostics,
+            verdict: status.verdict.clone(),
+            costs: status.costs.clone(),
+            spent: status.spent.clone(),
+            diagnostics: status.diagnostics.clone(),
             docs: self
                 .docs
                 .iter()
@@ -436,7 +457,7 @@ impl Store {
         };
         // Every file the commit point covers is on disk before it moves.
         sync_touched_dirs();
-        let path = self.out.join(BUILD_FILE);
+        let path = crate::layout::build_file(&self.out);
         report_write(&path, write_yaml(&path, &build));
         sync_touched_dirs();
     }

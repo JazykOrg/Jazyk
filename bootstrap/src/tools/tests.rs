@@ -132,6 +132,7 @@ fn session_with_stale_anchor() -> ToolSession {
 
 fn open_diag(rule: &str, subjects: &[&str]) -> Diagnostic {
     Diagnostic {
+        goal: None,
         rule: rule.into(),
         severity: "warning".into(),
         subjects: subjects.iter().map(|s| s.to_string()).collect(),

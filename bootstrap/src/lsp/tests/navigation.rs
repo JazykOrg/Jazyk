@@ -322,6 +322,7 @@ fn entity_hover_on_a_derived_grouping_names_its_proposal() {
     s.graph.diagnostics.insert(
         "diag:ratification-pending-1".into(),
         Diagnostic {
+            goal: None,
             rule: "ratification-pending".into(),
             severity: "info".into(),
             subjects: vec!["ent:promotions".into()],

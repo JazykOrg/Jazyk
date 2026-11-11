@@ -858,6 +858,7 @@ fn diagnostic_exists_takes_every_listed_subject() {
     s.graph.diagnostics.insert(
         "diag:contradiction-1".into(),
         Diagnostic {
+            goal: None,
             rule: "contradiction".into(),
             severity: "error".into(),
             subjects: vec!["req:a".into(), "req:b".into()],

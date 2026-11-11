@@ -18,6 +18,7 @@ fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
     s.graph.diagnostics.insert(
         "diag:incomplete-build-1".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "incomplete-build".into(),
             severity: "warning".into(),
             subjects: vec!["ent:backend".into()],
@@ -45,6 +46,7 @@ fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
     s.graph.diagnostics.insert(
         "diag:criterion-missing-1".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "criterion-missing".into(),
             severity: "warning".into(),
             subjects: vec![s
@@ -66,6 +68,7 @@ fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
     s.graph.diagnostics.insert(
         "diag:ambiguity-1".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "ambiguity".into(),
             severity: "warning".into(),
             subjects: vec![rid],

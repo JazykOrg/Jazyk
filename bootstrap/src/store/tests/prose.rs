@@ -358,6 +358,7 @@ fn derived_and_decreed_requirements_pend_ratify_and_retract() {
             Op::ReportDiagnostic {
                 id: String::new(),
                 diagnostic: Diagnostic {
+                    goal: None,
                     rule: "ratification-pending".into(),
                     severity: "info".into(),
                     subjects: vec!["prov:new".into()],

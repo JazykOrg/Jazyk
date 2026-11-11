@@ -210,6 +210,7 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
     t.snapshot.graph.diagnostics.insert(
         "diag:ratification-pending-1".into(),
         Diagnostic {
+            goal: None,
             rule: "ratification-pending".into(),
             severity: "warning".into(),
             subjects: vec!["req:shop-1".into()],

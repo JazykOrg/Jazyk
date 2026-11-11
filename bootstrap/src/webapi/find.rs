@@ -294,6 +294,7 @@ mod tests {
         .unwrap();
         let mut s = Store::default();
         let section = |title: &str, raw: &str, start: usize| Section {
+            reflected: None,
             title: title.into(),
             kind: "heading".into(),
             order: 0,

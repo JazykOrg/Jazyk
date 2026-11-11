@@ -907,12 +907,33 @@ pub(super) fn retire_v4_layout(out: &Path) {
         ),
     ];
     for (from, to) in moves {
-        if from.vexists() && !to.vexists() {
-            if let Some(parent) = to.parent() {
-                crate::vfs::create_dir_all(parent).ok();
+        if !from.vexists() {
+            continue;
+        }
+        if let Some(parent) = to.parent() {
+            crate::vfs::create_dir_all(parent).ok();
+        }
+        if from.vis_dir() && to.vis_dir() {
+            // The build that is upgrading already wrote here (its own lease, say):
+            // what it wrote stays, and the old entries join it.
+            if let Ok(rd) = crate::vfs::read_dir(&from) {
+                for e in rd.flatten() {
+                    let target = to.join(e.file_name());
+                    if !target.vexists() {
+                        crate::vfs::rename(e.path(), &target).ok();
+                    }
+                }
             }
+            remove_dir(from);
+        } else {
+            // A file the opening build wrote from defaults gives way to the old one,
+            // which holds this operator's modes and releases.
             crate::vfs::rename(&from, &to).ok();
         }
+    }
+    remove_file(out.join(".ledger.lock"));
+    if let Some(jazyk) = layout::jazyk_dir_of(out) {
+        remove_file(jazyk.join("project.lock"));
     }
     for d in [
         "diagrams",

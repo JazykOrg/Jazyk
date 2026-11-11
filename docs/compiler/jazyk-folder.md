@@ -390,7 +390,7 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | `decompile/drafts.yaml` | Draft documents awaiting the owner ([decompile](../consumers/decompile.md)). | YAML |
 | `deliverable-baseline/` | Deliverable files as they were before a generation run touched them ([gen](../consumers/gen.md)). | files |
 | `merged.yaml` | Source sections a git merge left for the next build to reconcile, written by the [merge driver](#merging-through-git); the next load drops their hashes in `sources/` and deletes the file. | YAML |
-| `.lock`, `.leases.lock`, `.committing` | The commit lock, the lease lock, and the marker present while a commit writes. | empty |
+| `.lock`, `.leases.lock`, `.ledger.lock`, `.committing` | The commit lock, the lease lock, the ledger's writer lock, and the marker present while a commit writes. | empty |
 
 ```yaml
 # Jazyk build state: this machine's commit counter, last verdict, and costs. Written by jazyk, never committed.

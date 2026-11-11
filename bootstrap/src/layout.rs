@@ -90,6 +90,11 @@ pub fn leases_lock_file(out: &Path) -> PathBuf {
     local_dir(out).join(".leases.lock")
 }
 
+/// The ledger's writer lock.
+pub fn ledger_lock_file(out: &Path) -> PathBuf {
+    local_dir(out).join(".ledger.lock")
+}
+
 /// The marker present while a commit writes.
 pub fn committing_file(out: &Path) -> PathBuf {
     local_dir(out).join(".committing")

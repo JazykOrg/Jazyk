@@ -253,10 +253,13 @@ comments; no work, no generation, no marker, and no cause is committed.
   `status.yaml` becomes `store.yaml`; `docs/` becomes `sources/`; lookalike verdicts
   become `graph/decisions/lookalikes/`; the partners each requirement's records list as
   judged become `graph/decisions/pairs/`; a failed goal becomes a `goal-failed`
-  diagnostic; the change records, parked goals, and alignment proposals are dropped,
-  since the next derivation computes the same work from the graph; local files move into
-  `local/`, output into `derived/`, logs into the log directory. A commit before that
-  writes the version 5 layout too. Ids stay: ids are immutable.
+  diagnostic; the change records, parked goals, and alignment proposals move into the
+  machine-local `local/run.yaml` ([a build's progress](#a-builds-progress)); the journal,
+  `control.yaml`, workers, and leases move into `local/`; output and the old in-project
+  logs are deleted, since a build recreates the output and logs now live outside the
+  project. A set holding a version 4 store counts as dirty, so a bare `jazyk compile`
+  (with `--sessions 0`, too) performs the rewrite. A commit before that writes the
+  version 5 layout too. Ids stay: ids are immutable.
 - A store whose version is newer than the binary's is never archived and never
   written. It reads as empty and read-only, and every writer refuses with
   `store-newer`, naming both versions and asking for an upgrade of Jazyk. A project

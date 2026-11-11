@@ -261,12 +261,22 @@ comments; no work, no generation, no marker, and no cause is committed.
   (with `--sessions 0`, too) performs the rewrite. A commit before that writes the
   version 5 layout too. Ids stay: ids are immutable.
 - A store whose version is newer than the binary's is never archived and never
-  written. It reads as empty and read-only, every writer refuses with `store-newer`
-  (naming both versions and asking for an upgrade of Jazyk), and a build stops at its
-  opening, before it writes any file or runs any session. A project compiled in two
-  places with different releases loses nothing, and neither does an older Jazyk left
-  running against a newer project, e.g. after a rollback. Version 4 releases that carry
-  the newer-store guard read a `store.yaml` the same way.
+  written. Jazyk refuses to work on it:
+  - Every command that works on the set (`compile`, `check`, `watch`, `preview`,
+    `explain`, `ripple`, `context`, `query`, `gen`, `test`, `decompile`, `docsgen`,
+    `viewer`, `release`, `answer`, `spend`, `monitor`) stops before it reads the graph,
+    prints `store-newer` (naming both versions and asking for an upgrade of Jazyk), and
+    exits with 2. `jazyk status` reports the set as `store-newer` and exits with 1.
+  - The store reads as empty and read-only, and every writer refuses with
+    `store-newer`: a commit, the ledger, the journal, the control state, workers,
+    leases, and the rendered output under `derived/`. No file lands in the set
+    directory.
+  - A build, a generation, a verification, or a decompile stops at its opening,
+    before it writes any file or runs any session, whichever frontend starts it.
+
+  A project compiled in two places with different releases loses nothing, and neither
+  does an older Jazyk left running against a newer project, e.g. after a rollback.
+  Version 4 releases that carry the newer-store guard read a `store.yaml` the same way.
 - A store of an older version than 4, or with no version (no `store.yaml` and no
   `status.yaml`), is archived whole to
   `.jazyk/local/archive/<set-id>-v<N>/` at the start of a build (an existing archive of

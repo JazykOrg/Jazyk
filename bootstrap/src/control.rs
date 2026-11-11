@@ -71,6 +71,11 @@ impl Control {
     // state: it moves aside to `control.yaml.bad` first, never overwritten.
     // Mirrors docs/compiler/control-plane.md#modes-and-releases.
     pub fn save(&self, out: &Path) {
+        // A newer store is never written (docs/compiler/graph.md#store-version).
+        if let Some(why) = crate::store::newer_store(out) {
+            eprintln!("[jazyk] error: {}; the control state stays as it is", why);
+            return;
+        }
         crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
         let path = Self::path(out);
         if let Ok(old) = crate::vfs::read_to_string(&path) {
@@ -222,6 +227,10 @@ pub fn register(out: &Path, kind: &str, client: &str) -> WorkerHandle {
 
 impl WorkerHandle {
     fn write(&self) {
+        // A newer store is never written (docs/compiler/graph.md#store-version).
+        if crate::store::newer_version(&self.out).is_some() {
+            return;
+        }
         crate::vfs::create_dir_all(workers_dir(&self.out)).ok();
         if let Ok(text) = serde_norway::to_string(&self.worker) {
             crate::vfs::write(
@@ -480,7 +489,7 @@ struct TakeoverLock {
 
 fn takeover_lock(out: &Path) -> TakeoverLock {
     #[cfg(not(target_arch = "wasm32"))]
-    if !crate::vfs::is_scoped() {
+    if !crate::vfs::is_scoped() && crate::store::newer_version(out).is_none() {
         crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
         let file = std::fs::OpenOptions::new()
             .read(true)
@@ -508,6 +517,10 @@ pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
 // Claim a goal batch: the lease names the goals it holds, so the board shows
 // claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
+    // A newer store takes no lease (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(out) {
+        return Err(why);
+    }
     let mut nonce = [0u8; 16];
     getrandom::fill(&mut nonce)
         .map_err(|error| format!("Cannot mint control claim identity: {error}"))?;
@@ -637,6 +650,11 @@ impl BuildGuard {
 pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<BuildGuard, String> {
     if let Some(error) = &proj.config_error {
         return Err(error.clone());
+    }
+    // A build, a generation, a verification, or a decompile on a newer store stops
+    // here, before any lock, lease, or session (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(out) {
+        return Err(why);
     }
     // The project's file view spans every set and owns no graph: a build on it
     // would write the shared `.jazyk/`. Graph operations address one set

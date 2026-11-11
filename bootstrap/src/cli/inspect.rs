@@ -21,11 +21,19 @@ pub fn run_status(opts: &Options) -> i32 {
         let root = project::find_root(&cwd).unwrap_or(cwd);
         return match crate::document_sets::Workspace::load(&root) {
             Ok(workspace) => {
-                print!("{}", render_sets_overview(&workspace.summary()));
+                let summary = workspace.summary();
+                print!("{}", render_sets_overview(&summary));
                 // The last line names where this project's logs live
                 // (docs/frontends/cli.md#jazyk-status).
                 println!("logs: {}", crate::layout::log_dir_for_root(&root).display());
-                0
+                // A set holding a newer store is not a working set
+                // (docs/compiler/graph.md#store-version).
+                let newer = summary["sets"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|s| s["state"] == "store-newer");
+                i32::from(newer)
             }
             Err((_, e)) => {
                 eprintln!("jazyk: {}", e);
@@ -36,6 +44,10 @@ pub fn run_status(opts: &Options) -> i32 {
 
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let (proj, _llm, out) = resolve(&[], opts);
+    if let Some(why) = crate::store::newer_store(&out) {
+        println!("{}: {}", proj.set_name.as_deref().unwrap_or("store"), why);
+        return 1;
+    }
     // Outside a project the store is the ad hoc one at the working directory: say
     // so, because every other line would otherwise read as a project's.
     if project::find_root(&cwd).is_none() {
@@ -83,6 +95,14 @@ pub(crate) fn render_sets_overview(summary: &serde_json::Value) -> String {
     }
     let mut out = String::new();
     for set in &sets {
+        if set["state"] == "store-newer" {
+            out.push_str(&format!(
+                "{}: {}\n",
+                set["name"].as_str().unwrap_or("?"),
+                set["error"].as_str().unwrap_or("store-newer")
+            ));
+            continue;
+        }
         let n = |k: &str| set["counts"][k].as_u64().unwrap_or(0);
         let verdict = set["verdict"]["state"]
             .as_str()

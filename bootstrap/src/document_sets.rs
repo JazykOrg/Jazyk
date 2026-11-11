@@ -386,6 +386,17 @@ impl Workspace {
             let p = self.resolve(Some(&set.id)).expect("validated set");
             let docs: Vec<_> = p.doc_files().iter().map(|f| crate::webapi::status::rel_doc(&self.root, f)).collect();
             let source: Vec<_> = files.iter().filter(|f| included(&set.source, f)).cloned().collect();
+            let warnings: Vec<_> = set.docs.iter().chain(&set.source).chain(&set.roots)
+                .filter(|pattern| !pattern.starts_with('!') && !files.iter().any(|f| crate::project::glob_match(pattern, f)))
+                .map(|pattern| format!("No files match {}", pattern)).collect();
+            // A store of a newer version is reported as such and never read: its board
+            // would derive from an empty graph (docs/compiler/graph.md#store-version).
+            // It stays dirty, so a compile that picks dirty sets reports its refusal.
+            if let Some(why) = crate::store::newer_store(&p.out) {
+                return json!({"id": set.id, "name": set.name, "docs": set.docs, "roots": set.roots, "source": set.source,
+                    "documents": docs, "sourceFiles": source, "dirty": true, "state": "store-newer", "error": why,
+                    "generation": 0, "verdict": crate::model::Verdict::default(), "counts": crate::board::Counts::default(), "warnings": warnings});
+            }
             let store = crate::store::Store::load(&p.out);
             let hashes = crate::control::current_doc_hashes(&p);
             let docs_dirty = hashes.len() != store.docs.len() || hashes.iter().any(|(name, hash)| store.docs.get(name).map(|r| &r.content_hash) != Some(hash));
@@ -396,9 +407,6 @@ impl Workspace {
             // (docs/compiler/graph.md#store-version).
             let upgrade = store.status.version == crate::store::UPGRADABLE_VERSION;
             let dirty = docs_dirty || pending_answers || upgrade || counts.open > 0 || counts.failed > 0;
-            let warnings: Vec<_> = set.docs.iter().chain(&set.source).chain(&set.roots)
-                .filter(|pattern| !pattern.starts_with('!') && !files.iter().any(|f| crate::project::glob_match(pattern, f)))
-                .map(|pattern| format!("No files match {}", pattern)).collect();
             json!({"id": set.id, "name": set.name, "docs": set.docs, "roots": set.roots, "source": set.source,
                 "documents": docs, "sourceFiles": source, "dirty": dirty,
                 "state": if docs.is_empty() { "empty" } else if dirty { "dirty" } else { "clean" },

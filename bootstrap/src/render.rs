@@ -157,6 +157,10 @@ fn remove_if_present(path: &Path) {
 // reported. Mirrors docs/compiler/diagrams.md#rendering and #output-layout.
 pub fn render_all(store: &Store, out: &Path) -> RenderReport {
     let mut report = RenderReport::default();
+    // A newer store's output is never written (docs/compiler/graph.md#store-version).
+    if crate::store::newer_version(out).is_some() {
+        return report;
+    }
     let mut keep: BTreeSet<PathBuf> = BTreeSet::new();
     for (id, view) in render_targets(store) {
         let Some(base) = diagram_base(out, &id) else {

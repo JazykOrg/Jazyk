@@ -313,6 +313,10 @@ pub async fn run_all(
     scopes_wanted: &[String],
     trace: &crate::session::Trace,
 ) -> Result<Value, String> {
+    // A newer store runs no session (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(&store.out) {
+        return Err(why);
+    }
     let control = crate::control::Control::load(proj, &store.out);
     let all = pending(proj, store, gs, &control);
     let targets: Vec<String> = all

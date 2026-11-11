@@ -728,6 +728,15 @@ impl Store {
     }
 
     fn load_uncached(out: &Path) -> Store {
+        // A newer store reads as empty and read-only, never as a mix of its files.
+        // Mirrors docs/compiler/graph.md#store-version.
+        if let Some(why) = newer_store(out) {
+            return Store {
+                out: out.to_path_buf(),
+                load_errors: vec![why],
+                ..Default::default()
+            };
+        }
         // Readers never take the lock. A read counts when no commit was in progress at
         // its start or its end and the generation held still across it; otherwise it
         // waits and retries. A store that never holds still within the wait loads
@@ -795,7 +804,7 @@ impl Store {
             }
         };
         if version.is_some_and(|v| v > STORE_VERSION) {
-            let why = newer_store(out, version.unwrap_or(0));
+            let why = newer_refusal(out, version.unwrap_or(0));
             eprintln!("[jazyk] error: {}", why);
             return Store {
                 out: out.to_path_buf(),
@@ -1014,7 +1023,7 @@ impl Store {
     // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
     pub(super) fn unreadable(&self) -> Option<String> {
         self.load_errors.first().map(|e| {
-            if e.starts_with("store-busy:") {
+            if e.starts_with("store-busy:") || e.starts_with("store-newer:") {
                 return e.clone();
             }
             format!(
@@ -1032,7 +1041,7 @@ impl Store {
             return Some(why);
         }
         match disk_version(&self.out) {
-            Ok(Some(v)) if v > STORE_VERSION => Some(newer_store(&self.out, v)),
+            Ok(Some(v)) if v > STORE_VERSION => Some(newer_refusal(&self.out, v)),
             Ok(Some(v)) if !readable_version(v) => Some(format!(
                 "store-version: {} holds a version {} store and this is version {}; a build archives it",
                 self.out.display(),
@@ -1228,9 +1237,9 @@ pub(super) fn collect_yaml(dir: &Path, out: &mut Vec<PathBuf>) {
 
 // The refusal for a store written by a newer Jazyk: never archived, never written.
 // Mirrors docs/compiler/graph.md#store-version.
-fn newer_store(out: &Path, version: u32) -> String {
+fn newer_refusal(out: &Path, version: u32) -> String {
     format!(
-        "store-newer: {} holds a version {} store and this Jazyk writes version {}; upgrade Jazyk to work on it",
+        "store-newer: {} holds a version {} store and this jazyk writes version {}; upgrade jazyk to open it",
         out.display(),
         version,
         STORE_VERSION

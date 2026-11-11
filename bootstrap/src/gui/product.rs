@@ -18,10 +18,12 @@ use std::path::{Path, PathBuf};
 pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
     let acp = crate::project::load_global_acp();
     let proj = st.proj();
-    let agent = match proj.acp.agent.as_deref().or(acp.agent.as_deref()) {
-        Some("embedded") | None => "embedded",
-        Some(_) => "external",
-    };
+    let agent =
+        match crate::acp::config::resolve_acp(None, &proj.acp, &acp, |n| std::env::var(n).ok()) {
+            Ok(a) if a.name == "embedded" => "embedded",
+            Ok(_) => "external",
+            Err(_) => "none",
+        };
     let llm = st.llm();
     let model = if llm.model.is_empty() {
         "none"
@@ -35,6 +37,7 @@ pub async fn capabilities(State(st): State<SharedState>) -> Json<Value> {
     };
     Json(json!({
         "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
+        "agentSelectionProtocol": 1,
         "backend": "server",
         "projects": "list",
         "docs": "write",

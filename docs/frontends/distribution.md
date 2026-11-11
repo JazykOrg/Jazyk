@@ -1,7 +1,7 @@
 # Native distribution
 
 Jazyk ships as native archives on GitHub Releases and as the `jazyk` npm package.
-Both channels contain the same native build. The npm package is a Node launcher.
+The native channels contain the same native build. The npm package is a Node launcher.
 Every npm package declares `https://jazyk.org` as its homepage.
 The editor remains at `jazyk.dev`.
 
@@ -19,6 +19,44 @@ PDFium and its notices. Rust dependency license files and the pinned native
 renderer notices are included in `THIRD_PARTY_NOTICES`. Graphviz is linked into the executable. Optional execution
 backends such as Docker retain their installation requirements. Executing local
 build and test commands on Windows requires `sh` on `PATH`, such as Git for Windows.
+
+## Additional package managers
+
+- Homebrew: `brew install jazykorg/tap/jazyk`.
+- Scoop: `scoop bucket add jazyk https://github.com/JazykOrg/scoop-bucket`,
+  then `scoop install jazyk/jazyk`.
+- Cargo: `cargo install --locked jazyk` with Rust 1.99.1 or newer and the
+  native compiler tools for the platform.
+
+Homebrew and Scoop install the complete GitHub Release distribution, including
+PDFium and notices. Homebrew keeps it in `libexec` and links the executable into
+`bin`. Scoop creates a shim for the executable. Both retain `lib/` beside it.
+Homebrew supports the four macOS and glibc Linux targets. Scoop supports Windows x64.
+
+Cargo builds from source. Its package contains the canonical embedded documentation,
+benchmark fixtures and task helper sources. Release preparation copies those files
+into a standalone staging tree without changing the canonical source layout.
+The patched compaction dependency is published as `jazyk-goose-context-management`
+under its Apache-2.0 license. The installed command remains `jazyk`.
+Graphviz uses the dependency's default prebuilt download when no local library is
+available. Cargo installs the executable only. For PDF input, install a compatible
+PDFium library and set `JAZYK_PDFIUM` to its path. Other input formats and diagram
+rendering do not require PDFium. Native archives include PDFium automatically.
+
+`scripts/release/source-package.py` prepares the standalone Cargo source tree.
+Run `cargo package` and `cargo publish --dry-run` in that tree before publication.
+Publish the patched compaction crate before Jazyk. Registry versions are immutable.
+
+`scripts/release/package-managers.py` generates a Homebrew formula and Scoop
+manifest from a published release manifest. It verifies archive hashes against
+`SHA256SUMS` and pins versioned URLs. The `release-packages.yml` workflow validates
+source packages and generates package-manager metadata. Publication uses the
+existing published GitHub Release and its exact source commit. It can be retried
+independently of npm. The workflow publishes Cargo packages with
+`CARGO_REGISTRY_TOKEN` and retains Homebrew and Scoop manifests as an artifact. Commit those manifests to
+`JazykOrg/homebrew-tap` and `JazykOrg/scoop-bucket` with the owner signing identity.
+A first release publishes the compaction crate before Jazyk.
+Prereleases do not update the stable Homebrew or Scoop manifests.
 
 ## npm launcher
 

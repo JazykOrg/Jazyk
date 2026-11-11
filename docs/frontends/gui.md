@@ -893,3 +893,61 @@ Fragments and queries are retained. Absolute web URLs, code examples and prose
 mentions are unchanged. Documents outside the project and binary document links
 cannot be rewritten. The response lists updated files and these limits are shown
 before a move. Deleting a file does not delete references to it.
+
+## Coding agent selection
+
+The editor chooses a coding agent independently of its model source. The open
+project determines where the agent runs. Cloud projects use the hosted agent.
+A connected local project runs its agent in `jazyk gui`. Browser projects run
+the embedded agent in the browser. A local connection never grants local tools
+to a Cloud project.
+
+`GET /api/agents` lists the embedded agent and configured ACP profiles. Discovery
+checks executable presence without starting inference, downloading adapters, or
+changing login. Installed does not mean authenticated. Each entry states its
+readiness and setup action. Codex and Claude require their executable as well as
+an ACP adapter launcher. Custom profiles retain their configured command.
+
+`POST /api/agents/selections` admits a tab's selection. It returns an opaque id.
+Subsequent requests carry `X-Jazyk-Agent-Selection`. An unknown id fails instead
+of falling back. A selection is process-local and contains an agent profile and
+optional model settings. Keys are never returned or written to project settings.
+New conversations and jobs bind that selection. Existing conversations and queued
+jobs retain theirs. Executor overrides remain in effect for worker goals.
+Changing a selection does not rewrite the CLI configuration.
+
+The embedded agent uses the configured local endpoint, a custom OpenAI-compatible
+endpoint, Cloud inference, or a compatible browser model. External agents use
+their own login and model configuration. Installing an adapter is an explicit
+setup action. Discovery alone never installs it. Setup uses the pinned ACP adapter.
+
+Cloud inference for a local project runs through the binary. The browser authorizes
+a one-time challenge with its signed-in account. The binary exchanges its private
+proof for a short-lived inference credential. It never receives the account cookie,
+GitHub token, or provider key. The credential expires and is invalid when the
+issuing browser session expires or signs out. Its only authority is model inference.
+Local tools and changes stay on disk. Model context is sent to the chosen provider.
+A browser project can use the same account inference service without becoming a
+hosted project. Service accounting and spending ceilings apply to both paths.
+
+A browser model requires native tool calls and the complete project prompt. Basic
+Prompt API presence is insufficient. A local project using browser inference
+routes model requests through an authenticated bridge. A missing browser reply
+fails within a deadline. It never switches to another provider. Browser closure
+aborts its requests. Inference and tool execution remain separate.
+
+A selected agent or provider becoming unavailable fails visibly. There is no
+automatic fallback to paid Cloud inference. No AI disables new AI work while
+preserving document editing. Choosing a source never starts a build or model probe.
+
+Selected credentials live only for the connector process. A restored conversation
+that depended on a process-local selection requires a new conversation after the
+user chooses its agent again. It never resumes through the default provider.
+
+AI admission through a tab selection uses
+`/api/agent-selections/<id>/<route>` instead of `/api/<route>`. The gateway
+validates the selection and dispatches the original API route. This namespace
+makes an older connector reject the operation instead of ignoring the selection
+header and using its configured provider. Capabilities advertise
+`agentSelectionProtocol: 1`. Cancellation and deterministic reads retain their
+ordinary routes so expired selections cannot prevent Stop.

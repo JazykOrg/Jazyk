@@ -15,6 +15,15 @@ pub(super) struct FileLock {
 
 impl FileLock {
     pub(super) fn acquire(out: &Path) -> FileLock {
+        // A newer store takes no lock file: every writer refuses it after the
+        // acquire, so nothing lands in its directory (docs/compiler/graph.md#store-version).
+        if newer_version(out).is_some() {
+            return FileLock {
+                #[cfg(not(target_arch = "wasm32"))]
+                _file: None,
+                marker: None,
+            };
+        }
         let path = crate::layout::lock_file(out);
         if let Some(dir) = path.parent() {
             crate::vfs::create_dir_all(dir).ok();

@@ -1,7 +1,14 @@
 [package]
 name = "jazyk"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
+rust-version = "1.99.1"
+description = "A natural language compiler with a persistent semantic graph"
+license = "MIT"
+repository = "https://github.com/JazykOrg/Jazyk"
+homepage = "https://jazyk.org"
+keywords = ["compiler", "documentation", "llm", "uml"]
+categories = ["command-line-utilities", "development-tools"]
 
 # The crate is a library with two front doors: the native binary and the wasm
 # backend (docs/frontends/wasm.md). `cdylib` is what wasm-bindgen links.
@@ -56,7 +63,7 @@ maybe-async = "0.2.11"
 futures = "0.3"
 goose-agent = "=0.1.0-alpha.13"
 goose-provider-types = "=0.1.0-alpha.13"
-goose-context-management = { path = "vendor/goose-context-management" }
+goose-context-management = { package = "jazyk-goose-context-management", version = "=0.1.0-alpha.13-jazyk.1", path = "vendor/goose-context-management" }
 rmcp = { version = "=3.4.1", default-features = false, features = ["server", "macros"] }
 tokio = { version = "1", default-features = false, features = ["macros", "sync", "rt", "time"] }
 tokio-util = { version = "0.7", features = ["rt"] }
@@ -100,8 +107,8 @@ pdfium-render = { version = "=0.9.4", default-features = false, features = ["pdf
 tempfile = { version = "3", optional = true }
 zip = { version = "8.6", default-features = false, features = ["deflate"], optional = true }
 # Diagram renderer (docs/compiler/diagrams.md): PlantUML reimplemented in Rust, Graphviz
-# linked as a prebuilt static archive fetched by the crate's own opt-in path (see
-# .cargo/config.toml); resvg rasterizes the SVG where a surface needs pixels.
+# linked as a prebuilt static archive fetched by the crate's default download path.
+# resvg rasterizes the SVG where a surface needs pixels.
 plantuml-little = { version = "=1.2026.2-4", default-features = false, features = ["metrics-ttf-parser"] }
 resvg = "0.48"
 

@@ -125,13 +125,15 @@ fn set_projection(
         names
             .into_iter()
             .filter(|name| !internal(name))
-            .map(|name| {
-                let bytes = files
-                    .get(&name)
-                    .ok_or_else(|| format!("missing projected file: {name}"))?;
-                let content = std::str::from_utf8(bytes)
-                    .map_err(|_| format!("projected file is not UTF-8 text: {name}"))?;
-                Ok((name, content.to_owned()))
+            .filter_map(|name| {
+                let Some(bytes) = files.get(&name) else {
+                    return Some(Err(format!("missing projected file: {name}")));
+                };
+                // Binary inputs and assets remain byte-for-byte in the snapshot.
+                // These maps are only the host's text projections.
+                std::str::from_utf8(bytes)
+                    .ok()
+                    .map(|content| Ok((name, content.to_owned())))
             })
             .collect()
     };

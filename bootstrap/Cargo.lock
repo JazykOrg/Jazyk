@@ -1303,21 +1303,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "goose-context-management"
-version = "0.1.0-alpha.13"
-dependencies = [
- "anyhow",
- "async-trait",
- "goose-provider-types",
- "include_dir",
- "minijinja",
- "rmcp",
- "serde",
- "serde_json",
- "tracing",
-]
-
-[[package]]
 name = "goose-provider-types"
 version = "0.1.0-alpha.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1362,9 +1347,9 @@ dependencies = [
 
 [[package]]
 name = "graphviz-anywhere"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6c40ef9e5984936739e692c1bf1ddeff82b1262e3704c92c8e5a7e2dbdeafa8"
+checksum = "08dfb64b2ad89d8b8c05a4e870567312800ed6e35ede2ace26b7723691da78fe"
 dependencies = [
  "supramark-diagram-core",
  "thiserror 1.0.69",
@@ -1770,7 +1755,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "jazyk"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "agent-client-protocol",
  "anyhow",
@@ -1793,8 +1778,8 @@ dependencies = [
  "globset",
  "gloo-timers",
  "goose-agent",
- "goose-context-management",
  "goose-provider-types",
+ "jazyk-goose-context-management",
  "js-sys",
  "jsonc-parser",
  "libc",
@@ -1834,6 +1819,21 @@ dependencies = [
  "wasm-bindgen-futures",
  "which",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "jazyk-goose-context-management"
+version = "0.1.0-alpha.13-jazyk.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "goose-provider-types",
+ "include_dir",
+ "minijinja",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]

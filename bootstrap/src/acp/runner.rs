@@ -112,6 +112,7 @@ pub struct AcpRunner {
     // The [acp] agent: chat, answer, and follow sessions run on it, and it is the
     // executor for every kind without an override.
     default_agent: ResolvedAgent,
+    selected: bool,
     llm: Llm,
     project: Project,
     out: PathBuf,
@@ -207,11 +208,20 @@ impl AcpRunner {
     // Resolve the default agent (config ladder; JAZYK_ACP_AGENT carries the --agent
     // flag). Hosts spawn lazily per profile on the first session.
     pub fn start(project: &Project, llm: &Llm, out: &Path) -> Result<AcpRunner, String> {
+        Self::start_selected(project, llm, out, None)
+    }
+
+    pub fn start_selected(
+        project: &Project,
+        llm: &Llm,
+        out: &Path,
+        selected: Option<&str>,
+    ) -> Result<AcpRunner, String> {
         if crate::vfs::is_scoped() {
             return Err("hosted workspaces use the in-process runner".into());
         }
         let default_agent = config::resolve_acp(
-            None,
+            selected,
             &project.acp,
             &crate::project::load_global_acp(),
             |name| std::env::var(name).ok(),
@@ -219,6 +229,7 @@ impl AcpRunner {
         Ok(AcpRunner {
             hosts: Mutex::new(BTreeMap::new()),
             default_agent,
+            selected: selected.is_some(),
             llm: llm.clone(),
             project: project.clone(),
             out: out.to_path_buf(),
@@ -242,7 +253,13 @@ impl AcpRunner {
             &self.project.executors,
             &crate::project::load_global_acp(),
             &crate::project::load_global_executors(),
-            |name| std::env::var(name).ok(),
+            |name| {
+                if self.selected {
+                    None
+                } else {
+                    std::env::var(name).ok()
+                }
+            },
         )
     }
 
@@ -255,10 +272,17 @@ impl AcpRunner {
         let mut v = vec![
             ("JAZYK_LLM_BASE_URL".to_string(), self.llm.base_url.clone()),
             ("JAZYK_MODEL".to_string(), self.llm.model.clone()),
+            ("JAZYK_API_KEY".to_string(), self.llm.api_key.clone()),
             ("JAZYK_LLM_API".to_string(), self.llm.api.clone()),
         ];
-        if !self.llm.api_key.is_empty() {
-            v.push(("JAZYK_API_KEY".to_string(), self.llm.api_key.clone()));
+        if let Some(key_env) = self
+            .project
+            .llm
+            .api_key_env
+            .clone()
+            .or_else(|| crate::project::load_global_llm().api_key_env)
+        {
+            v.push((key_env, self.llm.api_key.clone()));
         }
         if let Some(summary) = &self.llm.reasoning_summary {
             v.push(("JAZYK_REASONING_SUMMARY".into(), summary.clone()));

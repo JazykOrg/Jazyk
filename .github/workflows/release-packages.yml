@@ -1,0 +1,97 @@
+name: Publish Cargo and prepare package managers
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing GitHub Release version, without v'
+        required: true
+        type: string
+      publish:
+        description: 'Publish Cargo packages after validation'
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      publish:
+        default: true
+        type: boolean
+    secrets:
+      CARGO_REGISTRY_TOKEN:
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: jazyk-source-packages
+  cancel-in-progress: false
+jobs:
+  packages:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - name: Select the published source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/master
+          python3 -c 'import os,re; assert re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+",os.environ["VERSION"])'
+          gh release download "v$VERSION" --pattern release-manifest.json --pattern SHA256SUMS --dir .local/package-release
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('.local/package-release')
+          manifest = json.loads((root/'release-manifest.json').read_text())
+          checks = dict(line.split('  ', 1)[::-1] for line in (root/'SHA256SUMS').read_text().splitlines())
+          assert checks['release-manifest.json'] == hashlib.sha256((root/'release-manifest.json').read_bytes()).hexdigest()
+          assert manifest['version'] == os.environ['VERSION']
+          commit = subprocess.check_output(['git','rev-parse',f'v{manifest["version"]}^{{commit}}'],text=True).strip()
+          assert manifest['commit'] == commit
+          subprocess.run(['git','checkout','--detach',commit],check=True)
+          PY
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
+        with:
+          toolchain: 1.99.1
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          workspaces: bootstrap
+          key: source-packages
+      - name: Check metadata generation
+        run: |
+          python3 scripts/release/publish-source.test.py
+          python3 scripts/release/package-managers.test.py
+          python3 scripts/release/source-package.test.py
+          python3 scripts/release/package-managers.py .local/package-release .local/package-managers
+      - name: Validate compaction fork
+        run: cargo publish --dry-run --locked --manifest-path bootstrap/vendor/goose-context-management/Cargo.toml
+      - name: Publish compaction fork if absent
+        if: inputs.publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN"
+          python3 scripts/release/publish-source.py fork
+      - name: Prepare and verify the source package
+        run: |
+          python3 scripts/release/source-package.py .local/cargo-source
+          cargo package --locked --manifest-path .local/cargo-source/Cargo.toml
+          cargo publish --dry-run --locked --manifest-path .local/cargo-source/Cargo.toml
+          cargo install --locked --path .local/cargo-source/target/package/jazyk-${{ inputs.version }} --root .local/cargo-install
+          .local/cargo-install/bin/jazyk --help
+      - name: Publish Jazyk
+        if: inputs.publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: python3 scripts/release/publish-source.py jazyk .local/cargo-source/Cargo.toml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-manager-manifests
+          path: .local/package-managers/
+          if-no-files-found: error

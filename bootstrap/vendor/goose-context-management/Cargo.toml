@@ -12,8 +12,8 @@
 [package]
 edition = "2021"
 rust-version = "1.94.1"
-name = "goose-context-management"
-version = "0.1.0-alpha.13"
+name = "jazyk-goose-context-management"
+version = "0.1.0-alpha.13-jazyk.1"
 authors = ["AAIF <ai-oss-tools@block.xyz>"]
 build = false
 autolib = false
@@ -21,10 +21,10 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "Conversation compaction for Goose"
+description = "Goose conversation compaction with Jazyk WASM portability fixes"
 readme = "README.md"
 license = "Apache-2.0"
-repository = "https://github.com/aaif-goose/goose"
+repository = "https://github.com/JazykOrg/Jazyk"
 
 [features]
 default = []

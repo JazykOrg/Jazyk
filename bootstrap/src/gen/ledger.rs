@@ -351,6 +351,15 @@ impl Ledger {
     // Mirrors docs/consumers/gen.md#the-ledger.
     pub fn save(&self, out: &Path) -> Result<(), String> {
         let path = Self::path(out);
+        // A newer store's ledger is never written (docs/compiler/graph.md#store-version).
+        if let Some(why) = crate::store::newer_store(out) {
+            eprintln!(
+                "[jazyk] error: refusing to write {}: {}",
+                path.display(),
+                why
+            );
+            return Err(why);
+        }
         if let Some(why) = &self.unreadable {
             let e = format!(
                 "refusing to write {}: the ledger did not load: {}",

@@ -39,6 +39,8 @@ pub struct AcpAgentProfile {
 // profile. Mirrors docs/compiler/project-settings.md#acp.
 #[derive(Clone, Default)]
 pub struct AcpSettings {
+    // Request-local GUI selection, never parsed from or saved to configuration.
+    pub runtime_agent: Option<String>,
     pub agent: Option<String>,
     pub agents: BTreeMap<String, AcpAgentProfile>,
 }
@@ -46,6 +48,7 @@ pub struct AcpSettings {
 // Parse the [acp] table out of a jazyk.toml (or the global config).
 fn parse_acp(t: &Toml) -> AcpSettings {
     let mut s = AcpSettings {
+        runtime_agent: None,
         agent: t.string("acp.agent"),
         agents: BTreeMap::new(),
     };

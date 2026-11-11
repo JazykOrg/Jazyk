@@ -59,9 +59,11 @@ snapshot. Unrecorded output does not enter a delivery merely because it exists. 
 ownership, not a current verification verdict. Delivery still requires its own
 approval and CI evidence against `criteria` and `graph_generation`.
 
-These two maps contain UTF-8 text. A selected binary file returns an explicit
-error. The full snapshot retains binary files and all internal state. Projection
-never deletes a file from the workspace.
+These two maps contain UTF-8 text. Binary authored files, documentation inputs,
+and ledger-owned assets stay in the full snapshot and are omitted from these
+text maps. They do not fail projection or prevent an upload from being saved.
+Document selection still applies to binary inputs. Committed compiler state must
+be valid UTF-8 text. Projection never deletes a file from the workspace.
 
 ## Models and events
 

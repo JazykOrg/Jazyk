@@ -154,6 +154,7 @@ impl JobKind {
 }
 
 pub struct Job {
+    agent_selection: Option<Arc<super::agents::Selection>>,
     pub id: u64,
     pub kind: JobKind,
     pub state: &'static str, // queued | running | done | failed | cancelled
@@ -188,6 +189,7 @@ impl Job {
             "finishedAt": self.finished_at,
             "result": self.result,
             "stem": self.stem,
+            "agentSelection": self.agent_selection.as_ref().map(|s|s.summary()),
         })
     }
 }
@@ -329,7 +331,11 @@ impl JobManager {
             }
         }
         for qid in &inner.queue {
-            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| {
+                j.kind == kind
+                    && j.agent_selection.as_ref().map(|s| &s.id)
+                        == st.agent_selection.as_ref().map(|s| &s.id)
+            }) {
                 // A request for the whole set widens a queued selected build.
                 if let Some(h) = &j.selection {
                     h.widen(None);
@@ -351,6 +357,7 @@ impl JobManager {
         inner.next_id += 1;
         let id = inner.next_id;
         let job = Job {
+            agent_selection: st.agent_selection.clone(),
             id,
             kind,
             state: "queued",
@@ -398,7 +405,11 @@ impl JobManager {
             }
         }
         for qid in &inner.queue {
-            if let Some(j) = inner.jobs.get(qid).filter(|j| j.kind == kind) {
+            if let Some(j) = inner.jobs.get(qid).filter(|j| {
+                j.kind == kind
+                    && j.agent_selection.as_ref().map(|s| &s.id)
+                        == st.agent_selection.as_ref().map(|s| &s.id)
+            }) {
                 if let Some(h) = &j.selection {
                     h.widen(Some(items.clone()));
                 }
@@ -408,7 +419,12 @@ impl JobManager {
         if let Some(j) = inner
             .running
             .and_then(|rid| inner.jobs.get(&rid))
-            .filter(|j| j.kind == kind && !j.cancel.load(Ordering::Relaxed))
+            .filter(|j| {
+                j.kind == kind
+                    && j.agent_selection.as_ref().map(|s| &s.id)
+                        == st.agent_selection.as_ref().map(|s| &s.id)
+                    && !j.cancel.load(Ordering::Relaxed)
+            })
         {
             if let (Some(h), Some(started)) = (&j.selection, j.started) {
                 if !saved_since(&st.proj(), &items, started)
@@ -579,7 +595,7 @@ impl JobManager {
 // cancelled job to discard its active session and release the store lock.
 pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || loop {
-        let (id, kind, cancel, selection) = {
+        let (id, kind, cancel, selection, agent_selection) = {
             let jm = &st.jobs;
             let mut inner = jm.inner.lock().unwrap();
             loop {
@@ -597,6 +613,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
                         job.kind.clone(),
                         job.cancel.clone(),
                         job.selection.clone(),
+                        job.agent_selection.clone(),
                     );
                 }
                 inner = jm.wake.wait(inner).unwrap();
@@ -607,6 +624,10 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
 
         // The transcript: one JSON-lines file per job under <out>/trace/, flushed per
         // line so a tail (or the API) always sees a parseable prefix.
+        let mut st = st
+            .scoped(st.proj().set_id.as_deref())
+            .expect("worker scope");
+        Arc::get_mut(&mut st).unwrap().agent_selection = agent_selection;
         // Mirrors docs/frontends/gui.md#jobs.
         let stem = {
             let started = crate::verify::now_iso();
@@ -799,7 +820,12 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
         JobKind::Gen { entities, force } => {
             // The clicked gen is an approval and holds the build lease, same as the CLI.
             let _build = crate::control::begin_internal_build(&st.proj(), &st.out, "generate")?;
-            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
+            let runner = crate::acp::runner::AcpRunner::start_selected(
+                &st.proj(),
+                &st.llm(),
+                &st.out,
+                st.agent_selection.as_ref().map(|s| s.agent.name.as_str()),
+            )?;
             runner.set_build_token(Some(_build.token().to_owned()));
             let store = crate::store::Store::load(&st.out);
             crate::gen::run_all(&store, &runner, &st.gs(), entities, *force, trace)
@@ -825,7 +851,12 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
                     },
                 );
             }
-            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
+            let runner = crate::acp::runner::AcpRunner::start_selected(
+                &st.proj(),
+                &st.llm(),
+                &st.out,
+                st.agent_selection.as_ref().map(|s| s.agent.name.as_str()),
+            )?;
             let store = crate::store::Store::load(&st.out);
             crate::verify::run_all(
                 &store,
@@ -842,7 +873,12 @@ fn execute(st: &SharedState, kind: &JobKind, trace: &Trace) -> Result<Value, Str
             Ok(crate::verify::audit(&store, &st.gs()))
         }
         JobKind::Decompile { scopes } => {
-            let runner = crate::acp::runner::AcpRunner::start(&st.proj(), &st.llm(), &st.out)?;
+            let runner = crate::acp::runner::AcpRunner::start_selected(
+                &st.proj(),
+                &st.llm(),
+                &st.out,
+                st.agent_selection.as_ref().map(|s| s.agent.name.as_str()),
+            )?;
             let store = crate::store::Store::load(&st.out);
             crate::control::release_decompile(&st.proj(), &st.out, scopes);
             crate::decompile::run_all(&st.proj(), &store, &runner, &st.gs(), scopes, trace)
@@ -1403,6 +1439,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let project = crate::project::Project::load(dir.path());
         let state = Arc::new(super::super::state::AppState {
+            agent_choices: Arc::new(super::super::agents::Choices::default()),
+            agent_selection: None,
             root: dir.path().into(),
             out: dir.path().join(".jazyk"),
             gs: std::sync::RwLock::new(crate::gen::GenSettings::resolve(&project)),
@@ -1491,6 +1529,7 @@ mod tests {
 
     fn finished(id: u64, state: &'static str) -> Job {
         Job {
+            agent_selection: None,
             id,
             kind: JobKind::Audit,
             state,

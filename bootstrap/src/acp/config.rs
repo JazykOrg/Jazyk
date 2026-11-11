@@ -25,6 +25,7 @@ pub fn resolve_acp(
     env: impl Fn(&str) -> Option<String>,
 ) -> Result<ResolvedAgent, String> {
     let name = flag
+        .or(proj.runtime_agent.as_deref())
         .map(|s| s.to_string())
         .or_else(|| env("JAZYK_ACP_AGENT"))
         .or_else(|| proj.agent.clone())
@@ -52,7 +53,13 @@ pub fn resolve_executor(
     // The flag and the variable name one agent for the whole run and outrank the table.
     let named = flag
         .map(|s| s.to_string())
-        .or_else(|| env("JAZYK_ACP_AGENT"))
+        .or_else(|| {
+            if proj.runtime_agent.is_some() {
+                None
+            } else {
+                env("JAZYK_ACP_AGENT")
+            }
+        })
         .or_else(|| {
             // Per key, the project table shadows the global one; the kind outranks
             // the class.
@@ -279,6 +286,7 @@ mod tests {
             );
         }
         AcpSettings {
+            runtime_agent: None,
             agent: agent.map(|s| s.to_string()),
             agents,
         }

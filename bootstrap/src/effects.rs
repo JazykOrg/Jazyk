@@ -461,8 +461,10 @@ mod tests {
 
     #[test]
     fn decorate_adds_standard_acp_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
         let effects = record(
-            vec![file_effect(Path::new("/p"), "docs/a.md", Some("x\nold\n"), "x\nnew\n").unwrap()],
+            vec![file_effect(root, "docs/a.md", Some("x\nold\n"), "x\nnew\n").unwrap()],
             vec![json!({"op":"updated","kind":"requirement","id":"req:a","title":"T","changes":[{"field":"statement","before":"old","after":"new"}]})],
         )
         .unwrap();
@@ -472,7 +474,10 @@ mod tests {
         decorate(&mut u);
         assert_eq!(u["kind"], "edit");
         assert_eq!(u["content"][0]["type"], "diff");
-        assert_eq!(u["content"][0]["path"], "/p/docs/a.md");
+        assert_eq!(
+            u["content"][0]["path"],
+            root.join("docs/a.md").to_string_lossy().as_ref()
+        );
         assert_eq!(u["content"][0]["oldText"], "old\n");
         assert_eq!(u["locations"][0]["line"], 1);
         assert!(u["content"][1]["content"]["text"]

@@ -1,6 +1,6 @@
 [package]
 name = "jazyk"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 rust-version = "1.99.1"
 description = "A natural language compiler with a persistent semantic graph"

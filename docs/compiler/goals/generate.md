@@ -54,10 +54,7 @@ regardless of the ledger
 E.g.:
 
 ```yaml
-- id: c414-0
-  generation: 414
-  mutation: 0
-  kind: ledger-stale
+- kind: ledger-stale
   subject: ent:order
   via: ledger
   detail: {goal: generate, reason: unimplemented, changed: [req:orders-6]}

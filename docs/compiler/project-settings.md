@@ -16,21 +16,22 @@ Limits and budgets stay in the binary's [limits registry](./graph.md#limits).
 version = 1
 
 [[sets]]
-id = "ds_checkout"
+id = "checkout-7q2xd"
 name = "checkout"
 docs = ["docs/checkout.md", "docs-checkout/**/*.md"]
 roots = ["docs/checkout.md"]
 source = ["src/checkout/**", "src/shared/**"]
 
 [[sets]]
-id = "ds_search"
+id = "search-m4k8p"
 name = "search"
 docs = ["docs/search.md"]
 source = ["src/search/**", "src/shared/**"]
 ```
 
-Each set has an immutable `ds_` ID and an editable name. Its store is
-`.jazyk/<id>/`. The project may contain zero sets. `docs`, `roots`, and `source`
+Each set has an immutable id, minted from its name when it is created (`My set` →
+`my-set-ks8mf`, see [persistence and identity](./document-sets.md#persistence-and-identity)),
+and an editable name. Its store is `.jazyk/<id>/`. The project may contain zero sets. `docs`, `roots`, and `source`
 are ordered pattern lists. `source` is optional. Empty means no source mapping.
 Project settings are defaults; `[sets.llm]`, `[sets.acp]`, `[sets.executors]`,
 `[sets.workflow]`, and `[sets.gen]` override them for one set.

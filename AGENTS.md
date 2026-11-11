@@ -89,7 +89,8 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   directory's top level commits the current state of the graph and nothing about how it
   got there: `store.yaml` (the version), the node files (diagnostics included), the
   decisions under `graph/decisions/` (lookalikes kept apart, requirement pairs judged,
-  entities reviewed, instances conformed, requirements judged not structural; each with
+  entities reviewed, instances conformed, requirements judged not structural, view query
+  matches reviewed; each with
   hashes of what it judged, so it lapses by itself), `sources/` section trees, and `gen/`
   (the ledger, one file per row). Work to do is never stored: every derivation computes
   it from the docs, the graph, its decisions and sources, and the ledger. A build's
@@ -301,7 +302,7 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   commands `tasks`, `runs`, `run`, `run-status`, `run-log`, `run-cancel`
   (`docs/frontends/cli.md`).
 - A project is a directory with `.jazyk/jazyk.toml` (walk-up discovery). Run the
-  dogfood from the repository root. Each set stores state directly in `.jazyk/<id>/`.
+  dogfood from the repository root. Each set stores state directly in `.jazyk/<id>/`; a new set's id is its name as a slug plus five random characters (`My set` → `my-set-ks8mf`), minted once, and older `ds_` ids stay valid.
 - Always run `jazyk benchmark` before trusting a new model: it grades session capability
   through the native GDK runtime with deterministic checks (cases per goal kind are deferred, see
   `docs/benchmark/benchmark.md`). Local 4B-class models fail it; the harness still holds

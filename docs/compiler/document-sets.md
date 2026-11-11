@@ -173,14 +173,25 @@ Logs (project-wide conversations, grouped job records, transcripts) live in the 
 [log directory](./jazyk-folder.md#logs), outside the repository. Every file is listed
 in [the .jazyk folder](./jazyk-folder.md).
 
-- Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
-  and its worker session history. Set IDs require the `ds_` prefix, keeping them
-  distinct from project directories such as `local`.
+- Each set lives directly at `.jazyk/<set-id>/` and owns its store. Its id is minted
+  once from its name when the set is created: the [id slug](./model.md#identifiers)
+  of the name cut to 24 characters, then `-` and five random characters of lowercase
+  Crockford base 32 (`0123456789abcdefghjkmnpqrstvwxyz`). E.g. a set named `My set`
+  gets `my-set-ks8mf`, `Checkout API` gets `checkout-api-7q2xd`. A name with no letters
+  or digits gives the slug `set`. The suffix keeps two sets with one name apart and
+  two people creating a set of the same name on two branches from meeting in one
+  folder; a new id that already exists draws again.
+- An id is lowercase ASCII letters, digits, and `-`, starts with a letter or digit,
+  and is never `local`, the project's own [local folder](./jazyk-folder.md#local).
+  Ids minted before this rule (`ds_` and 32 hex digits) and hand-written ones such as
+  `ds_main` stay valid: an id never changes.
   The project owns conversations that discuss several sets and records grouping jobs.
 - A native project operation explicitly unlocks when its guard ends. A duplicated
   descriptor inherited by a concurrently starting child cannot prolong that lock.
 - A set rename changes only `name`. It preserves IDs, paths, graph, history, and
-  bindings. Copying a set definition mints an ID and starts an empty graph.
+  bindings, so after a rename the id's slug can read as the old name. That is
+  expected. Copying a set definition mints an ID from the copy's name and starts an
+  empty graph.
 - Project-level references carry `setId` and `localId`. JSON graph identifiers use
   `<kind>:<setId>::<local-tail>` on the wire. The kind prefix stays unchanged.
   The API decodes these identifiers before accessing a store. Local identifiers
@@ -216,14 +227,16 @@ The generated file ignores everything, then keeps the committed paths:
 !/.gitignore
 !/.gitattributes
 !/README.md
-!/ds_*/
-!/ds_*/store.yaml
-!/ds_*/graph/
-!/ds_*/graph/**
-!/ds_*/sources/
-!/ds_*/sources/**
-!/ds_*/gen/
-!/ds_*/gen/**
+!/*/
+/local/
+/*/*
+!/*/store.yaml
+!/*/graph/
+!/*/graph/**
+!/*/sources/
+!/*/sources/**
+!/*/gen/
+!/*/gen/**
 .*.tmp
 ```
 

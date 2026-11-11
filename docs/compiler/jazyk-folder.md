@@ -46,7 +46,7 @@ machine, or in the host's database when hosted, and is gone when the build ends.
   .gitattributes                     committed   generated: the merge driver for set files
   README.md                          committed   generated: this layout in brief
   local/                             local       project machine state
-  <set-id>/                          one document set
+  <set-id>/                          one document set, e.g. my-set-ks8mf/
     store.yaml                       committed   store version
     graph/entities/<id>.yaml         committed   one entity
     graph/requirements/<id>.yaml     committed   one requirement
@@ -59,6 +59,7 @@ machine, or in the host's database when hosted, and is gone when the build ends.
     graph/decisions/reviews/<id>.yaml       committed   one entity reviewed
     graph/decisions/conformance/<id>.yaml   committed   one instance checked against its type
     graph/decisions/structure/<id>.yaml     committed   one requirement judged not structural
+    graph/decisions/curation/<id>.yaml      committed   one view's query matches reviewed
     sources/<doc path>.yaml          committed   one document as the graph last reflected it
     gen/ledger.yaml                  committed   the deliverable-wide ledger keys
     gen/entities/<slug>.yaml         committed   one entity's generation state
@@ -68,10 +69,11 @@ machine, or in the host's database when hosted, and is gone when the build ends.
     derived/                         local       rebuilt output
 ```
 
-`<set-id>` is the set's id from `jazyk.toml`: generated as `ds_` and 32 hex digits when
-a set is created (e.g. `ds_7b91362a262947c0b363a30768ad419b`), or written by hand
-(e.g. `ds_main`). It never changes; the set's friendly `name` lives beside it in
-`jazyk.toml` and can be renamed freely ([document sets](./document-sets.md)).
+`<set-id>` is the set's id from `jazyk.toml`, made from its name when the set is
+created: the name as a slug, then `-` and five random characters. A set named `My set`
+lives in `.jazyk/my-set-ks8mf/`. The id never changes; renaming the set changes only its
+`name` in `jazyk.toml`. Ids from older projects (`ds_7b91362a…`, `ds_main`) stay as they
+are ([document sets](./document-sets.md#persistence-and-identity)).
 
 `<id>`, `<pair>`, and `<doc path>` are [file ids](./graph.md#node-files): `:` written `~`,
 `/` written `+`, other bytes `%XX`. A pair is the two ids joined by `~`, smaller first.
@@ -103,8 +105,8 @@ Committed.
 ```toml
 version = 1
 [[sets]]
-id = "ds_main"
-name = "Main"
+id = "my-set-ks8mf"
+name = "My set"
 docs = ["docs/**/*.md"]
 roots = ["docs/main.md"]
 ```
@@ -112,7 +114,8 @@ roots = ["docs/main.md"]
 ### `.gitignore`
 
 Generated. Ignores everything, then keeps the committed paths by name, so a new kind of
-output never enters a commit by accident. Committed.
+output never enters a commit by accident. `/*/` is every set directory; `/local/` and
+each set's `local/` and `derived/` stay out because they are not named. Committed.
 
 ```
 *
@@ -120,14 +123,16 @@ output never enters a commit by accident. Committed.
 !/.gitignore
 !/.gitattributes
 !/README.md
-!/ds_*/
-!/ds_*/store.yaml
-!/ds_*/graph/
-!/ds_*/graph/**
-!/ds_*/sources/
-!/ds_*/sources/**
-!/ds_*/gen/
-!/ds_*/gen/**
+!/*/
+/local/
+/*/*
+!/*/store.yaml
+!/*/graph/
+!/*/graph/**
+!/*/sources/
+!/*/sources/**
+!/*/gen/
+!/*/gen/**
 .*.tmp
 ```
 
@@ -136,11 +141,15 @@ output never enters a commit by accident. Committed.
 Generated. Committed.
 
 ```
-/ds_*/** merge=jazyk
+/*/store.yaml merge=jazyk
+/*/graph/** merge=jazyk
+/*/sources/** merge=jazyk
+/*/gen/** merge=jazyk
 ```
 
-When a merge finds a file under a set directory changed on both sides, git runs the
-merge driver named `jazyk` instead of its own line-by-line merge
+Each line names a committed path of every set directory (`/*/` matches any set; the
+project's `local/` holds none of these). When a merge finds such a file changed on both
+sides, git runs the merge driver named `jazyk` instead of its own line-by-line merge
 ([merging through git](#merging-through-git)). Git takes the driver's command from the
 repository's own configuration, which a repository cannot commit, so `jazyk setup` and
 every build register it there. Where it is not registered (a fresh clone before the
@@ -283,18 +292,19 @@ the graph is deleted by the sweep.
 
 | Kind | Decides | Lapses when |
 |---|---|---|
-| `lookalikes/<pair>.yaml` | Two entities with similar names are different things ([dedupe](./goals/dedupe-candidates.md#verdicts-are-remembered)). | Their lookalike score rises above the score judged. |
+| `lookalikes/<pair>.yaml` | Two entities with similar names are different things ([dedupe](./goals/dedupe-candidates.md#verdicts-are-remembered)). | Their lookalike score changes (a rename, a new alias, a new document mentioning them). |
 | `pairs/<pair>.yaml` | Two requirements were judged against each other: consistent, or a diagnostic was filed ([rejudge-pair](./goals/rejudge-pair.md)). | Either statement changes. |
 | `reviews/<id>.yaml` | An entity's definition, parent, and attributes were reviewed against its requirements ([review-entity](./goals/review-entity.md)). | The entity's facts change. |
 | `conformance/<id>.yaml` | An instance was checked against its type ([conform-instance](./goals/conform-instance.md)). | The instance or its type changes. |
 | `structure/<id>.yaml` | A requirement naming several entities states no structural link between them ([declare-edges](./goals/declare-edges.md)). | The statement changes. |
+| `curation/<id>.yaml` | The nodes a curated view's query matched were reviewed: kept or excluded ([curate-view](./goals/curate-view.md)). | The query matches a node it does not list. |
 
 ```yaml
 # Jazyk decision: two similar entities judged to be different things. Written by jazyk.
 # yaml-language-server: $schema=https://jazyk.org/schemas/lookalike.json
 id: ent:audit-log~ent:audit-trail
 verdict: separate
-score: 0.5
+score: 0.5          # asked again when the score changes
 ```
 
 ```yaml

@@ -173,7 +173,7 @@ The board derives a `bind` goal from a `ledger-stale` change whose `detail.goal`
 `bind`, computed at derivation (never stored) whenever the ledger and the graph disagree
 about a requirement
 ([goal derivation](../compiler/reconciler.md#goal-derivation)). Nothing invokes binding
-by name; the board notices the gap, with the reason in the record:
+by name; the board notices the gap, with the reason in the finding's `detail`:
 
 - `unbound`: the requirement has no row. It is new (just extracted), or the whole ledger
   is (an adopted project).

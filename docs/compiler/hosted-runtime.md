@@ -230,3 +230,10 @@ The [shared runtime](./agent-runtime.md#checkpoints) defines model and tool rece
 MCP restoration and parent continuation. The private host owns storage, tenant
 policy, job reclaim and idempotent accounting reconciliation. Internal transport
 metadata identifies model requests and is removed before provider dispatch.
+
+A hosted build's progress (its batch, the goals it parked, its spend, its reopen
+counts) is part of the resume capsule, not of the workspace snapshot: the snapshot holds
+only the committed graph and the set's local files. A build suspended for a deploy
+resumes from the capsule where it stopped. The host deletes the capsule when the build
+ends. A build whose capsule is lost starts over, and its first derivation finds the same
+work ([a build's progress](./graph.md#a-builds-progress)).

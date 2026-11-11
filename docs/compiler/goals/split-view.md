@@ -27,9 +27,11 @@ node.
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 One [change record](../graph.md#change-records) kind derives the goal:
-`threshold-crossed` on a view (`via: limits`), written by the limit counts at commit
-([derived data](../graph.md#derived-data)) when a count is over the view's threshold.
+`threshold-crossed` on a view (`via: limits`), computed per derivation from the limit
+counts ([derived data](../graph.md#derived-data)) when a count is over the view's
+threshold.
 Five limits of [the registry](../graph.md#the-registry) apply to views:
 
 | limit | soft | hard | counts |
@@ -46,19 +48,15 @@ the thresholds in force, and for `edges-per-view` the shown pairs with the most 
 E.g.:
 
 ```yaml
-- id: c421-0
-  generation: 421
-  mutation: 0
-  kind: threshold-crossed
+- kind: threshold-crossed
   subject: view:class/commerce
   via: limits
   detail: {limit: members-per-structural-view, count: 23, soft: 20, hard: 30}
 ```
 
-- The record is level-triggered: it stands while the count is over the threshold and
-  clears on its own when the count falls back under it by any path (a merge, an
-  exclusion, a collapse, a delete). Resolving the goal clears it, and the next commit
-  writes it again when the count is still over.
+- The finding is level-triggered: it stands while the count is over the threshold and
+  ends when the count falls back under it by any path (a merge, an exclusion, a
+  collapse, a delete). A goal resolved while the count is still over derives again.
 - Default views cross limits like any view: a scope of forty entities puts its default
   class view over the limit, and the split makes the view curated
   ([default views](../model/view.md#default-views)).

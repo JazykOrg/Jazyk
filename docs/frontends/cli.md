@@ -491,7 +491,7 @@ Orders: dirty, generation 4, verdict none; 12 open, 12 ready, 0 blocked, 0 parke
   warning: No files match docs/orders/**/*.md
 ```
 
-With `--set` it summarizes that set's `status.yaml` and `build.yaml` (see
+With `--set` it summarizes that set's `store.yaml` and `local/build.yaml` (see
 [storage layout](../compiler/graph.md#storage-layout)) and the board. Outside a project
 (no `jazyk.toml` above the working directory) it says so on stderr and reads the ad hoc
 store at the working directory. The lines, in order:

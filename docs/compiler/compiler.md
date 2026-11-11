@@ -33,7 +33,8 @@ The harness owns everything that must never be wrong:
 - identity: ids minted once, natural keys, redirects on merge, and the
   [graph store](./graph.md) with its [validation gates](./graph.md#validation-gates),
 - dirtiness: the [dirty set](./reconciler.md#dirty-set) and the
-  [change records](./graph.md#change-records) every commit leaves behind,
+  [change records](./graph.md#change-records) every derivation computes from the
+  documents, the graph, its decisions, and its sources,
 - [goal derivation](./reconciler.md#goal-derivation),
   [readiness](./reconciler.md#readiness), and [batching](./reconciler.md#batching):
   what work exists, in what order, in which session,
@@ -64,13 +65,14 @@ ACP bridge are shared with every frontend.
 ### The store
 
 The [graph store](./graph.md) is the persistent home of the graph: one YAML file per
-node under `graph/<kind>/`, section trees and coverage under `docs/`, the journal, and
-`status.yaml`. It commits [changesets](./graph.md#changesets) atomically behind the
-validation gates, recomputes [derived data](./graph.md#derived-data) on every commit,
-writes the [change records](./graph.md#change-records) that goal derivation reads,
-journals every generation, and runs the deterministic sweep half of
-[garbage collection](./graph.md#garbage-collection). The store carries a
-[version](./graph.md#store-version) in `status.yaml`. An out directory of another
+node under `graph/<kind>/`, the decisions under `graph/decisions/`, section trees and
+coverage under `sources/`, `store.yaml`, and the local journal. It commits
+[changesets](./graph.md#changesets) atomically behind the validation gates, recomputes
+[derived data](./graph.md#derived-data) on every commit, journals every generation, and
+runs the deterministic sweep half of [garbage collection](./graph.md#garbage-collection).
+It stores no work: goal derivation computes it
+([what needs building](./graph.md#what-needs-building)). The store carries a
+[version](./graph.md#store-version) in `store.yaml`. An out directory of another
 version is upgraded in place when it is the one previous version, refused read-only
 when it is newer than the binary, and otherwise archived under `.jazyk/local/archive/`
 with the build starting from the empty graph. See
@@ -78,8 +80,8 @@ with the build starting from the empty graph. See
 
 ### The goal board
 
-The board is the set of goals derived from disk: the documents, the graph, the ledger,
-and the change records. It is never stored. Any process computes the same board, an
+The board is the set of goals derived from disk: the documents, the graph, its
+decisions and sources, and the ledger. It is never stored. Any process computes the same board, an
 interrupted build resumes anywhere, and a no-op rebuild derives an empty board. A goal
 carries its kind, its class (`compile` or `gc`), whether it is mandatory, its target, the
 change that is its evidence and its identity, the cause that opened it, its state, and
@@ -102,7 +104,7 @@ only when no compile goal is open or parked in its target's cone
 two classes interleave in bursts. Sessions run one at a time
 ([sequential builds](./control-plane.md#sequential-builds)). Hard thresholds
 [escalate](./reconciler.md#escalation) optional goals to mandatory. Exhausted budgets
-[park](./reconciler.md#parked-and-failed) goals for the next build.
+[park](./reconciler.md#parked-and-failed) goals; the next build derives the same work.
 [Flip detection](./reconciler.md#flip-detection) parks oscillation for a human.
 
 ### The serving
@@ -175,8 +177,8 @@ re-deriving after each → checks → verdict
   [prompt](./sessions.md#the-prompt) (agent contract, skills, project block, goals block,
   loaded set), the session runs over ACP, and `done` runs the batch gates. The changeset
   commits: mutations applied, derived data recomputed, diagrams rendered, journal entry
-  written with its resolved and opened goals, change records updated. The board
-  re-derives. Goals a commit opened join the running session when they fit its locality
+  written with its resolved and opened goals, the resolved goals' decisions written. The
+  board re-derives. Goals a commit opened join the running session when they fit its locality
   and budget, or wait for a later one.
 - As each cone's compile goals settle, its GC goals become ready and run in a burst
   (`gc burst: <kind> <target> (<count> > <limit>)`). A GC commit can reopen compile
@@ -186,8 +188,8 @@ re-deriving after each → checks → verdict
   [docsgen](../consumers/docsgen.md) renders, and the
   [verdict](./compilation.md#convergence) closes the build: `converged` with its
   `blocked` and `optional` counts, or `incomplete` with open, failed, blocked, and
-  optional counts. Budget exhaustion parks the leftovers under an `incomplete-build`
-  diagnostic; the next build resumes them first.
+  optional counts. Budget exhaustion parks the leftovers in the build's progress; the
+  next build derives the same work and resumes it.
 
 [Compilation](./compilation.md#a-build) states the sequence in full, with the
 [edit paths](./compilation.md#edit-paths) that feed it and the

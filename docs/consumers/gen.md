@@ -478,9 +478,11 @@ id; the requirement it belongs to is the row that groups them, and the requireme
 verifies when every criterion's test is green. Tests are written during generation
 or explicit [binding](./bind.md). A failing test names the
 criterion it verifies and the requirement above it, and a changed criterion invalidates
-exactly the test keyed to it (`criterion-revised`), while a changed requirement statement
-marks its derived criteria revised and reaches the tests through them
-([change records](../compiler/graph.md#change-records)). A requirement with no criterion
+exactly the test keyed to it, while a changed requirement statement leaves its derived
+criteria stale (their `statement_hash` no longer matches,
+[criterion fields](../compiler/model/criterion.md#fields)) and reaches the tests through
+them. Both are computed by the ledger comparison, never recorded
+([what needs building](../compiler/graph.md#what-needs-building)). A requirement with no criterion
 is not bound: `bind` waits on `derive-criteria`
 ([tiers](../compiler/reconciler.md#tiers)). A requirement several entities
 share (an actor's statement about the tool it uses lists both) has one row and one

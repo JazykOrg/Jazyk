@@ -33,10 +33,7 @@ are not work.
 E.g.:
 
 ```yaml
-- id: c416-0
-  generation: 416
-  mutation: 0
-  kind: ledger-stale
+- kind: ledger-stale
   subject: req:orders-6
   via: ledger
   detail: {goal: verify, reason: code-changed, kind: programmatic}

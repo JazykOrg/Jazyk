@@ -50,7 +50,8 @@ A test skipped because its binding left current Source
 Re-bind before testing again. The skipped row and its files remain unchanged.
 
 Compile completion and generation readiness are separate checks. A compile action
-finishes when no mandatory graph work remains open, parked, or failed. Ledger work
+finishes when no mandatory graph work remains open or parked and no `goal-failed`
+diagnostic is open on mandatory work. Ledger work
 not selected by the action does not prevent compile completion. An incomplete
 compile keeps its report, including its verdict and counts, beside the reason the
 workflow stopped. The error names up to five blocking goals, their states, and

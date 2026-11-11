@@ -150,9 +150,10 @@ Project and store reads:
 - `GET /api/project`: project root, out directory, docs glob, roots, deliverable
   directory, the [executors](../compiler/project-settings.md#executors), and the LLM
   model and base URL. The API key is never served.
-- `GET /api/status`: `status.yaml` and `build.yaml` (the store version, the generation, the
-  [verdict](../compiler/compilation.md#convergence) with its counts, the costs, the
-  `parked` goals as goal records each with its `reason`, the `failed` goals) plus
+- `GET /api/status`: `store.yaml` and `local/build.yaml` (the store version, the
+  generation, the [verdict](../compiler/compilation.md#convergence) with its counts, the
+  costs), the running build's `parked` goals each with its `reason` (none when no build
+  runs), the open `goal-failed` diagnostics, plus
   node counts, the coverage fraction, open diagnostics by severity, and the board
   counts. The same summary as `jazyk status`.
 - `GET /api/overview`: the same summary without the board counts, plus verification

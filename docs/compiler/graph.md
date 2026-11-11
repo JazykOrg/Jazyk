@@ -65,7 +65,7 @@ got there: the [graph](./model.md) under `graph/`, its decisions under
   build asks again: two similar entities kept apart (`lookalikes/`), two requirements
   judged against each other (`pairs/`), an entity reviewed (`reviews/`), an instance
   checked against its type (`conformance/`), a requirement judged not structural
-  (`structure/`). Each records a hash of what it judged and lapses when that changes
+  (`structure/`), a curated view's query matches reviewed (`curation/`). Each records a hash of what it judged and lapses when that changes
   ([the .jazyk folder](./jazyk-folder.md#graphdecisionskindidyaml)).
 - `sources/<doc path>.yaml`: one document's section tree as the graph last reflected
   it, described below.
@@ -350,7 +350,8 @@ Their semantics:
   view again. See [default views](./model/view.md#default-views).
 - `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given).
   An anchor whose quote does not locate in its new section stays stale, and its section
-  reconciles. `orphan_anchor` records nothing; the anchor's stale state stands. Both are
+  reconciles. With `reevaluate`, it drops the target section's hash in `sources/`, so the
+  section reconciles like an edited one. `orphan_anchor` records nothing; the anchor's stale state stands. Both are
   staged only by [`place-anchors`](./goals/place-anchors.md) sessions, which commit them
   like any changeset; the document's proposals are computed again at the next
   derivation and no longer include a placed anchor.
@@ -669,8 +670,8 @@ The kinds, what each is computed from, and the goal it feeds:
 | `prompt-unanswered` | a diagnostic with a prompt and no answer | `answer` |
 | `provenance-pending` | a derived or decreed fact | `ratify` |
 | `threshold-crossed` | a count over its node's limit ([limits](#limits)) | `split-view`, `abstract-entity` |
-| `lookalike` | an entity pair over the score threshold with no `lookalikes/` decision at or above that score | `dedupe-candidates` |
-| `query-match`, `flow-unplaced` | a new node a curated view's query matches; a flow no view places | `curate-view` |
+| `lookalike` | an entity pair over the score threshold with no `lookalikes/` decision at its current score | `dedupe-candidates` |
+| `query-match`, `flow-unplaced` | a node a curated view's query matches that its `curation/` decision does not list; a flow no view places | `curate-view` |
 | `ledger-stale` | the [ledger](../consumers/gen.md#the-ledger) comparison: a requirement unbound, changed since it was bound, or its artifact gone; an entity whose facts differ from the ledger; a row whose derived status says action | `bind`, `generate`, `verify` |
 | `reparent-flip` | the build's own journal replay of a child moved back between two parents | nothing directly: [flip detection](./reconciler.md#flip-detection) parks the goal |
 
@@ -678,7 +679,8 @@ What a session judged becomes a decision in the graph, so the finding stops: a
 `rejudge-pair` resolved writes `pairs/<a~b>` with both statement hashes, a
 `review-entity` writes `reviews/<entity>` with the entity's fact hash, a
 `conform-instance` writes `conformance/<instance>`, a `declare-edges` judged not
-structural writes `structure/<requirement>`, a `dedupe-candidates` kept apart writes
+structural writes `structure/<requirement>`, a `curate-view` resolved writes
+`curation/<view>` with the nodes its query matches, a `dedupe-candidates` kept apart writes
 `lookalikes/<a~b>` with its score. A human edit through a dual write or an accepted
 ratification writes the entity's review the same way: the person reviewed it. A goal a
 session marks failed becomes a `goal-failed` [diagnostic](./model/diagnostic.md) on its

@@ -843,7 +843,7 @@ definitions:
         description: Replacement quote; must locate in the target section
       reevaluate:
         type: boolean
-        description: List the anchor as a stale anchor on the target section's reconcile-section goal
+        description: Drop the target section's hash in sources/, so its reconcile-section goal derives and re-reads the anchor
     additionalProperties: false
   orphanAnchor:
     description: Request payload of orphan_anchor. Leaves one proposed anchor homeless

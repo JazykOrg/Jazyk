@@ -721,7 +721,7 @@ documents, open diagnostics, open goals) reaches the IDE's chat surface through 
 proxy instead: on session start and on every
 [control plane](../compiler/control-plane.md) or board change, the proxy refreshes
 the advertised commands and the pending-work plan. The board derives from files (the
-documents, the graph, `status.yaml`) and the leases are files, so the proxy computes
+documents, the graph, its decisions and sources) and the leases are files, so the proxy computes
 them the way every other frontend does, no new channel.
 
 ## Registration

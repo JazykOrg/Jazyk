@@ -29,9 +29,11 @@ are over the `children-per-entity` limit ([levels](../concepts/levels.md#levels)
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 One [change record](../graph.md#change-records) kind derives the goal:
-`threshold-crossed` on an entity (`via: limits`), written by the limit counts at commit
-([derived data](../graph.md#derived-data)) when a count is over the entity's threshold.
+`threshold-crossed` on an entity (`via: limits`), computed per derivation from the limit
+counts ([derived data](../graph.md#derived-data)) when a count is over the entity's
+threshold.
 Two limits of [the registry](../graph.md#the-registry) derive the caps variant; the
 third, `children-per-entity`, derives the [fan-out variant](#the-fan-out-variant):
 
@@ -46,20 +48,16 @@ The entity's own bump (`limits: {<limit>: n}`) is the soft threshold for that en
 and the thresholds in force. E.g.:
 
 ```yaml
-- id: c420-0
-  generation: 420
-  mutation: 0
-  kind: threshold-crossed
+- kind: threshold-crossed
   subject: ent:order
   via: limits
   detail: {limit: requirements-per-entity, count: 54, soft: 50, hard: 80}
 ```
 
-- The record is level-triggered: it stands while the count is over the threshold and
-  clears on its own when the count falls back under it by any path (a delete, a merge
-  elsewhere, a re-pointed statement). Resolving the goal clears it, and the next commit
-  writes it again when the count is still over.
-- Records for two limits on one entity fold into one goal whose `change` names both.
+- The finding is level-triggered: it stands while the count is over the threshold and
+  ends when the count falls back under it by any path (a delete, a merge elsewhere, a
+  re-pointed statement). A goal resolved while the count is still over derives again.
+- Findings for two limits on one entity fold into one goal whose `change` names both.
 
 ### Escalation and dismissal
 
@@ -385,10 +383,9 @@ limit reopens it.
 - The limit: `children-per-entity`, soft 9, hard 15, counting the entities whose
   `parent` is the node; the scope root counts its parentless entities under the same row
   ([the registry](../graph.md#the-registry)).
-- Crossing soft writes the record at commit and derives the goal optional; hard
-  escalates it to mandatory; dropping back under soft clears the record without a
-  session, the level-triggered rule of [created when](#created-when). The reconciler's
-  [fan-out](../reconciler.md#fan-out) derivation names the record and the target form.
+- Crossing soft derives the goal optional; hard escalates it to mandatory; dropping
+  back under soft ends it without a session, the level-triggered rule of [created when](#created-when). The reconciler's
+  [fan-out](../reconciler.md#fan-out) derivation names the finding and the target form.
 - Target: the node whose children are over the limit, or `scope:<scope>` for the top
   level (`g:abstract-entity:scope:public` for the default scope). The cone is the node's
   subtree, the whole scope for the root form; the goal is ready when no compile goal is

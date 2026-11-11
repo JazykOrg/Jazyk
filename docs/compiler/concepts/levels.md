@@ -31,7 +31,7 @@ upward pressure that builds the tree and the views that show each level.
   [`abstract-entity`](../goals/abstract-entity.md) goal on the node with the `fan-out`
   change; crossing the hard threshold makes it mandatory
   ([escalation](../reconciler.md#escalation)). Dropping back under the soft threshold
-  clears the record without a session. See [fan-out](../reconciler.md#fan-out).
+  ends the finding without a session. See [fan-out](../reconciler.md#fan-out).
 - The harness computes coupling; the model names and judges. Coupling hints are
   deterministic partitions over the derived relationship graph. The model may accept a
   partition, adjust it with reasons, or decline with a reason. The harness never names a

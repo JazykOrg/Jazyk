@@ -14,19 +14,19 @@ this file describes what a build does with it, from dirty set to verdict. The
 ## A build
 
 ```
-parse all documents → align section trees → dirty set → edit generation (change records)
+parse all documents → align section trees against sources/ → compute the work (change records, in memory)
   → derive the board: "compile: N goals (k reconcile-section, ...), b blocked"
   → sessions, one batch at a time, highest ready tier first:
       tier 0  place-anchors        (a document's alignment proposals)
       tier 1  reconcile-section    (link levels, roots first)
       tier 2  rejudge-pair, review-entity, retrace, conform-instance
       tier 3  derive-criteria, bind, generate, verify   (ratify and answer wait on a human)
-    every commit recomputes derived data, writes change records, re-derives the board
+    every commit recomputes derived data and decisions, re-derives the board
     GC bursts fire as cones quiet: declare-edges, dedupe-candidates, curate-view,
       split-view, abstract-entity
   → checks (deterministic)
   → render every view to diagrams, docsgen
-  → verdict: converged with counts, or incomplete with parked work
+  → verdict: converged with counts, or incomplete with the open work
 ```
 
 The first build and every rebuild run the same lifecycle. The first build starts from an
@@ -34,9 +34,10 @@ empty graph, so every section is dirty. A rebuild with no changes derives zero g
 makes zero LLM calls.
 
 - Parse and align. [Parsing](./parsing.md) produces section trees;
-  [alignment](./alignment.md) applies exact moves mechanically and persists proposals
-  for the rest. The [dirty set](./reconciler.md#dirty-set) lands as change records under
-  an `edit` generation.
+  [alignment](./alignment.md) applies exact moves mechanically and proposes the rest.
+  The [dirty set](./reconciler.md#dirty-set) is computed as change records in memory
+  ([what needs building](./graph.md#what-needs-building)); nothing about it is
+  written.
 - Derive the board. The terminal prints the summary first
   ([`jazyk compile`](../frontends/cli.md#jazyk-compile)). E.g.:
   `compile: 27 goals (12 reconcile-section, 9 rejudge-pair, 6 retrace), 3 blocked`.
@@ -46,25 +47,26 @@ makes zero LLM calls.
   loaded graph for their locality, and one summary line for the rest. Write tools stage
   mutations; `done` runs the batch gates; the changeset commits atomically
   ([changesets](./graph.md#changesets)).
-- Commit. Derived data recomputes (relationships, state machines, default views), change
-  records land, the journal entry records resolved goals with their justifications and
+- Commit. Derived data recomputes (relationships, state machines, default views), a
+  resolved goal's decision lands in `graph/decisions/` when its kind has one, the
+  journal entry records resolved goals with their justifications and
   opened goals with their causes ([journal](./graph.md#journal)), the deterministic sweep
   runs ([garbage collection](./graph.md#garbage-collection)), and every view whose
   `.puml` changed renders again ([diagrams](./diagrams.md#rendering)). The board
   re-derives; the live trace and the [GUI board](../frontends/gui.md#board) show counts
   ticking down. A goal the board re-derives with the same `change` it was just resolved
-  under is a cycle (the commit recomputed the record behind it); the second cycle in one
+  under is a cycle (the commit left the finding behind it true); the second cycle in one
   build parks the goal ([parked and failed](./reconciler.md#parked-and-failed)), so one
   goal never spends the build cap.
 - The tail. When no goal is ready or a budget is spent, the [checks](#checks) run, the
   [requirements documents](../consumers/docsgen.md) regenerate, and the
-  [verdict](#convergence) lands in `build.yaml`. The tail needs no model.
+  [verdict](#convergence) lands in `local/build.yaml`. The tail needs no model.
 
 A user stop retains completed commits and drops the active session. It saves the
 incomplete verdict and spend, then releases the build lease. It runs no further
-checks, rendering, or docsgen. Goals the build parked before the stop stay parked
-with their reasons ([parked and failed](./reconciler.md#parked-and-failed)); the rest
-stay open. The next Build reads current
+checks, rendering, or docsgen. The build's progress (what it parked and why) stays in
+its run file until the next build resumes or replaces it
+([a build's progress](./graph.md#a-builds-progress)). The next Build reads current
 saved documents, derives the board, and runs the ordinary lifecycle. Stop is not a
 failed session and creates no cancellation diagnostic.
 
@@ -145,15 +147,16 @@ gc burst: abstract-entity ent:order (54 > 50)
 
 A GC session sees the cone's final counts, so an entity that doubled its requirements
 this build is abstracted once, holistically. GC mutations can reopen compile goals: a
-split entity writes `entity-changed` records for the new parents and children and
-`requirement-revised` records for the statements it moved, and the loop runs compile for
-that cone and returns. [Flip detection](./reconciler.md#flip-detection) and the budgets
+split entity changes the facts of the new parents and children, so their reviews lapse,
+and the statements it moved meet new neighbors without a pair decision, so the next
+derivation finds compile work in that cone and the loop returns to it. [Flip detection](./reconciler.md#flip-detection) and the budgets
 bound the alternation; compile outranks GC when the build budget is tight.
 
 ## Edit paths
 
-Every human edit enters as one of four paths, and all four end the same way: change
-records written, goals derived, sessions scheduled, fixed point restored. Every path
+Every human edit enters as one of four paths, and all four end the same way: the next
+derivation computes the work the edit left, goals derive, sessions run, fixed point
+restored. Every path
 journals its own generation, so the root of every ripple is itself a generation
 ([journal](./graph.md#journal)).
 
@@ -169,18 +172,18 @@ journals its own generation, so the root of every ripple is itself a generation
   declared it. The commit absorbs the new section hashes, so the edit does not dirty the
   document it just changed. A human edit is the review: the person just read the
   sentence, and the mention it adds to each entity it names is the quote they
-  confirmed, so a `dual-write` commit writes no `entity-changed` record and opens no
-  `review-entity`; an answer whose chosen option carries a suggested edit lands the
+  confirmed, so a `dual-write` commit writes each touched entity's review decision with
+  its new fact hash and opens no `review-entity`; an answer whose chosen option carries a suggested edit lands the
   same way (journal entry `answer` with the prose edit). A revised statement still
   owes its judgment against other
-  requirements: the commit writes `requirement-revised` as usual and `rejudge-pair`
-  derives per neighbor ([pairs](./reconciler.md#pairs)). Deletions write their
-  `node-deleted` records as usual. When no proposed rewrite is accepted, the edit falls
+  requirements: its pair decisions no longer match its statement, so `rejudge-pair`
+  derives per neighbor ([pairs](./reconciler.md#pairs)). A deletion leaves dangling
+  references as usual, and `retrace` derives on them. When no proposed rewrite is accepted, the edit falls
   through to the decree path: the compiler never rewrites a source document without an
   accepted proposal.
 - Edit a derived fact, or add a fact with no prose behind it: a decree. The changeset
   lands graph-only with `decree` provenance (journal entry `decree`). Downstream goals
-  derive normally. Upward, the commit writes a `provenance-pending` record and a
+  derive normally. Upward, the decreed fact is a `provenance-pending` finding, and a
   [`ratify`](./goals/ratify.md) goal derives, blocked on a human: docsgen renders the
   sentence the docs should gain as a `ratification-pending` diagnostic whose prompt's
   `edit` option inserts it
@@ -191,11 +194,11 @@ journals its own generation, so the root of every ripple is itself a generation
   like a dual write, so the inserted sentence dirties no section and no
   `reconcile-section` follows it: the flip is the ratify changeset's own work, never a
   later session's. An accepted proposal is a human edit too: the accepting `ratify`
-  commit writes no `entity-changed` record, so the mention the landed sentence adds
-  opens no `review-entity`; a sentence the person reworded writes
-  `requirement-revised` and `rejudge-pair` derives per neighbor. Retracting deletes the
-  decree and writes its records as usual, `entity-changed` included: the facts that
-  remain were not what the person read. The compiler never overwrites a
+  commit writes the touched entities' review decisions, so the mention the landed
+  sentence adds opens no `review-entity`; a sentence the person reworded no longer
+  matches its pair decisions, and `rejudge-pair` derives per neighbor. Retracting
+  deletes the decree and writes no review: the facts that remain were not what the
+  person read, so `review-entity` derives. The compiler never overwrites a
   decree; it files diagnostics against it. Derived facts a GC session creates
   (`abstract-entity`'s new parents) take the same path.
 - Edit the deliverable or tests. Ledger statuses flip (`stale-code`, `stale-test`;
@@ -209,9 +212,9 @@ journals its own generation, so the root of every ripple is itself a generation
 Deletion runs the same paths in reverse. A removed section leaves its anchors homeless:
 `place-anchors` and `reconcile-section` decide what the facts anchored there become
 (re-recorded elsewhere, revised, or deleted). The sweep at commit deletes what is left
-without provenance, leaves tombstone redirects, and writes `node-deleted` and
-`view-member-gone` records for the live nodes that referenced the dead ones; those derive
-[`retrace`](./goals/retrace.md) goals on the views, instances, and derived facts that
+without provenance and leaves tombstone redirects; the live nodes that referenced the
+dead ones are `node-deleted` and `view-member-gone` findings at the next derivation, and
+they derive [`retrace`](./goals/retrace.md) goals on the views, instances, and derived facts that
 depended on them. Derived data (relationships, state machines, default views) simply
 recomputes.
 
@@ -277,7 +280,7 @@ Every check run journals a `checks` entry under its own generation.
   chars), `doc-too-large` (over 40 sections), `empty-file` (a matched file with no
   content), `broken-link` (a relative Markdown document link whose target file does
   not exist). Link checks read current matched documents through the filesystem
-  abstraction, including documents never compiled. A stored document record does
+  abstraction, including documents never compiled. A document's entry in `sources/` does
   not make a deleted file exist. Each missing source-target pair has one sticky
   warning. Its message names the source location and target and asks the author to
   create the target or fix the link. Repeated links share the warning. A check
@@ -302,7 +305,7 @@ Every check run journals a `checks` entry under its own generation.
 - Flow placement, wherever flow views exist: `unplaced-behavior` for a behavior
   requirement in no flow view and not excluded from one with a note;
   `unrepresented-failure-mode` for a failure-mode requirement represented in no branch.
-  Each finding also writes a `flow-unplaced` record, feeding
+  Each finding is also a `flow-unplaced` finding at derivation, feeding
   [`curate-view`](./goals/curate-view.md).
 - Containment consistency: `containment-mismatch` when a `composition` edge and the
   `parent` field disagree ([containment](./model/entity.md#containment)).
@@ -330,49 +333,49 @@ Every check run journals a `checks` entry under its own generation.
   ([facets](./model/requirement.md#facets)).
 - Cross-class flip detection: `unstable-derivation`, parking the oscillating pair
   ([flip detection](./reconciler.md#flip-detection)).
-- `incomplete-build`: goals parked because a budget ran out, the park reason in the
-  message ([parked and failed](./reconciler.md#parked-and-failed)).
 - `unratified`: a [decompiled](../consumers/decompile.md#ratification) draft no human
   has edited since the draft landed (`info`). An edit to the document clears it.
 
 The checks also settle stranded diagnostics: every open judged diagnostic whose subjects
 are all missing from the graph is resolved and journaled (`settle-diagnostics`), so a
 store deleted into a stranded state heals at the next build or board poll instead of
-staying wedged. The `incomplete-build` and `uncovered-section` markers do not wait for
-the tail: [the sweep](./graph.md#the-sweep) resolves them at every commit once their
-condition clears, and the checks re-file a marker whose condition holds again.
+staying wedged. The `uncovered-section` marker does not wait for the tail:
+[the sweep](./graph.md#the-sweep) resolves it at every commit once its condition clears,
+and the checks re-file it when its condition holds again. Unfinished work files no
+diagnostic: it is open work, and the verdict counts it.
 
 ## Convergence
 
-The build is done when both goal classes derive empty of open or failed mandatory goals
-and the checks are clean: every finding is recorded as a diagnostic or a goal, and no
+The build is done when both goal classes derive empty of open mandatory goals, no
+`goal-failed` diagnostic is open, and the checks are clean: every finding is recorded as a diagnostic or a goal, and no
 section with a body of its own is left `unprocessed`. Idempotence is what makes this a
 fixed point rather than a loop: a session that re-derives an unchanged conclusion stages
 a no-op upsert, no mutation lands, and that branch of the cascade dies.
 
-The verdict in `build.yaml` is `verdict: {state, open, failed, blocked, optional}`:
+The verdict in `local/build.yaml` is `verdict: {state, open, failed, blocked, optional}`:
 
 - `converged` when no open or failed mandatory goal of either class remains and the
   checks are clean. The counts ride with it: `blocked` (goals waiting on a human:
   unanswered prompts, ratification proposals, gated releases) and `optional` (standing
   advice). Printed as `converged, 2 blocked, 1 optional advised`.
-- `incomplete` otherwise, with `open` (open and parked mandatory goals), `failed`
-  (failed mandatory goals), `blocked`, and `optional`. Printed as
+- `incomplete` otherwise, with `open` (open mandatory goals, those this build parked
+  included), `failed` (open `goal-failed` diagnostics on mandatory work), `blocked`,
+  and `optional`. Printed as
   `incomplete: 3 open, 1 failed, 2 blocked, 5 optional advised`.
 
 A build whose verdict write is refused ([concurrency](./graph.md#concurrency)) reports
-`unsaved` with the reason and is not converged, whatever its verdict: the verdict and
-the goals it parked never reached `build.yaml` and `status.yaml`. Printed as
+`unsaved` with the reason and is not converged, whatever its verdict: the verdict never
+reached `local/build.yaml`. Printed as
 `converged (not saved: store-moved: ...)`.
 
 A mandatory [fan-out](./reconciler.md#fan-out) goal
 ([`abstract-entity`](./goals/abstract-entity.md) on a node, or on `scope:<scope>` for
 the top level) open or failed blocks `converged`: it is a mandatory GC goal, and the rule
 above already counts it. An optional fan-out goal rides under `optional`. A level a
-session declared genuinely flat stays a failed goal until a human bumps the node's limit
-([per-node bumps](./graph.md#per-node-bumps)), retries the goal, or the level changes
-again ([parked and failed](./reconciler.md#parked-and-failed)), so a verdict never hides
-an over-fan-out level.
+session declared genuinely flat carries a `goal-failed` diagnostic until a human bumps
+the node's limit ([per-node bumps](./graph.md#per-node-bumps)), resolves the diagnostic,
+or the level changes again ([parked and failed](./reconciler.md#parked-and-failed)), so
+a verdict never hides an over-fan-out level.
 
 A build with open blocked goals is `converged, 2 blocked`, never silently done.
 A hard per-build cap (8 × the distinct goals derived so far in the build + 64 sessions)
@@ -381,15 +384,15 @@ carried, recomputed after every commit, so a project whose deeper link levels de
 their goals only after the roots ingest gets a cap sized for the whole build, not for
 its first board. The bound stays finite: goal ids are finite, and a goal that keeps
 coming back parks on its reopen cycle ([parked and failed](./reconciler.md#parked-and-failed)).
-Work still open when the cap runs out is parked under `parked/` and reported as an
-`incomplete-build` diagnostic, and the next build resumes parked goals first
-([parked and failed](./reconciler.md#parked-and-failed)). A session that exhausts its
+Work still open when the cap runs out stays open: the verdict counts it, the build's run
+file keeps what it parked, and the next build derives the same work and resumes it
+([a build's progress](./graph.md#a-builds-progress)). A session that exhausts its
 round budget without meeting its gate leaves its goals open, so the verdict counts them;
 a build that stopped halfway is never reported as converged.
 
 The verdict speaks to work completion, never to document health: a graph can converge
 with open `error` diagnostics standing. So the verdict never travels alone. Open
-diagnostic counts by severity (suppressed excluded) ride beside it: in `build.yaml`
+diagnostic counts by severity (suppressed excluded) ride beside it: in `local/build.yaml`
 (`diagnostics`), in the empty-board `goals` reply, in the final `done` reply, and in
 `await_changes` (`openDiagnostics`). An agent deciding "done" sees the open errors in
 the same breath as `converged`. Costs ride there too: `costs {sessions, tokens,
@@ -435,14 +438,15 @@ There is no separate incremental mode:
 
 - Nothing changed → empty dirty set → zero goals, zero LLM calls.
 - A cosmetic edit → one `reconcile-section` session that stages no mutations → graph
-  unchanged, no records written, nothing downstream.
+  unchanged, nothing written but the section's new text in `sources/`, nothing
+  downstream.
 - A section moved, split, or merged → a `place-anchors` session decides its anchors,
-  then `reconcile-section` re-judges only the ones marked for re-evaluation.
+  then `reconcile-section` re-judges only the ones whose quotes no longer locate.
 - A real edit → sessions for that section, then for the goals its commit opens. The rest
   of the graph is not visited: a change reaches exactly its cone, never the pyramid.
 
-Idempotence and convergence replace per-stage caching. The graph plus the change records
-is the cache. The trace a one-sentence edit leaves (`orders.md`: "held orders expire
+Idempotence and convergence replace per-stage caching. The graph, its decisions, and
+its sources are the cache. The trace a one-sentence edit leaves (`orders.md`: "held orders expire
 after 21 days" becomes "30 days"), as [`jazyk ripple`](../frontends/cli.md#jazyk-ripple)
 renders it:
 

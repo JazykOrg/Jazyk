@@ -37,10 +37,7 @@ disagree about a requirement, with the reason in `detail.reason`:
 E.g.:
 
 ```yaml
-- id: c413-2
-  generation: 413
-  mutation: 2
-  kind: ledger-stale
+- kind: ledger-stale
   subject: req:orders-6
   via: ledger
   detail: {goal: bind, reason: requirement-changed, entity: ent:order}

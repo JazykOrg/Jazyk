@@ -146,10 +146,13 @@ in [generation](../../consumers/gen.md).
 - The id is `req:<stem>-<hash>`, minted by the store from the natural key, stem `x` for
   derived and decree requirements. E.g. `req:catalog-search-9k2d`. See
   [identifiers](../model.md#identifiers).
-- A change to `statement`, to the source `quote` in substance, or to `edges`,
-  `transition`, or `facets` is a `requirement-revised` change record and opens
-  [`rejudge-pair`](../goals/rejudge-pair.md) on the requirement's neighbors. Creation
-  opens the same goal. See [goal derivation](../reconciler.md#goal-derivation).
+- A change to `statement` or to the source `quote` in substance changes the
+  requirement's statement hash, so its [`pairs/` decisions](../jazyk-folder.md#graphdecisionskindidyaml)
+  stop matching and [`rejudge-pair`](../goals/rejudge-pair.md) derives on its neighbors,
+  as it does for a new requirement. A change to `edges`, `transition`, or `facets`
+  changes the fact hash of the entities it names, which their review covers. Both are
+  computed, never recorded ([what needs building](../graph.md#what-needs-building)). See
+  [goal derivation](../reconciler.md#goal-derivation).
 - Deleting a requirement needs a `reason`. Its edges leave the relationships and its
   transition leaves the machine at commit. Curated views and instances that referenced it
   open [`retrace`](../goals/retrace.md).

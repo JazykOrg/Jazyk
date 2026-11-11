@@ -20,35 +20,41 @@ mechanical half (attribute names against the type's declarations) is a
 
 ## Created when
 
-The goal derives from an `instance-changed` [change record](../graph.md#change-records)
-on the instance. A commit writes one when the instance or the model under it changed,
-`via` naming how:
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+The goal derives for an instance whose fact hash, or whose type's, differs from its
+[`conformance/` decision](../jazyk-folder.md#graphdecisionskindidyaml), or that has
+none. The finding is an `instance-changed` [change record](../graph.md#change-records),
+computed per derivation, `via` naming what differs:
 
-- `edges`: an `instantiation` edge landed on a requirement (a new instance), or the
-  requirement stating the example was revised (a link added or removed, a value
-  restated).
-- `attributes`: the instance's values changed, or the type's attribute names or types
-  changed.
-- `entities`: a requirement on the type was created, revised, or deleted; the type's
-  statements constrain the values ("currency is one of EUR, USD").
-- `recompute`: a relationship of the type was added, removed, or retyped at commit
-  ([recompute](../model/relationship.md#recompute)), so a link's backing changed.
-- `parent`: the type gained or lost a generalization; an instance conforms to the
-  supertype's attributes and relationships as well as its own.
+- `edges`: the `instantiation` edge or the requirement stating the example (a link added
+  or removed, a value restated).
+- `attributes`: the instance's values, or the type's attribute names or types.
+- `entities`: the requirements on the type; the type's statements constrain the values
+  ("currency is one of EUR, USD").
+- `recompute`: the type's relationships, so a link's backing changed
+  ([recompute](../model/relationship.md#recompute)).
+- `parent`: the type's generalizations; an instance conforms to the supertype's
+  attributes and relationships as well as its own.
 
-`detail` names the type and what changed. One record per instance: a change on a type
-writes one for each of its instances, so a type with many worked examples fans out to
-that many goals, batched together. The commit that resolves a `conform-instance` goal
-writes no `instance-changed` record for its target from that session's own repairs;
-the session saw the result it staged.
+`detail` names the type and what differs. A change on a type changes the hash every one
+of its instances checks against, so a type with many worked examples fans out to that
+many goals, batched together. Resolving the goal writes
+`graph/decisions/conformance/<instance>.yaml` with both hashes the commit leaves, so the
+session's own repairs do not reopen it:
+
+```yaml
+# Jazyk decision: an instance checked against its type. Written by jazyk.
+# yaml-language-server: $schema=https://jazyk.org/schemas/conformance.json
+id: ent:ana
+facts:
+  ent:ana: 7c01e9a4d2b35f86
+  ent:customer: 3b9f0c27e18a6d45
+```
 
 E.g.:
 
 ```yaml
-- id: c414-1
-  generation: 414
-  mutation: 1
-  kind: instance-changed
+- kind: instance-changed
   subject: ent:ana
   via: attributes
   detail: {type: ent:customer, changed: [attributes.tier.type]}
@@ -122,14 +128,14 @@ quote locates, `report_diagnostic` subjects exist, a prompt's `old_text` locates
 section it names. When the instance conforms as stored, the session stages nothing and
 marks the goal done with a justification naming what was compared.
 `mark_goal_failed({goal, reason})` is for an instance that instantiates two unrelated
-types and documents that do not say which governs. A failed goal keeps its record and
-surfaces on the instance; it blocks convergence.
+types and documents that do not say which governs. A failed goal becomes a `goal-failed`
+[diagnostic](../model/diagnostic.md) on the instance; it blocks convergence.
 
 ## Hints
 
 Computed by the harness and rendered under the goal block:
 
-- The type and what changed, from the record.
+- The type and what changed, from the finding's `detail`.
 - The type's declared attributes with their types, its generalizations, and the
   relationships between the type and the linked instances' types with their
   cardinalities ([types](../model/relationship.md#types)).

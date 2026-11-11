@@ -65,6 +65,7 @@ jobs:
           key: source-packages
       - name: Check metadata generation
         run: |
+          python3 scripts/release/publish-source.test.py
           python3 scripts/release/package-managers.test.py
           python3 scripts/release/source-package.test.py
           python3 scripts/release/package-managers.py .local/package-release .local/package-managers

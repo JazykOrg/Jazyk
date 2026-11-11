@@ -3,8 +3,8 @@
 // jazyk.dev (docs/frontends/gui.md#serving).
 use super::state::SharedState;
 use super::{
-    api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws, outfiles,
-    product, projfiles, views_api,
+    agents, api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
+    outfiles, product, projfiles, views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
@@ -137,7 +137,11 @@ fn cors(gui_origin: &str) -> CorsLayer {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-jazyk-agent-selection"),
+        ])
         .allow_private_network(true)
         .max_age(std::time::Duration::from_secs(600))
 }
@@ -150,6 +154,12 @@ fn api_router(st: SharedState) -> Router {
 
 fn api_routes() -> Router<SharedState> {
     let api = Router::new()
+        .route("/agents", get(agents::list))
+        .route("/agents/selections", post(agents::select))
+        .route("/agents/setup", post(agents::setup))
+        .route("/agents/cloud-challenge", post(agents::challenge))
+        .route("/agents/bridge/{id}", get(agents::bridge_poll))
+        .route("/agents/bridge/{id}/{request}", post(agents::bridge_reply))
         .route("/ping", get(api::ping))
         .route("/project", get(api::project))
         .route("/status", get(api::status))
@@ -306,7 +316,9 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
             | "/benchmarks/models"
             | "/jobs"
             | "/trace"
-    ) || route.starts_with("/chat/")
+    ) || route == "/agents"
+        || route.starts_with("/agents/")
+        || route.starts_with("/chat/")
         || route.starts_with("/jobs/")
         || route.starts_with("/trace/");
     if route == "/tasks"
@@ -381,10 +393,31 @@ async fn gateway(State(st): State<SharedState>, req: Request) -> Response {
         .await
         .expect("request scope resolution")
     };
-    let (workspace, selector, context) = match resolved {
+    let (workspace, selector, mut context) = match resolved {
         Ok(r) => r,
         Err((code, e)) => return api::err(StatusCode::from_u16(code).unwrap(), e),
     };
+    if let Some(id) = parts
+        .headers
+        .get("x-jazyk-agent-selection")
+        .filter(|_| !route.starts_with("/agents/"))
+    {
+        let selected = id.to_str().ok().and_then(|id| st.agent_choices.get(id));
+        let Some(selected) = selected else {
+            return api::err(
+                StatusCode::CONFLICT,
+                "Agent selection expired. Choose an agent again.",
+            );
+        };
+        if let Some(context) = std::sync::Arc::get_mut(&mut context) {
+            context.agent_selection = Some(selected);
+        } else {
+            return api::err(
+                StatusCode::CONFLICT,
+                "Project settings must be valid before choosing an agent.",
+            );
+        }
+    }
     let selector = selector.as_deref();
     // The outer wildcard capture must not be appended to the inner route's captures.
     parts.extensions.clear();
@@ -459,6 +492,10 @@ pub fn router_on(st: SharedState, port: Option<u16>) -> Router {
     let cors = cors(&st.gui_origin);
     Router::new()
         .route("/api/{*path}", axum::routing::any(gateway))
+        .route(
+            "/model-bridge/{id}/chat/completions",
+            post(agents::bridge_request),
+        )
         .route("/lsp", get(lsp_ws::ws))
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
@@ -641,6 +678,8 @@ pub(super) mod tests {
         let out = proj.out.clone();
         let gs = crate::gen::GenSettings::resolve(&proj);
         Arc::new(AppState {
+            agent_choices: Arc::new(super::agents::Choices::default()),
+            agent_selection: None,
             root,
             proj: std::sync::RwLock::new(proj),
             llm: std::sync::RwLock::new(crate::llm::Llm {

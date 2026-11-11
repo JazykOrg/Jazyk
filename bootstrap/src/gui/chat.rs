@@ -26,6 +26,10 @@ pub struct ChatSession {
     // idle | running | failed | closed
     pub state: String,
     handle: Option<SessionHandle>,
+    host: Option<AcpHost>,
+    binding: Option<(config::ResolvedAgent, crate::llm::Llm)>,
+    agent_selection: Option<Arc<super::agents::Selection>>,
+    selection_id: Option<String>,
     // Numbered updates, full payloads, bounded.
     ring: VecDeque<(u64, Value)>,
     next_n: u64,
@@ -37,7 +41,6 @@ pub struct ChatSession {
 }
 
 pub struct ChatManager {
-    host: Mutex<Option<AcpHost>>,
     sessions: Mutex<BTreeMap<String, Arc<Mutex<ChatSession>>>>,
     seq: AtomicU64,
 }
@@ -45,7 +48,6 @@ pub struct ChatManager {
 impl Default for ChatManager {
     fn default() -> Self {
         ChatManager {
-            host: Mutex::new(None),
             sessions: Mutex::new(BTreeMap::new()),
             seq: AtomicU64::new(0),
         }
@@ -64,61 +66,79 @@ impl ChatManager {
             })
     }
 
-    // The shared agent process behind every chat session, spawned on first use.
-    fn host(&self, st: &SharedState) -> Result<(), String> {
-        let mut h = self.host.lock().unwrap();
-        if h.is_some() {
-            return Ok(());
-        }
-        let proj = st.proj();
-        let agent =
-            config::resolve_acp(None, &proj.acp, &crate::project::load_global_acp(), |n| {
-                std::env::var(n).ok()
-            })?;
-        let llm = st.llm();
-        let extra_env = if agent.name == EMBEDDED {
-            let mut v = vec![
-                ("JAZYK_LLM_BASE_URL".to_string(), llm.base_url.clone()),
-                ("JAZYK_MODEL".to_string(), llm.model.clone()),
-            ];
-            if !llm.api_key.is_empty() {
-                v.push(("JAZYK_API_KEY".to_string(), llm.api_key));
-            }
-            if let Some(t) = llm.temperature {
-                v.push(("JAZYK_TEMPERATURE".to_string(), t.to_string()));
-            }
-            v
-        } else {
-            Vec::new()
-        };
-        *h = Some(AcpHost::start(agent, proj.root.clone(), extra_env)?);
-        Ok(())
-    }
-
     fn open_acp_session(&self, st: &SharedState, chat_id: &str) -> Result<SessionHandle, String> {
-        self.host(st)?;
-        let proj = st.proj();
+        let session = self
+            .sessions
+            .lock()
+            .unwrap()
+            .get(chat_id)
+            .cloned()
+            .ok_or("Unknown chat")?;
+        let mut session = session.lock().unwrap();
+        if session.selection_id.is_some() && session.agent_selection.is_none() {
+            return Err("This conversation used a process-local agent selection. Choose your agent and open a new conversation after restarting jazyk gui.".into());
+        }
+        if session.binding.is_none() {
+            let binding = if let Some(selected) = session.agent_selection.as_ref() {
+                (selected.agent.clone(), selected.llm.clone())
+            } else {
+                let proj = st.proj();
+                (
+                    config::resolve_acp(
+                        None,
+                        &proj.acp,
+                        &crate::project::load_global_acp(),
+                        |n| std::env::var(n).ok(),
+                    )?,
+                    st.llm(),
+                )
+            };
+            session.binding = Some(binding);
+        }
+        if session.host.is_none() {
+            let (agent, llm) = session.binding.as_ref().unwrap();
+            let mut env = Vec::new();
+            if agent.name == EMBEDDED {
+                env.extend([
+                    ("JAZYK_LLM_BASE_URL".into(), llm.base_url.clone()),
+                    ("JAZYK_MODEL".into(), llm.model.clone()),
+                    ("JAZYK_API_KEY".into(), llm.api_key.clone()),
+                    ("JAZYK_LLM_API".into(), llm.api.clone()),
+                ]);
+                if let Some(t) = llm.temperature {
+                    env.push(("JAZYK_TEMPERATURE".into(), t.to_string()));
+                }
+                if let Some(summary) = &llm.reasoning_summary {
+                    env.push(("JAZYK_REASONING_SUMMARY".into(), summary.clone()));
+                }
+            }
+            if agent.name == EMBEDDED {
+                if let Some(key_env) = st
+                    .proj()
+                    .llm
+                    .api_key_env
+                    .or_else(|| crate::project::load_global_llm().api_key_env)
+                {
+                    env.push((key_env, llm.api_key.clone()));
+                }
+            }
+            session.host = Some(AcpHost::start(agent.clone(), st.root.clone(), env)?);
+        }
         let exe = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.to_str().map(|s| s.to_string()))
-            .unwrap_or_else(|| "jazyk".to_string());
-        // The chat serving: reads, lifecycles, and the dual-write chat tools
-        // (docs/frontends/mcp.md#toolsets). Scoped to this session.
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .into_owned();
         let spec = McpSpec {
-            name: "jazyk".to_string(),
+            name: "jazyk".into(),
             command: exe,
-            args: vec![
-                "mcp".to_string(),
-                "chat".to_string(),
-                "--ephemeral".to_string(),
-            ],
+            args: vec!["mcp".into(), "chat".into(), "--ephemeral".into()],
             env: Vec::new(),
         };
-        let h = self.host.lock().unwrap();
-        let host = h.as_ref().ok_or("agent host is gone")?;
-        let handle = host.new_chat_session(&proj.root, vec![spec], PermissionPolicy::Forward)?;
-        let _ = chat_id;
-        Ok(handle)
+        session.host.as_ref().unwrap().new_chat_session(
+            &st.root,
+            vec![spec],
+            PermissionPolicy::Forward,
+        )
     }
 
     pub fn snapshot(&self) -> Vec<Value> {
@@ -129,7 +149,7 @@ impl ChatManager {
             .map(|s| {
                 let s = s.lock().unwrap();
                 json!({"id": s.id, "title": s.title, "state": s.state, "updates": s.next_n,
-                       "pending": s.pending, "inputs":s.inputs,"turnId":s.turn_id})
+                       "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "inputs":s.inputs,"turnId":s.turn_id})
             })
             .collect()
     }
@@ -190,6 +210,13 @@ impl ChatManager {
                     }
                 }
             }
+            let restored_selection = ring.iter().find_map(|(_, u)| {
+                if u["sessionUpdate"] == "agent_binding" {
+                    u["selection"]["id"].as_str().map(str::to_string)
+                } else {
+                    None
+                }
+            });
             let restored_state = ring
                 .iter()
                 .rev()
@@ -229,6 +256,10 @@ impl ChatManager {
                     title: meta.title,
                     state: restored_state.into(),
                     handle: None,
+                    host: None,
+                    binding: None,
+                    agent_selection: None,
+                    selection_id: restored_selection,
                     ring,
                     next_n,
                     pending: Vec::new(),
@@ -319,6 +350,17 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         title: format!("Chat {}", n),
         state: "idle".into(),
         handle: None,
+        host: None,
+        binding: config::resolve_acp(
+            None,
+            &st.proj().acp,
+            &crate::project::load_global_acp(),
+            |n| std::env::var(n).ok(),
+        )
+        .ok()
+        .map(|agent| (agent, st.llm())),
+        agent_selection: st.agent_selection.clone(),
+        selection_id: st.agent_selection.as_ref().map(|s| s.id.clone()),
         ring: VecDeque::new(),
         next_n: 0,
         pending: Vec::new(),
@@ -327,6 +369,13 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         stopped: false,
     };
     crate::acp::sessions::open(&st.out, &id, &st.proj().root, "gui");
+    if let Some(selected) = &st.agent_selection {
+        crate::acp::sessions::record_update(
+            &st.out,
+            &id,
+            &json!({"sessionUpdate":"agent_binding","selection":selected.summary()}),
+        );
+    }
     st.chat
         .sessions
         .lock()
@@ -360,7 +409,7 @@ pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) 
                 .map(|(n, u)| json!({"n": n, "update": super::jobs::elide(u)}))
                 .collect();
             Json(json!({"id": s.id, "title": s.title, "state": s.state,
-                        "pending": s.pending, "updates": updates,"inputs":s.inputs,"turnId":s.turn_id}))
+                        "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "updates": updates,"inputs":s.inputs,"turnId":s.turn_id}))
             .into_response()
         }
         None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id)),
@@ -1096,6 +1145,10 @@ mod steering_tests {
             title: "Test".into(),
             state: "running".into(),
             handle: None,
+            host: None,
+            binding: None,
+            agent_selection: None,
+            selection_id: None,
             ring: VecDeque::new(),
             next_n: 0,
             pending: vec![],

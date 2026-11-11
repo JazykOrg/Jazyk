@@ -6,6 +6,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 pub struct AppState {
+    pub agent_choices: Arc<super::agents::Choices>,
+    pub agent_selection: Option<Arc<super::agents::Selection>>,
     // The project root is fixed for the process; the settings behind it can be
     // rewritten from the GUI and reload live (see gui/mod.rs reload_project).
     pub root: PathBuf,
@@ -70,6 +72,8 @@ impl AppState {
             |n| std::env::var(n).ok(),
         );
         Ok(Arc::new(Self {
+            agent_choices: self.agent_choices.clone(),
+            agent_selection: self.agent_selection.clone(),
             root: self.root.clone(),
             out: if id.is_some() {
                 proj.out.clone()
@@ -99,10 +103,31 @@ impl AppState {
     }
 
     pub fn proj(&self) -> Project {
-        self.proj.read().unwrap().clone()
+        {
+            let mut proj = self.proj.read().unwrap().clone();
+            if let Some(selection) = &self.agent_selection {
+                proj.acp.agent = Some(selection.agent.name.clone());
+                proj.acp.runtime_agent = Some(selection.agent.name.clone());
+                if !selection.agent.command.is_empty() {
+                    proj.acp.agents.insert(
+                        selection.agent.name.clone(),
+                        crate::project::AcpAgentProfile {
+                            command: selection.agent.command.clone(),
+                            args: selection.agent.args.clone(),
+                            env: selection.agent.env.clone(),
+                            serve_files: selection.agent.serve_files,
+                        },
+                    );
+                }
+            }
+            proj
+        }
     }
     pub fn llm(&self) -> Llm {
-        self.llm.read().unwrap().clone()
+        self.agent_selection
+            .as_ref()
+            .map(|s| s.llm.clone())
+            .unwrap_or_else(|| self.llm.read().unwrap().clone())
     }
     pub fn gs(&self) -> GenSettings {
         self.gs.read().unwrap().clone()

@@ -2,6 +2,7 @@
 // the language server over WebSocket. The page itself is jazyk.dev (or --gui-url),
 // opened with the port and the token in the address, and connects back over CORS.
 // Mirrors docs/frontends/gui.md#serving.
+mod agents;
 mod api;
 mod board_api;
 mod card_api;
@@ -188,6 +189,8 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         }
     };
     let st = Arc::new(AppState {
+        agent_choices: Arc::new(agents::Choices::default()),
+        agent_selection: None,
         root: proj.root.clone(),
         proj: std::sync::RwLock::new(proj),
         llm: std::sync::RwLock::new(llm),

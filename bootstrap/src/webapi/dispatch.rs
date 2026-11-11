@@ -277,7 +277,7 @@ pub(crate) async fn request_scoped(
     match (method, path) {
         ("GET", "/ping") => ok(json!({
             "app": if crate::vfs::is_scoped() { "jazyk-hosted" } else { "jazyk-wasm" },
-            "version": env!("CARGO_PKG_VERSION"),
+            "version": crate::version::VERSION,
             "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
             "root": root.to_string_lossy(),
         })),
@@ -298,7 +298,7 @@ pub(crate) async fn request_scoped(
                 },
                 "executors": p.executors.by_kind,
                 "llm": { "model": crate::portable::model_name(), "baseUrl": "in-page" },
-                "version": env!("CARGO_PKG_VERSION"),
+                "version": crate::version::VERSION,
                 // What this transport is, so the app can hide what it cannot serve.
                 "chatInputs": true,
                 "conversationJobs": true,

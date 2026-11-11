@@ -70,6 +70,7 @@ pub mod sys;
 pub mod task_runtime;
 pub mod tools;
 pub mod verify;
+pub mod version;
 pub mod vfs;
 pub mod webapi;
 

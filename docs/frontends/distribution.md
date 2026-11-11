@@ -81,6 +81,29 @@ and Linux `libc`. All optional dependencies use the exact launcher version.
 Other files retain their committed bytes, including opaque document fixtures.
 Release metadata from Cargo is UTF-8.
 
+## Versions
+
+Every build names its version in one string. `jazyk --version`, `jazyk version`
+([cli](./cli.md#jazyk-version)), `GET /api/ping`, the MCP and LSP `serverInfo`, and
+Jazyk Cloud report the same string.
+
+- A release build is the release number, e.g. `0.2.2`.
+- Any other build is unreleased: the last release before it, `+`, the commits since
+  that release, and the commit. E.g. `0.2.2+31.ge0fff82` is 31 commits after `0.2.2`.
+- A build that cannot count those commits (a checkout without the release tags)
+  omits the count: `0.2.2+ge0fff82`.
+- A build with no evidence of where it came from reads `0.2.2+unknown`.
+
+The build finds it in this order:
+
+1. `JAZYK_BUILD_VERSION` (and `JAZYK_BUILD_COMMIT`) in the build's environment,
+   used as given. The release workflow sets it to the version it releases. A builder
+   that compiles a checkout without history, e.g. Jazyk Cloud, sets it.
+2. A packaged crate (`cargo install jazyk`): the `Cargo.toml` version, a release.
+3. The Jazyk Git checkout the source sits in: `git describe` against the
+   `v<version>` tags.
+4. Otherwise `<Cargo.toml version>+unknown`.
+
 ## Manual releases
 
 `.github/workflows/release.yml` accepts `workflow_dispatch` only, on `master`.

@@ -61,6 +61,11 @@ pub async fn compile_with(
             ..Default::default()
         }
     };
+    // A store of a newer version is refused before the lease, the runner, or any file
+    // write (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(out) {
+        return refused(why);
+    }
     // The control plane's build contract: one coarse lease for the run, refused while
     // an agent is mid-task, and the run itself is an approval in manual mode.
     let _build = match crate::control::begin_internal_build(proj, out, "compile") {
@@ -115,6 +120,12 @@ pub(crate) async fn compile_under(
         return result.clone();
     }
     let resuming = saved.is_some();
+    // A store of a newer version stops the build before it writes any file or runs any
+    // session (docs/compiler/graph.md#store-version).
+    if let Some(why) = crate::store::newer_store(out) {
+        trace.line("build", &why);
+        return suspended_build(why, 0, 0, 0, 0);
+    }
 
     // Every build keeps the generated ignore file current
     // (docs/compiler/document-sets.md#persistence-and-identity).

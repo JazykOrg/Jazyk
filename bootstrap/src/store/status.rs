@@ -17,6 +17,47 @@ pub fn read_generation(out: &Path) -> u64 {
         .unwrap_or(0)
 }
 
+// The version of a store newer than this one, when the out directory holds one: the
+// higher of `status.yaml`'s and `store.yaml`'s `version`, and a `store.yaml` without a
+// `status.yaml` always counts as newer. Such a store is never archived and never
+// written. Mirrors docs/compiler/graph.md#store-version.
+pub fn newer_version(out: &Path) -> Option<u32> {
+    let version_in = |p: &Path| -> Option<u32> {
+        match yaml_read::<serde_norway::Value>(p) {
+            Ok(Some(v)) => Some(
+                v.get("version")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| u32::try_from(v).unwrap_or(u32::MAX))
+                    .unwrap_or(0),
+            ),
+            Ok(None) => None,
+            Err(_) => Some(0),
+        }
+    };
+    let status = out.join("status.yaml");
+    let from_status = version_in(&status).unwrap_or(0);
+    let from_store = match version_in(&out.join("store.yaml")) {
+        Some(v) if !status.vexists() => v.max(STORE_VERSION + 1),
+        Some(v) => v,
+        None => 0,
+    };
+    let v = from_status.max(from_store);
+    (v > STORE_VERSION).then_some(v)
+}
+
+// The `store-newer` refusal for a store of a newer version.
+// Mirrors docs/compiler/graph.md#store-version.
+pub fn newer_store(out: &Path) -> Option<String> {
+    newer_version(out).map(|v| {
+        format!(
+            "store-newer: {} holds a version {} store and this jazyk writes version {}; upgrade jazyk to open it",
+            out.display(),
+            v,
+            STORE_VERSION
+        )
+    })
+}
+
 // build.yaml: the local half of the status, what one checkout's runs leave behind.
 // Mirrors docs/compiler/graph.md#storage-layout and #committed-and-local-state.
 pub const BUILD_FILE: &str = "build.yaml";

@@ -632,3 +632,52 @@ fn hosted_image_upload_survives_projection_and_workspace_reload() {
         assert_eq!(reply.body, bytes);
     }
 }
+
+// A hosted compile against a project a newer jazyk migrated stops before any session
+// and leaves the snapshot's set files untouched. Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_hosted_compile_never_writes_a_newer_store() {
+    let mut w = workspace("Alpha");
+    for (path, bytes) in [
+        (".jazyk/ds_main/store.yaml", &b"version: 5\n"[..]),
+        (".jazyk/ds_main/status.yaml", &b"version: 5\n"[..]),
+        (
+            ".jazyk/ds_main/graph/entities/x.yaml",
+            &b"# Jazyk entity\nid: ent:x\nname: X\n"[..],
+        ),
+        (".jazyk/ds_main/local/build.yaml", &b"generation: 9\n"[..]),
+    ] {
+        w.files.insert(path.into(), bytes.to_vec());
+    }
+    let set_files = |w: &Workspace| -> BTreeMap<String, Vec<u8>> {
+        w.snapshot()
+            .into_iter()
+            .filter(|(p, _)| p.starts_with(".jazyk/ds_main"))
+            .collect()
+    };
+    let before = set_files(&w);
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let e = Execution {
+        model: "never".into(),
+        transport: Some(Arc::new(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Err("no model call is expected".into())
+        })),
+        ..Default::default()
+    };
+    let result = value(&mut w, "POST", "/api/compile", json!({}), &e);
+    let report = &result["results"][0]["body"]["report"];
+    assert_eq!(report["verdict"], "incomplete", "{result}");
+    assert_eq!(report["sessions"], 0, "{result}");
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        set_files(&w),
+        before,
+        "the newer store's files stay byte-identical"
+    );
+    assert!(!w
+        .snapshot()
+        .keys()
+        .any(|p| p.starts_with(".jazyk/ds_main.bak")));
+}

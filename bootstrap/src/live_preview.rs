@@ -133,8 +133,7 @@ impl Preview {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn path(out: &Path, label: &str) -> PathBuf {
-    out.join("preview")
-        .join(format!("{}.json", crate::model::hash_hex(label)))
+    crate::layout::preview_dir(out).join(format!("{}.json", crate::model::hash_hex(label)))
 }
 
 // Native ACP's serving is another process. These private, ephemeral display bytes

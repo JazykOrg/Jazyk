@@ -1694,7 +1694,7 @@ fn watch_board(state: &Arc<ProxyState>) {
             };
             let sig = (
                 crate::store::read_generation(&st.out),
-                std::fs::metadata(st.out.join("control.yaml"))
+                std::fs::metadata(crate::control::Control::path(&st.out))
                     .ok()
                     .and_then(|m| m.modified().ok()),
             );

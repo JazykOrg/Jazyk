@@ -19,7 +19,7 @@ pub(super) fn snapshot_baseline(
     if !seen.insert(rel.to_string()) {
         return;
     }
-    let dst = out.join("deliverable-baseline").join(rel);
+    let dst = crate::layout::deliverable_baseline_dir(out).join(rel);
     match crate::vfs::read(gs.deliverable.join(rel)) {
         Ok(bytes) => {
             if let Some(p) = dst.parent() {

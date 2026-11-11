@@ -15,9 +15,7 @@ impl Lsp {
     fn view_svg_path(&self, view_id: &str) -> Option<PathBuf> {
         let rel = view_id.strip_prefix("view:")?;
         let (kind, slug) = rel.split_once('/')?;
-        let p = self
-            .out
-            .join("diagrams")
+        let p = crate::layout::diagrams_dir(&self.out)
             .join(kind)
             .join(format!("{}.svg", slug));
         p.vexists().then_some(p)
@@ -30,17 +28,14 @@ impl Lsp {
 
     // An entity's card: `docsgen/entities/<slug>.md`.
     fn card_path(&self, id: &str) -> PathBuf {
-        self.out
-            .join("docsgen")
+        crate::layout::docsgen_dir(&self.out)
             .join("entities")
             .join(format!("{}.md", crate::ids::entity_slug(id)))
     }
 
     // An entity's requirements document: `docsgen/<slug>.md`.
     fn requirements_doc_path(&self, id: &str) -> PathBuf {
-        self.out
-            .join("docsgen")
-            .join(format!("{}.md", crate::ids::entity_slug(id)))
+        crate::layout::docsgen_dir(&self.out).join(format!("{}.md", crate::ids::entity_slug(id)))
     }
 
     // A view's diagram page: `docsgen/diagrams/<kind>/<slug>.md`.
@@ -48,8 +43,7 @@ impl Lsp {
         let rel = view_id.strip_prefix("view:")?;
         let (kind, slug) = rel.split_once('/')?;
         Some(
-            self.out
-                .join("docsgen")
+            crate::layout::docsgen_dir(&self.out)
                 .join("diagrams")
                 .join(kind)
                 .join(format!("{}.md", slug)),
@@ -59,9 +53,7 @@ impl Lsp {
     // A level's page: `docsgen/levels/<slug>.md`, or `levels/scope-<scope>.md` for a
     // scope root.
     fn level_page_path(&self, target: &str) -> PathBuf {
-        self.out
-            .join("docsgen")
-            .join(crate::docsgen::level_page(target))
+        crate::layout::docsgen_dir(&self.out).join(crate::docsgen::level_page(target))
     }
 
     // The entity's card in short, read from the shared model (card.rs) so the hover
@@ -467,7 +459,7 @@ impl Lsp {
             .strip_prefix("ent:")
             .unwrap_or(ent)
             .to_string();
-        let path = self.out.join("docsgen").join(format!("{}.md", slug));
+        let path = crate::layout::docsgen_dir(&self.out).join(format!("{}.md", slug));
         let text = crate::vfs::read_to_string(&path).ok()?;
         let heading = format!("### `{}`", rid);
         let line = text
@@ -512,7 +504,7 @@ impl Lsp {
         let text = self.doc_text(&doc);
         let docsgen = |id: &str| {
             let slug = id.strip_prefix("ent:").unwrap_or(id);
-            self.out.join("docsgen").join(format!("{}.md", slug))
+            crate::layout::docsgen_dir(&self.out).join(format!("{}.md", slug))
         };
         let links: Vec<Value> = self
             .entity_mentions(&text, |id| docsgen(id).vexists())

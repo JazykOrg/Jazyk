@@ -893,7 +893,7 @@ The same render runs after every committed changeset. See
 ### jazyk viewer
 
 `jazyk viewer [--out FILE]` renders the graph into one self-contained HTML file
-(default `<out>/graph.html`). See [viewer](./viewer.md).
+(default `<out>/derived/graph.html`). See [viewer](./viewer.md).
 
 ### jazyk gui
 

@@ -13,7 +13,9 @@ import java.nio.file.Path;
 
 public final class JazykServerFactory implements LanguageServerFactory {
     static String command(Path root) throws IOException {
-        Path config = root.resolve(".jazyk/ide.json");
+        // .jazyk/local/ide.json; .jazyk/ide.json is where an older Jazyk wrote it.
+        Path config = root.resolve(".jazyk/local/ide.json");
+        if (!Files.exists(config)) config = root.resolve(".jazyk/ide.json");
         if (!Files.exists(config)) return "jazyk";
         JsonObject json = JsonParser.parseString(Files.readString(config)).getAsJsonObject();
         if (!json.has("lsp") || !json.getAsJsonObject("lsp").has("command")) return "jazyk";

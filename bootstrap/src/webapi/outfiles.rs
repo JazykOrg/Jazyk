@@ -14,7 +14,21 @@ use std::path::{Path, PathBuf};
 // out directory (a symlink pointing out is refused). None when anything fails,
 // including a path that does not exist.
 pub fn safe_out_path(out: &Path, rel: &str) -> Option<PathBuf> {
-    super::deliverable::safe_under(out, rel)
+    let (base, rel) = legacy_base(out, rel);
+    super::deliverable::safe_under(&base, rel)
+}
+
+// A path that starts with `docsgen` or `diagrams` names the derived output a store of
+// version 4 kept at the top of the set: it resolves under `derived/`, so a client that
+// asks for the old path reads the same files. Every other path is relative to the out
+// directory. Mirrors docs/compiler/jazyk-folder.md (derived set files).
+fn legacy_base<'a>(out: &Path, rel: &'a str) -> (PathBuf, &'a str) {
+    let first = rel.split('/').next().unwrap_or("");
+    if matches!(first, "docsgen" | "diagrams") {
+        (crate::layout::derived_dir(out), rel)
+    } else {
+        (out.to_path_buf(), rel)
+    }
 }
 
 // The content type by extension. Text kinds carry a charset so the browser and the
@@ -42,7 +56,8 @@ pub fn content_type(rel: &str) -> &'static str {
 // 400; a path that validates but names nothing is 404.
 pub fn out_file(out: &Path, path: &str) -> Result<Vec<u8>, Refusal> {
     let Some(abs) = safe_out_path(out, path) else {
-        if !lexical_ok(path) || out.join(path).vexists() {
+        let (base, rel) = legacy_base(out, path);
+        if !lexical_ok(path) || base.join(rel).vexists() {
             return Err((400, format!("invalid out path {}", path)));
         }
         return Err((404, format!("no file {}", path)));
@@ -76,15 +91,23 @@ pub(crate) fn walk(dir: &Path, base: &Path, acc: &mut Vec<(String, u64)>) {
 // recursively, paths relative to the out directory. An absent directory lists as
 // empty: the pages simply have not been generated yet. Every refusal is 400.
 pub fn out_list(out: &Path, path: &str) -> Result<Value, Refusal> {
+    let (base, _) = legacy_base(out, path);
     let root = out
         .vcanonicalize()
         .map_err(|_| (400, "no out directory".to_string()))?;
+    // Listed paths read as the client asked for them: an old `docsgen` listing names
+    // `docsgen/...`, a `derived/docsgen` listing names `derived/docsgen/...`.
+    let root = if base == out {
+        root
+    } else {
+        base.vcanonicalize().unwrap_or(root)
+    };
     let mut files = Vec::new();
     match safe_out_path(out, path) {
         Some(dir) if dir.vis_dir() => walk(&dir, &root, &mut files),
         Some(_) => return Err((400, format!("{} is not a directory", path))),
         None => {
-            if !lexical_ok(path) || out.join(path).vexists() {
+            if !lexical_ok(path) || base.join(path).vexists() {
                 return Err((400, format!("invalid out path {}", path)));
             }
         }
@@ -103,9 +126,7 @@ pub fn docsgen_value(out: &Path, slug: &str) -> Result<Value, Refusal> {
     if slug.contains('/') || slug.contains("..") || slug.contains('\\') {
         return Err((400, format!("invalid slug {}", slug)));
     }
-    let f = out
-        .join("docsgen")
-        .join(format!("{}.md", slug.trim_end_matches(".md")));
+    let f = crate::layout::docsgen_dir(out).join(format!("{}.md", slug.trim_end_matches(".md")));
     crate::vfs::read_to_string(&f)
         .map(|text| json!({ "slug": slug, "text": text }))
         .map_err(|_| (404, format!("no requirements document for {}", slug)))
@@ -122,10 +143,18 @@ mod tests {
             crate::sys::process_id()
         ));
         crate::vfs::remove_dir_all(&dir).ok();
-        crate::vfs::create_dir_all(dir.join(".jazyk/docsgen/entities")).unwrap();
-        crate::vfs::create_dir_all(dir.join(".jazyk/diagrams/class")).unwrap();
-        crate::vfs::write(dir.join(".jazyk/docsgen/entities/funds.md"), "# Funds\n").unwrap();
-        crate::vfs::write(dir.join(".jazyk/diagrams/class/funds.svg"), "<svg/>").unwrap();
+        crate::vfs::create_dir_all(dir.join(".jazyk/derived/docsgen/entities")).unwrap();
+        crate::vfs::create_dir_all(dir.join(".jazyk/derived/diagrams/class")).unwrap();
+        crate::vfs::write(
+            dir.join(".jazyk/derived/docsgen/entities/funds.md"),
+            "# Funds\n",
+        )
+        .unwrap();
+        crate::vfs::write(
+            dir.join(".jazyk/derived/diagrams/class/funds.svg"),
+            "<svg/>",
+        )
+        .unwrap();
         crate::vfs::write(dir.join(".jazyk/.hidden.md"), "x").unwrap();
         crate::vfs::write(dir.join("secret.md"), "outside\n").unwrap();
         dir
@@ -138,6 +167,7 @@ mod tests {
         let dir = temp_out("confine");
         let out = dir.join(".jazyk");
         assert!(safe_out_path(&out, "docsgen/entities/funds.md").is_some());
+        assert!(safe_out_path(&out, "derived/docsgen/entities/funds.md").is_some());
         assert!(safe_out_path(&out, "diagrams/class/funds.svg").is_some());
         assert!(safe_out_path(&out, "docsgen").is_some());
         assert!(safe_out_path(&out, "../secret.md").is_none());
@@ -196,6 +226,8 @@ mod tests {
         let files = v["files"].as_array().unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0]["path"], "docsgen/entities/funds.md");
+        let v = out_list(&out, "derived/docsgen").unwrap();
+        assert_eq!(v["files"][0]["path"], "derived/docsgen/entities/funds.md");
         assert_eq!(out_list(&out, "gen").unwrap()["files"], json!([]));
         assert_eq!(out_list(&out, "../x").unwrap_err().0, 400);
         let root = out.vcanonicalize().unwrap();

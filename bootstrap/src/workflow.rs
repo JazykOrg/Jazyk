@@ -661,7 +661,7 @@ mod tests {
         .save(&project.out)
         .unwrap();
         crate::vfs::write(
-            project.out.join("control.yaml"),
+            crate::control::Control::path(&project.out),
             "compile: manual\ngenerate: manual\nreleased:\n  compile: {}\n  generate: 0\n",
         )
         .unwrap();

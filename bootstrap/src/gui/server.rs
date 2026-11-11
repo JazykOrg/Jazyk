@@ -940,7 +940,7 @@ pub(super) mod tests {
             .sets[0]
             .id
             .clone();
-        let diagrams = st.root.join(".jazyk").join(&set).join("diagrams");
+        let diagrams = crate::layout::diagrams_dir(&st.root.join(".jazyk").join(&set));
         std::fs::create_dir_all(&diagrams).unwrap();
         std::fs::write(diagrams.join("v.svg"), "<svg/>").unwrap();
         let r = send(

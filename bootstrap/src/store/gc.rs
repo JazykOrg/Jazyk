@@ -420,9 +420,8 @@ impl Store {
             .collect()
     }
 
-    // The marker diagnostics whose condition cleared: an incomplete-build marker an
-    // earlier store version filed, an uncovered-section marker whose section is marked covered
-    // or non-normative, or is gone. Each with the reason its resolution records.
+    // Legacy markers for pending compiler work settle regardless of coverage.
+    // Each carries the reason its resolution records.
     // Mirrors docs/compiler/graph.md#the-sweep.
     fn cleared_markers(&self) -> Vec<(String, String)> {
         let mut out = Vec::new();
@@ -444,20 +443,13 @@ impl Store {
                     ));
                 }
                 "uncovered-section" => {
-                    let Some((doc, r)) = subject.split_once('#') else {
-                        continue;
-                    };
-                    let rec = self.docs.get(doc);
-                    let gone = rec.map(|rec| !rec.sections.contains_key(r)).unwrap_or(true);
-                    let marked = rec
-                        .and_then(|rec| rec.coverage.get(r))
-                        .map(|c| c.state == "covered" || c.state == "non-normative")
-                        .unwrap_or(false);
-                    if gone {
-                        out.push((id.clone(), format!("section {} is gone", subject)));
-                    } else if marked {
-                        out.push((id.clone(), format!("section {} is covered", subject)));
-                    }
+                    out.push((
+                        id.clone(),
+                        format!(
+                            "section {} coverage is build progress, not a diagnostic",
+                            subject
+                        ),
+                    ));
                 }
                 _ => {}
             }

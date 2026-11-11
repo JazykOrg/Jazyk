@@ -418,20 +418,14 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             ));
         }
     }
-    // Coverage: sections with a body of their own that stayed unprocessed, and
-    // non-normative marks over text that still looks normative.
+    // Coverage: non-normative marks over text that still looks normative.
+    // Unprocessed sections are pending reconciliation, not document findings.
     for (doc, rec) in &store.docs {
         for (r, sec) in &rec.sections {
             if !goals::section_has_body(sec) {
                 continue;
             }
             match rec.coverage.get(r) {
-                None => f.push(finding(
-                    "uncovered-section",
-                    &format!("{}#{}", doc, r),
-                    "warning",
-                    format!("section {}#{} is unprocessed after the build", doc, r),
-                )),
                 Some(c)
                     if c.state == "non-normative"
                         && sec.kind != "blob"

@@ -237,9 +237,9 @@ re-ask a question a person already answered. Sessions never see them: an empty f
 no section to schedule, and a link only feeds levels, so both are invisible to the model.
 Every check run journals a `checks` entry under its own generation.
 
-- Coverage: `uncovered-section` for a section with a body of its own left
-  `unprocessed`; `suspicious-non-normative` for a `non-normative` section whose text
-  still looks normative ([coverage](#coverage)).
+- Coverage: `suspicious-non-normative` for a `non-normative` section whose text
+  still looks normative ([coverage](#coverage)). Unprocessed sections are pending
+  compiler work, not document diagnostics.
 - `stale-provenance`: an anchor no session addressed, a quote that fails to locate.
 - `failing-binding`: a ledger row whose implementing files exist and whose tests fail,
   the deliverable contradicting the statement, or whose criterion tests stay red after
@@ -339,10 +339,9 @@ Every check run journals a `checks` entry under its own generation.
 The checks also settle stranded diagnostics: every open judged diagnostic whose subjects
 are all missing from the graph is resolved and journaled (`settle-diagnostics`), so a
 store deleted into a stranded state heals at the next build or board poll instead of
-staying wedged. The `uncovered-section` marker does not wait for the tail:
-[the sweep](./graph.md#the-sweep) resolves it at every commit once its condition clears,
-and the checks re-file it when its condition holds again. Unfinished work files no
-diagnostic: it is open work, and the verdict counts it.
+staying wedged. [The sweep](./graph.md#the-sweep) also resolves legacy
+`uncovered-section` markers, including those for sections still awaiting processing.
+Unfinished work files no diagnostic: it is open work, and the verdict counts it.
 
 ## Convergence
 
@@ -426,7 +425,8 @@ body is its text after the heading line, a `preamble`'s body is its whole text
   navigation). A `note` is required.
 
 Coverage is the completeness meter of a build and part of its termination criterion.
-Checks flag sections that stay `unprocessed`, and `non-normative` sections whose text
+Unprocessed sections derive `reconcile-section` goals and appear in coverage and build
+progress, without document warnings. Checks flag `non-normative` sections whose text
 still looks normative (`suspicious-non-normative`). "Looks normative" is a cheap
 deterministic signal: the body says `shall`, uses obligation verbs (supports, manages,
 handles, provides, requires, allows, stores, can be performed, is responsible), or

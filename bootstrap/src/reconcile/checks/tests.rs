@@ -232,7 +232,7 @@ fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
 }
 
 #[test]
-fn coverage_checks_flag_an_unprocessed_and_a_suspicious_section() {
+fn coverage_checks_only_flag_suspicious_sections() {
     let mut s = Store::default();
     seed_doc(
         &mut s,
@@ -249,10 +249,15 @@ fn coverage_checks_flag_an_unprocessed_and_a_suspicious_section() {
     );
     let f = checks(&s, &Project::default());
     let uncovered = rules_for(&f, "uncovered-section");
+    assert!(uncovered.is_empty(), "{:?}", uncovered);
+    let board =
+        crate::board::Board::derive(&s, &Project::default(), &crate::control::Control::default());
     assert!(
-        uncovered.iter().any(|h| h.1 == ["shop.md#/shop/cart"]),
-        "{:?}",
-        uncovered
+        board
+            .goals
+            .iter()
+            .any(|g| { g.kind == "reconcile-section" && g.target == "shop.md#/shop/cart" }),
+        "unprocessed sections must remain pending work"
     );
     let suspicious = rules_for(&f, "suspicious-non-normative");
     assert_eq!(suspicious.len(), 1, "{:?}", suspicious);

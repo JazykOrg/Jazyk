@@ -255,8 +255,7 @@ answer:
 | --- | --- | --- | --- |
 | [parsing](../parsing.md#format-handlers), filed by the checks | `unsupported-format` | warning | retired, resolves when checks run; opaque inputs compile as blobs |
 | parsing, filed by the checks | `parse-error` | error | a matched file its format handler cannot read (not valid UTF-8, or unreadable) |
-| [coverage](../compilation.md#coverage) | `uncovered-section` | warning | a section with a body of its own still `unprocessed` after the build |
-| coverage | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
+| [coverage](../compilation.md#coverage) | `suspicious-non-normative` | warning | a `non-normative` section whose text still looks normative |
 | [`rejudge-pair`](../goals/rejudge-pair.md), [`review-entity`](../goals/review-entity.md) sessions | `contradiction` | warning or error | requirements on an entity that cannot all hold |
 | `review-entity`, [`dedupe-candidates`](../goals/dedupe-candidates.md) sessions | `duplicate-entity` | warning | two entities that look like one concept |
 | `rejudge-pair`, `review-entity` sessions, checks | `duplicate-requirement` | warning or info | warning: the same obligation recorded twice; info: the same fact intentionally restated in different documents (both kept) |

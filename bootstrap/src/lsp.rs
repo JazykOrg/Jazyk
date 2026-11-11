@@ -263,7 +263,7 @@ impl Lsp {
                 "workspaceSymbolProvider": true,
                 "executeCommandProvider": { "commands": ["jazyk.openRequirement", "jazyk.showLastBuild", "jazyk.answerDiagnostic", "jazyk.documentSets", "jazyk.previewDocumentSet", "jazyk.saveDocumentSet", "jazyk.compile"] }
             },
-            "serverInfo": { "name": "jazyk", "version": env!("CARGO_PKG_VERSION") }
+            "serverInfo": { "name": "jazyk", "version": crate::version::VERSION }
         })
     }
 

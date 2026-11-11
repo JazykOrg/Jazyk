@@ -13,6 +13,10 @@ on:
         type: boolean
 permissions:
   contents: read
+# Every build names the version it releases; the checkout has no tags to describe
+# (docs/frontends/distribution.md#versions).
+env:
+  JAZYK_BUILD_VERSION: ${{ inputs.version }}
 concurrency:
   group: jazyk-release
   cancel-in-progress: false

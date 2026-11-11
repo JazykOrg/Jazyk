@@ -8,8 +8,9 @@ engine package version and the graph storage version.
 
 `GET /api/ping` includes an integer `protocol` field. The current version is `2`.
 The response retains `app`, `version`, and `root`. `app` is `jazyk-gui` for the
-local HTTP API and `jazyk-wasm` for WebAssembly. `version` is the engine package
-version. It does not decide editor compatibility.
+local HTTP API and `jazyk-wasm` for WebAssembly. `version` is the engine's
+[version](./distribution.md#versions), e.g. `0.2.2+31.ge0fff82`. It does not decide
+editor compatibility.
 
 E.g.:
 

@@ -4,6 +4,7 @@
 use super::*;
 
 const COMMANDS: &[&str] = &[
+    "version",
     "init",
     "setup",
     "compile",
@@ -118,4 +119,13 @@ fn the_top_level_help_lists_every_command() {
             .any(|(u, _)| u.split([' ', '|']).any(|w| w == *cmd));
         assert!(listed, "`jazyk --help` does not list `{cmd}`:\n{usage}");
     }
+}
+
+// `jazyk --version` and `jazyk version` name the build's version.
+// Mirrors docs/frontends/cli.md#jazyk-version.
+#[test]
+fn version_has_a_shape_a_help_and_a_listing() {
+    assert_eq!(command_shape("version").unwrap().0, Some(0));
+    assert!(cmd_usage("version").unwrap().contains("--version"));
+    assert!(top_usage().contains("--version, -V"));
 }

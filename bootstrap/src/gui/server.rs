@@ -888,7 +888,7 @@ pub(super) mod tests {
             .unwrap();
         let ping: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(ping["app"], "jazyk-gui");
-        assert_eq!(ping["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(ping["version"], crate::version::VERSION);
         assert_eq!(ping["protocol"], crate::protocol::EDITOR_PROTOCOL_VERSION);
         assert_eq!(ping["root"], st.root.to_string_lossy().as_ref());
 

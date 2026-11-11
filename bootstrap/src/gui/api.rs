@@ -39,7 +39,7 @@ pub async fn load_store(st: &SharedState) -> Store {
 pub async fn ping(State(st): State<SharedState>) -> Json<Value> {
     Json(json!({
         "app": "jazyk-gui",
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::version::VERSION,
         "protocol": crate::protocol::EDITOR_PROTOCOL_VERSION,
         "root": st.proj().root.to_string_lossy(),
     }))
@@ -62,7 +62,7 @@ pub async fn project(State(st): State<SharedState>) -> Json<Value> {
         "executors": p.executors.by_kind,
         // Never the api key.
         "llm": { "model": st.llm().model, "baseUrl": st.llm().base_url },
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::version::VERSION,
         // --dev: the app starts with the Developer toggle on.
         "dev": st.dev,
     }))

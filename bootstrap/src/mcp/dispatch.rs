@@ -62,7 +62,7 @@ impl McpServer {
                 Ok(json!({
                     "protocolVersion": negotiate_protocol(&params["protocolVersion"]),
                     "capabilities": self.capabilities(),
-                    "serverInfo": {"name": "jazyk", "version": env!("CARGO_PKG_VERSION")},
+                    "serverInfo": {"name": "jazyk", "version": crate::version::VERSION},
                     "instructions": self.initialize_instructions(self.initialized())?
                 }))
             }

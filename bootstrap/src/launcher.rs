@@ -38,6 +38,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
+        ("version [--json]", "this jazyk's version, commit, store version, and protocol; --version prints the version line alone"),
         ("compile [path...] [--sessions N] [--select PATH] [--record]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
@@ -100,6 +101,7 @@ pub(crate) fn top_usage() -> String {
     );
     s.push_str("         --quiet, -q     only the board summary, gc bursts, and the verdict\n");
     s.push_str("         --help, -h      print help and exit\n");
+    s.push_str("         --version, -V   print the version and exit\n");
     s.push_str(
         "\n`jazyk <command> --help` prints that command's arguments, options, and exit codes.\n",
     );
@@ -195,6 +197,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "check" | "watch" => (Some(0), &[]),
         "decompile" => (None, &[]),
         "status" => (Some(0), &["--json", "--costs"]),
+        "version" => (Some(0), &["--json"]),
         "preview" | "explain" => (Some(1), &[]),
         "ripple" => (Some(1), &["--back"]),
         "context" => (Some(1), &["--depth", "--expand"]),
@@ -356,6 +359,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              {}",
             COMMON_OUT
         ),
+        "version" => "usage: jazyk version [--json]\n\n             Print this jazyk's version: the release number for a release, else the last\n             release, `+`, the commits after it, and the commit (0.2.2+31.ge0fff82 is\n             unreleased, 31 commits after 0.2.2). Then the commit, the store version it\n             reads and writes, and the editor protocol. `jazyk --version` (-V) prints the\n             version line alone. Reads nothing from the project.\n\n             options:\n               --json    one JSON object: version, release, released, commitsAfter,\n                         commit, store, protocol\n\n             exit: 0".to_string(),
         "spend" => format!(
             "usage: jazyk spend <generation> <tokens> [--cached N]\n\n\
              Record what an external agent's session billed on its journal entry, after\n\
@@ -661,6 +665,11 @@ pub fn run() {
         }
         return;
     }
+    // `jazyk --version`: the version line alone (docs/frontends/cli.md#jazyk-version).
+    if args.len() == 2 && (args[1] == "--version" || args[1] == "-V") {
+        println!("jazyk {}", crate::version::VERSION);
+        return;
+    }
     let mut opts = cli::Options::default();
     let mut positional: Vec<String> = Vec::new();
     let mut cmd = String::new();
@@ -912,6 +921,22 @@ pub fn run() {
         "check" => cli::run_check(&positional, &opts),
         "watch" => cli::run_watch(&positional, &opts),
         "status" => cli::run_status(&opts),
+        "version" => {
+            if opts.json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&crate::version::json()).unwrap_or_default()
+                );
+            } else {
+                println!("{}", crate::version::line());
+                if !crate::version::COMMIT.is_empty() {
+                    println!("commit {}", crate::version::COMMIT);
+                }
+                println!("store version {}", crate::store::STORE_VERSION);
+                println!("protocol {}", crate::protocol::EDITOR_PROTOCOL_VERSION);
+            }
+            0
+        }
         "preview" => cli::run_preview(&positional, &opts),
         "explain" => cli::run_explain(&positional, &opts),
         "ripple" => cli::run_ripple(&positional, &opts),

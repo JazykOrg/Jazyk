@@ -635,6 +635,25 @@ over the measured sessions, `0` when none reported any), `by_kind` and `by_docum
 `requirements`, `criteria`, `per_requirement`, `per_criterion`. A figure no session
 measured is `null` (and `-` in the text), never `0`. Exit `0`.
 
+### jazyk version
+
+`jazyk version [--json]` prints this build's [version](./distribution.md#versions), its
+commit, the [store version](../compiler/graph.md#store-version) it reads and writes,
+and the [editor protocol](./protocol.md). `jazyk --version` (or `-V`) prints the
+version line alone, e.g. `jazyk 0.2.2+31.ge0fff82`. Both read nothing from the project
+and exit with 0. E.g.:
+
+```
+jazyk 0.2.2+31.ge0fff82 (unreleased, 31 commits after 0.2.2)
+commit e0fff82d8252b0357681ea22f20bf0f50894448c
+store version 5
+protocol 2
+```
+
+A release prints `jazyk 0.2.2` on the first line. `--json` prints one object:
+`version`, `release` (the last release), `released`, `commitsAfter` (`null` when
+unknown), `commit` (empty when unknown), `store`, and `protocol`.
+
 ### jazyk spend
 
 `jazyk spend <generation> <tokens> [--cached N]` records what an external agent's

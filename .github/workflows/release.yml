@@ -24,6 +24,9 @@ jobs:
       matrix: ${{ steps.plan.outputs.matrix }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
@@ -58,6 +61,9 @@ jobs:
           }
           JS
       - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
+      - run: python3 scripts/release/publish-source.test.py
+      - run: python3 scripts/release/package-managers.test.py
+      - run: python3 scripts/release/source-package.test.py
       - run: python3 scripts/release/publish-github.test.py
       - run: node --test scripts/release/publish-npm.test.mjs
       - run: python3 scripts/release/verify-npm-source.test.py
@@ -186,4 +192,14 @@ jobs:
     uses: ./.github/workflows/release-npm.yml
     with:
       version: ${{ inputs.version }}
+    secrets: inherit
+  source-packages:
+    needs: github-release
+    if: inputs.publish && !contains(inputs.version, '-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-packages.yml
+    with:
+      version: ${{ inputs.version }}
+      publish: true
     secrets: inherit

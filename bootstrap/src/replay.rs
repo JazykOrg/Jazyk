@@ -31,7 +31,11 @@ impl ReplayReport {
 
 // The replays under docs/benchmark/replays, the default set.
 pub fn default_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/benchmark/replays")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(file!())
+        .parent()
+        .expect("replay source has a parent directory")
+        .join("../../docs/benchmark/replays")
 }
 
 // Every replay in the named files and directories, in path order.

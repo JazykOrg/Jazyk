@@ -38,7 +38,7 @@ pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
-        ("compile [path...] [--sessions N] [--select PATH]", "run one build: sessions resolve goals until the board converges"),
+        ("compile [path...] [--sessions N] [--select PATH] [--record]", "run one build: sessions resolve goals until the board converges"),
         ("benchmark [case...]", "grade the configured agent and model"),
     ]),
     ("actions on the project", &[
@@ -187,7 +187,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
-        "compile" => (None, &["--sessions", "--select"]),
+        "compile" => (None, &["--sessions", "--select", "--record"]),
         "sets" => (
             Some(2),
             &["--docs", "--source", "--roots", "--name", "--json"],
@@ -295,7 +295,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              exit: 0 when something was set up, 1 when nothing was written"
             .to_string(),
         "compile" => format!(
-            "usage: jazyk compile [path...] [--set ID] [--sessions N] [--select PATH[:A-B]]...\n\n\
+            "usage: jazyk compile [path...] [--set ID] [--sessions N] [--select PATH[:A-B]]... [--record]\n\n\
              Run one build per document set: the set --set names, else every set\n\
              claiming one of the paths (a path no set claims is a usage error), else\n\
              every dirty set. The reconciler derives the goal board from the documents\n\
@@ -307,7 +307,8 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              --sessions N    run at most N sessions, then stop with an honest incomplete\n  \
              \x20               (0 derives the board and parks every goal without an LLM call)\n  \
              --verbose, -v   every session's prompt, the goal cascade, raw payloads\n  \
-             --quiet, -q     only the board summary, gc bursts, and the verdict\n\
+             --quiet, -q     only the board summary, gc bursts, and the verdict\n  \
+             --record        write a graph snapshot per batch to the log directory, for replays\n\
              {}\n\n\
              exit: 0 on converged, 1 on incomplete, 2 on a usage error",
             COMMON_LLM
@@ -735,6 +736,7 @@ pub fn run() {
             "--dev" => opts.dev = true,
             "--verbose" | "-v" => opts.verbose = true,
             "--quiet" | "-q" => opts.quiet = true,
+            "--record" => opts.record = true,
             "--write" => opts.write = true,
             "--json" => opts.json = true,
             "--once" => opts.once = true,

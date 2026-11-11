@@ -48,6 +48,7 @@ pub mod live_preview;
 pub mod llm;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_socket;
+pub mod logs;
 pub mod mcp;
 pub mod md;
 pub mod model;

@@ -1071,33 +1071,237 @@ pub fn import_history(body: &Value) -> Result<Value, String> {
 }
 
 // A hosted request owns its conversation book. Only serializable history and
-// updates survive; the MCP loaded set is reopened explicitly on the next turn.
+// updates survive; the MCP loaded set is reopened explicitly on the next turn. The book
+// lives in the host's record store (or its file-backed fallback), never in the
+// workspace snapshot: a request loads it, and a save writes only what changed since the
+// load. Mirrors docs/compiler/hosted-runtime.md#host-records.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) struct Scope(Book);
+pub(crate) struct Scope(Book, Option<Stored>);
+
+// What the record store holds for the book as last loaded or saved, so a save writes
+// only the difference.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Default)]
+pub(crate) struct Stored {
+    seq: u64,
+    chats: BTreeMap<String, StoredChat>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone, Default)]
+struct StoredChat {
+    meta: Value,
+    updates: Vec<(u64, Value)>,
+    history: Vec<Value>,
+    updates_gen: u32,
+    history_gen: u32,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static STORED: RefCell<Option<Stored>> = const { RefCell::new(None) };
+}
+
+// The key holding the book's own counter beside the conversations.
+#[cfg(not(target_arch = "wasm32"))]
+const BOOK_KEY: &str = "_book";
+
+// The version 4 snapshot file the book lived in before the record store.
+#[cfg(not(target_arch = "wasm32"))]
+const LEGACY_BOOK: &str = "/project/.jazyk/conversations.json";
+
+#[cfg(not(target_arch = "wasm32"))]
+fn chat_meta(chat: &Value) -> Value {
+    let mut meta = chat.clone();
+    if let Some(m) = meta.as_object_mut() {
+        m.remove("updates");
+        m.remove("history");
+    }
+    meta
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn load_book(store: &dyn crate::hosted::records::RecordStore) -> Result<(Book, Stored), String> {
+    use crate::hosted::records::Stream;
+    let mut book = Book::default();
+    let mut stored = Stored::default();
+    for (key, meta) in store.keys(Stream::ChatUpdates)? {
+        if key == BOOK_KEY {
+            book.seq = meta["seq"].as_u64().unwrap_or(0);
+            stored.seq = book.seq;
+            continue;
+        }
+        let updates = store.read(Stream::ChatUpdates, &key, None, usize::MAX)?;
+        let history: Vec<Value> = store
+            .read(Stream::ChatHistory, &key, None, usize::MAX)?
+            .into_iter()
+            .map(|(_, v)| v)
+            .collect();
+        let updates_gen = meta["_updatesGen"].as_u64().unwrap_or(0) as u32;
+        let history_gen = meta["_historyGen"].as_u64().unwrap_or(0) as u32;
+        let mut full = meta.clone();
+        if let Some(m) = full.as_object_mut() {
+            m.remove("_updatesGen");
+            m.remove("_historyGen");
+            m.insert(
+                "updates".into(),
+                Value::Array(updates.iter().map(|(n, u)| json!([n, u])).collect()),
+            );
+            m.insert("history".into(), Value::Array(history.clone()));
+        }
+        let chat: Chat = serde_json::from_value(full)
+            .map_err(|e| format!("invalid conversation {}: {}", key, e))?;
+        stored.chats.insert(
+            key.clone(),
+            StoredChat {
+                meta: chat_meta(&serde_json::to_value(&chat).map_err(|e| e.to_string())?),
+                updates,
+                history,
+                updates_gen,
+                history_gen,
+            },
+        );
+        book.chats.insert(key, chat);
+    }
+    Ok((book, stored))
+}
+
+// Write the book's difference from what the store holds, then remember the book as
+// stored. Called when a request saves and before every checkpoint.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn persist_book() -> Result<(), String> {
+    use crate::hosted::records::Stream;
+    let store = crate::hosted::records::store();
+    let before = STORED.with(|s| s.borrow().clone()).unwrap_or_default();
+    let (seq, current): (u64, BTreeMap<String, Value>) = BOOK.with(|b| {
+        let b = b.borrow();
+        (
+            b.seq,
+            b.chats
+                .iter()
+                .map(|(k, c)| (k.clone(), serde_json::to_value(c).unwrap_or(Value::Null)))
+                .collect(),
+        )
+    });
+    let mut after = Stored {
+        seq,
+        chats: BTreeMap::new(),
+    };
+    for (id, chat) in &current {
+        let updates: Vec<(u64, Value)> = chat["updates"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|u| Some((u[0].as_u64()?, u[1].clone())))
+            .collect();
+        let history: Vec<Value> = chat["history"].as_array().cloned().unwrap_or_default();
+        let meta = chat_meta(chat);
+        let old = before.chats.get(id).cloned().unwrap_or_default();
+        let mut next = StoredChat {
+            meta: meta.clone(),
+            updates: updates.clone(),
+            history: history.clone(),
+            updates_gen: old.updates_gen,
+            history_gen: old.history_gen,
+        };
+        // The timeline only grows; a rewritten one is replaced under the next generation.
+        let grew =
+            updates.len() >= old.updates.len() && updates[..old.updates.len()] == old.updates[..];
+        if grew {
+            let fresh = &updates[old.updates.len()..];
+            for run in fresh.chunk_by(|a, b| b.0 == a.0 + 1) {
+                let items: Vec<Value> = run.iter().map(|(_, u)| u.clone()).collect();
+                store.append(Stream::ChatUpdates, id, next.updates_gen, run[0].0, &items)?;
+            }
+        } else {
+            next.updates_gen += 1;
+            // Replace numbers records from 0; keep each update's own number by
+            // appending them under the new generation instead.
+            store.replace(Stream::ChatUpdates, id, next.updates_gen, &[])?;
+            for run in updates.chunk_by(|a, b| b.0 == a.0 + 1) {
+                let items: Vec<Value> = run.iter().map(|(_, u)| u.clone()).collect();
+                store.append(Stream::ChatUpdates, id, next.updates_gen, run[0].0, &items)?;
+            }
+        }
+        // The model history appends while its prefix holds; compaction or a stop
+        // restore rewrites it under the next generation.
+        let prefix =
+            history.len() >= old.history.len() && history[..old.history.len()] == old.history[..];
+        if prefix {
+            if history.len() > old.history.len() {
+                store.append(
+                    Stream::ChatHistory,
+                    id,
+                    next.history_gen,
+                    old.history.len() as u64,
+                    &history[old.history.len()..],
+                )?;
+            }
+        } else {
+            next.history_gen += 1;
+            store.replace(Stream::ChatHistory, id, next.history_gen, &history)?;
+        }
+        if old.meta != meta
+            || next.updates_gen != old.updates_gen
+            || next.history_gen != old.history_gen
+            || !before.chats.contains_key(id)
+        {
+            let mut stored_meta = meta.clone();
+            stored_meta["_updatesGen"] = json!(next.updates_gen);
+            stored_meta["_historyGen"] = json!(next.history_gen);
+            store.put_meta(Stream::ChatUpdates, id, &stored_meta)?;
+        }
+        after.chats.insert(id.clone(), next);
+    }
+    for id in before.chats.keys().filter(|id| !current.contains_key(*id)) {
+        store.delete(Stream::ChatUpdates, id)?;
+        store.delete(Stream::ChatHistory, id)?;
+    }
+    if seq != before.seq || before.chats.is_empty() && !current.is_empty() {
+        store.put_meta(Stream::ChatUpdates, BOOK_KEY, &json!({"seq": seq}))?;
+    }
+    STORED.with(|s| *s.borrow_mut() = Some(after));
+    Ok(())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl Scope {
     pub(crate) fn enter() -> Result<Self, String> {
-        let path = "/project/.jazyk/conversations.json";
-        let book = match crate::vfs::read_to_string(path) {
-            Ok(text) => {
-                serde_json::from_str(&text).map_err(|e| format!("invalid conversations: {}", e))?
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Book::default(),
+        let store = crate::hosted::records::store();
+        // A version 4 snapshot kept the book in one file: read it once, write it
+        // through the store, and remove the file.
+        let legacy = match crate::vfs::read_to_string(LEGACY_BOOK) {
+            Ok(text) => Some(
+                serde_json::from_str::<Book>(&text)
+                    .map_err(|e| format!("invalid conversations: {}", e))?,
+            ),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e.to_string()),
         };
-        Ok(Self(BOOK.with(|b| b.replace(book))))
+        // An imported book is written as a difference from what the store already
+        // holds, so a key the store has is rewritten, never appended to twice.
+        let (book, stored) = match legacy {
+            Some(book) => (book, load_book(&*store)?.1),
+            None => load_book(&*store)?,
+        };
+        let previous_book = BOOK.with(|b| b.replace(book));
+        let previous_stored = STORED.with(|s| s.replace(Some(stored)));
+        let scope = Self(previous_book, previous_stored);
+        if crate::vfs::read_to_string(LEGACY_BOOK).is_ok() {
+            persist_book()?;
+            crate::vfs::remove_file(LEGACY_BOOK).map_err(|e| e.to_string())?;
+        }
+        Ok(scope)
     }
     pub(crate) fn save(&self) -> Result<(), String> {
-        let bytes = BOOK
-            .with(|b| serde_json::to_vec(&*b.borrow()))
-            .map_err(|e| e.to_string())?;
-        crate::vfs::write("/project/.jazyk/conversations.json", bytes).map_err(|e| e.to_string())
+        persist_book()
     }
 }
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Scope {
     fn drop(&mut self) {
         BOOK.with(|b| b.replace(std::mem::take(&mut self.0)));
+        STORED.with(|s| s.replace(self.1.take()));
     }
 }
 

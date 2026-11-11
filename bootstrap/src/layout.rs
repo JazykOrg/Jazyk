@@ -187,6 +187,19 @@ pub fn project_log_dir(out: &Path) -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| out.to_path_buf());
+    native_log_dir(&root)
+}
+
+/// The log directory of the project at `root` (the folder holding `.jazyk/`).
+pub fn log_dir_for_root(root: &Path) -> PathBuf {
+    if crate::vfs::is_scoped() {
+        return project_local_dir(&root.join(".jazyk")).join("records");
+    }
+    native_log_dir(root)
+}
+
+fn native_log_dir(root: &Path) -> PathBuf {
+    let root = root.to_path_buf();
     let base = match crate::sys::env_var("JAZYK_LOG_DIR")
         .ok()
         .filter(|v| !v.is_empty())

@@ -7,6 +7,50 @@ mod recovery;
 mod tasks;
 mod workspace;
 
+// The conversation book as the file-backed record store holds it in a snapshot:
+// `{seq, chats: {id: chat}}`, each chat its metadata with `updates` and `history`.
+// Mirrors docs/compiler/hosted-runtime.md#host-records.
+fn stored_book(files: &Snapshot) -> Value {
+    let prefix = ".jazyk/local/records/";
+    let docs = |stream: &str| -> Vec<Value> {
+        files
+            .iter()
+            .filter(|(p, _)| p.starts_with(&format!("{prefix}{stream}/")) && p.ends_with(".json"))
+            .filter_map(|(_, b)| serde_json::from_slice::<Value>(b).ok())
+            .collect()
+    };
+    let mut book = json!({"seq": 0, "chats": {}});
+    for doc in docs("chat-updates") {
+        let key = doc["key"].as_str().unwrap_or_default().to_string();
+        if key == "_book" {
+            book["seq"] = doc["meta"]["seq"].clone();
+            continue;
+        }
+        let mut chat = doc["meta"].clone();
+        if let Some(m) = chat.as_object_mut() {
+            m.remove("_updatesGen");
+            m.remove("_historyGen");
+        }
+        chat["updates"] = doc["items"].clone();
+        chat["history"] = json!([]);
+        book["chats"][&key] = chat;
+    }
+    for doc in docs("chat-history") {
+        let key = doc["key"].as_str().unwrap_or_default().to_string();
+        if book["chats"].get(&key).is_some() {
+            book["chats"][&key]["history"] = Value::Array(
+                doc["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|i| i[1].clone())
+                    .collect(),
+            );
+        }
+    }
+    book
+}
+
 fn workspace(name: &str) -> Workspace {
     Workspace::new(BTreeMap::from([
         (

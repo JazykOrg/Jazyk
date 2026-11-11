@@ -361,12 +361,9 @@ async fn save() -> Result<(), String> {
             // A running turn is absent from the ordinary history until it returns.
             // Its GDK frame is authoritative, while accepted input and event cursors
             // belong to the application book and must survive the same checkpoint.
-            let history = crate::conversation::export_history();
-            crate::vfs::write(
-                "/project/.jazyk/conversations.json",
-                history["book"].to_string(),
-            )
-            .map_err(|e| e.to_string())?;
+            // The book goes to the record store before the capsule, so a capsule never
+            // carries a copy of the history (docs/compiler/hosted-runtime.md#host-records).
+            crate::conversation::persist_book()?;
             crate::hosted::checkpoint(capsule()?).await?;
         }
     }

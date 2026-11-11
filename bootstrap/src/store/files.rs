@@ -678,15 +678,15 @@ pub(super) fn report_write(path: &Path, r: std::io::Result<()>) {
     }
 }
 
-// The graph as a batch saw it: the shards and status.yaml copied under
-// <out>/snapshots/<label>/ once per batch, for replays to seed from.
-// Mirrors docs/compiler/sessions.md#snapshots. A hosted workspace keeps none
-// (docs/compiler/hosted-runtime.md#workspace-snapshots).
+// The graph as a batch saw it: the shards and status.yaml copied under the set's log
+// directory, snapshots/<label>/, once per batch, for replays to seed from. Written only
+// when `jazyk compile --record` asked for it. Mirrors docs/compiler/sessions.md#snapshots.
+// A hosted workspace keeps none (docs/compiler/hosted-runtime.md#workspace-snapshots).
 pub fn snapshot_graph(out: &Path, label: &str) {
-    if crate::vfs::is_scoped() {
+    if crate::vfs::is_scoped() || !crate::logs::recording() {
         return;
     }
-    let dir = out.join("snapshots").join(label.replace(['/', ':'], "_"));
+    let dir = crate::layout::snapshots_dir(out).join(label.replace(['/', ':'], "_"));
     if dir.vexists() {
         return;
     }

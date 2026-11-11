@@ -58,6 +58,8 @@ jobs:
           }
           JS
       - run: node --test scripts/release/launcher.test.cjs scripts/release/packaging.test.mjs
+      - run: python3 scripts/release/package-managers.test.py
+      - run: python3 scripts/release/source-package.test.py
       - run: python3 scripts/release/publish-github.test.py
       - run: node --test scripts/release/publish-npm.test.mjs
       - run: python3 scripts/release/verify-npm-source.test.py
@@ -186,4 +188,14 @@ jobs:
     uses: ./.github/workflows/release-npm.yml
     with:
       version: ${{ inputs.version }}
+    secrets: inherit
+  source-packages:
+    needs: github-release
+    if: inputs.publish && !contains(inputs.version, '-')
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-packages.yml
+    with:
+      version: ${{ inputs.version }}
+      publish: true
     secrets: inherit

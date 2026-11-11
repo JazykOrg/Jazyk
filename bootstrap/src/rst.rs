@@ -5,7 +5,7 @@ use pest_derive::Parser;
 use std::{collections::BTreeMap, ops::Range, path::Path};
 
 #[derive(Parser)]
-#[grammar = "../vendor/rst-grammar/rst.pest"]
+#[grammar = "vendor/rst-grammar/rst.pest"]
 struct RstParser;
 
 pub fn supported(path: &Path) -> bool {

@@ -201,7 +201,7 @@ fn derived(from: &[&str]) -> Provenance {
 }
 
 fn journal_entry(s: &Store, generation: u64) -> JournalEntry {
-    let path = s.out.join("journal").join(format!("g{}.yaml", generation));
+    let path = crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", generation));
     serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
 }
 
@@ -246,6 +246,7 @@ fn move_to(id: &str, parent: &str) -> Op {
 
 fn diag(rule: &str, subjects: Vec<&str>) -> Diagnostic {
     Diagnostic {
+        goal: None,
         rule: rule.into(),
         severity: "error".into(),
         subjects: subjects.into_iter().map(String::from).collect(),

@@ -20,28 +20,27 @@ view draws walks back to a sentence.
 
 ## Created when
 
-One [change record](../graph.md#change-records) kind derives the goal: `edges-missing`
-(`via: entities`). The commit that creates or revises a requirement writes it when, after
-the changeset lands, the requirement lists two or more entities and carries no `edges`
-([edges](../model/requirement.md#edges)). E.g.:
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+The goal derives from an `edges-missing` [change record](../graph.md#change-records)
+(`via: entities`), computed per derivation for a requirement that lists two or more
+entities, carries no `edges` ([edges](../model/requirement.md#edges)), and holds no
+[`structure/` decision](../jazyk-folder.md#graphdecisionskindidyaml) on its current
+statement. E.g.:
 
 ```yaml
-- id: c414-2
-  generation: 414
-  mutation: 2
-  kind: edges-missing
+- kind: edges-missing
   subject: req:shop-3
   via: entities
   detail: {entities: [ent:order-service, ent:stock-api], edges: 0}
 ```
 
-- The record is written by the commit that lands the requirement, never by a scan of the
-  graph. A requirement the session judged not structural is not asked about again until
-  its `statement` or `entities` change, which writes a fresh record.
-- The record clears on its own when the requirement gains an edge by any path: a
+- A requirement the session judged not structural carries a
+  `graph/decisions/structure/<requirement>.yaml` decision with the hash of its statement
+  and its `entities`, and is not asked about again until either changes.
+- The finding stops by itself when the requirement gains an edge by any path: a
   [`review-entity`](./review-entity.md) session adding one, a dual write, a decree.
-  Resolving the goal clears it too. Deleting the requirement drops it with its subject.
-- A requirement extracted with its edges in the same call never writes the record. The
+  Deleting the requirement takes it, and the sweep deletes its decision.
+- A requirement extracted with its edges in the same call never derives the goal. The
   [extraction skill](../skills/extraction.md) asks for edges beside every statement, so
   this goal is the net for what extraction left implicit, not the normal path.
 
@@ -71,9 +70,16 @@ anything else is `bad-evidence`), and the harness checks:
   one staged, so the repaired call clears the refusal and the superseded one is not
   judged again.
 - `not-structural`: no edges are staged on the target (`edges-staged` otherwise), and
-  the justification names the sentence and why it relates no pair. The justification is recorded in the journal
-  with the resolution ([journal](../graph.md#journal)) and is what stops the goal from
-  deriving again.
+  the justification names the sentence and why it relates no pair. The commit writes
+  the requirement's `structure/` decision, which is what stops the goal from deriving
+  again:
+
+  ```yaml
+  # Jazyk decision: a requirement judged to state no structural link. Written by jazyk.
+  # yaml-language-server: $schema=https://jazyk.org/schemas/structure.json
+  id: req:shop-3
+  statement: 2d4f81c90ab37e65
+  ```
 
 The `entities` list is not this goal's to change: whether an entity belongs on the
 requirement is [`review-entity`](./review-entity.md)'s question. A staged
@@ -83,17 +89,16 @@ rejected under this goal, naming the field.
 At `done`, the per-mutation gates hold and a clean batch commits
 ([commit](../sessions.md#commit)). The commit recomputes the relationships
 ([derived data](../graph.md#derived-data)) and the views that show the pair redraw at
-the same commit. An edges-only `update_requirement` writes no `requirement-revised`
-record: that record means the `statement` or the quote changed in substance
-([pairs](../reconciler.md#pairs)). It writes `entity-changed` (`via: edges`) on each of
-the requirement's entities, so [`review-entity`](./review-entity.md#created-when) sees
-the new edge on its next review.
+the same commit. An edges-only `update_requirement` leaves the statement hash alone, so
+no pair is judged again ([pairs](../reconciler.md#pairs)). A `composition` edge changes
+the fact hash of both ends, so [`review-entity`](./review-entity.md#created-when) sees
+it on its next review.
 
 The goal fails (`mark_goal_failed`) when the sentence is too ambiguous to type honestly
 and `dependency` would be a guess about whether any relationship exists at all: the
-failure surfaces on the requirement, where the author sees it
-([parked and failed](../reconciler.md#parked-and-failed)). A failed optional goal is
-recorded and stands.
+failure is a `goal-failed` [diagnostic](../model/diagnostic.md) on the requirement,
+where the author sees it ([parked and failed](../reconciler.md#parked-and-failed)). A
+failed optional goal stands until the author acts.
 
 ## Hints
 

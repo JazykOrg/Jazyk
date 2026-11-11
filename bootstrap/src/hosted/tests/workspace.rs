@@ -115,11 +115,11 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
         ("spec/product/build.zip", "built output"),
         (".jazyk/ds_main/gen/judge.md", "LLM judgment criteria"),
         (".jazyk/.gitignore", crate::document_sets::IGNORE),
-        (".jazyk/ds_main/journal/g1.yaml", "build: g1\n"),
-        (".jazyk/ds_main/diagrams/class/alpha.svg", "<svg/>"),
-        (".jazyk/ds_main/graph/relationships/rel~a%7Eb.yaml", "members: []\n"),
+        (".jazyk/ds_main/local/journal/g1.yaml", "build: g1\n"),
+        (".jazyk/ds_main/derived/diagrams/class/alpha.svg", "<svg/>"),
+        (".jazyk/ds_main/derived/graph/relationships/rel~a%7Eb.yaml", "members: []\n"),
         (".jazyk/ds_main/trace/run.jsonl", "{}"),
-        (".jazyk/ds_main/control.yaml", "compile: auto\n"),
+        (".jazyk/ds_main/local/control.yaml", "compile: auto\n"),
     ] {
         w.files.insert(path.into(), text.as_bytes().to_vec());
     }
@@ -211,7 +211,7 @@ fn projection_preserves_authored_membership_and_records_only_ledger_output() {
             ".jazyk/ds_main/gen/ledger.yaml",
             ".jazyk/ds_main/gen/requirements/req~stable.yaml",
             ".jazyk/ds_main/graph/criteria/crit~stable.yaml",
-            ".jazyk/ds_main/status.yaml",
+            ".jazyk/ds_main/store.yaml",
         ]
     );
     assert_eq!(
@@ -399,7 +399,7 @@ fn incomplete_model_writes_cannot_bypass_commit_gates() {
         .iter()
         .any(|e| e.contains("coverage")));
     assert!(
-        w.snapshot().contains_key(".jazyk/ds_main/status.yaml"),
+        w.snapshot().contains_key(".jazyk/ds_main/store.yaml"),
         "valid failure state should remain persistable"
     );
 }
@@ -444,7 +444,7 @@ fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
         b"name: A\n".to_vec(),
     );
     w.files.insert(
-        ".jazyk/ds_main/status.yaml".into(),
+        ".jazyk/ds_main/store.yaml".into(),
         format!("version: {}\n", crate::store::STORE_VERSION).into_bytes(),
     );
     {
@@ -471,7 +471,7 @@ fn hosted_requests_write_no_graph_snapshots_and_drop_old_ones() {
         files.keys()
     );
     assert!(files.contains_key(".jazyk/ds_main/graph/entities/ent~a.yaml"));
-    assert!(files.contains_key(".jazyk/ds_main/status.yaml"));
+    assert!(files.contains_key(".jazyk/ds_main/store.yaml"));
 }
 
 #[test]
@@ -556,14 +556,14 @@ fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
     let snapshot = w.snapshot();
     assert!(!snapshot
         .keys()
-        .any(|p| p.starts_with(".jazyk/ds_main/preview/")));
+        .any(|p| p.starts_with(".jazyk/ds_main/derived/preview/")));
     assert!(
         !snapshot.keys().any(|p| p.contains("/snapshots/")),
         "a hosted batch writes no graph snapshot"
     );
     assert!(snapshot
         .keys()
-        .any(|p| p.starts_with(".jazyk/ds_main/journal/")));
+        .any(|p| p.starts_with(".jazyk/ds_main/local/journal/")));
     assert!(
         snapshot.keys().any(|p| p.ends_with(".svg")),
         "hosted compilation should retain diagram output"
@@ -639,8 +639,7 @@ fn hosted_image_upload_survives_projection_and_workspace_reload() {
 fn a_hosted_compile_never_writes_a_newer_store() {
     let mut w = workspace("Alpha");
     for (path, bytes) in [
-        (".jazyk/ds_main/store.yaml", &b"version: 5\n"[..]),
-        (".jazyk/ds_main/status.yaml", &b"version: 5\n"[..]),
+        (".jazyk/ds_main/store.yaml", &b"version: 6\n"[..]),
         (
             ".jazyk/ds_main/graph/entities/x.yaml",
             &b"# Jazyk entity\nid: ent:x\nname: X\n"[..],
@@ -680,4 +679,91 @@ fn a_hosted_compile_never_writes_a_newer_store() {
         .snapshot()
         .keys()
         .any(|p| p.starts_with(".jazyk/ds_main.bak")));
+}
+
+// A hosted compile with no sessions upgrades a version 4 store in the snapshot: the
+// node files keep their ids, the records become local build progress and decisions,
+// and nothing of the old layout stays. No model call is made.
+// Mirrors docs/compiler/graph.md#store-version.
+#[test]
+fn a_hosted_compile_without_sessions_upgrades_a_version_4_store() {
+    let mut w = workspace("Alpha");
+    for (path, text) in [
+        (".jazyk/ds_main/status.yaml", "version: 4\n"),
+        (
+            ".jazyk/ds_main/changes/entity-changed/ent~x.yaml",
+            "kind: entity-changed\nsubject: ent:x\nvia: name\n",
+        ),
+        (
+            ".jazyk/ds_main/lookalikes/ent~x%7Eent~y.yaml",
+            "id: ent:x~ent:y\npair: ent:x~ent:y\nverdict: separate\nscore: 0.6\n",
+        ),
+        (
+            ".jazyk/ds_main/graph/entities/ent~x.yaml",
+            "id: ent:x\nname: X\nmentions:\n- doc: docs/main.md\n  section: /alpha\n  quote: Navigation index.\n",
+        ),
+        (
+            ".jazyk/ds_main/graph/entities/ent~y.yaml",
+            "id: ent:y\nname: Y\nmentions:\n- doc: docs/main.md\n  section: /alpha\n  quote: Navigation index.\n",
+        ),
+        (".jazyk/ds_main/build.yaml", "generation: 3\n"),
+        (".jazyk/ds_main/markers.yaml", "ent:x:\n- g1\n- g3\n"),
+        (".jazyk/ds_main/journal/g3.yaml", "generation: 3\n"),
+        (".jazyk/ds_main/control.yaml", "compile: auto\n"),
+        (".jazyk/ds_main/trace/old.jsonl", "{}\n"),
+    ] {
+        w.files.insert(path.into(), text.as_bytes().to_vec());
+    }
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let e = Execution {
+        model: "never".into(),
+        transport: Some(Arc::new(move |_| {
+            seen.fetch_add(1, Ordering::SeqCst);
+            Err("no model call is expected".into())
+        })),
+        ..Default::default()
+    };
+    let result = value(&mut w, "POST", "/api/compile", json!({"sessions": 0}), &e);
+    assert_eq!(calls.load(Ordering::SeqCst), 0, "{result}");
+    let files = w.snapshot();
+    let text = |p: &str| match files.get(p) {
+        Some(b) => String::from_utf8_lossy(b).to_string(),
+        None => panic!(
+            "{p} missing from {:?}",
+            files
+                .keys()
+                .filter(|k| k.starts_with(".jazyk"))
+                .collect::<Vec<_>>()
+        ),
+    };
+    assert!(
+        text(".jazyk/ds_main/store.yaml").contains("version: 5"),
+        "{result}"
+    );
+    for gone in [
+        ".jazyk/ds_main/status.yaml",
+        ".jazyk/ds_main/build.yaml",
+        ".jazyk/ds_main/markers.yaml",
+        ".jazyk/ds_main/control.yaml",
+    ] {
+        assert!(!files.contains_key(gone), "{gone} survived");
+    }
+    for gone in ["changes/", "lookalikes/", "journal/", "trace/", "docs/"] {
+        let prefix = format!(".jazyk/ds_main/{gone}");
+        assert!(
+            !files.keys().any(|p| p.starts_with(&prefix)),
+            "{prefix} survived"
+        );
+    }
+    assert!(text(".jazyk/ds_main/graph/entities/ent~x.yaml").contains("id: ent:x\nname: X\n"));
+    assert!(text(".jazyk/ds_main/graph/entities/ent~y.yaml").contains("id: ent:y\nname: Y\n"));
+    assert!(files.contains_key(".jazyk/ds_main/graph/decisions/lookalikes/ent~x%7Eent~y.yaml"));
+    assert!(files.contains_key(".jazyk/ds_main/local/journal/g3.yaml"));
+    assert!(text(".jazyk/ds_main/local/control.yaml").contains("compile: auto"));
+    // What a delivery commits is the version 5 layout only.
+    assert!(files
+        .keys()
+        .filter(|p| p.starts_with(".jazyk/ds_main/") && crate::document_sets::committed(p))
+        .all(|p| !p.contains("/local/") && !p.contains("/derived/")));
 }

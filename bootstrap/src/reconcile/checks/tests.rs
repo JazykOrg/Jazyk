@@ -167,11 +167,10 @@ fn unstable_extraction_flags_a_recreated_natural_key() {
     assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
 }
 
-// `incomplete-build` names the goals a budget parked; a pair parked by flip
-// detection carries its unstable-derivation finding instead.
-// Mirrors docs/compiler/compilation.md#checks.
+// Parked goals are build progress, not graph state: no check files a diagnostic for
+// them. Mirrors docs/compiler/reconciler.md#parked-and-failed.
 #[test]
-fn incomplete_build_skips_flip_parked_goals() {
+fn parked_goals_file_no_diagnostic() {
     let mut s = Store::default();
     let goal = |id: &str, via: &str| Goal {
         id: id.into(),
@@ -196,8 +195,7 @@ fn incomplete_build_skips_flip_parked_goals() {
     ));
     let f = checks(&s, &Project::default());
     let hits = rules_for(&f, "incomplete-build");
-    assert_eq!(hits.len(), 1, "{:?}", hits);
-    assert_eq!(hits[0].1, ["ent:cart"]);
+    assert!(hits.is_empty(), "{:?}", hits);
 }
 
 // A decompiled draft nobody has edited since the machine wrote it is unratified;
@@ -212,9 +210,9 @@ fn unratified_flags_an_untouched_decompiled_draft_and_clears_on_edit() {
     let drafted = "# Cart\nThe Cart holds items.\n";
     seed_doc(&mut s, "cart.md", drafted);
     seed_doc(&mut s, "shop.md", "# Shop\nThe Shop sells.\n");
-    crate::vfs::create_dir_all(dir.join("decompile")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::decompile_dir(&dir)).unwrap();
     crate::vfs::write(
-        dir.join("decompile/drafts.yaml"),
+        crate::layout::decompile_dir(&dir).join("drafts.yaml"),
         format!("cart.md: {}\n", hash_hex(drafted)),
     )
     .unwrap();
@@ -664,6 +662,7 @@ fn duplicate_requirement_splits_warning_and_info() {
     s.graph.diagnostics.insert(
         "diag:duplicate-requirement-9".into(),
         crate::model::Diagnostic {
+            goal: None,
             rule: "duplicate-requirement".into(),
             severity: "info".into(),
             subjects: vec!["req:b-1".into(), "req:b-2".into()],

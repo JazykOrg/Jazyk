@@ -298,7 +298,7 @@ agent spawns nothing:
 - Every request dispatches through the same handler the stdio loop uses: one
   registry, one set of schemas ([tools](../compiler/tools.md)), the same
   [bridge flags](#mcp-into-acp-sessions) (`--ephemeral`, `--only`, `--build-token`,
-  `--packaged`, `--serve-files`), the same transcript under `<out>/trace`. The
+  `--packaged`, `--serve-files`), the same transcript under `<set-id>/trace/` in the [log directory](../compiler/jazyk-folder.md#logs). The
   batch lifecycle (`begin_goals`, the write tools, `mark_goal_done`, `done`) behaves
   identically, because it is the same code.
 - Owned workers use the [compact task view](../compiler/task-runtime.md#results-and-verification).
@@ -701,7 +701,7 @@ whole cascade afterward, one line per journal entry.
 
 ## Transcripts
 
-Every serving leaves a transcript: one JSON-lines file under `<out>/trace`
+Every serving leaves a transcript: one JSON-lines file under `<set-id>/trace/` in the [log directory](../compiler/jazyk-folder.md#logs)
 (`<ts>-mcp-cli<pid>.jsonl`; the file opens at server start, before the client
 introduces itself, so the stem carries the process id, not the client name), one
 `toolCall`/`toolResult`/`toolError` event per call

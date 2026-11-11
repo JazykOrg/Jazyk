@@ -17,33 +17,37 @@ statements side by side.
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 The goal derives from two [change record](../graph.md#change-records) kinds on the
-section, and from one coverage state:
+section, both computed per derivation, and from one coverage state:
 
-- `section-dirty`: the `edit` journal entry of a build writes it for every section the
-  [dirty set](../reconciler.md#dirty-set) marks: added, or changed in title or body. An
-  exact move is not dirty; references are rewritten mechanically
-  ([section diffing](../parsing.md#section-diffing)). `detail` carries the diff: the
-  previous hash, the counts of lines `added` and `removed`, and the lines themselves
-  (`addedLines`, `removedLines`, blank lines left out, twenty of each at most). The
-  record is the diff's only copy: the `edit` entry writes the new body to the store
-  before any session runs, so the loaded body marks the diff from the record.
-- `anchor-stale`: written by the `align` entry for a requirement `source` or an entity
-  mention whose stored quote stops locating in the section, and by a `place_anchor`
-  with `reevaluate: true` or with a quote that does not locate in its new section
-  ([place-anchors](./place-anchors.md#gate)). An orphaned anchor lands on the nearest
-  surviving ancestor of its old section. `detail` lists the anchors: the id, the
-  `statement` or the entity name, the dead quote.
+- `section-dirty`: a section on disk whose hash differs from its entry in the document's
+  [`sources/` file](../jazyk-folder.md#sourcesdoc-pathyaml), or that the file lacks:
+  added, or changed in title or body. An exact move is not dirty; references are
+  rewritten mechanically ([section diffing](../parsing.md#section-diffing)). `detail`
+  carries the diff between the two texts: the previous hash, the counts of lines
+  `added` and `removed`, and the lines themselves (`addedLines`, `removedLines`, blank
+  lines left out, twenty of each at most). `sources/` keeps the section's old text
+  until the goal resolves, so the diff is computed again, the same, by every derivation
+  until then.
+- `anchor-stale`: a requirement `source` or an entity mention whose quote no longer
+  locates in the section on disk, including one a `place_anchor` moved here with a quote
+  that does not locate ([place-anchors](./place-anchors.md#gate)). An orphaned anchor
+  lands on the nearest surviving ancestor of its old section. `detail` lists the
+  anchors: the id, the `statement` or the entity name, the dead quote.
 - Unprocessed coverage: a section with a body of its own whose coverage is
-  `unprocessed` derives the goal without a record
-  ([coverage](../compilation.md#coverage)); its `change` is `{unprocessed: true}` and
-  its `cause` is the generation that parsed the section. This is what makes a fresh
+  `unprocessed` derives the goal ([coverage](../compilation.md#coverage)); its `change`
+  is `{unprocessed: true}`.
+
+The commit that resolves the goal writes the section's text on disk into `sources/`, so
+the next derivation finds it settled. A goal's `cause` is the build's `edit` journal
+entry that first saw the section change, when this machine's journal holds one. This is what makes a fresh
   store the same case as any other build, and what resumes a section an earlier session
   left unmarked.
 
-Several records on one section fold into one goal whose `change` merges their details
-(the line lists join, a line the body no longer holds drops out of `addedLines`) and
-whose `cause` is the earliest ([change records](../reconciler.md#change-records)).
+Several findings on one section fold into one goal whose `change` merges their details
+(the line lists join, a line the body no longer holds drops out of `addedLines`)
+([change records](../reconciler.md#change-records)).
 A section without a body of its own (a bare heading, a document title whose content
 sits in child sections) derives no goal from its dirt or from unprocessed coverage:
 there is nothing to extract and nothing to mark, and the coverage meter does not count
@@ -60,10 +64,7 @@ surfaces as [`retrace`](./retrace.md) goals.
 E.g.:
 
 ```yaml
-- id: c412-0
-  generation: 412
-  mutation: 0
-  kind: section-dirty
+- kind: section-dirty
   subject: docs/orders.md#/orders/holds
   via: section
   detail:
@@ -191,8 +192,8 @@ differ in what one bad claim can sink ([commit](../sessions.md#commit)):
   commits around one.
 - `mark_goal_failed({goal, reason})` is for a section that cannot honestly be
   reconciled: its stale anchors match nothing it says and nothing it deletes, or its
-  text contradicts itself sentence by sentence. A failed goal keeps its record and
-  surfaces on the section. It blocks convergence and does not hold tier 2
+  text contradicts itself sentence by sentence. A failed goal becomes a `goal-failed`
+  [diagnostic](../model/diagnostic.md) on the section. It blocks convergence and does not hold tier 2
   ([readiness](../reconciler.md#readiness)).
 
 Extraction order inside the goal is deliberate: requirements first, entities only as

@@ -94,6 +94,11 @@ pub fn runtime(request: &Value) -> Result<Value, String> {
     transport.ok_or("Hosted task runtime is not configured")?(request)
 }
 
+/// The host's record store, when this execution carries one.
+pub(super) fn record_store() -> Option<Arc<dyn super::records::RecordStore>> {
+    EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.records.clone()))
+}
+
 pub fn host_context() -> Option<Arc<crate::agent_context::HostContext>> {
     EXECUTION.with(|e| e.borrow().as_ref().and_then(|e| e.agent_context.clone()))
 }

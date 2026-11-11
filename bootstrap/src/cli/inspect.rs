@@ -22,6 +22,9 @@ pub fn run_status(opts: &Options) -> i32 {
         return match crate::document_sets::Workspace::load(&root) {
             Ok(workspace) => {
                 print!("{}", render_sets_overview(&workspace.summary()));
+                // The last line names where this project's logs live
+                // (docs/frontends/cli.md#jazyk-status).
+                println!("logs: {}", crate::layout::log_dir_for_root(&root).display());
                 0
             }
             Err((_, e)) => {
@@ -66,6 +69,7 @@ pub fn run_status(opts: &Options) -> i32 {
         );
     } else {
         print!("{}", render_status(&report));
+        println!("logs: {}", crate::layout::project_log_dir(&out).display());
     }
     0
 }
@@ -767,7 +771,7 @@ pub fn run_viewer(opts: &Options) -> i32 {
     let html = crate::viewer::render(&store, &gs);
     let path = html_target
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| out.join("graph.html"));
+        .unwrap_or_else(|| crate::layout::derived_dir(&out).join("graph.html"));
     if let Some(parent) = path.parent() {
         crate::vfs::create_dir_all(parent).ok();
     }

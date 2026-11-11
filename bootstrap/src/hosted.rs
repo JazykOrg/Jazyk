@@ -7,6 +7,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 mod dispatch;
 mod execution;
 mod projection;
+pub mod records;
 #[cfg(test)]
 mod tests;
 
@@ -19,6 +20,12 @@ pub use execution::{
     take_inputs, trace,
 };
 pub(crate) use execution::{checkpoint, suspension_requested, transport_async};
+
+/// The record store of the host request running on this thread, when its execution
+/// carries one (docs/compiler/hosted-runtime.md#host-records).
+pub fn host_record_store() -> Option<Arc<dyn records::RecordStore>> {
+    execution::record_store()
+}
 use projection::project_projection;
 
 pub type Snapshot = BTreeMap<String, Vec<u8>>;
@@ -89,6 +96,10 @@ pub struct Execution {
     /// The host's global agent context and remote MCP servers for conversations
     /// (docs/frontends/agent-context.md#hosted-context).
     pub agent_context: Option<Arc<crate::agent_context::HostContext>>,
+    /// The host's record store for conversations, feedback, and transcripts; `None`
+    /// keeps them as files under `.jazyk/local/records/`
+    /// (docs/compiler/hosted-runtime.md#host-records).
+    pub records: Option<Arc<dyn records::RecordStore>>,
 }
 
 #[derive(Debug)]

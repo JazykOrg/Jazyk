@@ -157,26 +157,41 @@ affected bindings and checks. They never silently preserve a clean verdict.
 
 ```text
 .jazyk/
-  jazyk.toml
-  .gitignore
-  project.lock                 project operation coordination
-  sessions/                    project-wide user conversations
-  runs/                        grouped job records
-  removed-sets/                 retained definitions for local recovery
+  jazyk.toml                   committed: project configuration
+  .gitignore .gitattributes    committed: generated
+  README.md                    committed: generated, the layout in brief
+  local/                       project machine state: project.lock, ide.json,
+                               removed-sets/, archive/
   <set-id>/
-    graph/ docs/ journal/ diagrams/ docsgen/ gen/ trace/ sessions/
-    status.yaml changes/ parked/ failed/ alignment/ lookalikes/
-    build.yaml markers.yaml causes.yaml control.yaml workers/ leases/ .lock
+    store.yaml graph/ sources/ gen/   committed: the current graph, its decisions,
+                               its sources, the ledger
+    local/                     this checkout's machine state
+    derived/                   rebuilt output
 ```
 
-- Each set lives directly at `.jazyk/<set-id>/` and owns the existing store shape
-  and its worker session history. Set IDs require the `ds_` prefix, keeping them
-  distinct from project directories such as `sessions`, `runs`, and `removed-sets`.
+Logs (project-wide conversations, grouped job records, transcripts) live in the project's
+[log directory](./jazyk-folder.md#logs), outside the repository. Every file is listed
+in [the .jazyk folder](./jazyk-folder.md).
+
+- Each set lives directly at `.jazyk/<set-id>/` and owns its store. Its id is minted
+  once from its name when the set is created: the [id slug](./model.md#identifiers)
+  of the name cut to 24 characters, then `-` and five random characters of lowercase
+  Crockford base 32 (`0123456789abcdefghjkmnpqrstvwxyz`). E.g. a set named `My set`
+  gets `my-set-ks8mf`, `Checkout API` gets `checkout-api-7q2xd`. A name with no letters
+  or digits gives the slug `set`. The suffix keeps two sets with one name apart and
+  two people creating a set of the same name on two branches from meeting in one
+  folder; a new id that already exists draws again.
+- An id is lowercase ASCII letters, digits, and `-`, starts with a letter or digit,
+  and is never `local`, the project's own [local folder](./jazyk-folder.md#local).
+  Ids minted before this rule (`ds_` and 32 hex digits) and hand-written ones such as
+  `ds_main` stay valid: an id never changes.
   The project owns conversations that discuss several sets and records grouping jobs.
 - A native project operation explicitly unlocks when its guard ends. A duplicated
   descriptor inherited by a concurrently starting child cannot prolong that lock.
 - A set rename changes only `name`. It preserves IDs, paths, graph, history, and
-  bindings. Copying a set definition mints an ID and starts an empty graph.
+  bindings, so after a rename the id's slug can read as the old name. That is
+  expected. Copying a set definition mints an ID from the copy's name and starts an
+  empty graph.
 - Project-level references carry `setId` and `localId`. JSON graph identifiers use
   `<kind>:<setId>::<local-tail>` on the wire. The kind prefix stays unchanged.
   The API decodes these identifiers before accessing a store. Local identifiers
@@ -210,44 +225,27 @@ The generated file ignores everything, then keeps the committed paths:
 *
 !/jazyk.toml
 !/.gitignore
-!/ds_*/
-/ds_*.bak/
-!/ds_*/status.yaml
-!/ds_*/changes/
-!/ds_*/changes/**
-!/ds_*/parked/
-!/ds_*/parked/*.yaml
-!/ds_*/failed/
-!/ds_*/failed/*.yaml
-!/ds_*/alignment/
-!/ds_*/alignment/*.yaml
-!/ds_*/lookalikes/
-!/ds_*/lookalikes/*.yaml
-!/ds_*/docs/
-!/ds_*/docs/**
-!/ds_*/graph/
-!/ds_*/graph/entities/
-!/ds_*/graph/entities/*.yaml
-!/ds_*/graph/requirements/
-!/ds_*/graph/requirements/*.yaml
-!/ds_*/graph/criteria/
-!/ds_*/graph/criteria/*.yaml
-!/ds_*/graph/views/
-!/ds_*/graph/views/*.yaml
-!/ds_*/graph/diagnostics/
-!/ds_*/graph/diagnostics/*.yaml
-!/ds_*/graph/redirects/
-!/ds_*/graph/redirects/*.yaml
-!/ds_*/gen/
-!/ds_*/gen/**
+!/.gitattributes
+!/README.md
+!/*/
+/local/
+/*/*
+!/*/store.yaml
+!/*/graph/
+!/*/graph/**
+!/*/sources/
+!/*/sources/**
+!/*/gen/
+!/*/gen/**
 .*.tmp
 ```
 
 A path the file does not name is local, so a new kind of output never enters a commit
-by accident: the journal, logs, snapshots, diagrams, docsgen, the derived graph kinds
-(`default-views/`, `relationships/`, `state-machines/`), `build.yaml`, `markers.yaml`,
-`causes.yaml`,
-the control plane, and `.bak` archives all stay out.
+by accident: every set's `local/` (build state, the journal, the control plane, locks)
+and `derived/` (derived graph kinds, diagrams, docsgen), and the project's `local/`
+(locks, editor settings, archives) all stay out. Jazyk writes `.jazyk/.gitattributes`
+on the same terms, naming the [merge driver](./jazyk-folder.md#merging-through-git) for
+set files, and `.jazyk/README.md`, the layout in brief.
 
 Existing repository rules that ignore `.jazyk` itself must be removed or narrowed;
 an ignore file inside an ignored parent cannot make config trackable. Setup reports

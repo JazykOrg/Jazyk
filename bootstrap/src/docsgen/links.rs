@@ -6,9 +6,9 @@ use crate::model::{StateMachine, View};
 use crate::store::Store;
 use crate::vfs::VPathExt;
 
-// The directories the pages live in, under `<out>`. Every link is a relative path
-// from the page's directory to the target's path under `<out>`, so the out directory
-// serves anywhere as-is. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
+// The directories the pages live in, under `<out>/derived`, beside `diagrams/`. Every
+// link is a relative path from the page's directory to the target's path under
+// `<out>/derived`, so the folder serves anywhere as-is. Mirrors docs/consumers/docsgen.md#diagrams-on-entity-pages.
 pub(super) const DOCS_DIR: &str = "docsgen";
 pub(super) const LEVELS_DIR: &str = "docsgen/levels";
 pub(super) const CARDS_DIR: &str = "docsgen/entities";
@@ -118,9 +118,7 @@ fn svg_exists(store: &Store, view_id: &str) -> bool {
     let Some((kind, s)) = rel.split_once('/') else {
         return false;
     };
-    store
-        .out
-        .join("diagrams")
+    crate::layout::diagrams_dir(&store.out)
         .join(kind)
         .join(format!("{}.svg", s))
         .vexists()

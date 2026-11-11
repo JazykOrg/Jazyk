@@ -19,48 +19,46 @@ reach.
 
 ## Created when
 
-Three sources derive the goal ([pairs](../reconciler.md#pairs)):
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+Three findings derive the goal ([pairs](../reconciler.md#pairs)):
 
-- `requirement-created` and `requirement-revised` [change records](../graph.md#change-records):
-  a commit writes one when it creates a requirement or changes its `statement` or its
-  quote in substance (normalized text, not punctuation). For each such record the
-  reconciler computes the neighbor set deterministically: requirements sharing an
-  entity with it, scored by overlapping content tokens (statement tokens minus stop
-  words and the shared entities' own name tokens, reduced to crude stems), at least two
-  shared tokens, best six by score. One goal per neighbor.
+- A candidate pair with no current judgment. For every requirement the reconciler
+  computes the neighbor set deterministically: requirements sharing an entity with it,
+  scored by overlapping content tokens (statement tokens minus stop words and the shared
+  entities' own name tokens, reduced to crude stems), at least two shared tokens, best
+  six by score. A neighbor pair derives a goal when no
+  [`pairs/` decision](../jazyk-folder.md#graphdecisionskindidyaml) holds statement hashes
+  that match both statements now: never judged, or either side changed in substance
+  (normalized text, not punctuation) since. The finding is a `requirement-revised`
+  [change record](../graph.md#change-records), computed per derivation.
 - Sticky pairs: an open `contradiction` or `duplicate-requirement` diagnostic ties two
   requirements. When either side is created or revised, the other is a neighbor
   whatever the token overlap says, so editing one side of a known pair always re-judges
   the other.
-- `node-deleted` on a surviving subject of an open pair diagnostic: the sweep writes it
-  when the other subject died. The goal shows the dead subject marked `(deleted)`; the
+- A surviving subject of an open pair diagnostic whose other subject is gone
+  (`node-deleted`). The goal shows the dead subject marked `(deleted)`; the
   session resolves the diagnostic when the finding died with the requirement, or
   refiles it against the surviving statements. A diagnostic left with no existing
   subject at all is settled by the store at commit (`settle-diagnostics`,
   [journal](../graph.md#journal)); no goal derives for it.
 
-A changed requirement with no neighbor, no sticky partner, and no open diagnostic
-naming it derives no pair goal. Two changed requirements that are each other's
-neighbors are one goal: judging A against B is judging B against A. One
-`requirement-*` record feeds one pair per candidate (its neighbors and sticky
-partners); resolving a pair appends the partner to `detail.judged` on the records of
-both sides, a re-derivation skips the judged partners, and the record clears at the
-sweep when no candidate remains. A requirement takes part in at most
-`pairs-per-requirement` (8) open pairs at once: pinned pairs (sticky, a dead
-diagnostic subject, parked, failed) open first, the rest by score, and a pair whose
-side is full waits, no goal until a slot frees; a waiting pair marks nothing judged
+A requirement with no neighbor, no sticky partner, and no open diagnostic naming it
+derives no pair goal. Two requirements that are each other's neighbors are one goal:
+judging A against B is judging B against A. Resolving the goal writes the pair's
+decision, `graph/decisions/pairs/<a~b>.yaml`, with both statement hashes, and the next
+derivation finds nothing to judge until a side changes again. A requirement takes part in
+at most `pairs-per-requirement` (8) open pairs at once: pinned pairs (sticky, a dead
+diagnostic subject, parked in this build) open first, the rest by score, and a pair
+whose side is full waits, no goal until a slot frees; a waiting pair writes no decision
 ([pairs](../reconciler.md#pairs)).
 
 E.g.:
 
 ```yaml
-- id: c413-2
-  generation: 413
-  mutation: 2
-  kind: requirement-revised
+- kind: requirement-revised
   subject: req:orders-6
   via: quote
-  detail: {fields: [statement, quote], judged: []}
+  detail: {fields: [statement, quote]}
 ```
 
 derives, for each neighbor:
@@ -79,7 +77,22 @@ g:rejudge-pair:req:orders-6~req:payment-9:
 ```
 
 `change` is the goal's identity across re-derivations: a pair judged consistent in one
-build derives again only when a side changes in substance again.
+build derives again only when a side changes in substance again, because only then do
+the decision's hashes stop matching.
+
+```yaml
+# Jazyk decision: two requirements judged against each other. Written by jazyk.
+# yaml-language-server: $schema=https://jazyk.org/schemas/pair.json
+id: req:orders-6~req:payment-9
+verdict: consistent
+statements:
+  req:orders-6: 9f2c41aa07b3d118
+  req:payment-9: 41d0e7c2b9aa6f30
+```
+
+A verdict that files or keeps a diagnostic writes the decision with `verdict:
+diagnosed`: the diagnostic carries the finding, and the pair is not asked again while
+both statements hold.
 
 ## Readiness
 
@@ -92,8 +105,7 @@ build derives again only when a side changes in substance again.
   entity review sees the pairs' verdicts. A changed requirement loaded once serves all
   its pairs.
 - A statement the session repairs before judging (`update_requirement` on a drifted
-  `statement`) writes a new `requirement-revised` record at commit and the pair derives
-  again with the new cause ([bubbling](../reconciler.md#bubbling)). The second judgment
+  `statement`) changes its statement hash, so the pair derives again with the new cause ([bubbling](../reconciler.md#bubbling)). The second judgment
   stages nothing, and the cascade ends there: that is the fixed point.
 
 ## Gate
@@ -151,8 +163,9 @@ quality is the skill's demand and a benchmarking concern
 ([judgment](../concepts/judgment.md)). `mark_goal_failed({goal, reason})` is for a pair
 the session cannot honestly decide: a quote that contradicts its own statement in a way
 no `update_requirement` can repair without re-extraction, or two statements whose
-documents changed under the session. A failed goal keeps its record and surfaces on
-both requirements; it blocks convergence.
+documents changed under the session. A failed goal becomes a `goal-failed`
+[diagnostic](../model/diagnostic.md) on both requirements; no goal derives on the pair
+while it is open, and it blocks convergence.
 
 ## Hints
 

@@ -555,7 +555,8 @@ impl AcpRunner {
             return failed_report(e.to_string(), 0, 0, 0);
         }
         let name: String = nonce.iter().map(|b| format!("{b:02x}")).collect();
-        let cancel_file = self.out.join("sessions").join(format!("cancel-{name}"));
+        // A cancel signal is machine state, kept in the set's local/ folder.
+        let cancel_file = crate::layout::local_dir(&self.out).join(format!("cancel-{name}"));
         plan.flags.cancel_file = Some(cancel_file.clone());
         let opened = match self.session_on(&agent, &plan) {
             Ok(s) => s,

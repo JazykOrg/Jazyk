@@ -238,7 +238,7 @@ pub fn deliverable_raw(gs: &GenSettings, path: &str) -> Result<Vec<u8>, Refusal>
 // when generation never rewrote the file. Mirrors docs/frontends/gui.md#api
 // (deliverable) and docs/consumers/gen.md#incremental-regeneration.
 pub fn deliverable_baseline(out_dir: &Path, path: &str) -> Result<Value, Refusal> {
-    let root = out_dir.join("deliverable-baseline");
+    let root = crate::layout::deliverable_baseline_dir(out_dir);
     let missing = || (404, format!("no baseline for {}", path));
     let abs = safe_under(&root, path).ok_or_else(missing)?;
     let bytes = crate::vfs::read(&abs).map_err(|_| missing())?;

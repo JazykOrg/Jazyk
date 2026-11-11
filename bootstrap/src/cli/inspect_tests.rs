@@ -129,7 +129,7 @@ fn ripple_renders_a_three_generation_cascade() {
     use crate::model::{Cause, JournalEntry, OpenedGoal, Resolved};
     let dir = std::env::temp_dir().join(format!("jazyk-ripple-test-{}", crate::sys::process_id()));
     crate::vfs::remove_dir_all(&dir).ok();
-    crate::vfs::create_dir_all(dir.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&dir)).unwrap();
     let sec = "g:reconcile-section:docs/orders.md#/orders/holds";
     let pair = "g:rejudge-pair:req:orders-6~req:payment-9";
     let g1 = JournalEntry {
@@ -183,7 +183,7 @@ fn ripple_renders_a_three_generation_cascade() {
     };
     for (n, e) in [(1, &g1), (2, &g2), (3, &g3)] {
         crate::vfs::write(
-            dir.join("journal").join(format!("g{}.yaml", n)),
+            crate::layout::journal_dir(&dir).join(format!("g{}.yaml", n)),
             serde_norway::to_string(e).unwrap(),
         )
         .unwrap();

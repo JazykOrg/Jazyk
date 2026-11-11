@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 pub fn run_compile(paths: &[String], opts: &Options) -> i32 {
     use crate::document_sets::Workspace;
+    crate::logs::set_recording(opts.record);
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let root = project::find_root(&cwd).unwrap_or_else(|| cwd.clone());
     let workspace = match Workspace::load(&root) {

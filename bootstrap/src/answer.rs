@@ -1079,7 +1079,7 @@ mod tests {
     }
 
     fn journal_kind(out: &Path, generation: u64) -> crate::model::JournalEntry {
-        let path = out.join("journal").join(format!("g{}.yaml", generation));
+        let path = crate::layout::journal_dir(out).join(format!("g{}.yaml", generation));
         serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap()
     }
 
@@ -1345,6 +1345,7 @@ mod tests {
             vec![Op::ReportDiagnostic {
                 id: String::new(),
                 diagnostic: Diagnostic {
+                    goal: None,
                     rule: "contradiction".into(),
                     severity: "warning".into(),
                     subjects: vec![format!("docs/pay.md#{}", sec)],
@@ -1467,6 +1468,7 @@ mod tests {
             vec![Op::ReportDiagnostic {
                 id: String::new(),
                 diagnostic: Diagnostic {
+                    goal: None,
                     rule: "ambiguity".into(),
                     severity: "warning".into(),
                     subjects: vec![format!("docs/pay.md#{}", refunds)],
@@ -1584,6 +1586,7 @@ mod tests {
             vec![Op::ReportDiagnostic {
                 id: String::new(),
                 diagnostic: Diagnostic {
+                    goal: None,
                     rule: "contradiction".into(),
                     severity: "error".into(),
                     subjects: vec!["req:pay-1".into(), "req:pay-2".into()],
@@ -1820,6 +1823,7 @@ mod tests {
                 Op::ReportDiagnostic {
                     id: String::new(),
                     diagnostic: Diagnostic {
+                        goal: None,
                         rule: "contradiction".into(),
                         severity: "error".into(),
                         subjects: vec!["req:arcs-29".into()],

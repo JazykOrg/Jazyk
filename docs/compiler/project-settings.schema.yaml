@@ -317,7 +317,11 @@ properties:
       properties:
         id:
           type: string
-          pattern: "^ds_[A-Za-z0-9_-]+$"
+          pattern: "^(ds_[A-Za-z0-9_-]+|(?!local$)[a-z0-9][a-z0-9-]*)$"
+          description: >-
+            Minted once from the name: its id slug cut to 24 characters, `-`, and five
+            random Crockford base 32 characters, e.g. my-set-ks8mf. Never `local`. Older
+            `ds_` ids stay valid
         name:
           type: string
           minLength: 1

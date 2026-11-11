@@ -294,6 +294,7 @@ pub(crate) fn section_tree(
         sections.insert(
             "/".to_string(),
             Section {
+                reflected: None,
                 title: String::new(),
                 kind: "preamble".to_string(),
                 order: 0,
@@ -362,6 +363,7 @@ pub(crate) fn section_tree(
         sections.insert(
             reference,
             Section {
+                reflected: None,
                 title: h.title.clone(),
                 kind: kind.to_string(),
                 order,
@@ -411,6 +413,7 @@ pub(crate) fn section_tree(
             block_sections.push((
                 reference,
                 Section {
+                    reflected: None,
                     title: b.title.clone(),
                     kind: b.kind.to_string(),
                     order,

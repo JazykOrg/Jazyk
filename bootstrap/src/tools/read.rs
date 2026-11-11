@@ -330,7 +330,7 @@ impl ToolSession {
             "id": id, "kind": v.kind, "title": v.title, "members": v.members,
             "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
             "collapse": v.collapse, "query": v.query, "default": v.default,
-            "rendering": format!("diagrams/{}/{}.svg", v.kind, slug),
+            "rendering": format!("derived/diagrams/{}/{}.svg", v.kind, slug),
             "children": children,
             "relationships": relationships,
         });

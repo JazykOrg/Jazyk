@@ -433,12 +433,12 @@ impl Ledger {
         }
     }
 
-    // The ledger's writer lock, `<out>/.ledger.lock`: every load, modify, and save
+    // The ledger's writer lock, `<out>/local/.ledger.lock`: every load, modify, and save
     // runs under it, so two processes never lose each other's rows. Reentrant on one
     // thread; an in-memory tree belongs to one thread and takes no file lock. Never
     // held while a test command runs. Mirrors docs/consumers/gen.md#the-ledger.
     pub fn lock(out: &Path) -> LedgerLock {
-        let path = out.join(".ledger.lock");
+        let path = crate::layout::ledger_lock_file(out);
         let nested = LEDGER_LOCKS.with(|held| {
             let mut held = held.borrow_mut();
             let n = held.entry(path.clone()).or_insert(0);
@@ -447,7 +447,7 @@ impl Ledger {
         });
         #[cfg(not(target_arch = "wasm32"))]
         if !nested && !crate::vfs::is_scoped() {
-            crate::vfs::create_dir_all(out).ok();
+            crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
             let opened = std::fs::OpenOptions::new()
                 .read(true)
                 .write(true)

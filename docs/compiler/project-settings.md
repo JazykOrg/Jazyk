@@ -16,21 +16,22 @@ Limits and budgets stay in the binary's [limits registry](./graph.md#limits).
 version = 1
 
 [[sets]]
-id = "ds_checkout"
+id = "checkout-7q2xd"
 name = "checkout"
 docs = ["docs/checkout.md", "docs-checkout/**/*.md"]
 roots = ["docs/checkout.md"]
 source = ["src/checkout/**", "src/shared/**"]
 
 [[sets]]
-id = "ds_search"
+id = "search-m4k8p"
 name = "search"
 docs = ["docs/search.md"]
 source = ["src/search/**", "src/shared/**"]
 ```
 
-Each set has an immutable `ds_` ID and an editable name. Its store is
-`.jazyk/<id>/`. The project may contain zero sets. `docs`, `roots`, and `source`
+Each set has an immutable id, minted from its name when it is created (`My set` →
+`my-set-ks8mf`, see [persistence and identity](./document-sets.md#persistence-and-identity)),
+and an editable name. Its store is `.jazyk/<id>/`. The project may contain zero sets. `docs`, `roots`, and `source`
 are ordered pattern lists. `source` is optional. Empty means no source mapping.
 Project settings are defaults; `[sets.llm]`, `[sets.acp]`, `[sets.executors]`,
 `[sets.workflow]`, and `[sets.gen]` override them for one set.
@@ -68,9 +69,9 @@ Some paths are never doc input, regardless of the glob:
 
 - The resolved [output directory](../frontends/cli.md) (default `.jazyk`, or the
   `--out` override). The compiler never reads its own output as source.
-- Any directory whose name starts with `.jazyk` (e.g. the `.jazyk.bak` archive
-  the [store version](./graph.md#store-version) check leaves behind) or with
-  `jazyk-out` (the out directory's old name, left where it is).
+- Any directory whose name starts with `.jazyk` (an older Jazyk left `.jazyk.bak`
+  archives beside the out directory) or with `jazyk-out` (the out directory's old
+  name, left where it is).
 - Hidden directories (name starting with `.`), `target`, and `node_modules`.
 - A file the [ledger](../consumers/gen.md#the-ledger) records as a test artifact under
   the deliverable (an `llm` row's criteria file): it is generation metadata, never a
@@ -313,7 +314,7 @@ worker = "agent"
 - `worker`: who acts on a GUI release. `internal`, `agent`, or `any` (default).
   See [dispatch](./control-plane.md#dispatch).
 
-These are defaults; the live values sit in `control.yaml` in the out directory,
+These are defaults; the live values sit in `control.yaml` in the set's `local/` directory,
 where a GUI toggle or CLI flag changes them at runtime without editing the project
 file. Deleting `control.yaml` returns to the defaults.
 

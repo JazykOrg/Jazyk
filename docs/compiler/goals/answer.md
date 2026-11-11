@@ -15,10 +15,12 @@ honest: a build with open questions is `converged, 2 blocked`, never silently do
 
 ## Created when
 
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
 The goal derives from a `prompt-unanswered` [change record](../graph.md#change-records),
-written by the commit that files a prompt on a diagnostic. `via` names what filed it:
-the tool (`report_diagnostic`, `update_diagnostic`, `record_generation`) or the check.
-The writers:
+computed per derivation for every diagnostic that carries a prompt and no answer and is
+not triaged `suppressed` or `wontfix`. `via` names what filed the prompt: the tool
+(`report_diagnostic`, `update_diagnostic`, `record_generation`) or the check. The
+writers of prompts:
 
 - Judgment sessions. [`rejudge-pair`](./rejudge-pair.md) attaches a prompt to a
   `contradiction` whose repair is enumerable: one `edit` option per side, rewriting
@@ -45,10 +47,7 @@ The writers:
 E.g.:
 
 ```yaml
-- id: c415-2
-  generation: 415
-  mutation: 2
-  kind: prompt-unanswered
+- kind: prompt-unanswered
   subject: diag:contradiction-3
   via: report_diagnostic
   detail: {rule: contradiction, subjects: [req:orders-6, req:payment-9],
@@ -61,7 +60,7 @@ What derives no goal of this kind:
   decreed fact is the [`ratify`](./ratify.md) goal; the two human seams stay distinct
   and both count as `blocked`.
 - A diagnostic that already carries an `answer`. A re-detected condition on a node
-  that carries one is not re-asked, so no record is written; a rejected suggestion
+  that carries one is not re-asked, so no goal derives; a rejected suggestion
   stays rejected across rebuilds.
 - A prompt on a diagnostic whose `triage` is `suppressed` or `wontfix`: the owner
   declined the question (below).
@@ -89,8 +88,8 @@ an answer in that case, so a condition that returns asks again.
 A human answer lands on the diagnostic: an option chosen, or freeform text
 ([answers](../model/diagnostic.md#answers)). The `answer` journal entry
 ([journal](../graph.md#journal)) records the goal under `resolved_goals` with the
-chosen option's label, or the first line of the freeform reply, as its justification;
-the change record clears; the goal is gone. Nothing a session does closes it:
+chosen option's label, or the first line of the freeform reply, as its justification.
+The diagnostic now carries an answer, so the goal is gone. Nothing a session does closes it:
 `mark_goal_done` is never accepted for this kind, because no batch ever carries it, and
 `answer_diagnostic` is a chat tool absent from every goal toolset.
 
@@ -103,8 +102,9 @@ question a person already answered. The failure surfaces where questions surface
 answer session over the same recorded text.
 
 Declining is the other way out. Setting `triage` to `suppressed` or `wontfix` on the
-prompted diagnostic journals a `triage` entry that clears the record: the prompt stays
-on the node unanswered, the finding stands, and the compiler never asks again.
+prompted diagnostic journals a `triage` entry, and a triaged prompt derives no goal: the
+prompt stays on the node unanswered, the finding stands, and the compiler never asks
+again.
 `acknowledged` says seen, not declined: the goal stands.
 
 ## Hints
@@ -162,7 +162,7 @@ dual write ([edit paths](../compilation.md#edit-paths)):
   verbatim. Anchors that cannot be re-anchored mechanically go stale, and
   [`reconcile-section`](./reconcile-section.md) addresses them next build.
 - The diagnostic resolves with the option's label as the reason
-  (`answer.status: applied`); the change record clears; the goal is gone.
+  (`answer.status: applied`); the goal is gone.
 
 Downstream goals derive from the graph change as usual: a revised requirement opens
 [`rejudge-pair`](./rejudge-pair.md) on its neighbors and [`bind`](./bind.md) on its
@@ -193,13 +193,13 @@ Choosing an `answer` option or replying freeform records the text on the node wi
   at the human's reply.
 - `answer.status` moves to `handled` when the session lands, or `failed` with the
   error after one retry. Every frontend shows the same progress from the store.
-- A re-prompt is a new question: the refined prompt writes a fresh
-  `prompt-unanswered` record, and a new `answer` goal derives for it.
+- A re-prompt is a new question: the refined prompt carries no answer yet, and a new
+  `answer` goal derives for it.
 
 Two replies have consequences the harness owns:
 
-- `unstable-derivation`: the ruling clears the parked pair, and the next build resumes
-  the chosen direction ([flip detection](../reconciler.md#flip-detection)).
+- `unstable-derivation`: the ruling settles the flipping pair, and the next build
+  follows the chosen direction ([flip detection](../reconciler.md#flip-detection)).
 - `pinned-fact-drift`, when the reply says the docs are right: the diagnostic resolves
   with the ruling, and the requirement's row is the deliverable's debt; the bound test
   encodes the pinned value, and the row's verdict says whether the code caught up

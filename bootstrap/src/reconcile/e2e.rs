@@ -1171,7 +1171,7 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
         for ext in ["puml", "svg"] {
-            let path = out.join("diagrams").join(format!("{}.{}", rel, ext));
+            let path = crate::layout::diagrams_dir(&out).join(format!("{}.{}", rel, ext));
             assert!(path.exists(), "{} missing", path.display());
         }
     }
@@ -1481,7 +1481,7 @@ fn assert_diagrams_rendered(store: &Store, out: &Path) {
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
         for ext in ["puml", "svg"] {
-            let path = out.join("diagrams").join(format!("{}.{}", rel, ext));
+            let path = crate::layout::diagrams_dir(out).join(format!("{}.{}", rel, ext));
             assert!(path.exists(), "{} missing", path.display());
         }
     }
@@ -2094,7 +2094,7 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
 
 // The store version: outside a build, a version-2 out directory (one shard per kind)
 // reads as empty and refuses a commit with `store-version`; a build archives it whole
-// to `<out>.bak` (the old shard included), reconciles from empty to converged in node
+// under `.jazyk/local/archive/` (the old shard included), reconciles from empty to converged in node
 // files, and stamps the current version. Mirrors docs/compiler/graph.md#store-version.
 #[test]
 fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty() {
@@ -2147,10 +2147,7 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
         report.verdict
     );
     assert_clean_build(&report, &events);
-    let bak = out.with_file_name(format!(
-        "{}.bak",
-        out.file_name().unwrap().to_string_lossy()
-    ));
+    let bak = crate::layout::archive_dir(&out, 2);
     assert!(
         bak.join("graph").join("entities.yaml").exists(),
         "{} not archived whole",
@@ -2164,19 +2161,19 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 4);
+    assert_eq!(store.status.version, 5);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
-    assert!(crate::vfs::read_to_string(out.join("status.yaml"))
+    assert!(crate::vfs::read_to_string(out.join("store.yaml"))
         .unwrap()
-        .contains("version: 4"));
+        .contains("version: 5"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
 // A batch that exhausts its unfinished-goal attempts parks its goals:
-// `status.yaml` carries the reason, `Board::explain` shows it, the build is incomplete
-// with an `incomplete-build` diagnostic, and the next build resumes the parked goals
+// the build progress carries the reason, `Board::explain` shows it, the build is
+// incomplete with no diagnostic filed for it, and the next build resumes the parked goals
 // first and converges. Mirrors docs/compiler/reconciler.md#parked-and-failed.
 #[test]
 fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_them_first() {
@@ -2284,20 +2281,12 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
         "{:?}",
         store.status.parked
     );
-    assert!(
-        store
-            .graph
-            .diagnostics
-            .values()
-            .any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"),
-        "{:?}",
-        store
-            .graph
-            .diagnostics
-            .values()
-            .map(|d| &d.rule)
-            .collect::<Vec<_>>()
-    );
+    // Parked work is build progress, not a diagnostic.
+    assert!(!store
+        .graph
+        .diagnostics
+        .values()
+        .any(|d| d.rule == "incomplete-build"));
     let control = crate::control::Control::load(&project, &out);
     let board = crate::board::Board::derive(&store, &project, &control);
     for id in parked.keys() {

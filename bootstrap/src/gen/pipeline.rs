@@ -310,7 +310,10 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            crate::vfs::read_to_string(out.join("deliverable-baseline/product.rs")).unwrap(),
+            crate::vfs::read_to_string(
+                crate::layout::deliverable_baseline_dir(out).join("product.rs")
+            )
+            .unwrap(),
             "original"
         );
         assert_eq!(

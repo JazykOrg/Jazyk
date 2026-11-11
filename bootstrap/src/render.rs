@@ -132,7 +132,7 @@ fn diagram_base(out: &Path, view_id: &str) -> Option<PathBuf> {
     if !clean(kind) || !clean(slug) {
         return None;
     }
-    Some(out.join("diagrams").join(kind).join(slug))
+    Some(crate::layout::diagrams_dir(out).join(kind).join(slug))
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -200,7 +200,7 @@ pub fn render_all(store: &Store, out: &Path) -> RenderReport {
             }
         }
     }
-    let dir = out.join("diagrams");
+    let dir = crate::layout::diagrams_dir(out);
     let Ok(kinds) = crate::vfs::read_dir(&dir) else {
         return report;
     };

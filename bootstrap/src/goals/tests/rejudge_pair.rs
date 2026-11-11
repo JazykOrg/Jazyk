@@ -147,6 +147,7 @@ fn a_pinned_pair_opens_on_a_saturated_side() {
     s.graph.diagnostics.insert(
         "diag:contradiction-1".into(),
         Diagnostic {
+            goal: None,
             rule: "contradiction".into(),
             severity: "error".into(),
             subjects: vec!["req:hub".into(), "req:p11".into()],

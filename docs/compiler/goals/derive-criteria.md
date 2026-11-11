@@ -16,8 +16,12 @@ when the selected document set has a nonempty `source` selection
 ([project settings](../project-settings.md)) and the entity has a requirement that:
 
 - carries no criterion, or
-- carries a `requirement-revised` record newer than its criteria (its derived criteria
-  were marked `criterion-revised` by the sweep, [change records](../graph.md#change-records)).
+- carries a derived criterion whose `statement_hash` no longer matches the requirement's
+  statement ([criterion fields](../model/criterion.md#fields)): the statement changed
+  since the criterion was written.
+
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)):
+both conditions are read from the graph at every derivation.
 
 A requirement with no criterion that waits on an open question is not listed: an open
 `invented-choice`, or an open `contradiction`, `decision`, or `ambiguity` with a prompt,
@@ -28,7 +32,8 @@ until the [reopen cycle](../reconciler.md#parked-and-failed) parked it and the b
 ended `incomplete` (a local model on f2 parked two entities this way).
 
 The `change` carries two id lists, `none` (no criterion yet) and `revised` (a derived
-criterion gone stale); the `cause` is the newest record among them. Up to four goals
+criterion gone stale); the `cause` is the newest local journal entry that changed one of
+those statements, when this machine's journal holds it. Up to four goals
 share a batch ([batching](../reconciler.md#batching)), within the context budget, and
 the changeset's mutation budget grows by three per listed requirement
 ([budgets](../sessions.md#budgets)). A batch that packed twelve entities' goals

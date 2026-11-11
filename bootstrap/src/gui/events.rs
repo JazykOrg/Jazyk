@@ -316,7 +316,7 @@ pub fn spawn_store_watcher(st: SharedState) {
                 // settings, model configuration) is resolved only when it moved.
                 let out = w.root.join(".jazyk").join(&set.id);
                 let now = read_generation(&out);
-                let locked = out.join(".lock").vexists();
+                let locked = crate::layout::lock_file(&out).vexists();
                 if previous
                     .get(&set.id)
                     .is_none_or(|seen| *seen == (now, locked))
@@ -339,7 +339,7 @@ pub fn spawn_store_watcher(st: SharedState) {
                 let mut entries = Vec::new();
                 for g in (last + 1)..=now {
                     if let Ok(text) = crate::vfs::read_to_string(
-                        scope.out.join("journal").join(format!("g{}.yaml", g)),
+                        crate::layout::journal_dir(&scope.out).join(format!("g{}.yaml", g)),
                     ) {
                         if let Ok(entry) = serde_norway::from_str::<Value>(&text) {
                             entries.push(entry_summary(g, &entry));

@@ -103,6 +103,7 @@ fn a_row_over_an_open_error_diagnostic_is_flagged_contradicted() {
     crate::vfs::remove_dir_all(&out).ok();
     let (mut s, gs) = fixture(&out);
     let diag = |severity: &str, lifecycle: &str| Diagnostic {
+        goal: None,
         rule: "contradiction".into(),
         severity: severity.into(),
         subjects: vec!["req:shop-1".into(), "req:shop-9".into()],
@@ -654,7 +655,9 @@ fn a_record_removes_the_files_its_manifest_omits() {
     );
     assert!(gs.deliverable.join("tests/cart.rs").vexists());
     assert!(
-        out.join("deliverable-baseline/src/cart_old.rs").vexists(),
+        crate::layout::deliverable_baseline_dir(&out)
+            .join("src/cart_old.rs")
+            .vexists(),
         "snapshotted before removal"
     );
     crate::vfs::remove_dir_all(&out).ok();

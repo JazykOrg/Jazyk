@@ -202,10 +202,9 @@ answer:
   either state: the transition stays and the review decides.
 - The answer is the judgment of the pair the diagnostic concerned. When its subjects
   are two requirements (a `contradiction`, a `duplicate-requirement`), the commit
-  appends each to `detail.judged` on every `requirement-created` and
-  `requirement-revised` record of the other, the records this commit lands included
-  ([change records](../graph.md#change-records)). The rewrite opens no `rejudge-pair`
-  goal for that pair. Every other goal it opens stays: pairs with the revised
+  writes the pair's decision under `graph/decisions/pairs/` with both statements' hashes
+  after the edit ([what needs building](../graph.md#what-needs-building)). The rewrite
+  opens no `rejudge-pair` goal for that pair. Every other goal it opens stays: pairs with the revised
   requirement's other neighbors, `review-entity`, `declare-edges`, `derive-criteria`,
   so a conflict the rewrite creates elsewhere is still caught.
 - Choosing an `answer` option or replying freeform records the text
@@ -234,13 +233,21 @@ answer:
   entry. See [journal](../graph.md#journal).
 - A judged diagnostic whose subjects are all gone from the graph is resolved by the
   checks and journaled as `settle-diagnostics`.
-- Some rules are the build's own bookkeeping, settled by the harness and never a
-  session's to judge: `incomplete-build` (cleared when the parked goal resumes),
-  `ratification-pending` (accept or retract), and `unstable-derivation` with every
-  other `unstable-` rule (a human's ruling). The `diagnostics` read marks them
+- Some rules are the build's own bookkeeping, settled by the harness or a person and
+  never a session's to judge: `goal-failed` (see below), `ratification-pending`
+  (accept or retract), and `unstable-derivation` with every other `unstable-` rule (a
+  human's ruling). The `diagnostics` read marks them
   `owner: harness`, `resolve_diagnostic` refuses them naming the owner, and the
   review hints leave them out of the open diagnostics a review judges
   ([review-entity](../goals/review-entity.md#hints)).
+- A `goal-failed` diagnostic records a goal a session marked failed: its `subjects`
+  name the goal's target, its `message` the goal kind and the session's reason, and it
+  carries the goal kind and a hash of the goal's computed `change` at failure. No goal
+  of that kind derives on that target while it is open. The store resolves it by itself
+  when the same goal's computed change differs from the hash (the work changed, so it is
+  worth trying again); otherwise a person answers or resolves it, and the goal derives
+  again. Unfinished work files no diagnostic: a goal a build parked is open work the
+  verdict counts ([convergence](../compilation.md#convergence)).
 
 ## Rules catalog
 
@@ -283,7 +290,7 @@ answer:
 | checks | `provider-missing` | warning | an interface-like entity something depends on with no `realization` toward it |
 | checks | `provider-ambiguous` | warning | an interface-like entity with more than one realizer |
 | checks | `quality-unmeasured` | warning | a `quality` facet without a `measure` |
-| [reconciler](../compilation.md#convergence) | `incomplete-build` | warning | goals parked when a build budget ran out |
+| [sessions](../sessions.md#resolving-failing-parking) | `goal-failed` | warning | a goal a session marked failed, with its reason; no goal of that kind derives on its target until its computed change differs or a person resolves it |
 | the store | `ratification-pending` | warning | a `derived` or `decree` fact with no sentence in the documents; the `prompt` proposes one |
 | [generation](../../consumers/gen.md), [`derive-criteria`](../goals/derive-criteria.md) sessions | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |
 | [decompilation](../../consumers/decompile.md#ratification) | `unratified` | info | a drafted document no human has edited since the draft landed |
@@ -292,8 +299,8 @@ answer:
 ## Ratification proposals
 
 A `derived` or `decree` fact has no sentence in the documents behind it. The commit that
-lands such a fact files one `ratification-pending` diagnostic on it, mechanically, and
-writes the `provenance-pending` change record the blocked
+lands such a fact files one `ratification-pending` diagnostic on it, mechanically; the
+fact is a `provenance-pending` finding at every derivation, which the blocked
 [`ratify` goal](../goals/ratify.md) derives from. The diagnostic is the proposal; the goal
 is the count on the board. Each pending fact belongs to one open proposal.
 Derived criteria of the same requirement that append to the same section share one
@@ -363,10 +370,10 @@ The two ways out:
   the document (as the human edited it), the section hashes are absorbed in the same
   changeset, and in the same changeset the fact's provenance flips to `quote` with the
   landed sentence as the quote (`source` on a requirement, a mention on an entity, the
-  attribute's `provenance`). The diagnostic resolves with `status: applied`, the change
-  record clears, the goal is gone. No session runs. A reworded statement opens
-  `rejudge-pair` as usual; the accepting commit writes no `entity-changed` record, so
-  no `review-entity` follows the mention the sentence adds
+  attribute's `provenance`). The diagnostic resolves with `status: applied`, the fact is
+  no longer a `provenance-pending` finding, the goal is gone. No session runs. A reworded
+  statement opens `rejudge-pair` as usual; the accepting commit writes the touched
+  entities' review decisions, so no `review-entity` follows the mention the sentence adds
   ([edit paths](../compilation.md#edit-paths)).
 - Retract. Choosing the retract option runs `retract_decree`
   ([mutations](../graph.md#mutations)) with reason `retracted`, journaled as `ratify`,

@@ -478,9 +478,11 @@ id; the requirement it belongs to is the row that groups them, and the requireme
 verifies when every criterion's test is green. Tests are written during generation
 or explicit [binding](./bind.md). A failing test names the
 criterion it verifies and the requirement above it, and a changed criterion invalidates
-exactly the test keyed to it (`criterion-revised`), while a changed requirement statement
-marks its derived criteria revised and reaches the tests through them
-([change records](../compiler/graph.md#change-records)). A requirement with no criterion
+exactly the test keyed to it, while a changed requirement statement leaves its derived
+criteria stale (their `statement_hash` no longer matches,
+[criterion fields](../compiler/model/criterion.md#fields)) and reaches the tests through
+them. Both are computed by the ledger comparison, never recorded
+([what needs building](../compiler/graph.md#what-needs-building)). A requirement with no criterion
 is not bound: `bind` waits on `derive-criteria`
 ([tiers](../compiler/reconciler.md#tiers)). A requirement several entities
 share (an actor's statement about the tool it uses lists both) has one row and one
@@ -704,7 +706,7 @@ artifacts carry. A ledger written whole into `gen/ledger.yaml` (store version 3)
 as it is and is split by its next save.
 
 Every path that changes the ledger loads, modifies, and saves it under the ledger lock,
-`.ledger.lock` in the out directory, so two processes writing at once never lose each
+`local/.ledger.lock` in the set directory, so two processes writing at once never lose each
 other's rows. A test command never runs under the lock: its verdicts land on a fresh
 load taken under the lock after the run. A save that fails is an error of the operation
 that asked for it, never a recorded result.
@@ -874,7 +876,7 @@ files left Source is generation work. Its
 gate rejects the old manifest. Reclassification never deletes or rewrites a file.
 
 Each status that says action is a goal on the board, derived from a `ledger-stale`
-change record: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
+change the ledger comparison computes at derivation and never stores: a `bind` goal for `missing`, `stale-requirement`, and a gone artifact
 ([when binding runs](./bind.md#when-binding-runs)), a `generate` goal for the entity of
 an `unimplemented` or `partial` row or an entity whose facts moved, a `verify` goal for `stale-test`,
 `stale-code`, and `unverified` ([the verify goal](../compiler/goals/verify.md)). A
@@ -1174,7 +1176,7 @@ predecessor cleanup. Entity ids are stable
   the journal holds the deletion, so removals are never silent.
 
 Before a run rewrites or removes a deliverable file, the previous content is
-snapshotted to `<out>/deliverable-baseline/` under the file's relative path, once per
+snapshotted to `<out>/local/deliverable-baseline/` under the file's relative path, once per
 run per file. The snapshot is the diff baseline for frontends: the
 [GUI](../frontends/gui.md#editor-specification) shows what the last generation changed
 against it. A file the run creates fresh has no baseline.

@@ -104,7 +104,7 @@ with the release that would lift it, `begin_goals` refuses a blocked goal with a
 
 ## Workers and leases
 
-Two directories make the actors and their claims visible:
+Two directories under the set's `local/` make the actors and their claims visible:
 
 - `workers/<id>.yaml`: one file per attached worker session. `kind` (`internal`,
   `gui`, `agent`), `client` (the MCP client name when there is one), `pid`,

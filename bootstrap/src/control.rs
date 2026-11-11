@@ -46,7 +46,7 @@ pub struct Released {
 
 impl Control {
     pub fn path(out: &Path) -> PathBuf {
-        out.join("control.yaml")
+        crate::layout::control_file(out)
     }
 
     // Load the live control state; absent fields fall back to the project defaults.
@@ -71,11 +71,11 @@ impl Control {
     // state: it moves aside to `control.yaml.bad` first, never overwritten.
     // Mirrors docs/compiler/control-plane.md#modes-and-releases.
     pub fn save(&self, out: &Path) {
-        crate::vfs::create_dir_all(out).ok();
+        crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
         let path = Self::path(out);
         if let Ok(old) = crate::vfs::read_to_string(&path) {
             if serde_norway::from_str::<Control>(&old).is_err() {
-                let bad = out.join("control.yaml.bad");
+                let bad = path.with_extension("yaml.bad");
                 crate::vfs::remove_file(&bad).ok();
                 if crate::vfs::rename(&path, &bad).is_err() {
                     eprintln!("[jazyk] warning: {} does not parse and cannot be moved aside; not writing it", path.display());
@@ -191,7 +191,7 @@ pub struct Worker {
 }
 
 fn workers_dir(out: &Path) -> PathBuf {
-    out.join("workers")
+    crate::layout::workers_dir(out)
 }
 
 // A registration that lives as long as the handle: refresh() heartbeats, drop
@@ -301,7 +301,7 @@ pub struct Lease {
 }
 
 fn leases_dir(out: &Path) -> PathBuf {
-    out.join("leases")
+    crate::layout::leases_dir(out)
 }
 
 // Injective file-name encoding for lease ids: alphanumerics, `-`, and `.` stand as
@@ -481,13 +481,13 @@ struct TakeoverLock {
 fn takeover_lock(out: &Path) -> TakeoverLock {
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() {
-        crate::vfs::create_dir_all(out).ok();
+        crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
         let file = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .create(true)
             .truncate(false)
-            .open(out.join(".leases.lock"))
+            .open(crate::layout::leases_lock_file(out))
             .ok()
             .filter(|f| fs2::FileExt::lock_exclusive(f).is_ok());
         return TakeoverLock { _file: file };
@@ -979,6 +979,7 @@ mod tests {
     fn an_unparseable_control_file_moves_aside_before_a_write() {
         let out = tmp();
         let broken = "compile: [auto\n";
+        crate::vfs::create_dir_all(crate::layout::local_dir(&out)).unwrap();
         crate::vfs::write(Control::path(&out), broken).unwrap();
         let proj = Project {
             workflow: Default::default(),
@@ -989,7 +990,8 @@ mod tests {
         c.compile = "auto".into();
         c.save(&out);
         assert_eq!(
-            crate::vfs::read_to_string(out.join("control.yaml.bad")).unwrap(),
+            crate::vfs::read_to_string(crate::layout::local_dir(&out).join("control.yaml.bad"))
+                .unwrap(),
             broken
         );
         assert_eq!(Control::load(&proj, &out).compile, "auto");

@@ -15,8 +15,9 @@ keeps the provenance, and tells the session what actually happened.
 
 ## The deterministic pass
 
-Inputs: the stored `DocRecord` of every document and the fresh parse of every matched
-file, all documents at once. A document whose `contentHash` is unchanged drops out whole.
+Inputs: every document's entry in `sources/` (its sections as the graph last reflected
+them) and the fresh parse of every matched file, all documents at once. A document whose
+content hash in `local/build.yaml` is unchanged drops out whole.
 A section whose reference and identity (below) are unchanged drops out. Matching is global: a
 section that left one file for another is a move, not a removal.
 
@@ -128,11 +129,19 @@ session will see. The outcome per anchor is a relocation (`anchor`, `from`, `to`
   it restates them when it is reconciled. Otherwise it is the same
   contract as before alignment existed.
 
-Proposals persist under `alignment/`, one file per target document,
-each proposal carrying the old location, the old quote, an excerpt of the old section
-around it, and its candidates. The old tree is gone from the store once it is synced, so
-the excerpt is what the session will see. Persisting them keeps the
-[goal board](./reconciler.md#goal-derivation) derivable from disk.
+Proposals are never stored. Every derivation runs the deterministic pass again and
+computes the same proposals, each carrying the old location, the old quote, an excerpt
+of the old section around it, and its candidates. That holds because `sources/` moves
+only when the work it implies commits:
+
+- An exact move rewrites the anchors and the document's entry in `sources/` at once.
+- A document with proposals keeps its old sections in `sources/` until its
+  `place-anchors` commit has decided every proposal; that commit rewrites the entry.
+- A changed section keeps its old text in `sources/` until the `reconcile-section`
+  commit that covers it writes the new text and hash.
+
+So a build that stops before the decision loses nothing: the next derivation finds the
+same proposals and the same dirty sections ([what needs building](./graph.md#what-needs-building)).
 
 ## The place-anchors goal
 
@@ -140,14 +149,12 @@ One `place-anchors` goal per document holding proposals. The model sees each anc
 previous location and wording, its new candidates and their wording, and decides per
 anchor:
 
-- `place_anchor` with `reevaluate: false`: the statement is made in the new place with
-  the same meaning. The anchor moves and stays an ordinary extracted statement;
-  `reconcile-section` leaves it alone.
-- `place_anchor` with `reevaluate: true`: the wording, scope, or surrounding section
-  changed meaning. The anchor moves and is listed as a stale anchor on the target
-  section's `reconcile-section` goal, which must re-record, revise, or delete it under
-  the usual [gate](./goals/reconcile-section.md#gate). A quote that no longer locates
-  forces this outcome.
+- `place_anchor`: the statement is made in the new place. The anchor moves. Whether it
+  must be re-judged follows from its new section, never from a stored flag: when the
+  section's text differs from `sources/`, its `reconcile-section` session sees the moved
+  statement with the rest and re-records, revises, or deletes it under the usual
+  [gate](./goals/reconcile-section.md#gate); a quote that no longer locates is a stale
+  anchor on that goal.
 - `orphan_anchor`: the statement is no longer made anywhere. The anchor stays a stale
   anchor on its old document.
 
@@ -159,7 +166,7 @@ The `place-anchors` goals sit in [readiness tier 0](./reconciler.md#readiness), 
 documents at once: placing anchors needs no vocabulary from the roots, and every ingest
 session benefits from seeing the anchors in their new place. A document with pending
 proposals blocks its own `reconcile-section` goals until the `place-anchors` goal
-commits; a parked `place-anchors` goal parks the document's ingest with it. A build with
+commits; a `place-anchors` goal this build parked parks the document's ingest with it. A build with
 no proposals derives no `place-anchors` goal, so a no-op rebuild still makes zero LLM
 calls. The store never reaps an anchor named by a pending proposal:
 [garbage collection](./graph.md#garbage-collection) waits for the decision.

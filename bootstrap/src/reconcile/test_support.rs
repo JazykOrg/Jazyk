@@ -48,7 +48,7 @@ pub(super) fn journal_dir() -> std::path::PathBuf {
         crate::sys::process_id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
-    crate::vfs::create_dir_all(dir.join("journal")).unwrap();
+    crate::vfs::create_dir_all(crate::layout::journal_dir(&dir)).unwrap();
     dir
 }
 
@@ -76,7 +76,7 @@ pub(super) fn write_entry(
         ..Default::default()
     };
     crate::vfs::write(
-        dir.join("journal").join(format!("g{}.yaml", generation)),
+        crate::layout::journal_dir(dir).join(format!("g{}.yaml", generation)),
         serde_norway::to_string(&entry).unwrap(),
     )
     .unwrap();

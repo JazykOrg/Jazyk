@@ -256,7 +256,7 @@ pub fn pending_lookalikes(store: &Store) -> Vec<Lookalike> {
 
 // Every journal entry, by generation.
 pub fn read_journal(out: &std::path::Path) -> Vec<JournalEntry> {
-    let dir = out.join("journal");
+    let dir = crate::layout::journal_dir(out);
     let mut entries: Vec<(u64, JournalEntry)> = Vec::new();
     let Ok(rd) = crate::vfs::read_dir(&dir) else {
         return Vec::new();
@@ -282,7 +282,7 @@ pub fn read_journal(out: &std::path::Path) -> Vec<JournalEntry> {
 // named by those generations alone, so a build reading what one session wrote parses
 // nothing older. Mirrors docs/compiler/graph.md#journal.
 pub fn read_journal_range(out: &std::path::Path, from: u64, to: u64) -> Vec<JournalEntry> {
-    let dir = out.join("journal");
+    let dir = crate::layout::journal_dir(out);
     (from + 1..=to)
         .filter_map(|g| read_journal_entry(&dir.join(format!("g{}.yaml", g)), g))
         .collect()

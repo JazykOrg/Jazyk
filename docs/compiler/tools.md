@@ -82,7 +82,7 @@ loaded set as a stub.
 - `get_view({id})`: one view with its members in order, its exclusions, query, and
   collapse list, the relationships among its members as the rendering draws them
   (`{a, b, type, cardinality?, count?}`, lifted where a member is hidden or
-  collapsed), the path of its rendering under `diagrams/`
+  collapsed), the path of its rendering under `derived/diagrams/`
   ([output layout](./diagrams.md#output-layout)), and `children`: the members that
   hold a [level](./concepts/levels.md#levels) of their own, each with the id of its
   level view. These are the drill-down links the rendering carries
@@ -94,7 +94,7 @@ loaded set as a stub.
   further). One reply lists at most 50 entries from `offset` (default `0`); `count` is
   the number that match, and a cut listing carries `truncated: true` and `nextOffset`. Each entry carries id, rule, severity, lifecycle, triage, subjects,
   message, whether it carries an unanswered prompt, and `owner: harness` on the
-  build's own bookkeeping rules (`incomplete-build`, `ratification-pending`,
+  build's own bookkeeping rules (`goal-failed`, `ratification-pending`,
   `criterion-missing`, `unstable-*`), which no session resolves
   ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)). Without a `rule`, those
   bookkeeping entries are counted per rule under `bookkeeping` rather than listed, and
@@ -148,9 +148,10 @@ midway stages neither the grouping nor any reparent).
   [check](./compilation.md#checks).
 - `delete_entity({id, reason})`: rejected while any requirement references the entity
   or any entity names it as `parent`; the error lists them. Deleting an entity a view,
-  a transition, or a `from` list references is allowed: the commit writes
-  `view-member-gone` and `node-deleted` [change records](./graph.md#change-records),
-  and [`retrace`](./goals/retrace.md) derives. The reply says so before commit.
+  a transition, or a `from` list references is allowed: the references left dangling are
+  `view-member-gone` and `node-deleted` findings at the next derivation
+  ([change records](./graph.md#change-records)), and [`retrace`](./goals/retrace.md)
+  derives. The reply says so before commit.
 - `merge_entities({keep, absorb, reason})`: the store rewires every reference
   (requirement `entities`, `edges`, `transition.subject`, entity `parent`, view
   `members`, `excluded`, `collapse`, diagnostic `subjects`, provenance `from`),
@@ -202,7 +203,7 @@ midway stages neither the grouping nor any reparent).
   another entity the statement names (`entities-dropped`); the refusal carries the
   list to send, the stored entities with the target swapped for the sub-entity.
 - `delete_requirement({id, reason})`: allowed while views or `from` lists reference the
-  requirement; the commit writes the change records and `retrace` derives. The sweep
+  requirement; the references left dangling derive `retrace`. The sweep
   prunes the mentions the requirement carried
   ([garbage collection](./graph.md#garbage-collection)).
 - `place_anchor({id, section, quote?, reevaluate})`: move one anchor (a requirement's
@@ -211,9 +212,13 @@ midway stages neither the grouping nor any reparent).
   verbatim in the section and replaces the stored one; omitted, the stored quote stays.
   An entity with several proposed mentions takes the section alone, each mention
   keeping its own quote. A placed requirement carries the mentions derived from its
-  source with it. `reevaluate: true`, or a stored quote that does not locate in the new
-  section, lists the anchor as a stale anchor on the target section's
-  [`reconcile-section`](./goals/reconcile-section.md) goal. The `id` must be one of
+  source with it. A stored quote that does not locate in the new section leaves the
+  anchor stale, and the target section's
+  [`reconcile-section`](./goals/reconcile-section.md) goal lists it; a target section
+  whose text differs from `sources/` reconciles anyway, moved statements included.
+  `reevaluate: true` drops the target section's hash in `sources/`, so its
+  `reconcile-section` goal derives and re-reads the anchor even when the quote locates;
+  nothing else records it. The `id` must be one of
   the batch's proposals (`unknown-anchor` otherwise).
 - `orphan_anchor({id})`: leave one proposed anchor homeless; it stays a stale anchor
   on its old document while that section still exists, for the
@@ -247,8 +252,8 @@ midway stages neither the grouping nor any reparent).
   natural-key upsert; this tool only maintains the question. Never touches a human-set
   `answer` or `triage`.
 - `resolve_diagnostic({id, reason})`. Refused on a harness-owned rule
-  (`incomplete-build`, `ratification-pending`, `criterion-missing`, `unstable-*`),
-  naming the owner: the build settles those itself (a `criterion-missing` clears when a
+  (`goal-failed`, `ratification-pending`, `criterion-missing`, `unstable-*`), naming the
+  owner: a person or the build settles those (a `criterion-missing` clears when a
   [`derive-criteria`](./goals/derive-criteria.md) goal lands a criterion) ([lifecycle](./model/diagnostic.md#lifecycle-and-triage)).
 - `set_coverage({section, state, note?})`: `state` is `covered` or `non-normative`.
   `non-normative` requires the `note`; a placeholder note (`<nil>`, `none`, `n/a`)
@@ -363,9 +368,13 @@ the write tools. They serve the [`retrace`](./goals/retrace.md),
 
 ## Goal tools
 
-Every session sees the goal tools. They record goal resolutions in the journal and
-clear or keep change records; they are not graph mutations
-([resolving, failing, parking](./sessions.md#resolving-failing-parking)).
+Every session sees the goal tools. They record goal resolutions in the journal; a
+resolution of a kind that ends in a judgment also writes that judgment as a decision
+under `graph/decisions/` (`rejudge-pair` a pair, `review-entity` a review,
+`conform-instance` a conformance, `declare-edges` judged not structural a structure,
+`dedupe-candidates` kept apart a lookalike), so the next derivation stops finding the
+work ([what needs building](./graph.md#what-needs-building)). They stage no other
+graph mutation ([resolving, failing, parking](./sessions.md#resolving-failing-parking)).
 
 - `mark_goal_done({goal, justification, evidence?})`: claim one goal of the batch
   resolved. `justification` is mandatory and concise, one or two sentences of why the
@@ -441,10 +450,12 @@ clear or keep change records; they are not graph mutations
   sense) must be failable, or the board fills with dishonestly resolved goals. The
   reason is a sentence saying what blocked the goal; a placeholder (`placeholder`,
   `TODO`, under twelve characters) is refused as `bad-reason`, since a failed
-  mandatory goal blocks convergence and one once landed by a slip. A failed
-  goal keeps its target, so the failure surfaces on the thing itself everywhere it
-  renders. A failed mandatory goal blocks convergence; a failed optional goal is
-  recorded and stands ([parked and failed](./reconciler.md#parked-and-failed)).
+  mandatory goal blocks convergence and one once landed by a slip. The commit files a
+  `goal-failed` [diagnostic](./model/diagnostic.md) on the goal's target with the
+  reason, so the failure surfaces on the thing itself everywhere it renders, and no
+  goal derives on that target while it is open. A failed mandatory goal blocks
+  convergence; a failed optional goal is recorded and stands
+  ([parked and failed](./reconciler.md#parked-and-failed)).
 - `load_skill({name})`: bring one [skill](./sessions.md#skills) into the session. The
   skill index line of the status block lists the names. An unknown name is rejected
   with the index; a call past the per-session cap (four, the registry constant
@@ -493,8 +504,8 @@ so a chat edit moves the prose and the graph together, or not at all:
   and stage the requirement sourced from it. The entities must exist; search before
   naming them.
 - `retract_requirement({id, reason})`: remove the requirement's sentence from the prose
-  and delete the requirement, one changeset. The deletion writes its change records, so
-  `retrace` derives where a view or instance referenced it.
+  and delete the requirement, one changeset. `retrace` derives where a view or instance
+  referenced it.
 - `edit_fact({id, field, value, note?})`: set one authored field on one node
   (`statement`, `edges`, `transition`, `facets`, `definition`, `stereotype`, `parent`,
   an attribute's `type` or `value` as `attributes.<name>.type` or
@@ -504,8 +515,8 @@ so a chat edit moves the prose and the graph together, or not at all:
   call carries the accepted sentence as `note`: the serving locates the quote and
   commits the prose replacement with the graph mutation as one dual write. Without an
   accepted sentence, or on a derived or decreed fact, the edit lands graph-only with
-  `decree` provenance (`note` becomes the decree's note), a `provenance-pending`
-  change record is written, and the blocked [`ratify`](./goals/ratify.md) goal derives
+  `decree` provenance (`note` becomes the decree's note), the decreed fact is a
+  `provenance-pending` finding, and the blocked [`ratify`](./goals/ratify.md) goal derives
   with its [ratification proposal](./model/diagnostic.md#ratification-proposals). The
   compiler never rewrites a source document without an accepted sentence. Ids,
   `created`, `updated`, `mentions`, and provenance itself are never edited directly.
@@ -542,8 +553,10 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own
 developers. It reports that a prompt, a skill, a tool, a schema, or an error message is
 ambiguous, wrong, confusing, or missing something, not that the project's documents are.
-The channel is a local file: each call appends one line to the project's
-`<out>/feedback.jsonl`, and nothing is transmitted anywhere. The tool description and
+The channel is the project's feedback log: locally each call appends one line to
+`<set-id>/feedback.jsonl` in the project's [log directory](./jazyk-folder.md#logs), and
+nothing is transmitted anywhere; a hosted project's log is kept by its host
+([host records](./hosted-runtime.md#host-records)). The tool description and
 the serving instructions say so, since an agent whose own guard screens outbound data
 once refused the call as an export to an external destination.
 Findings about the documents are [diagnostics](./model/diagnostic.md); findings about
@@ -560,7 +573,7 @@ budget, and passes no gate beyond a non-empty `message`, so a confused model is 
 bounced while asking for help. It is in every [toolset](#toolsets), including the
 read-only MCP serving.
 
-Each call appends one JSON line to `<out>/feedback.jsonl`, with the payload plus the
+Each call appends one JSON line to the feedback log, with the payload plus the
 references that identify the caller: the timestamp, the source (`session` or `mcp`), the
 batch (the goal ids of the open batch, absent when none is open), the serving mode for an
 MCP call, the model, the codec, the store generation, the run's transcript name, and the
@@ -987,8 +1000,8 @@ serving carries the read tools, `report_feedback`, `report_spend`, `await_change
   against sandbox stores.
 - `jazyk mcp graph`: the read tools only; `--write` adds the raw write tools, the view
   tools, and the [task runtime tools](#task-runtime-tools), each graph write
-  committing as its own changeset with its change records written, so the next build
-  derives the goals the write opened.
+  committing as its own changeset, so the next build derives the goals the write
+  opened.
 - `jazyk mcp runtime`: the [task runtime tools](#task-runtime-tools).
 - `jazyk mcp all`: `compile`, `generate`, `verify`, `decompile`, and `chat` in one
   serving ([MCP](../frontends/mcp.md#toolsets)).

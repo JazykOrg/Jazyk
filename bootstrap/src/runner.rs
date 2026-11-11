@@ -147,7 +147,7 @@ pub fn journal_diff(
     let mut applied = 0usize;
     let mut resolved: Vec<String> = Vec::new();
     for g in (from + 1)..=to {
-        let path = out.join("journal").join(format!("g{}.yaml", g));
+        let path = crate::layout::journal_dir(out).join(format!("g{}.yaml", g));
         let Ok(text) = crate::vfs::read_to_string(&path) else {
             continue;
         };

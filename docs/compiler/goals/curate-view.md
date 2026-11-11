@@ -19,20 +19,24 @@ recomputed from the result ([view](../model/view.md)).
 
 ## Created when
 
-Two [change record](../graph.md#change-records) kinds derive the goal:
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+Two [change record](../graph.md#change-records) kinds, computed per derivation, derive
+the goal:
 
-- `query-match` (`via: query`): the recompute at commit found a node that newly matches
-  a curated view's `query` ([membership](../model/view.md#membership)). The node joins
-  `members` at that commit, so the diagram is current meanwhile; the record asks whether
-  it belongs. `detail` names the matched ids and the query clause each matched. A
-  default view never writes the record: the harness owns its membership and a match
-  joins silently. Any mutation on a default view makes it curated
+- `query-match` (`via: query`): a node a curated view's `query` matches that its
+  `graph/decisions/curation/<view>` decision does not list
+  ([membership](../model/view.md#membership)). The node joins `members` at every commit
+  as the query says, so the diagram is current meanwhile; the finding asks whether it
+  belongs. `detail` names the matched ids and the query clause each matched. Resolving
+  the goal keeps the node or excludes it with a note, and writes the decision with
+  every node the query matches now, so only a later match asks again. A default view
+  has no such finding: the harness owns its membership and a match joins silently. Any mutation on a default view makes it curated
   ([default views](../model/view.md#default-views)).
 - `flow-unplaced` (`via: flow-placement`): the flow placement
   [check](../compilation.md#checks) at the end of a build found a `behavior` requirement
   in no flow view and excluded from none (`unplaced-behavior`), or a `failure-mode`
   requirement represented in no branch (`unrepresented-failure-mode`). The check files
-  the diagnostic and writes the record on the flow view the requirement fits best.
+  the diagnostic, and the finding lands on the flow view the requirement fits best.
   `detail` names the requirement, its facet, the diagnostic, and the alternatives.
 
 The check matches a requirement to a view deterministically:
@@ -45,24 +49,21 @@ The check matches a requirement to a view deterministically:
 
 A cluster of one member derives no default view, which is the common way a requirement
 ends up unplaced: its actor's other statements live in another document. The check runs
-only where flow views exist; a project with no flow view writes no record. E.g.:
+only where flow views exist; a project with no flow view has no such finding. E.g.:
 
 ```yaml
-- id: c419-0
-  generation: 419
-  mutation: 0
-  kind: flow-unplaced
+- kind: flow-unplaced
   subject: view:usecase/customer-shop
   via: flow-placement
   detail: {requirement: req:returns-2, facet: behavior, diagnostic: diag:unplaced-behavior-1,
            shared: [ent:customer], alternatives: [view:usecase/customer-returns]}
 ```
 
-Records on one view fold into one goal per build
-([goal derivation](../reconciler.md#goal-derivation)). Resolving the goal clears them. A
-`flow-unplaced` record clears on its own when the requirement becomes a member of any
-flow view or is excluded from one with a note, by any path; a `query-match` record
-clears when the node leaves the view or the query.
+Findings on one view fold into one goal per build
+([goal derivation](../reconciler.md#goal-derivation)). A `flow-unplaced` finding ends
+when the requirement becomes a member of any flow view or is excluded from one with a
+note, by any path; a `query-match` finding ends when the view's `curation/` decision
+lists the node, or the node leaves the query.
 
 ### Batching
 

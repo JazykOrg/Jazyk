@@ -24,7 +24,10 @@ impl FileLock {
                 marker: None,
             };
         }
-        let path = out.join(".lock");
+        let path = crate::layout::lock_file(out);
+        if let Some(dir) = path.parent() {
+            crate::vfs::create_dir_all(dir).ok();
+        }
         crate::vfs::create_dir_all(out).ok();
         #[cfg(not(target_arch = "wasm32"))]
         if !crate::vfs::is_scoped() {
@@ -125,12 +128,12 @@ pub(super) struct CommitMarker {
 impl CommitMarker {
     // A nested begin (a save inside a save) leaves the marker to the outer one.
     pub(super) fn begin(out: &Path) -> CommitMarker {
-        let path = out.join(COMMIT_MARKER);
+        let path = crate::layout::committing_file(out);
         let outer = MARKING.with(|m| m.borrow_mut().insert(path.clone()));
         if !outer {
             return CommitMarker { path: None };
         }
-        if let Err(e) = crate::vfs::create_dir_all(out)
+        if let Err(e) = crate::vfs::create_dir_all(path.parent().unwrap_or(out))
             .and_then(|()| write_durable(&path, crate::sys::process_id().to_string().as_bytes()))
         {
             eprintln!("[jazyk] error: cannot write {}: {}", path.display(), e);
@@ -163,14 +166,14 @@ thread_local! {
 // belongs to one thread, which cannot read while it writes, so its marker is always a
 // leftover. Mirrors docs/compiler/graph.md#concurrency.
 pub(super) fn commit_in_progress(out: &Path) -> bool {
-    if !out.join(COMMIT_MARKER).vexists() {
+    if !crate::layout::committing_file(out).vexists() {
         return false;
     }
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() {
         // A shared probe of the writers' advisory lock: it fails only while a writer
         // holds it, and it creates nothing.
-        let Ok(file) = std::fs::File::open(out.join(".lock")) else {
+        let Ok(file) = std::fs::File::open(crate::layout::lock_file(out)) else {
             return false;
         };
         return match fs2::FileExt::try_lock_shared(&file) {

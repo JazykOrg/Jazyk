@@ -150,9 +150,10 @@ Project and store reads:
 - `GET /api/project`: project root, out directory, docs glob, roots, deliverable
   directory, the [executors](../compiler/project-settings.md#executors), and the LLM
   model and base URL. The API key is never served.
-- `GET /api/status`: `status.yaml` and `build.yaml` (the store version, the generation, the
-  [verdict](../compiler/compilation.md#convergence) with its counts, the costs, the
-  `parked` goals as goal records each with its `reason`, the `failed` goals) plus
+- `GET /api/status`: `store.yaml` and `local/build.yaml` (the store version, the
+  generation, the [verdict](../compiler/compilation.md#convergence) with its counts, the
+  costs), the running build's `parked` goals each with its `reason` (none when no build
+  runs), the open `goal-failed` diagnostics, plus
   node counts, the coverage fraction, open diagnostics by severity, and the board
   counts. The same summary as `jazyk status`.
 - `GET /api/overview`: the same summary without the board counts, plus verification
@@ -448,7 +449,7 @@ The out directory:
 - `GET /api/out/list?path=`: the files under one directory of the out directory,
   recursively, each with its path (relative to the out directory) and size, hidden
   entries skipped. The same validation as the file read. The explorer lists
-  `docsgen/` with it.
+  `derived/docsgen/` with it.
 
 Diagnostics:
 
@@ -505,7 +506,7 @@ Diagnostics:
 
 Transcripts:
 
-- `GET /api/trace`: past runs from the transcripts on disk under `<out>/trace/`,
+- `GET /api/trace`: past runs from the transcripts on disk under `<set-id>/trace/` in the [log directory](../compiler/jazyk-folder.md#logs),
   newest first (by the start the metadata line records), capped at 200: each with
   its stem, its metadata line, its outcome when the run finished (a missing outcome
   means it died mid-run), and its event count. The [Runs](#runs) page's
@@ -533,7 +534,7 @@ The `gen` job develops source and tests together through the
 [generation contract](../consumers/gen.md). It does not run a binding phase first.
 The agent chooses the order of source work and checks, as in the CLI and ACP.
 
-- Every job's trace persists as one JSON-lines file under `<out>/trace/`: a metadata
+- Every job's trace persists as one JSON-lines file under `<set-id>/trace/` in the [log directory](../compiler/jazyk-folder.md#logs): a metadata
   line, one line per numbered event, and a final line with the outcome. The activity
   panel lists past jobs from these files, so the history survives server restarts and
   page reloads, and any tool can load a transcript programmatically. Files older

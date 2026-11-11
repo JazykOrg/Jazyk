@@ -20,8 +20,9 @@ graph, changed or not.
 
 ## Created when
 
-One [change record](../graph.md#change-records) kind derives the goal: `lookalike`
-(`via: lookalike`), written at commit by the name index recompute
+Work is computed, never stored ([what needs building](../graph.md#what-needs-building)).
+The goal derives from a `lookalike` [change record](../graph.md#change-records)
+(`via: lookalike`), computed per derivation from the name index
 ([derived data](../graph.md#derived-data)) for every pair whose score reaches the
 threshold and holds no standing verdict. A pair either side's `distinct_from` names
 ([fields](../model/entity.md#fields)) holds one: the `note` that let the second name
@@ -55,11 +56,12 @@ pair; the model never computes or adjusts it.
   coefficient, so two names sharing one distinctive token score as they always did.
 - `documents`: the documents mentioning each entity, as one set per entity. The overlap
   is the Jaccard index: the shared documents over the union.
-- `score = 0.75 × tokens + 0.25 × documents`. The record is written when the score
+- `score = 0.75 × tokens + 0.25 × documents`. A pair is a candidate when the score
   reaches `0.5`. The weights (`lookalike-token-weight` 0.75, `lookalike-document-weight`
   0.25), the threshold (`lookalike-threshold` 0.5), and the holder count
   (`lookalike-distinctive-holders` 3) are registry constants, not settings
-  ([budgets and thresholds](../graph.md#budgets-and-thresholds)).
+  ([budgets and thresholds](../graph.md#budgets-and-thresholds)). A pair whose score
+  reaches the threshold is a candidate.
 
 E.g. "backend" and "backend system", each mentioned in its own document: `tokens` 0.67,
 `documents` 0, score 0.5, a candidate. "Product" and "Product price" mentioned in the
@@ -76,10 +78,7 @@ share one generic word are not 120 pairs to judge; a shared word two names hold 
 is.
 
 ```yaml
-- id: c418-0
-  generation: 418
-  mutation: 0
-  kind: lookalike
+- kind: lookalike
   subject: ent:backend~ent:backend-system
   via: lookalike
   detail: {score: 0.5, tokens: 0.67, documents: 0, shared: [backend],
@@ -89,35 +88,35 @@ is.
 ### Verdicts are remembered
 
 A kept pair must not be asked about again on every build: a no-op rebuild derives zero
-goals. The status keeps one file per pair kept apart under `lookalikes/`
-([storage layout](../graph.md#storage-layout)):
-`{pair, verdict: separate, score, generation}`.
+goals. Each pair kept apart is a decision in the graph,
+`graph/decisions/lookalikes/<a~b>.yaml`
+([the .jazyk folder](../jazyk-folder.md#graphdecisionskindidyaml)), with the pair's score
+at judgment.
 
-- Resolving the goal with `separate` writes the entry with the pair's score at judgment
-  and clears the record. The score is the formula's value over the graph as the
-  session's changeset commits (an alias the session added counts). A merge needs no
-  entry: one of the ids is gone, and the pair with it.
+- Resolving the goal with `separate` writes the decision with the pair's score at
+  judgment. The score is the formula's value over the graph as the session's changeset
+  commits (an alias the session added counts). A merge needs no decision: one of the ids
+  is gone, and the pair with it.
 - A `separate` verdict a [`review-entity`](./review-entity.md#gate) session records in
-  its `evidence` writes the same entry for that pair, so a review that kept two entities
-  apart with a reason is not asked again by this goal. The entry carries the formula's
-  value for the pair whether or not it reaches the threshold, so a pair the review kept
-  apart below the threshold is still remembered when it later crosses it unchanged. A
-  merge it stages clears the record outright.
-- The name index writes a fresh `lookalike` record for a judged pair only when its score
-  differs from the recorded one: a rename, a new alias, a new mention document. The entry
-  is dropped with it, and the pair is judged again over the new evidence.
-- An entry whose pair lost one of its ids (a delete, a merge, a retraction) is dropped at
-  the same commit.
-- The list is the only memory. Goal derivation does not read the journal's resolved
-  goals for this kind, so a store written before the list existed judges each kept pair
-  once more and remembers it from then on.
+  its `evidence` writes the same decision for that pair, so a review that kept two
+  entities apart with a reason is not asked again by this goal. The decision carries the
+  formula's value for the pair whether or not it reaches the threshold, so a pair the
+  review kept apart below the threshold is still remembered when it later crosses it
+  unchanged. A merge it stages removes the pair outright.
+- A decision applies while the pair's score equals the recorded one. A rename, a new
+  alias, or a new mention document changes the score, the decision lapses, and the pair
+  is judged again over the new evidence; resolving it again rewrites the decision.
+- A decision whose pair lost one of its ids (a delete, a merge, a retraction) is deleted
+  by the sweep at the same commit.
+- The decisions are the only memory. Goal derivation does not read the journal's
+  resolved goals for this kind.
 
 ```yaml
-lookalikes:
-  - pair: ent:product~ent:product-price
-    verdict: separate
-    score: 0.75
-    generation: 419
+# Jazyk decision: two similar entities judged to be different things. Written by jazyk.
+# yaml-language-server: $schema=https://jazyk.org/schemas/lookalike.json
+id: ent:product~ent:product-price
+verdict: separate
+score: 0.75
 ```
 
 ### Batching
@@ -148,8 +147,8 @@ checks:
 
 Nothing else closes the goal. At `done`, the per-mutation gates hold
 ([validation gates](../graph.md#validation-gates)) and a clean batch commits
-([commit](../sessions.md#commit)). The survivor's `entity-changed` record opens
-[`review-entity`](./review-entity.md) on it, which refreshes the definition over the
+([commit](../sessions.md#commit)). The survivor's fact hash no longer matches its
+review, which opens [`review-entity`](./review-entity.md) on it, which refreshes the definition over the
 merged statement set.
 
 The review asymmetry governs the verdict
@@ -157,8 +156,9 @@ The review asymmetry governs the verdict
 destroys information and everything bound to it, and the graph cannot tell afterwards
 that two concepts were ever there; a missed duplicate leaves two nodes and a finding for
 the next build. When in doubt, keep both and file. The goal fails (`mark_goal_failed`)
-when the documents contradict each other about what the two names mean; the failure
-surfaces on both entities ([parked and failed](../reconciler.md#parked-and-failed)).
+when the documents contradict each other about what the two names mean; the failure is
+a `goal-failed` [diagnostic](../model/diagnostic.md) on both entities
+([parked and failed](../reconciler.md#parked-and-failed)).
 
 ## Hints
 

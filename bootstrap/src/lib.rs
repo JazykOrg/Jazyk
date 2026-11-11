@@ -42,13 +42,16 @@ pub mod hosted;
 pub mod ids;
 pub mod inprocess;
 pub mod input;
+pub mod layout;
 pub mod limits;
 pub mod live_preview;
 pub mod llm;
 #[cfg(not(target_arch = "wasm32"))]
 mod local_socket;
+pub mod logs;
 pub mod mcp;
 pub mod md;
+pub mod merge_file;
 pub mod model;
 pub mod payload;
 pub mod portable;
@@ -148,15 +151,38 @@ mod site_schemas {
             else {
                 continue;
             };
-            let json = format!("{}\n", serde_json::to_string_pretty(&yaml).unwrap());
-            let target = site.join(&name);
-            if write {
-                std::fs::create_dir_all(&site).unwrap();
-                std::fs::write(&target, &json).unwrap();
-            } else if std::fs::read_to_string(&target).ok().as_deref() != Some(json.as_str()) {
-                stale.push(format!("{} from {}", target.display(), src.display()));
+            let mut files = vec![(
+                name.clone(),
+                format!("{}\n", serde_json::to_string_pretty(&yaml).unwrap()),
+            )];
+            // One schema per kind of file the `x-files` map names, each a `$ref` to its
+            // definition in this schema (docs/site.md#schemas).
+            if let Some(serde_norway::Value::Mapping(kinds)) = yaml.get("x-files") {
+                for (kind, def) in kinds {
+                    let (Some(kind), Some(def)) = (kind.as_str(), def.as_str()) else {
+                        continue;
+                    };
+                    let wrapper = serde_json::json!({
+                        "$schema": "http://json-schema.org/draft-07/schema#",
+                        "$id": format!("{PREFIX}{kind}.json"),
+                        "$ref": format!("{name}#/definitions/{def}"),
+                    });
+                    files.push((
+                        format!("{kind}.json"),
+                        format!("{}\n", serde_json::to_string_pretty(&wrapper).unwrap()),
+                    ));
+                }
             }
-            published.insert(name);
+            for (file, json) in files {
+                let target = site.join(&file);
+                if write {
+                    std::fs::create_dir_all(&site).unwrap();
+                    std::fs::write(&target, &json).unwrap();
+                } else if std::fs::read_to_string(&target).ok().as_deref() != Some(json.as_str()) {
+                    stale.push(format!("{} from {}", target.display(), src.display()));
+                }
+                assert!(published.insert(file.clone()), "{file} is published twice");
+            }
         }
         for e in std::fs::read_dir(&site).into_iter().flatten().flatten() {
             let name = e.file_name().to_string_lossy().to_string();

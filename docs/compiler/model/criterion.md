@@ -41,9 +41,13 @@ An Order paid on day 5 is never cancelled for non-payment.
   the documents state none, `from` naming the requirement, with a ratification proposal
   toward prose like every derived fact ([provenance](../model.md#provenance)); or
   `{decree: {...}}` for a human write. Exactly one of `source` or `provenance`.
-- `stale`: set by the store when the owning requirement's statement changed after this
-  derived criterion was written, cleared by the next update or re-upsert; what
-  [`derive-criteria`](../goals/derive-criteria.md) reads as `revised`.
+- `statement_hash`: on a derived criterion, the hash of the owning requirement's
+  `statement` when the criterion was written, set by the store at every create, update,
+  and re-upsert. A derived criterion whose `statement_hash` no longer matches the
+  statement is stale: its evidence was written against older text, and
+  [`derive-criteria`](../goals/derive-criteria.md) reads it as `revised`. Nothing marks
+  it; the mismatch is computed. A quoted criterion carries none: its own quote anchors
+  it.
 - `confidence` and `reasoning`; `created` and `updated`.
 
 ## Identity
@@ -84,11 +88,12 @@ The [criteria skill](../skills/criteria.md) carries the method.
   its case is a criterion of the requirement under test.
 - [`derive-criteria`](../goals/derive-criteria.md) writes the rest for the requirements
   generation will bind, as derived facts with proposals.
-- A requirement's statement change marks its derived criteria revised (their evidence
-  may no longer fit) and leaves quoted ones to their own quotes; deleting a requirement
+- A requirement's statement change leaves its derived criteria with a `statement_hash`
+  that no longer matches (their evidence may no longer fit) and leaves quoted ones to
+  their own quotes; deleting a requirement
   deletes its criteria in [the sweep](../graph.md#the-sweep).
-- A `criterion-created` or `criterion-revised` record invalidates the test keyed to it
-  ([the ledger](../../consumers/gen.md#the-ledger)).
+- A criterion whose content differs from the hash its ledger test was written against
+  invalidates that test ([the ledger](../../consumers/gen.md#the-ledger)).
 
 ## Not a criterion
 

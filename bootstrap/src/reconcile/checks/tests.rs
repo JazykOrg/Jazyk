@@ -167,11 +167,10 @@ fn unstable_extraction_flags_a_recreated_natural_key() {
     assert!(hits[0].3.contains("ent:cart"), "{}", hits[0].3);
 }
 
-// `incomplete-build` names the goals a budget parked; a pair parked by flip
-// detection carries its unstable-derivation finding instead.
-// Mirrors docs/compiler/compilation.md#checks.
+// Parked goals are build progress, not graph state: no check files a diagnostic for
+// them. Mirrors docs/compiler/reconciler.md#parked-and-failed.
 #[test]
-fn incomplete_build_skips_flip_parked_goals() {
+fn parked_goals_file_no_diagnostic() {
     let mut s = Store::default();
     let goal = |id: &str, via: &str| Goal {
         id: id.into(),
@@ -196,8 +195,7 @@ fn incomplete_build_skips_flip_parked_goals() {
     ));
     let f = checks(&s, &Project::default());
     let hits = rules_for(&f, "incomplete-build");
-    assert_eq!(hits.len(), 1, "{:?}", hits);
-    assert_eq!(hits[0].1, ["ent:cart"]);
+    assert!(hits.is_empty(), "{:?}", hits);
 }
 
 // A decompiled draft nobody has edited since the machine wrote it is unratified;

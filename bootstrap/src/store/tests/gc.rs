@@ -628,8 +628,8 @@ fn settle_dangling_diags_heals_a_stranded_graph() {
 }
 
 // The marker diagnostics settle at the sweep once their condition clears: an
-// incomplete-build marker whose goal left parked, an uncovered-section marker whose
-// section is marked or gone. Mirrors docs/compiler/graph.md#the-sweep.
+// incomplete-build marker an earlier store version filed, an uncovered-section marker
+// whose section is marked or gone. Mirrors docs/compiler/graph.md#the-sweep.
 #[test]
 fn sweep_settles_cleared_markers() {
     let mut s = Store {
@@ -706,21 +706,17 @@ fn sweep_settles_cleared_markers() {
     assert_eq!(lc(&s, "diag:uncovered-section-2"), "resolved");
     assert_eq!(lc(&s, "diag:uncovered-section-3"), "open");
     assert_eq!(lc(&s, "diag:uncovered-section-9"), "resolved");
-    // The goal still parked keeps its marker; the resumed one's resolves.
-    assert_eq!(lc(&s, "diag:incomplete-build-1"), "open");
+    // Parked work files no marker any more: an old one resolves, parked or not.
+    assert_eq!(lc(&s, "diag:incomplete-build-1"), "resolved");
     assert_eq!(lc(&s, "diag:incomplete-build-2"), "resolved");
-    assert_eq!(actions.len(), 4, "{:?}", actions);
+    assert_eq!(actions.len(), 5, "{:?}", actions);
     let entry: JournalEntry =
         yaml_to(&crate::layout::journal_dir(&s.out).join(format!("g{}.yaml", s.status.generation)))
             .unwrap();
     assert_eq!(entry.kind, "settle-diagnostics");
-    assert_eq!(entry.mutations.len(), 4);
-    // Idempotent, and the goal leaving parked clears the last marker next sweep.
+    assert_eq!(entry.mutations.len(), 5);
+    // Idempotent.
     assert!(s.settle_cleared_markers().is_empty());
-    s.status.parked.clear();
-    let actions = s.settle_cleared_markers();
-    assert_eq!(actions.len(), 1, "{:?}", actions);
-    assert_eq!(lc(&s, "diag:incomplete-build-1"), "resolved");
     assert!(!s.has_dangling_diags());
 }
 

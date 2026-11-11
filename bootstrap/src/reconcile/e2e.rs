@@ -2172,8 +2172,8 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
 }
 
 // A batch that exhausts its unfinished-goal attempts parks its goals:
-// `status.yaml` carries the reason, `Board::explain` shows it, the build is incomplete
-// with an `incomplete-build` diagnostic, and the next build resumes the parked goals
+// the build progress carries the reason, `Board::explain` shows it, the build is
+// incomplete with no diagnostic filed for it, and the next build resumes the parked goals
 // first and converges. Mirrors docs/compiler/reconciler.md#parked-and-failed.
 #[test]
 fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_them_first() {
@@ -2281,20 +2281,12 @@ fn a_batch_exhausting_its_attempts_parks_its_goals_and_the_next_build_resumes_th
         "{:?}",
         store.status.parked
     );
-    assert!(
-        store
-            .graph
-            .diagnostics
-            .values()
-            .any(|d| d.rule == "incomplete-build" && d.lifecycle == "open"),
-        "{:?}",
-        store
-            .graph
-            .diagnostics
-            .values()
-            .map(|d| &d.rule)
-            .collect::<Vec<_>>()
-    );
+    // Parked work is build progress, not a diagnostic.
+    assert!(!store
+        .graph
+        .diagnostics
+        .values()
+        .any(|d| d.rule == "incomplete-build"));
     let control = crate::control::Control::load(&project, &out);
     let board = crate::board::Board::derive(&store, &project, &control);
     for id in parked.keys() {

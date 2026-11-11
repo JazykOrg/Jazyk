@@ -1090,27 +1090,6 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
             format!("{} is a decompiled draft nobody has ratified; review it by editing it, even a one-line change clears this", doc),
         ));
     }
-    // Goals parked when a budget ran out. A pair parked by flip detection waits on
-    // its unstable-derivation ruling, which is its finding already.
-    // Mirrors docs/compiler/compilation.md#checks.
-    for p in store
-        .status
-        .parked
-        .iter()
-        .filter(|p| crate::board::flip_subject(&p.goal).is_none())
-    {
-        let why = p
-            .reason
-            .as_deref()
-            .map(|r| format!(" ({})", r))
-            .unwrap_or_default();
-        f.push(finding(
-            "incomplete-build",
-            &p.goal.target,
-            "warning",
-            format!("{} was parked{}; the next build resumes it", p.goal.id, why),
-        ));
-    }
     f.extend(drift_checks(store, proj));
     f
 }

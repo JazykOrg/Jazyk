@@ -29,7 +29,8 @@ class Manifests(unittest.TestCase):
         managers.generate(self.assets, self.output)
         formula = (self.output / 'jazyk.rb').read_text()
         self.assertIn('libexec.install Dir["*"]', formula)
-        self.assertIn('bin.install_symlink libexec/"jazyk"', formula)
+        self.assertIn('bin.write_exec_script libexec/"jazyk"', formula)
+        self.assertNotIn("install_symlink", formula)
         self.assertEqual(formula.count('sha256 "'), 4)
         self.assertNotIn('/latest/', formula)
         self.assertNotIn('--version', formula)
@@ -38,6 +39,16 @@ class Manifests(unittest.TestCase):
         self.assertEqual(scoop['bin'], 'jazyk.exe')
         self.assertIn('/v1.2.3/', scoop['architecture']['64bit']['url'])
         self.assertEqual(scoop['architecture']['64bit']['hash'], '5' * 64)
+
+    def test_homebrew_revisions_are_specific_to_the_upstream_version(self):
+        self.manifest['version'] = '0.2.2'
+        self.save()
+        managers.generate(self.assets, self.output)
+        self.assertIn('revision 1', (self.output / 'jazyk.rb').read_text())
+        self.manifest['version'] = '0.2.3'
+        self.save()
+        managers.generate(self.assets, self.output)
+        self.assertNotIn('revision ', (self.output / 'jazyk.rb').read_text())
 
     def test_reject_mismatched_checksums(self):
         (self.assets / 'SHA256SUMS').write_text('0' * 64 + '  ' + next(iter(self.hashes)))

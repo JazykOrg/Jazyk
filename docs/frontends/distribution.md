@@ -29,8 +29,8 @@ build and test commands on Windows requires `sh` on `PATH`, such as Git for Wind
   native compiler tools for the platform.
 
 Homebrew and Scoop install the complete GitHub Release distribution, including
-PDFium and notices. Homebrew keeps it in `libexec` and links the executable into
-`bin`. Scoop creates a shim for the executable. Both retain `lib/` beside it.
+PDFium and notices. Homebrew keeps it in `libexec`. A wrapper in `bin` executes
+the real binary so PDFium resolves beside it on macOS and Linux. Scoop creates a shim for the executable. Both retain `lib/` beside it.
 Homebrew supports the four macOS and glibc Linux targets. Scoop supports Windows x64.
 
 Cargo builds from source. Its package contains the canonical embedded documentation,
@@ -49,9 +49,11 @@ Publish the patched compaction crate before Jazyk. Registry versions are immutab
 
 `scripts/release/package-managers.py` generates a Homebrew formula and Scoop
 manifest from a published release manifest. It verifies archive hashes against
-`SHA256SUMS` and pins versioned URLs. The `release-packages.yml` workflow validates
+`SHA256SUMS` and pins versioned URLs. Homebrew package revisions come from
+`scripts/release/homebrew-revisions.json` and reset for each upstream version. The `release-packages.yml` workflow validates
 source packages and generates package-manager metadata. Publication uses the
-existing published GitHub Release and its exact source commit. It can be retried
+existing published GitHub Release and its exact source commit. Metadata generation
+uses the workflow revision. Source packaging uses the published source commit. It can be retried
 independently of npm. The workflow publishes Cargo packages with
 `CARGO_REGISTRY_TOKEN` and retains Homebrew and Scoop manifests as an artifact. Commit those manifests to
 `JazykOrg/homebrew-tap` and `JazykOrg/scoop-bucket` with the owner signing identity.

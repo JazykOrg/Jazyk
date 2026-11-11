@@ -37,6 +37,8 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.12'
+      - name: Check metadata generation
+        run: python3 scripts/release/package-managers.test.py
       - name: Select the published source
         env:
           GH_TOKEN: ${{ github.token }}
@@ -54,6 +56,7 @@ jobs:
           assert manifest['version'] == os.environ['VERSION']
           commit = subprocess.check_output(['git','rev-parse',f'v{manifest["version"]}^{{commit}}'],text=True).strip()
           assert manifest['commit'] == commit
+          subprocess.run(['python3','scripts/release/package-managers.py',str(root),'.local/package-managers'],check=True)
           subprocess.run(['git','checkout','--detach',commit],check=True)
           PY
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master
@@ -63,12 +66,10 @@ jobs:
         with:
           workspaces: bootstrap
           key: source-packages
-      - name: Check metadata generation
+      - name: Check source-packaging helpers
         run: |
           python3 scripts/release/publish-source.test.py
-          python3 scripts/release/package-managers.test.py
           python3 scripts/release/source-package.test.py
-          python3 scripts/release/package-managers.py .local/package-release .local/package-managers
       - name: Validate compaction fork
         run: cargo publish --dry-run --locked --manifest-path bootstrap/vendor/goose-context-management/Cargo.toml
       - name: Publish compaction fork if absent

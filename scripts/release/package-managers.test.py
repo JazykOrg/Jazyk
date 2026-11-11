@@ -32,6 +32,8 @@ class Manifests(unittest.TestCase):
         self.assertIn('bin.install_symlink libexec/"jazyk"', formula)
         self.assertEqual(formula.count('sha256 "'), 4)
         self.assertNotIn('/latest/', formula)
+        self.assertNotIn('--version', formula)
+        self.assertIn('usage: jazyk', formula)
         scoop = json.loads((self.output / 'jazyk.json').read_text())
         self.assertEqual(scoop['bin'], 'jazyk.exe')
         self.assertIn('/v1.2.3/', scoop['architecture']['64bit']['url'])

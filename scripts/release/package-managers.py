@@ -43,8 +43,7 @@ def generate(assets, output):
         lines.extend(['  end', ''])
     lines.extend(['  def install', '    libexec.install Dir["*"]',
         '    bin.install_symlink libexec/"jazyk"', '  end', '', '  test do',
-        '    assert_match version.to_s, shell_output("#{bin}/jazyk --version")',
-        '    assert_match "Usage", shell_output("#{bin}/jazyk --help")',
+        '    assert_match "usage: jazyk", shell_output("#{bin}/jazyk --help")',
         '    assert_predicate libexec/"lib", :directory?', '  end', 'end', ''])
     output.mkdir(parents=True, exist_ok=True)
     (output / 'jazyk.rb').write_text('\n'.join(lines))

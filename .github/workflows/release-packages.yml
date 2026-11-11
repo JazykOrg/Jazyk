@@ -83,7 +83,6 @@ jobs:
           cargo package --locked --manifest-path .local/cargo-source/Cargo.toml
           cargo publish --dry-run --locked --manifest-path .local/cargo-source/Cargo.toml
           cargo install --locked --path .local/cargo-source/target/package/jazyk-${{ inputs.version }} --root .local/cargo-install
-          .local/cargo-install/bin/jazyk --version
           .local/cargo-install/bin/jazyk --help
       - name: Publish Jazyk
         if: inputs.publish

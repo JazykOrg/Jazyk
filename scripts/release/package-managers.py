@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 
 PLATFORMS = json.loads((Path(__file__).parent / 'platforms.json').read_text())
+REVISIONS = json.loads((Path(__file__).parent / 'homebrew-revisions.json').read_text())
 
 
 def generate(assets, output):
@@ -33,7 +34,10 @@ def generate(assets, output):
 
     lines = ['# frozen_string_literal: true', '', 'class Jazyk < Formula',
         '  desc "Natural language compiler with a persistent semantic graph"',
-        '  homepage "https://jazyk.org"', f'  version "{version}"', '  license "MIT"', '']
+        '  homepage "https://jazyk.org"', f'  version "{version}"', '  license "MIT"']
+    if revision := REVISIONS.get(version, 0):
+        lines.append(f'  revision {revision}')
+    lines.append('')
     for os, prefix in [('macos', 'darwin'), ('linux', 'linux')]:
         lines.append(f'  on_{os} do')
         for arch, suffix in [('arm', 'arm64'), ('intel', 'x64')]:
@@ -42,9 +46,11 @@ def generate(assets, output):
                 f'      sha256 "{digest}"', '    end'])
         lines.extend(['  end', ''])
     lines.extend(['  def install', '    libexec.install Dir["*"]',
-        '    bin.install_symlink libexec/"jazyk"', '  end', '', '  test do',
+        '    bin.write_exec_script libexec/"jazyk"', '  end', '', '  test do',
         '    assert_match "usage: jazyk", shell_output("#{bin}/jazyk --help")',
-        '    assert_predicate libexec/"lib", :directory?', '  end', 'end', ''])
+        '    assert_predicate libexec/"lib", :directory?',
+        '    refute_predicate bin/"jazyk", :symlink?',
+        '    assert_match libexec.to_s, (bin/"jazyk").read', '  end', 'end', ''])
     output.mkdir(parents=True, exist_ok=True)
     (output / 'jazyk.rb').write_text('\n'.join(lines))
     url, digest = archive('win32-x64')

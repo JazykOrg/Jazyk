@@ -733,6 +733,15 @@ impl Store {
     }
 
     fn load_uncached(out: &Path) -> Store {
+        // A newer store reads as empty and read-only, never as a mix of its files.
+        // Mirrors docs/compiler/graph.md#store-version.
+        if let Some(why) = newer_store(out) {
+            return Store {
+                out: out.to_path_buf(),
+                load_errors: vec![why],
+                ..Default::default()
+            };
+        }
         // Readers never take the lock. A read counts when no commit was in progress at
         // its start or its end and the generation held still across it; otherwise it
         // waits and retries. A store that never holds still within the wait loads
@@ -784,6 +793,16 @@ impl Store {
     // carries another one is archived whole to `<out>.bak` (an earlier archive is
     // replaced) and the store starts empty. Mirrors docs/compiler/graph.md#store-version.
     pub fn open_for_build(out: &Path) -> Store {
+        // A newer store is never archived: it opens read-only.
+        // Mirrors docs/compiler/graph.md#store-version.
+        if let Some(why) = newer_store(out) {
+            eprintln!("[jazyk] error: {}; the store stays read-only", why);
+            return Store {
+                out: out.to_path_buf(),
+                load_errors: vec![why],
+                ..Default::default()
+            };
+        }
         let status_path = out.join("status.yaml");
         if status_path.vexists() {
             // A status.yaml that does not parse is a broken file, not another version:
@@ -939,7 +958,7 @@ impl Store {
     // Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
     pub(super) fn unreadable(&self) -> Option<String> {
         self.load_errors.first().map(|e| {
-            if e.starts_with("store-busy:") {
+            if e.starts_with("store-busy:") || e.starts_with("store-newer:") {
                 return e.clone();
             }
             format!(
@@ -954,6 +973,9 @@ impl Store {
     // Called under the lock. Mirrors docs/compiler/graph.md#concurrency.
     fn refusal(&self) -> Option<String> {
         if let Some(why) = self.unreadable() {
+            return Some(why);
+        }
+        if let Some(why) = newer_store(&self.out) {
             return Some(why);
         }
         match yaml_read::<Status>(&self.out.join("status.yaml")) {

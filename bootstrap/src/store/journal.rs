@@ -100,7 +100,7 @@ impl Store {
     // split the same way; 0 leaves the field absent.
     // Mirrors docs/compiler/graph.md#journal.
     pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64, cached: u64) {
-        if tokens == 0 || to <= from {
+        if tokens == 0 || to <= from || newer_version(out).is_some() {
             return;
         }
         // A journal rewrite is a store write: under the lock, through the atomic
@@ -156,6 +156,9 @@ impl Store {
                 cached.unwrap_or(0),
                 tokens
             ));
+        }
+        if let Some(why) = newer_store(out) {
+            return Err(why);
         }
         let p = out.join("journal").join(format!("g{}.yaml", generation));
         if !p.vis_file() {

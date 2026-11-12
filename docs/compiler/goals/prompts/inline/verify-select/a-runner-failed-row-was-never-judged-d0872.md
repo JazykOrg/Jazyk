@@ -1,0 +1,1 @@
+a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again

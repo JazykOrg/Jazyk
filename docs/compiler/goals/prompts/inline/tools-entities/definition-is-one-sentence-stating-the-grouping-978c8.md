@@ -1,0 +1,1 @@
+definition is one sentence stating the grouping's responsibility; it is the sentence the documents should gain

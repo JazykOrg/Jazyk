@@ -783,7 +783,7 @@ pub fn eval_workflow_check(
                 }
             }
             if ran == 0 {
-                return Some("no programmatic test rows to run".into());
+                return Some(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-checks/no-programmatic-test-rows-to-run-8335e.md")).into());
             }
             None
         }
@@ -890,7 +890,7 @@ pub fn eval_workflow_check(
             }
             for t in tests {
                 if t.run.trim().is_empty() {
-                    return Some(format!("test `{}` has no run command", t.name));
+                    return Some(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-checks/test-has-no-run-command-dad4b.md")), t.name));
                 }
                 match crate::verify::run_test_ref(gs, t) {
                     Ok(out) if out.pass => {
@@ -906,7 +906,7 @@ pub fn eval_workflow_check(
                         ))
                     }
                     Ok(_) => {}
-                    Err(e) => return Some(format!("test `{}` did not run: {}", t.name, e)),
+                    Err(e) => return Some(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-checks/test-did-not-run-cc1f7.md")), t.name, e)),
                 }
             }
             None

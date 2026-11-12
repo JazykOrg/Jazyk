@@ -52,7 +52,10 @@ pub fn cancel_owned(root: &Path, fence: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub const PROMPT: &str = include_str!("../../docs/compiler/skills/agent/execute-task.md");
+pub const PROMPT: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/skills/agent/execute-task.md"
+));
 pub const TOOLS: [&str; 9] = [
     "task_context",
     "update_tasks",
@@ -125,13 +128,13 @@ impl Task {
             return Err("Invalid image reference.".into());
         }
         if self.cwd != "." && (!safe_path(&self.cwd) || protected(&self.cwd)) {
-            return Err(format!("Task {} cwd {:?} must be a project-relative directory; use \".\" for the project root, not an absolute deliverable path.", self.id, self.cwd));
+            return Err(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/task-cwd-must-be-a-project-relative-215cf.md")), self.id, self.cwd));
         }
         if !matches!(self.size.as_str(), "small" | "medium" | "large")
             || !(1..=7200).contains(&self.timeout_seconds)
         {
             return Err(
-                "Choose small, medium, or large and a timeout from 1 to 7200 seconds.".into(),
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/choose-small-medium-or-large-and-a-50b0f.md")).into(),
             );
         }
         if self.env.len() > 40 {
@@ -160,10 +163,10 @@ impl Task {
             }
             for pattern in patterns {
                 if !safe_path(pattern) || protected(pattern) || pattern.starts_with('!') {
-                    return Err(format!("Task {} {field} pattern {pattern:?} must be an unprotected, project-relative glob.", self.id));
+                    return Err(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/task-field-pattern-pattern-must-be-an-afc1b.md")), self.id, field = field, pattern = pattern));
                 }
                 if let Some(previous) = seen.insert(pattern, field) {
-                    return Err(format!("Task {} {field} pattern {pattern:?} repeats a pattern in {previous}. Keep each pattern in only one field; put test report patterns in reports.", self.id));
+                    return Err(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/task-field-pattern-pattern-repeats-a-pattern-3d515.md")), self.id, field = field, pattern = pattern, previous = previous));
                 }
                 globset::GlobBuilder::new(pattern)
                     .literal_separator(true)
@@ -686,14 +689,22 @@ fn select_tasks(tasks: Vec<Task>, selection: &Value) -> Result<(Vec<Task>, Optio
     }
     let ids: Vec<&str> = selection
         .as_array()
-        .ok_or("task_ids must be a list of task IDs")?
+        .ok_or(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/task_runtime/task-ids-must-be-a-list-of-41ddd.md"
+        )))?
         .iter()
-        .map(|id| id.as_str().ok_or("task_ids must be a list of task IDs"))
+        .map(|id| {
+            id.as_str().ok_or(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/task_runtime/task-ids-must-be-a-list-of-41ddd.md"
+            )))
+        })
         .collect::<Result<_, _>>()?;
     if let Some(unknown) = ids.iter().find(|id| !tasks.iter().any(|t| t.id == **id)) {
         return Err(format!(
-            "Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list."
-        ));
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/unknown-task-id-unknown-in-task-ids-f4a31.md"))
+        , unknown = unknown));
     }
     let (selected, rest): (Vec<Task>, Vec<Task>) = tasks
         .into_iter()
@@ -776,7 +787,7 @@ struct Submission {
 
 fn submission_key(root: &Path, id: &str) -> Result<String, String> {
     if !valid_id(id) {
-        return Err("Invalid run ID in submission receipt.".into());
+        return Err(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/invalid-run-id-in-submission-receipt-6a816.md")).into());
     }
     Ok(format!("task-submission:{}:{id}", root.display()))
 }
@@ -798,7 +809,7 @@ fn save_submission(root: &Path, request: &Value, status: &Value) -> Result<(), S
     if let Some(previous) = crate::session_recovery::parent(&key)? {
         let previous: Submission = serde_json::from_value(previous).map_err(|e| e.to_string())?;
         if previous.task != receipt.task || previous.input_digest != receipt.input_digest {
-            return Err("Run receipt identifies a different submitted task or input.".into());
+            return Err(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/run-receipt-identifies-a-different-submitted-task-55ea5.md")).into());
         }
         return Ok(());
     }
@@ -831,7 +842,7 @@ fn import_scoped_result(
         &fetched
     };
     if terminal_state.is_some_and(|state| result["status"].as_str() != Some(state)) {
-        return Err("Retained task result does not match its terminal run state.".into());
+        return Err(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/task_runtime/retained-task-result-does-not-match-its-a2644.md")).into());
     }
     let input: BTreeMap<String, String> = serde_json::from_value(result["input_files"].clone())
         .map_err(|_| "Retained task result has no frozen inputs.")?;

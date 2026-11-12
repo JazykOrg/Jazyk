@@ -1,0 +1,1 @@
+Task {} {field} pattern {pattern:?} must be an unprotected, project-relative glob.

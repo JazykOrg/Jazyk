@@ -12,7 +12,7 @@ Nothing here changes the harness, the gates, or the tools.
 
 ### review-entity asks one diffuse question
 
-`docs/compiler/goals/prompts/review-entity.md` (6.3k characters, one paragraph) asks the
+`docs/compiler/goals/prompts/goals/review-entity.md` (6.3k characters, one paragraph) asks the
 model to judge an entity whose fact set changed. The paragraph bundles nine duties:
 
 - refresh the definition, stereotype, and parent when the statements no longer fit;

@@ -1,0 +1,1 @@
+`{rel}` is recorded for entity `ent:{owner}`. Call begin_generation for that entity before repairing its files; successful record_generation ends the previous claim.

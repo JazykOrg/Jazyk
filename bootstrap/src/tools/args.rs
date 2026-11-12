@@ -66,7 +66,10 @@ pub(super) fn prefer_quote(name: &str, args: &mut Value) -> Option<String> {
         "section and quote"
     };
     Some(format!(
-        "provenance dropped: the call carried {} and a derivation; a fact the documents state keeps its quote as its one provenance, so send `provenance` only for what no sentence states",
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/tools-args/provenance-dropped-the-call-carried-and-a-0cc94.md"
+        )),
         what
     ))
 }
@@ -320,8 +323,11 @@ impl ToolSession {
         if raw.is_empty() {
             return Err(ToolError::new(
                 "bad-transition",
-                "transition.subject is empty; name the subject entity, or omit `transition` entirely"
-                    .into(),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-args/transition-subject-is-empty-name-the-subject-50f4d.md"
+                ))
+                .into(),
             ));
         }
         let Some(subject) = self.canon_entity_id(raw) else {
@@ -347,7 +353,10 @@ impl ToolSession {
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| {
                     let coach = if k == "from" {
-                        " Name the state the documents place the subject in before the trigger; the event that creates the subject names its initial state. When no sentence states one, omit `transition` entirely."
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-args/name-the-state-the-documents-place-the-59849.md"
+                        ))
                     } else {
                         ""
                     };
@@ -432,7 +441,10 @@ impl ToolSession {
                         return Err(ToolError::new(
                             "bad-attribute",
                             format!(
-                                "attribute `{}` needs a provenance ({{section, quote}}); the call carries no quote it could take",
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-args/attribute-needs-a-provenance-section-quote-the-d0871.md"
+                                )),
                                 name
                             ),
                         ))
@@ -468,7 +480,11 @@ impl ToolSession {
         if v["decree"].is_object() {
             return Err(ToolError::new(
                 "bad-provenance",
-                "a session never stages a decree; pass provenance.derived {from, reasoning}, or a mention".into(),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-args/a-session-never-stages-a-decree-pass-fb2c8.md"
+                ))
+                .into(),
             ));
         }
         let d = &v["derived"];

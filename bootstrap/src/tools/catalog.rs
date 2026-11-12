@@ -32,7 +32,7 @@ pub fn catalog() -> Vec<ToolDef> {
     vec![
         ToolDef {
             name: "load",
-            description: "Load a target and its immediate neighborhood into the loaded set: any node id (ent:..., req:..., view:..., diag:...), a section reference (doc.md#/ref), or alignment:<document> for pending anchor proposals and section changes. depth defaults to 1: the target in full, its edges, each neighbor as a stub; depth 2 loads the neighbors in full too. Whatever the budget cut off arrives as expansion handles (h:<target>:<axis>). Loading an already loaded target is a repeat; deepen a loaded node with expand instead.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/load-a-target-and-its-immediate-neighborhood-dac60.md")),
             parameters: obj(
                 json!({"target": {"type": "string"}, "depth": {"type": "integer", "minimum": 1}}),
                 &["target"],
@@ -40,7 +40,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "expand",
-            description: "Load the frontier behind an expansion handle (h:<target>:<axis>[:<start>]) from the loaded set's status block or an earlier reply.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/load-the-frontier-behind-an-expansion-handle-ff841.md")),
             parameters: obj(json!({"handle": {"type": "string"}}), &["handle"]),
         },
         ToolDef {
@@ -50,12 +50,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "graph_status",
-            description: "Re-render the loaded set's status block in full: every loaded item, its handles, the skill index line, and the unload suggestions. A condensed form already rides on every mutating reply.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/re-render-the-loaded-set-s-status-896bf.md")),
             parameters: obj(json!({}), &[]),
         },
         ToolDef {
             name: "search",
-            description: "Look up entities by name or alias (kind entity, the default) or views by title (kind view) before creating one. Pass query for one name, or queries for every name a section introduces in one call (one result per query, in order). Returns up to 8 possible matches per name; hits can be false neighbors (substrings, shared words), so inspect each before reusing it.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/look-up-entities-by-name-or-alias-1b67f.md")),
             parameters: obj(
                 json!({"query": {"type": "string"}, "queries": {"type": "array", "items": {"type": "string"}, "minItems": 1}, "kind": {"type": "string", "enum": ["entity", "view"]}}),
                 &[],
@@ -63,12 +63,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_section",
-            description: "Read one section's raw body and its child section titles. ref is a full section reference (doc.md#/ref). The body is capped at 400 lines and 16 KiB from line (default 1); a cut body carries truncated, totalLines, and nextLine.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/read-one-section-s-raw-body-and-405e0.md")),
             parameters: obj(json!({"ref": {"type": "string"}, "line": {"type": "integer", "minimum": 1}}), &["ref"]),
         },
         ToolDef {
             name: "get_entity",
-            description: "One entity (ent:...) with its definition, mentions, requirements, and relationships. For requirements (req:...) and other node kinds use load with target instead.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/one-entity-ent-with-its-definition-mentions-4fbad.md")),
             parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
         },
         ToolDef {
@@ -86,7 +86,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_entity",
-            description: "Create a domain concept, or update it if the name already exists (name plus scope, and parent when given; several entities under that name need parent to say which). mention cites the section and the verbatim quote that talks about it; provenance.derived {from, reasoning} is the alternative for structure the documents do not state. stereotype is free-form judgment (actor, service, interface, table). parent must exist and keeps the containment tree acyclic. attributes are [{name, type?, value?, provenance?: {section, quote}}], keyed by name; one without its own provenance takes the call's quote. Not for file paths, CLI flags, or markdown terms. Leave scope unset unless the documents name a bounded context. A name that reads as a variant of an existing entity is rejected unless note names how the concepts differ (a field, part, or state of X is a different concept than X).",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/create-a-domain-concept-or-update-it-8b7e3.md")),
             parameters: obj(
                 json!({
                     "name": {"type": "string"},
@@ -105,7 +105,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_entity",
-            description: "Update an existing entity. A rename keeps the id. add_aliases records a wording, remove_aliases takes one back (a wording the documents turn out not to use). remove_parent: true takes the entity out of the containment tree (a generic rule-carrier that should stand beside no parent). attributes upsert by name; attributes not named stand. parent obeys the same gates as on create.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/update-an-existing-entity-a-rename-keeps-71734.md")),
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -128,12 +128,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "merge_entities",
-            description: "Merge two entities that are the same concept. keep survives; absorb's aliases, mentions, and references are rewired onto it.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/merge-two-entities-that-are-the-same-3a53c.md")),
             parameters: obj(json!({"keep": {"type": "string"}, "absorb": {"type": "string"}, "reason": {"type": "string"}}), &["keep", "absorb", "reason"]),
         },
         ToolDef {
             name: "group_entities",
-            description: "Build one level: stage a derived grouping entity from members (provenance derived from exactly them, reasoning why the domain would recognize them as one thing) and reparent every member under it, as one changeset. The grouping takes the members' shared current parent (none at the scope root) and their scope. At least two members; every member resolves; all members share one current parent (a grouping never crosses levels); the name passes the near-duplicate gate, so a lookalike of an existing area reuses that entity instead; definition is one sentence stating the grouping's responsibility. stereotype is from the existing vocabulary (system, component, module) or absent; there is no grouping stereotype.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/build-one-level-stage-a-derived-grouping-71383.md")),
             parameters: obj(
                 json!({
                     "name": {"type": "string"},
@@ -152,7 +152,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_requirement",
-            description: "Record one requirement: a free-form statement of one atomic obligation (specific, testable, entity-anchored). entities are the entity ids the statement is about. Exactly one of section plus quote (the verbatim source sentence copied from the section) or provenance.derived {from, reasoning} (a statement the documents do not state). Safe to retry: re-recording the same statement updates it in place. edges optionally tie two of the entities directionally (a acts on b) with a relationship type and cardinality. transition {subject, from, to, trigger?, guard?} says the subject (one of the entities) enters a state. facets are [{facet, reasoning, measure?}] with facet one of behavior, constraint, failure-mode, quality; measure only on quality.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-one-requirement-a-free-form-statement-65a84.md")),
             parameters: obj(
                 json!({
                     "statement": {"type": "string"},
@@ -169,7 +169,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_requirement",
-            description: "Update an existing requirement's statement, entities, edges, transition, or facets; a field given replaces the stored one whole. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section. Omit both when only the other fields change.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/update-an-existing-requirement-s-statement-entities-193fc.md")),
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -191,7 +191,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_criterion",
-            description: "Record one acceptance criterion of a requirement: the observable evidence it is met, one condition and its outcome with concrete values, written from outside the system (never a function, a table, or a file). requirement is the owning requirement id. kind is positive, negative, boundary, or quality (with measure). Exactly one of section plus quote (a criterion supported by existing prose, including the requirement's own description; quote the original verbatim even when the criterion uses observer wording) or provenance.derived {from, reasoning} (a criterion the documents do not state; from names the requirement). Refused when the statement restates the requirement (criterion-restates). Safe to retry: the same statement on the same requirement updates in place.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-one-acceptance-criterion-of-a-requirement-9c0cc.md")),
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -235,7 +235,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "place_anchor",
-            description: "Move one proposed anchor (a requirement or an entity mention named in this align task) to the section that now holds its text. quote, when given, must locate verbatim there and replaces the stored quote. reevaluate true lists the anchor for the extraction turn to re-judge; false keeps it as an unchanged statement.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/move-one-proposed-anchor-a-requirement-or-65ff4.md")),
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -253,7 +253,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_diagnostic",
-            description: "Record a judgment about the graph or documents. Severity error only when two statements cannot both hold; warning for real but repairable issues; info for observations; none for a considered judgment recorded but not surfaced. prompt is optional and usually absent: attach one only when the diagnostic asks a person a real question, omit it entirely otherwise. When present, it carries up to 4 options, each a label with exactly one of edit (a suggested prose edit, applied without a model) or answer (a prefilled reply), plus freeform for typed replies. A decision (a choice the documents leave open) requires a prompt; nonconformant-instance is an instance whose values or links its type's statements rule out.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-a-judgment-about-the-graph-or-e2ebc.md")),
             parameters: obj(
                 json!({
                     "rule": {"type": "string", "enum": REVIEW_RULES},
@@ -268,7 +268,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_diagnostic",
-            description: "Replace the question attached to an open diagnostic (null prompt removes it). The finding itself is edited by re-reporting it; this tool only maintains the prompt. Never touches a human answer or triage.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/replace-the-question-attached-to-an-open-b8e99.md")),
             parameters: obj(
                 json!({"id": {"type": "string"}, "prompt": prompt_schema()}),
                 &["id"],
@@ -303,7 +303,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "upsert_view",
-            description: "Create a view (the stored half of a diagram: what it includes, never how it looks), or refresh it when a view of that kind and title exists. members are ordered node ids: entities for structural kinds (class, object, package, component, deployment; composite and state take exactly one), requirements for flow kinds (use-case, activity, sequence, communication, overview; order is the flow order), one entity then requirements for timing. query {scope?, parent?, stereotype?, depth?} adds membership by rule at every commit. collapse lists members (or their ancestors) shown as one node despite their children. excluded is [{id, note}]. reasoning says why the view exists; every id must exist.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/create-a-view-the-stored-half-of-b30f5.md")),
             parameters: obj(
                 json!({
                     "kind": {"type": "string", "enum": VIEW_KINDS},
@@ -342,7 +342,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "edit_fact",
-            description: "Requires id, field, value. Criterion IDs use update_criterion instead. Set one authored field on one requirement, entity, or view: a requirement's statement, edges, transition, or facets; an entity's definition, stereotype, parent, or an attribute's type or value (field attributes.<name>.type or attributes.<name>.value); a view's members. On a quote-provenanced fact, note carries the sentence rewrite the person accepted in conversation: the prose replacement and the graph mutation commit as one dual write. Without an accepted sentence, or on a derived or decreed fact, the edit lands graph-only with decree provenance (note becomes the decree's note) and a ratification proposal follows. value is the field's new content: a string, or the array or object the write tools take.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/requires-id-field-value-criterion-ids-use-7b163.md")),
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -355,7 +355,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_spend",
-            description: "Record what YOUR run billed for the open batch, when you know it: tokens is the input plus output tokens your endpoint billed across every round of this batch, cached the input tokens among them served from its prompt cache. Your own figure, never an estimate; do not call it if you do not know your usage. A second call replaces the first (the batch's whole spend so far, not an increment). At done the batch's journal entry takes the figure as tokens and cachedTokens with tokensSource agent. Stages nothing and touches no graph state. Outside an open batch it is refused; `jazyk spend <generation> <tokens>` stamps a committed entry instead.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-what-your-run-billed-for-the-8a891.md")),
             parameters: obj(
                 json!({
                     "tokens": {"type": "integer", "minimum": 1},
@@ -366,7 +366,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "report_feedback",
-            description: "Report that jazyk's own prompt, tool, schema, or error message is ambiguous, wrong, confusing, or missing something. It appends one line to the project's own .jazyk/feedback.jsonl, read later by jazyk's developers, not this project's authors; nothing is transmitted anywhere. It never touches the graph. Use it for what blocked YOU; problems in the documents are diagnostics, not feedback. kind: ambiguous, wrong, confusing, missing, or other. subject names the tool, argument, or instruction. message says what was unclear and what would have helped. Then continue the task with your best judgment.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/report-that-jazyk-s-own-prompt-tool-78bcb.md")),
             parameters: obj(
                 json!({
                     "kind": {"type": "string", "enum": ["ambiguous", "wrong", "confusing", "missing", "other"]},
@@ -378,17 +378,17 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "generation_tasks",
-            description: "Generation work currently derived for entities. Develop implementation and tests together; a separate Bind pass is optional. An empty list does not prove that an artifact exists or its checks passed. Follow next and prerequisites, then begin_generation on one ready entity.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/generation-work-currently-derived-for-entities-develop-2a8e4.md")),
             parameters: obj(json!({}), &[]),
         },
         ToolDef {
             name: "begin_generation",
-            description: "The full generation package for one entity: instructions (the generation contract), context pack, requirement groups (with suggested test names), change diff, the deliverable directory, factHash, the manifest of already generated files with what each holds, the medium, and the build. Write the deliverable files with your own tools, then record_generation with the manifest.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/the-full-generation-package-for-one-entity-bf3c8.md")),
             parameters: obj(json!({"entity": {"type": "string"}}), &["entity"]),
         },
         ToolDef {
             name: "record_medium",
-            description: "Record what the deliverable is made of when no session has decided it yet (the package says medium: null with a mediumNote): form in your words (a Rust crate, a PowerPoint deck), produced written (the files are the deliverable) or built (they are the source a tool turns into artifact), toolchain, and artifact when built. An existing deliverable tree and recorded run commands pin the decision. Replaces an earlier decision until an entity is generated; refused after.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-what-the-deliverable-is-made-of-034a1.md")),
             parameters: obj(
                 json!({
                     "form": {"type": "string"},
@@ -401,7 +401,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "record_generation",
-            description: "Record the task done. manifest.files lists every deliverable-relative file written for this entity; manifest.supportFiles lists deliverable-wide files ownership never applies to (Cargo.toml, a crate root such as src/lib.rs); manifest.tests declares each required test: {requirement, criterion?, kind: programmatic|llm, label, artifact, name, run, cwd?, files?}; use criterion for a criterion test. Current test artifacts and selectors stay unchanged, while run/cwd may consolidate to a shared suite task and require fresh evidence. A programmatic artifact is the test source containing name, never the generated JUnit report; report paths belong in the saved task. For an llm row, artifact is the criteria file you wrote (front matter with the requirement id and statement hash, the statement, the quote, the implementing paths, the confirm steps, the verdict contract), path relative to the deliverable. Recording an identical manifest keeps existing verdicts. manifest.build is the one command that produces the deliverable's artifact when its medium must be built (a slide deck, a PDF, a rendered site, a binary): {run, cwd?, produces: [paths]}, run before any test. A task:<id> reference uses the saved task's project-relative cwd; legacy commands use the deliverable directory. produces paths remain deliverable-relative; omit it when the written files are themselves the deliverable, and reuse the build the begin_generation package already carries rather than recording a second one. Pass the factHash from the begin_generation package. choices lists what you had to invent, each {choice, scope: product|behavior|detail, reasoning, requirements?}; every entry lands as an invented-choice diagnostic graded by scope. Next: complete the related source changes for the other assigned entities, then run_tests at a useful execution milestone. Recording one entity does not require an immediate test run.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-the-task-done-manifest-files-lists-5b250.md")),
             parameters: obj(
                 json!({
                     "entity": {"type": "string"},
@@ -411,10 +411,10 @@ pub fn catalog() -> Vec<ToolDef> {
                         "supportFiles": {"type": "array", "items": {"type": "string"}},
                         "tests": {"type": "array", "items": {"type": "object", "properties": {
                             "requirement": {"type": "string"},
-                            "criterion": {"type": "string", "description": "Criterion ID from requirementGroups.criteria; omit only for a requirement-level test."},
+                            "criterion": {"type": "string", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/criterion-id-from-requirementgroups-criteria-omit-only-29285.md"))},
                             "kind": {"type": "string", "enum": ["programmatic", "llm"]},
                             "label": {"type": "string"},
-                            "artifact": {"type": "string", "description": "Deliverable-relative test source containing name, or an LLM criteria file. Never a generated JUnit report."},
+                            "artifact": {"type": "string", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/deliverable-relative-test-source-containing-name-or-0744f.md"))},
                             "name": {"type": "string"},
                             "run": {"type": "string"},
                             "cwd": {"type": "string"},
@@ -425,7 +425,7 @@ pub fn catalog() -> Vec<ToolDef> {
                             "cwd": {"type": "string"},
                             "produces": {"type": "array", "items": {"type": "string"}}
                         }},
-                        "tasks": {"type": "array", "items": {"type": "string"}, "description": "Saved task ids this generation uses beyond its tests and build, such as an asset copy. An unlisted task a session added is removed once nothing uses it."}
+                        "tasks": {"type": "array", "items": {"type": "string"}, "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/saved-task-ids-this-generation-uses-beyond-ead66.md"))}
                     }},
                     "choices": {"type": "array", "items": {"type": "object"}}
                 }),
@@ -439,12 +439,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "begin_binding",
-            description: "The bind package for one requirement: instructions (the bind contract), statement, quote, factHash, context pack, the deliverable directory, the suggested test name, the decided medium and build when they exist, and the recorded test conventions. Search the deliverable with your own tools: find the implementing files (or none), find or write the test, run it, then record_binding.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/the-bind-package-for-one-requirement-instructions-1cb7e.md")),
             parameters: obj(json!({"requirement": {"type": "string"}}), &["requirement"]),
         },
         ToolDef {
             name: "record_binding",
-            description: "Record the binding: files lists the deliverable-relative implementing files (an empty list is the honest record of an unimplemented requirement; a file that only restates the statement is not one, list the files a criterion test inspects); tests is one entry per criterion of the requirement, {criterion, kind: programmatic|llm, label, artifact, name, run, cwd?, verdict: pass|fail, evidence?} (the package lists the criteria with suggested test names; a requirement with criteria is refused without them); test is the requirement-level {kind, label, artifact, name, run, cwd?} for a requirement without criteria (with criteria it may be omitted, the first criterion's test stands in); verdict is the outcome (pass|fail) with evidence. A programmatic artifact is the test source containing name, never the generated JUnit report. The row's derived status classifies the requirement: verified (the deliverable already satisfies it), unimplemented (fail with no files: generation work, the tests are its acceptance gate), partial (files exist and the criterion tests split, some passing and some failing: generation work for the failing criteria), failing (every test fails with files present: the deliverable contradicts the statement, a finding the failing-binding check files for the author). Never rewrite implementation files during binding.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-the-binding-files-lists-the-deliverable-587dd.md")),
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -481,17 +481,17 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "begin_verification",
-            description: "The verification package for one requirement: statement, quote, factHash, context pack, implementing files, and either the run command (programmatic) or the criteria (llm). For llm rows, judge the criteria against the deliverable and record_verdict.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/the-verification-package-for-one-requirement-statement-35d15.md")),
             parameters: obj(json!({"requirement": {"type": "string"}}), &["requirement"]),
         },
         ToolDef {
             name: "run_tests",
-            description: "Run recorded programmatic tests: the build once, then each referenced saved task once for the selected rows, importing separate exact JUnit case verdicts. Reuse ordinary project suite tasks across requirements and criteria. Each later call starts fresh task runs. requirements selects rows (requirement or entity ids); empty runs every non-verified row; all: true reruns every programmatic row, verified ones included. llm rows are skipped here; judge them and record_verdict.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/run-recorded-programmatic-tests-the-build-once-c44ea.md")),
             parameters: obj(json!({"requirements": {"type": "array", "items": {"type": "string"}}, "all": {"type": "boolean"}}), &[]),
         },
         ToolDef {
             name: "record_verdict",
-            description: "Record LLM judgments with evidence. Copy factHash from begin_verification. For multiple LLM criteria, criteria must include every LLM criterionTests entry with its own criterion id, factHash, verdict, and evidence. The top-level verdict is pass only when every LLM entry passes. Programmatic evidence comes from run_tests.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-llm-judgments-with-evidence-copy-facthash-b07fb.md")),
             parameters: obj(
                 json!({
                     "requirement": {"type": "string"},
@@ -512,7 +512,7 @@ pub fn catalog() -> Vec<ToolDef> {
         // Mirrors docs/compiler/sessions.md#generation-sessions.
         ToolDef {
             name: "read_text_file",
-            description: "One eligible deliverable file's content, capped at 64 KiB including a long first line. Credentials and private compiler/Git state are excluded. path is relative to the deliverable directory; line (1-based) and limit select lines. hash is the whole file SHA-256, including unread content. truncatedLine identifies a line whose remainder was omitted.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/one-eligible-deliverable-file-s-content-capped-a6c2c.md")),
             parameters: obj(
                 json!({"path": {"type": "string"}, "line": {"type": "integer"}, "limit": {"type": "integer"}}),
                 &["path"],
@@ -535,7 +535,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "write_text_file",
-            description: "Write one deliverable file atomically. For a small edit, pass old_text matching exactly once and expectedHash from the last read or write; content replaces that literal text. old_text requires expectedHash and cannot combine with append true. An optional expectedHash guards any write mode; a conflict changes nothing. With append true, content goes at the end. Replies include the whole-file hash. path is relative to the deliverable. Source and ownership gates apply to every mode; preserve unrelated content.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/write-one-deliverable-file-atomically-for-a-d2316.md")),
             parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, "old_text": {"type": "string"}, "expectedHash": {"type": "string"}}), &["path", "content"]),
         },
         ToolDef {
@@ -545,7 +545,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "task_context",
-            description: "Read existing reusable project tasks, descriptions, configuration revision, execution capabilities and recent runs. Inspect this and project runner configuration before defining a task. Criterion identities belong in JUnit cases, not one task per criterion. Pass next_cursor as before for older runs. task_ids limits full definitions to those tasks and indexes the rest by id, name and description; omit it before update_tasks.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/read-existing-reusable-project-tasks-descriptions-configuration-f39b5.md")),
             parameters: obj(json!({"before":{"type":"string"},"task_ids":{"type":"array","items":{"type":"string"}}}), &[]),
         },
         ToolDef {
@@ -555,7 +555,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "run_task",
-            description: "Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately; wait=true waits in the host and returns the terminal status, or the current status if interrupted (then use wait_run). No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; run_tests imports its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/run-one-saved-project-task-in-a-f3e1d.md")),
             parameters: obj(json!({"task_id": {"type": "string"}, "expected_revision": {"type": "string"}, "operation_key": {"type": "string"}, "size": {"type": "string", "enum": ["small", "medium", "large"]}, "timeout_seconds": {"type": "integer"}, "wait": {"type": "boolean"}}), &["task_id", "expected_revision", "operation_key"]),
         },
         ToolDef {
@@ -565,7 +565,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "wait_run",
-            description: "Wait briefly for a run update, then return its durable status. Repeating does not extend its deadline.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/wait-briefly-for-a-run-update-then-1eddd.md")),
             parameters: obj(json!({"run_id": {"type": "string"}, "wait_ms": {"type": "integer"}}), &["run_id"]),
         },
         ToolDef {
@@ -575,27 +575,27 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "read_run_log",
-            description: "Read a bounded run log slice, including after teardown. Offsets and limits count Unicode characters, not bytes or lines. Continue with next_offset; search match line numbers are not read offsets.",
-            parameters: obj(json!({"run_id": {"type": "string"}, "offset": {"type": "integer", "description": "Zero-based Unicode character offset; default 0. Reuse next_offset from the preceding read."}, "limit": {"type": "integer", "description": "Maximum Unicode characters; default 16000, capped at 64000."}}), &["run_id"]),
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/read-a-bounded-run-log-slice-including-52c66.md")),
+            parameters: obj(json!({"run_id": {"type": "string"}, "offset": {"type": "integer", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/zero-based-unicode-character-offset-default-reuse-cbbd6.md"))}, "limit": {"type": "integer", "description": "Maximum Unicode characters; default 16000, capped at 64000."}}), &["run_id"]),
         },
         ToolDef {
             name: "search_run_log",
-            description: "Search retained run logs for literal failure text before reading more log context. Returns bounded matching lines with one-based line numbers, not read_run_log character offsets.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/search-retained-run-logs-for-literal-failure-a7589.md")),
             parameters: obj(json!({"run_id": {"type": "string"}, "query": {"type": "string"}, "offset": {"type": "integer", "description": "Zero-based number of log lines to skip; default 0."}, "limit": {"type": "integer", "description": "Maximum matching lines; default and cap 100."}}), &["run_id", "query"]),
         },
         ToolDef {
             name: "read_run_changes",
-            description: "List retained file changes or read one changed path (version: changes, the default). version: input requires path and reads the frozen run input, including an unchanged file, explicitly labeled historical input. It does not read the current workspace. Missing contents and partial collection are explicit.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/list-retained-file-changes-or-read-one-11af1.md")),
             parameters: obj(json!({"run_id": {"type": "string"}, "path": {"type": "string"}, "offset": {"type": "integer"}, "version": {"type": "string", "enum": ["changes", "input"]}}), &["run_id"]),
         },
         ToolDef {
             name: "mark_goal_done",
-            description: "Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges \"declared\" or \"not-structural\"; dedupe-candidates \"merged\" or \"separate\"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/claim-one-goal-of-the-batch-resolved-617f9.md")),
             parameters: goal_claim_parameters(),
         },
         ToolDef {
             name: "settle_pairs",
-            description: "Settle several rejudge-pair goals of the batch in one call: one entry per goal with its verdict and a one or two sentence justification. consistent stages nothing and marks the goal done; duplicate files a duplicate-requirement diagnostic on the pair (severity info, message optional) and marks; contradiction files a contradiction diagnostic with the entry's severity, message (both required), reasoning, and prompt, and marks, unless an open contradiction already names both sides (filed by an earlier batch, or by this session before the pair opened): then that one carries the verdict, nothing is filed, and the entry needs only the goal, the verdict, and the justification; an entry may name carried_by, an open contradiction on one side that states the same conflict, and that one carries it; resolved resolves the pair's open contradiction or duplicate-requirement diagnostic with the justification as the reason and marks. Each entry runs the gates of the single calls it stands for; a refused entry is reported with the rule and the repair, leaves nothing staged, and stops none of the others. Goals outside the batch or of another kind are refused. The same-document delete stays on delete_requirement plus mark_goal_done.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/settle-several-rejudge-pair-goals-of-the-3cb89.md")),
             parameters: obj(
                 json!({"verdicts": {"type": "array", "minItems": 1, "items": {
                     "type": "object",
@@ -616,7 +616,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "mark_goal_failed",
-            description: "Record that one goal of the batch cannot honestly be accomplished, with a one or two sentence reason. Always accepted; a failed mandatory goal blocks convergence, a failed optional goal is recorded and stands.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-that-one-goal-of-the-batch-a5ff6.md")),
             parameters: obj(
                 json!({"goal": {"type": "string"}, "reason": {"type": "string"}}),
                 &["goal", "reason"],
@@ -624,12 +624,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "load_skill",
-            description: "Bring one skill into the session by its name from the skills index. The reply renders the payload; at most eight skills render in one session.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/bring-one-skill-into-the-session-by-14eb3.md")),
             parameters: obj(json!({"name": {"type": "string"}}), &["name"]),
         },
         ToolDef {
             name: "done",
-            description: "Resolve final goals and commit the staged mutations in one call. goals entries use {goal, justification, evidence?}, with the same evidence and gates as mark_goal_done. Earlier claims may already be marked. Every mandatory goal must end done or failed; all batch gates run. A rejected claim or gate leaves earlier work intact for repair. summary is one line.",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/resolve-final-goals-and-commit-the-staged-3db5b.md")),
             parameters: done_parameters(false),
         },
     ]

@@ -1,0 +1,1 @@
+This conversation used a process-local agent selection. Choose your agent and open a new conversation after restarting jazyk gui.

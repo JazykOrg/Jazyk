@@ -243,12 +243,15 @@ fn levels_store() -> Store {
 }
 
 // The agent contract asks for independent calls in one reply under the native
-// codec. Mirrors docs/compiler/goals/prompts/agent-contract.md.
+// codec. Mirrors docs/compiler/goals/prompts/session/agent-contract.md.mustache.
 #[test]
 fn the_contract_asks_for_independent_calls_in_one_reply() {
-    let contract = include_str!("../../../docs/compiler/goals/prompts/agent-contract.md");
+    let contract = include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/session/agent-contract.md.mustache"
+    ));
     assert!(contract.contains("Independent calls go together in one reply"));
-    let skill = include_str!("../../../docs/compiler/skills/extraction.md");
+    let skill = include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/extraction.md"));
     assert!(skill.contains("one `search` with `queries`"));
 }
 
@@ -258,7 +261,7 @@ fn the_contract_asks_for_independent_calls_in_one_reply() {
 // Mirrors docs/compiler/skills/extraction.md.
 #[test]
 fn the_extraction_skill_refuses_default_stereotypes() {
-    let skill = include_str!("../../../docs/compiler/skills/extraction.md");
+    let skill = include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/extraction.md"));
     assert!(skill.contains("carries no stereotype: leave the field absent"));
     assert!(skill.contains("`component`, `entity`, and `class` are never defaults"));
 }
@@ -269,7 +272,7 @@ fn the_extraction_skill_refuses_default_stereotypes() {
 // gate folds no plurals). Mirrors docs/compiler/skills/abstraction.md.
 #[test]
 fn the_abstraction_skill_refuses_a_plural_of_a_member_as_a_grouping_name() {
-    let skill = include_str!("../../../docs/compiler/skills/abstraction.md");
+    let skill = include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/abstraction.md"));
     assert!(skill.contains("never named as the plural of one member"));
     assert!(skill.contains("the near-duplicate gate folds no plurals"));
 }

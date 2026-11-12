@@ -1,0 +1,1 @@
+Read a project document as compiler text. DOCX and PDF include source locations and diagnostics. Never overwrite binary documents with text.

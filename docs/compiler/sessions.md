@@ -51,8 +51,8 @@ the graph. Nothing in between. A goal left open after four attempts parks
 The prompt is assembled, never authored per goal. The same disk state renders the same
 prompt, so it can be shown before it is spent. The parts, in order:
 
-1. The agent contract, [`goals/prompts/agent-contract.md`](./goals/prompts/agent-contract.md),
-   with [`feedback-note.md`](./goals/prompts/feedback-note.md) filled into its
+1. The agent contract, [`goals/prompts/session/agent-contract.md`](./goals/prompts/session/agent-contract.md.mustache),
+   with [`feedback-note.md`](./goals/prompts/session/feedback-note.md) filled into its
    `{feedback}` slot, the second paragraph. The contract states the job (resolve the listed goals with the tools over
    the loaded graph, finish with `done`), the graph invariants, the loading rules, the
    staging rules, the review asymmetry, and the finish contract. The feedback note says
@@ -70,7 +70,7 @@ prompt, so it can be shown before it is spent. The parts, in order:
 4. `## Goals`: one block per goal in the batch: the line `- [g:...] mandatory|optional`,
    the kind's contract paragraph (its payload file under `goals/prompts/`), the change in
    one line, the gate in one line (the kind's section of
-   [`gates.md`](./goals/prompts/gates.md)), and the hints. The contract paragraph renders once
+   [`gates.md`](./goals/prompts/session/gates.md)), and the hints. The contract paragraph renders once
    per kind, under the first goal of that kind in the batch; a later goal of the same
    kind carries `Contract: as the first <kind> goal above` in its place, so a batch of
    eight pairs reads the pair contract once. The change line renders the change record
@@ -85,16 +85,16 @@ prompt, so it can be shown before it is spent. The parts, in order:
    a session starts working, never with a round of reads for text the harness already
    chose.
 6. The protocol line, with `{target}` set to the batch id:
-   [`worker-protocol.md`](./goals/prompts/worker-protocol.md) when the prompt travels
+   [`worker-protocol.md`](./goals/prompts/session/worker-protocol.md.mustache) when the prompt travels
    ahead of the claim (an ACP session prompt, `jazyk preview`), which tells the agent
-   to call `begin_goals` first; [`serving-protocol.md`](./goals/prompts/serving-protocol.md)
+   to call `begin_goals` first; [`serving-protocol.md`](./goals/prompts/session/serving-protocol.md.mustache)
    when `begin_goals` itself returns the prompt over a standalone MCP serving, which
    says the batch is claimed and not to call `begin_goals` again for it. The two lines
    describe one loop from either side of the claim. A session run in process with its
    batch already open (a [benchmark](../benchmark/benchmark.md#runs) case, a
    [snippet](../benchmark/benchmark.md#snippets-from-a-real-project), a
    [replay](../benchmark/replays.md)) gets
-   [`open-batch-protocol.md`](./goals/prompts/open-batch-protocol.md) instead: its tools
+   [`open-batch-protocol.md`](./goals/prompts/session/open-batch-protocol.md.mustache) instead: its tools
    hold no `begin_goals`, and every probe of a local model once opened by noting that its
    instructions named a tool it did not have.
 
@@ -180,35 +180,38 @@ exception: they live in the tool registry beside their schemas
   `<!-- name -->` opens each section, and the section runs to the next marker. Trailing
   newlines are dropped, so blank lines may separate sections. Markers never reach the
   model.
-- A placeholder is `{name}`: lowercase letters, digits, and underscores. Filling is one
-  pass, so a value that holds `{text}` (a quote, a human's reply) is never filled
-  again. Braces in any other shape (`{"batch": ...}`, `{goal, justification}`) are
-  literal text.
+- A placeholder is `{{{name}}}` (unescaped Mustache). Rendering is one pass, so
+  a quoted value that holds template syntax is never filled again. JSON braces
+  remain literal. `.md.mustache` files support comments and file-relative partials.
+
+The [prompt guide](./goals/prompts/README.md) defines the common source parser,
+includes, metadata, comments, inventory, and maintenance rules. Every prompt and
+skill passes through that parser before embedding.
 
 The fragment files:
 
-- [`gates.md`](./goals/prompts/gates.md): the one-line gate per goal kind.
-- [`session-blocks.md`](./goals/prompts/session-blocks.md): the prompt's framing (the
+- [`gates.md`](./goals/prompts/session/gates.md): the one-line gate per goal kind.
+- [`session-blocks.md`](./goals/prompts/session/session-blocks.md.mustache): the prompt's framing (the
   elided contract line, the skill and task headers, the `## Project` lines, the goal
   block labels, the `## Loaded` header and its deferred and unload lines).
-- [`agent-context.md`](./goals/prompts/agent-context.md): the framing around what a
+- [`agent-context.md`](./goals/prompts/conversation/agent-context.md.mustache): the framing around what a
   conversation picks up and the warnings about what it skipped
   ([agent context](../frontends/agent-context.md)).
-- [`serving-instructions.md`](./goals/prompts/serving-instructions.md): an MCP
+- [`serving-instructions.md`](./goals/prompts/serving/serving-instructions.md.mustache): an MCP
   serving's initialize instructions and the `next` guidance and notes in its replies,
   the benchmark case replies included ([MCP](../frontends/mcp.md)).
-- [`generation-steps.md`](./goals/prompts/generation-steps.md): the built-in
+- [`generation-steps.md`](./goals/prompts/generation/generation-steps.md.mustache): the built-in
   generation worker's medium decision, its product, tests, and manifest steps, their
   corrective retries, and the criteria file for an `llm` test
   ([generation](../consumers/gen.md)).
-- [`judge-input.md`](./goals/prompts/judge-input.md): what an `llm` verdict reads, one
+- [`judge-input.md`](./goals/prompts/verification/judge-input.md.mustache): what an `llm` verdict reads, one
   builder for every judge.
-- [`decompile-worker.md`](./goals/prompts/decompile-worker.md): the built-in drafting
+- [`decompile-worker.md`](./goals/prompts/decompile/decompile-worker.md.mustache): the built-in drafting
   worker's role line, scope request, and retry ([decompile](../consumers/decompile.md)).
-- [`answer-handling.md`](./goals/prompts/answer-handling.md): the handling contract for
+- [`answer-handling.md`](./goals/prompts/conversation/answer-handling.md.mustache): the handling contract for
   an answered question ([questions in chat](../frontends/acp.md#questions-in-chat)).
 
-[`integration-context.md`](./goals/prompts/integration-context.md) frames the project
+[`integration-context.md`](./goals/prompts/conversation/integration-context.md.mustache) frames the project
 integration facts in initialize instructions
 ([project integration context](../frontends/mcp.md#project-integration-context)).
 

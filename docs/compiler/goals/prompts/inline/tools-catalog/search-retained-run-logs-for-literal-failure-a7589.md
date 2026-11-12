@@ -1,0 +1,1 @@
+Search retained run logs for literal failure text before reading more log context. Returns bounded matching lines with one-based line numbers, not read_run_log character offsets.

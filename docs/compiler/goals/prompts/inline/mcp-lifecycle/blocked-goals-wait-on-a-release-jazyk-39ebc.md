@@ -1,0 +1,1 @@
+blocked goals wait on a release (jazyk release generate for bind and generate rows) or a human answer (jazyk answer); they do not hold the verdict

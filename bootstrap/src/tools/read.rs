@@ -73,8 +73,13 @@ impl ToolSession {
             .map(|(id, view)| format!("{} ({})", id, view.title))
             .collect();
         let mut next = format!(
-            "no view matches `{}`. {} of the graph's {} views are listed above. Use get_view with a listed id, or read entities and requirements directly with get_entity or load.",
-            query, views.len(), total
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/tools-read/no-view-matches-of-the-graph-s-3cb84.md"
+            )),
+            query,
+            views.len(),
+            total
         );
         if total > views.len() {
             next.push_str(" Refine the query to find an unlisted view title.");
@@ -104,12 +109,12 @@ impl ToolSession {
             "entities": known,
             "next": if total == 0 {
                 format!(
-                    "no match for `{}`: the graph holds no entities yet. Searching again will return this same answer. Create the entity with upsert_entity.",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-read/no-match-for-the-graph-holds-no-6bd09.md")),
                     query
                 )
             } else {
                 format!(
-                    "no match for `{}`. {} of the graph's {} entities are listed above; searching again will return this same answer. If one of them, or a known entity in your work pack, means the same concept under another name, use its id. Otherwise create the entity with upsert_entity.",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-read/no-match-for-of-the-graph-s-f53e8.md")),
                     query, shown, total
                 )
             }
@@ -146,7 +151,7 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "bad-section",
                         format!(
-                            "bare section reference `{}` needs a document; use doc.md#{}",
+                            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-read/bare-section-reference-needs-a-document-use-2c15e.md")),
                             section, section
                         ),
                     ))
@@ -226,24 +231,24 @@ impl ToolSession {
         let depth = u32::try_from(args["depth"].as_u64().unwrap_or(1).max(1)).unwrap_or(u32::MAX);
         let id = self.canon_entity_id(&target).unwrap_or(target);
         self.refuse_past_high_water("load", Some(&id))?;
-        let text = self
-            .loaded
-            .load(&self.snapshot, &id, depth)
-            .map_err(|e| {
-                // A node staged this session is not in the committed snapshot
-                // the loaded set renders. Mirrors docs/compiler/tools.md#read-tools.
-                if self.staged_reqs.contains(&id) || self.staged_entities.contains_key(&id) {
-                    ToolError::new(
-                        "staged-target",
-                        format!(
-                            "`{}` is staged in this session and not committed yet: the loaded set renders the committed snapshot, the staged node is exactly what your write call sent, and it loads after done",
-                            id
-                        ),
-                    )
-                } else {
-                    ToolError::new("bad-target", e)
-                }
-            })?;
+        let text = self.loaded.load(&self.snapshot, &id, depth).map_err(|e| {
+            // A node staged this session is not in the committed snapshot
+            // the loaded set renders. Mirrors docs/compiler/tools.md#read-tools.
+            if self.staged_reqs.contains(&id) || self.staged_entities.contains_key(&id) {
+                ToolError::new(
+                    "staged-target",
+                    format!(
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-read/is-staged-in-this-session-and-not-f3b1b.md"
+                        )),
+                        id
+                    ),
+                )
+            } else {
+                ToolError::new("bad-target", e)
+            }
+        })?;
         let mut v = json!({"pack": text});
         // In a serving, the first node of a kind loaded brings the kind's
         // skill, once; a batch works under its goal kinds' skills and reads
@@ -675,9 +680,10 @@ impl ToolSession {
             let mut v = Self::diagnostics_page(list, args);
             if !bookkeeping.is_empty() {
                 v["bookkeeping"] = json!(bookkeeping);
-                v["bookkeepingNote"] = json!(
-                    "the build's own records, never a session's to resolve; pass rule to list them"
-                );
+                v["bookkeepingNote"] = json!(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-read/the-build-s-own-records-never-a-9b5c0.md"
+                )));
             }
             return Ok(v);
         }

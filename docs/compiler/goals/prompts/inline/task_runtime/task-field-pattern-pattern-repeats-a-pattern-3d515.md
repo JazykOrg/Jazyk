@@ -1,0 +1,1 @@
+Task {} {field} pattern {pattern:?} repeats a pattern in {previous}. Keep each pattern in only one field; put test report patterns in reports.

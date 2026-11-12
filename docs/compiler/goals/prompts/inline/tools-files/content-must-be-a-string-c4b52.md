@@ -1,0 +1,1 @@
+content must be a string

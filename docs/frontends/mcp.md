@@ -518,7 +518,7 @@ serving; what it claims is a batch:
   the store, syncs the section trees in memory, opens a changeset, assembles the
   [session prompt](../compiler/sessions.md#the-prompt) for the batch as
   `instructions` (ending in the
-  [`serving-protocol.md`](../compiler/goals/prompts/serving-protocol.md) line, since
+  [`serving-protocol.md`](../compiler/goals/prompts/session/serving-protocol.md.mustache) line, since
   the batch is already claimed when the agent reads it), and returns the batch id,
   its goals, and the status block of the initially
   [loaded set](../compiler/context.md#the-loaded-set) as `package` (the items' text

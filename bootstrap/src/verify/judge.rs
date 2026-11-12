@@ -3,9 +3,11 @@ use super::*;
 // What a judge reads: the criterion or the row's criteria, the context, and the
 // implementing files. One builder for every llm verdict.
 // Mirrors docs/compiler/sessions.md#payload-files.
-pub(crate) const JUDGE: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../../docs/compiler/goals/prompts/judge-input.md"
-));
+pub(crate) const JUDGE: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/verification/judge-input.md.mustache"
+    )));
 
 // The implementing files as the judge sees them: each readable file under the
 // deliverable, truncated, under its own `=== path ===` line.
@@ -85,17 +87,30 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         String::new()
     };
     let mut instructions = if row.test.kind == "llm" {
-        include_str!("../../../docs/compiler/goals/prompts/verify-llm-contract.md").to_owned()
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/verification/verify-llm-contract.md.mustache"
+        ))
+        .to_owned()
     } else if row.test.run.starts_with("task:") {
-        include_str!("../../../docs/compiler/goals/prompts/verify-task-contract.md").to_owned()
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/verification/verify-task-contract.md"
+        ))
+        .to_owned()
     } else {
-        include_str!("../../../docs/compiler/goals/prompts/verify-legacy-contract.md").to_owned()
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/verification/verify-legacy-contract.md"
+        ))
+        .to_owned()
     };
     if row.test.kind != "llm" && row.tests.values().any(|test| test.test.kind == "llm") {
         instructions.push('\n');
-        instructions.push_str(include_str!(
-            "../../../docs/compiler/goals/prompts/verify-llm-contract.md"
-        ));
+        instructions.push_str(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/verification/verify-llm-contract.md.mustache"
+        )));
     }
     Ok(json!({
         "requirement": rid,
@@ -194,7 +209,10 @@ pub(super) async fn judge_llm_criteria(
         );
         let reply = runner
             .ask_traced(
-                include_str!("../../../docs/compiler/goals/prompts/verify-criterion-contract.md"),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/verification/verify-criterion-contract.md.mustache"
+                )),
                 &input,
                 &format!(
                     "verify {rid} {}",

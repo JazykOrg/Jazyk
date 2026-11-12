@@ -1,0 +1,1 @@
+test artifacts and build outputs are never implementing files; list the product files a criterion test inspects, or none

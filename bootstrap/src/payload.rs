@@ -2,14 +2,14 @@
 // under docs/compiler/goals/prompts/ and the placeholder fill shared by every payload.
 // Mirrors docs/compiler/sessions.md#payload-files.
 
-use regex::{Captures, Regex};
+use regex::Regex;
 use std::sync::OnceLock;
 
-// A `{name}` placeholder: lowercase letters, digits, and underscores. Literal braces
+// A `{{{name}}}` placeholder: letters, digits, and underscores. Literal braces
 // in a payload (`{"batch": ...}`, `{goal, justification}`) never match.
 fn placeholder() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\{([a-z][a-z0-9_]*)\}").unwrap())
+    RE.get_or_init(|| Regex::new(r"\{\{\{([a-zA-Z][a-zA-Z0-9_]*)\}\}\}").unwrap())
 }
 
 // The placeholder names a template carries, in order of first appearance.
@@ -24,9 +24,9 @@ pub fn placeholders(template: &str) -> Vec<String> {
     names
 }
 
-// Fill every `{name}` in one pass, so a value that itself holds `{text}` (a quote, a
-// user's reply) is never filled again. A placeholder without a value stays as it is;
-// a debug build refuses a template and a value list that disagree.
+// Fill every `{{{name}}}` in one pass, so a value that itself holds `{text}` (a quote, a
+// user's reply) is never filled again. A debug build refuses a template and a value
+// list that disagree. Mustache handles sections and comments through the same renderer.
 pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
     debug_assert!(
         {
@@ -41,14 +41,16 @@ pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
         placeholders(template),
         vars.iter().map(|(k, _)| *k).collect::<Vec<_>>()
     );
-    placeholder()
-        .replace_all(template, |c: &Captures| {
-            vars.iter()
-                .find(|(k, _)| *k == &c[1])
-                .map(|(_, v)| v.to_string())
-                .unwrap_or_else(|| c[0].to_string())
+    let values: serde_json::Map<String, serde_json::Value> = vars
+        .iter()
+        .map(|(key, value)| {
+            (
+                (*key).to_string(),
+                serde_json::Value::String((*value).to_string()),
+            )
         })
-        .into_owned()
+        .collect();
+    render_mustache(template, &serde_json::Value::Object(values)).expect("valid embedded prompt")
 }
 
 // A fragment file: named sections, each opened by a marker line `<!-- name -->`. A
@@ -105,7 +107,7 @@ mod tests {
 
     #[test]
     fn fill_is_one_pass_and_keeps_literal_braces() {
-        let t = "PROTOCOL {target}: {\"batch\": \"{target}\"} ({goal, justification}) {quote}";
+        let t = "PROTOCOL {{{target}}}: {\"batch\": \"{{{target}}}\"} ({goal, justification}) {{{quote}}}";
         let s = fill(t, &[("target", "b1-0"), ("quote", "{target}")]);
         assert_eq!(
             s,
@@ -398,22 +400,34 @@ mod tests {
     const FILES: &[(&str, &str, &[&str])] = &[
         (
             "agent-contract.md",
-            include_str!("../../docs/compiler/goals/prompts/agent-contract.md"),
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/session/agent-contract.md.mustache"
+            )),
             &["feedback"],
         ),
         (
             "worker-protocol.md",
-            include_str!("../../docs/compiler/goals/prompts/worker-protocol.md"),
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/session/worker-protocol.md.mustache"
+            )),
             &["target"],
         ),
         (
             "serving-protocol.md",
-            include_str!("../../docs/compiler/goals/prompts/serving-protocol.md"),
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/session/serving-protocol.md.mustache"
+            )),
             &["target"],
         ),
         (
             "open-batch-protocol.md",
-            include_str!("../../docs/compiler/goals/prompts/open-batch-protocol.md"),
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/session/open-batch-protocol.md.mustache"
+            )),
             &["target"],
         ),
         (
@@ -470,3 +484,15 @@ mod tests {
         }
     }
 }
+
+/// Render a prepared template once. Inserted values are never parsed as source.
+pub fn render_mustache(template: &str, values: &serde_json::Value) -> Result<String, String> {
+    mustache::compile_str(template)
+        .map_err(|e| format!("invalid prompt template: {e}"))?
+        .render_to_string(values)
+        .map_err(|e| format!("cannot render prompt template: {e}"))
+}
+
+#[cfg(test)]
+#[path = "../prompt_parser.rs"]
+mod source_parser;

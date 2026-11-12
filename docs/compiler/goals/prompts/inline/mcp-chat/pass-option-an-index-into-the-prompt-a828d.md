@@ -1,0 +1,1 @@
+pass option (an index into the prompt's options) or text (a freeform reply)

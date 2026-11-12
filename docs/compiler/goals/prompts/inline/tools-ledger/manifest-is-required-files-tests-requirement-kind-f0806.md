@@ -1,0 +1,1 @@
+manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}

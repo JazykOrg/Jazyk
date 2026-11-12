@@ -1,0 +1,1 @@
+The input must stay inside the project and outside private paths and nested projects.

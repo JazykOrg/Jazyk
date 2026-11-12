@@ -281,7 +281,14 @@ fn inspect(
     outputs: &BTreeSet<String>,
 ) -> ReferencedAsset {
     if !contained_path(root, path) {
-        return ReferencedAsset::new(path.into(), "blocked", Some("The input must stay inside the project and outside private paths and nested projects."));
+        return ReferencedAsset::new(
+            path.into(),
+            "blocked",
+            Some(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-assets/the-input-must-stay-inside-the-project-ac0fa.md"
+            ))),
+        );
     }
     let file = root.join(path);
     let resolved = resolved_relative(root, path);
@@ -307,9 +314,22 @@ fn inspect(
             asset.sha256 = Some(crate::task_runtime::digest(&bytes));
             asset
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound =>
-            ReferencedAsset::new(path.into(), "missing", Some("The referenced input file is missing. Restore it or correct the source reference; do not invent a substitute.")),
-        Err(_) => ReferencedAsset::new(path.into(), "unreadable", Some("The referenced input cannot be read. Resolve it before recording generation.")),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => ReferencedAsset::new(
+            path.into(),
+            "missing",
+            Some(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-assets/the-referenced-input-file-is-missing-restore-60bc9.md"
+            ))),
+        ),
+        Err(_) => ReferencedAsset::new(
+            path.into(),
+            "unreadable",
+            Some(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-assets/the-referenced-input-cannot-be-read-resolve-f4176.md"
+            ))),
+        ),
     }
 }
 

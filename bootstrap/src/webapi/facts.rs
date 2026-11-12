@@ -233,7 +233,7 @@ pub(crate) fn edit_fact_core(
                         "doc": p["doc"], "section": p["section"],
                         "old_text": p["old_text"], "new_text": p["new_text"],
                     },
-                    "note": "echo the proposal back to commit the dual write; decree: true declines it",
+                    "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/webapi-facts/echo-the-proposal-back-to-commit-the-2ea14.md")),
                 }));
             }
             // The tool decided the fact is not quoted after all: fall through to
@@ -284,13 +284,20 @@ pub(crate) fn edit_fact_core(
                     == Some(p["old_text"].as_str().unwrap_or_default());
             if !same {
                 return Err(conflict(
-                    "the fact moved since the proposal was made; re-read and propose again",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/webapi-facts/the-fact-moved-since-the-proposal-was-47746.md")),
                 ));
             }
         }
         let path = proj.root.join(&doc);
-        let old_full = crate::vfs::read_to_string(&path)
-            .map_err(|e| bad(format!("cannot read {}: {}", doc, e)))?;
+        let old_full = crate::vfs::read_to_string(&path).map_err(|e| {
+            bad(format!(
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/webapi-facts/cannot-read-9504a.md"
+                )),
+                doc, e
+            ))
+        })?;
         let section_raw = Store::load(out)
             .docs
             .get(&doc)

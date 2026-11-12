@@ -1,0 +1,1 @@
+a failing row has an open document diagnostic: surface it to the document author before changing the deliverable or test; do not silently rewrite prose

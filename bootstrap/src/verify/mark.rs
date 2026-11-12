@@ -109,9 +109,21 @@ pub fn mark_llm(
         return mark(store, &rid, verdict, fact_hash, evidence, None, gs);
     }
     if llm.is_empty() {
-        return Err("No LLM criterion is bound. Use run_tests for programmatic evidence.".into());
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-mark/no-llm-criterion-is-bound-use-run-20b31.md"
+        ))
+        .into());
     }
-    let entries = criteria.and_then(Value::as_array).ok_or_else(|| format!("Supply record_verdict.criteria for every LLM criterion: {}. Copy ids and factHash values from begin_verification. Programmatic evidence is not a model verdict.",llm.join(", ")))?;
+    let entries = criteria.and_then(Value::as_array).ok_or_else(|| {
+        format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-mark/supply-record-verdict-criteria-for-every-llm-c125f.md"
+            )),
+            llm.join(", ")
+        )
+    })?;
     let mut judgments = std::collections::BTreeMap::new();
     for entry in entries {
         let cid = entry["criterion"]
@@ -164,7 +176,11 @@ pub fn mark_llm(
     };
     if verdict != combined {
         return Err(format!(
-            "Top-level verdict must be `{combined}` to match the LLM criteria."
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-mark/top-level-verdict-must-be-combined-to-43ff7.md"
+            )),
+            combined = combined
         ));
     }
     let files = crate::gen::hash_implementing(&store.out, gs, &row.files);

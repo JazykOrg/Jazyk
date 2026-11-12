@@ -119,7 +119,10 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "repeated-call",
                     format!(
-                        "this is call {} to `{}` with identical arguments; the answer has not changed. Act on the answer you already have, or finish with done. If this refusal seems wrong, say so with report_feedback.",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-guard/this-is-call-to-with-identical-arguments-69f13.md"
+                        )),
                         seen, name
                     ),
                 ));
@@ -140,9 +143,10 @@ impl ToolSession {
                 }
                 let mut v = result?;
                 if v.is_object() {
-                    v["repeat"] = json!(
-                        "you already made this exact call; the answer is unchanged. Act on it."
-                    );
+                    v["repeat"] = json!(include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-guard/you-already-made-this-exact-call-the-fed9d.md"
+                    )));
                 }
                 return Ok(v);
             }

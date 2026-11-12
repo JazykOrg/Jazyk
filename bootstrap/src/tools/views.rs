@@ -230,7 +230,10 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "bad-args",
                         format!(
-                            "a {} view's members are requirements; an entity-matching query cannot drive it. Omit query and pick members",
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-views/a-view-s-members-are-requirements-an-9464c.md"
+                            )),
                             kind
                         ),
                     ));
@@ -334,7 +337,10 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "bad-args",
                         format!(
-                            "a {} view's members are requirements; an entity-matching query cannot drive it. Omit query and pick members",
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-views/a-view-s-members-are-requirements-an-9464c.md"
+                            )),
                             current.kind
                         ),
                     ));

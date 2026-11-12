@@ -1,0 +1,1 @@
+a session never stages a decree; pass provenance.derived {from, reasoning}, or a mention

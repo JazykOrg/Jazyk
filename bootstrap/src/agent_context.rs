@@ -29,9 +29,11 @@ pub const READ_SKILL: &str = "read_skill";
 
 // The framing around what a session picks up: instruction files, skills, warnings,
 // remote servers. Mirrors docs/frontends/agent-context.md.
-pub(crate) const FRAMING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../docs/compiler/goals/prompts/agent-context.md"
-));
+pub(crate) const FRAMING: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/conversation/agent-context.md.mustache"
+    )));
 // The header every outbound remote MCP request carries; a jazyk-hosted MCP endpoint
 // refuses a request that has it (docs/frontends/agent-context.md#hosted-context).
 pub const HOP_HEADER: &str = "Jazyk-Hop";
@@ -634,7 +636,11 @@ pub fn read_skill(skills: &[Skill], name: &str) -> Result<String, String> {
 pub fn read_skill_tool() -> GenericTool {
     GenericTool {
         name: READ_SKILL.into(),
-        description: "Read one skill listed in the session's SKILLS block: its instructions and the files in its folder. Read a skill before following it.".into(),
+        description: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/agent_context/read-one-skill-listed-in-the-session-e7887.md"
+        ))
+        .into(),
         parameters: json!({"type": "object", "properties": {"name": {"type": "string", "description": "The skill's name"}}, "required": ["name"]}),
     }
 }
@@ -1063,9 +1069,11 @@ pub fn check_remote_url(
         return Err("only https URLs are allowed".into());
     }
     if !url.username().is_empty() || url.password().is_some() {
-        return Err(
-            "credentials in the URL are not allowed; use headers from the secret store".into(),
-        );
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/agent_context/credentials-in-the-url-are-not-allowed-bb0a1.md"
+        ))
+        .into());
     }
     if url.port().is_some_and(|p| p != 443) {
         return Err("only the standard https port is allowed".into());

@@ -76,7 +76,11 @@ impl ChatManager {
             .ok_or("Unknown chat")?;
         let mut session = session.lock().unwrap();
         if session.selection_id.is_some() && session.agent_selection.is_none() {
-            return Err("This conversation used a process-local agent selection. Choose your agent and open a new conversation after restarting jazyk gui.".into());
+            return Err(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gui-chat/this-conversation-used-a-process-local-agent-d73c7.md"
+            ))
+            .into());
         }
         if session.binding.is_none() {
             let binding = if let Some(selected) = session.agent_selection.as_ref() {

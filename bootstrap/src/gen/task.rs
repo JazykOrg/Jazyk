@@ -128,8 +128,13 @@ pub(super) fn fact_hash_base(store: &Store, id: &str, rids: &[String]) -> String
 // the deliverable is (a language, a format, a genre) is a fact the documents state,
 // carried by the context pack.
 pub fn contract() -> String {
-    include_str!("../../../docs/compiler/goals/prompts/generate-contract.md")
-        .replace("{GROUP}", &GROUP.to_string())
+    crate::payload::fill(
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/generation/generate-contract.md.mustache"
+        )),
+        &[("GROUP", &GROUP.to_string())],
+    )
 }
 
 pub fn instructions() -> String {
@@ -288,13 +293,19 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
     let live = fact_hash(store, &id);
     if e.fact_hash != live {
         return Err(format!(
-            "the record for `{}` carries factHash {} but the graph says {}: the facts moved since the package was built; begin_generation again and record_generation with the current factHash",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-task/the-record-for-carries-facthash-but-the-30589.md"
+            )),
             id, e.fact_hash, live
         ));
     }
     if implementation_outside_source(gs, &ledger, &e.files) {
         return Err(format!(
-            "the record for `{}` names implementing files outside current Source; re-bind its requirements and record_generation inside the current source selection",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-task/the-record-for-names-implementing-files-outside-cee82.md"
+            )),
             id
         ));
     }
@@ -305,9 +316,15 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
         .collect();
     if !gone.is_empty() {
         return Err(format!(
-            "the record for `{}` lists files that do not exist under the deliverable ({}); write them, then record_generation again with every file the manifest names",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-task/the-record-for-lists-files-that-do-bceac.md"
+            )),
             id,
-            gone.iter().map(|f| f.as_str()).collect::<Vec<_>>().join(", ")
+            gone.iter()
+                .map(|f| f.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         ));
     }
     // A record with no implementing file of its own stands only when every
@@ -334,7 +351,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             .collect();
         if !missing.is_empty() {
             return Err(format!(
-                "the record for `{}` lists no implementing file, and these requirements have no row naming a file that realizes them: {}; write the entity's part and record it in files",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-task/the-record-for-lists-no-implementing-file-4efb2.md"
+                )),
                 id,
                 missing.join(", ")
             ));
@@ -371,7 +391,10 @@ pub fn gate(store: &Store, gs: &GenSettings, id: &str, require_run: bool) -> Res
             .collect();
         if !never_run.is_empty() {
             return Err(format!(
-                "run_tests has not run since the record: {} has incomplete programmatic evidence; call run_tests, then mark the goal",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-task/run-tests-has-not-run-since-the-366e1.md"
+                )),
                 never_run.join(", ")
             ));
         }
@@ -632,7 +655,7 @@ pub fn task_package(store: &Store, id: &str, gs: &GenSettings) -> Result<Value, 
         // (docs/consumers/bind.md#generation-makes-bound-tests-pass).
         // Shared requirements confused a Codex session into re-recording them
         // (docs/compiler/goals/generate.md#what-the-model-sees).
-        "ownershipNote": "a requirement already carried by another entity's file names that file on its test row (files: [path]); an entity whose every requirement is carried records files: []; extend a sharedWith member's file and record it in files. A genuine shared composition entrypoint can be support even for a written artifact: begin its recorded owner, preserve its content/current files/tests and re-record with that entrypoint added to supportFiles, then begin your entity and extend it. Also list it in files when it implements your requirements. Never promote an exclusive module merely to bypass ownership",
+        "ownershipNote": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/gen-task/a-requirement-already-carried-by-another-entity-005ff.md")),
         // The entity's component group: members whose files it may write and record
         // too (docs/consumers/gen.md#file-ownership-and-conventions).
         "sharedWith": shared_with(store, id),

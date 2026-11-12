@@ -130,7 +130,13 @@ impl GoalKind for DeriveCriteria {
                 hints.push(format!("examples nearby: {}", nearby.join(", ")));
             }
             hints.push("skill criteria".into());
-            hints.push("upsert_criterion per requirement; report_diagnostic invented-choice for a value the documents do not give".into());
+            hints.push(
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/goals-derive_criteria/upsert-criterion-per-requirement-report-diagnostic-invented-85133.md"
+                ))
+                .into(),
+            );
             let cause = store
                 .status
                 .changes
@@ -195,6 +201,9 @@ impl GoalKind for DeriveCriteria {
         Vec::new()
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/derive-criteria.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/derive-criteria.md"
+        ))
     }
 }

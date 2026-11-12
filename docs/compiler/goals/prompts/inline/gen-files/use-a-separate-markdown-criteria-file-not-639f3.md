@@ -1,0 +1,1 @@
+use a separate Markdown criteria file, not executable test source

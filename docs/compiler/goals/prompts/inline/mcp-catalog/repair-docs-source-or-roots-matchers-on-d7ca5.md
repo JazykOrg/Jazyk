@@ -1,0 +1,1 @@
+Repair docs, source or roots matchers on this worker's current document set. Preserve its id and unrelated selections; use baseHash from list_document_sets. New Source patterns apply to the next file write.

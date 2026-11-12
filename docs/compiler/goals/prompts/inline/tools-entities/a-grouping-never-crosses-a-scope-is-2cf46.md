@@ -1,0 +1,1 @@
+a grouping never crosses a scope: {} is in {}, {} is not

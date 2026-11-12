@@ -1,0 +1,1 @@
+`{}` must be a relative path under the deliverable directory, without `..`

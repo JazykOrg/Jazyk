@@ -116,7 +116,10 @@ impl GoalKind for CurateView {
         view_gates(store, staged)
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/curate-view.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/curate-view.md"
+        ))
     }
 }
 

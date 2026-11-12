@@ -36,8 +36,11 @@ pub fn medium_note(ledger: &Ledger) -> Option<String> {
         return None;
     }
     Some(
-        "MEDIUM UNDECIDED: no session has decided what this deliverable is made of. Decide it first from the requirements, the deliverable tree (an existing tree pins the language and toolchain), and any recorded run commands, and record it with record_medium before writing files; the contract's line that the medium is settled applies after that."
-            .to_string(),
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-medium/medium-undecided-no-session-has-decided-what-2a1a4.md"
+        ))
+        .to_string(),
     )
 }
 
@@ -80,7 +83,10 @@ pub fn medium_divergence(ledger: &Ledger) -> Option<String> {
         .map(|(_, run)| format!("`{}`", run))
         .collect();
     Some(format!(
-        "the decided medium's toolchain `{}` names {}, while the recorded run commands name {} ({})",
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-medium/the-decided-medium-s-toolchain-names-while-d492e.md"
+        )),
         medium.toolchain,
         toolchain.join(", "),
         families.join(", "),
@@ -106,9 +112,11 @@ pub struct Medium {
 
 // The generation pipeline's prompts: the medium decision, the per-entity steps, their
 // corrective retries, and the llm criteria file. Mirrors docs/compiler/sessions.md#payload-files.
-pub(crate) const STEPS: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../../docs/compiler/goals/prompts/generation-steps.md"
-));
+pub(crate) const STEPS: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/generation/generation-steps.md.mustache"
+    )));
 
 impl Medium {
     pub fn is_built(&self) -> bool {
@@ -428,7 +436,10 @@ pub async fn decide_medium(
         // say so instead of blaming an empty field (docs/consumers/gen.md#the-medium-is-decided-once-before-anything-is-generated).
         if crate::reconcile::rate_limited(&reply) {
             return Err(format!(
-                "could not decide the deliverable's medium: the model call was rate limited ({})",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-medium/could-not-decide-the-deliverable-s-medium-902a3.md"
+                )),
                 crate::llm::truncate(reply.trim(), 200)
             ));
         }
@@ -448,7 +459,10 @@ pub async fn decide_medium(
             .to_lowercase();
         if produced != "written" && produced != "built" {
             last = format!(
-                "`produced` was `{}`, not `written` or `built` (the reply began: {})",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-medium/produced-was-not-written-or-built-the-57b0e.md"
+                )),
                 produced, excerpt
             );
             continue;

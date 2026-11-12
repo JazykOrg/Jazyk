@@ -182,6 +182,9 @@ impl GoalKind for DeclareEdges {
         out
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/declare-edges.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/declare-edges.md"
+        ))
     }
 }

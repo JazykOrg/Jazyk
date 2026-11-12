@@ -1,0 +1,1 @@
+Top-level verdict must be `{combined}` to match the LLM criteria.

@@ -1,0 +1,1 @@
+Run receipt identifies a different submitted task or input.

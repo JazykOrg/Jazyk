@@ -14,14 +14,20 @@ use std::path::Path;
 // The drafting contract, served as begin_decompile instructions and as the internal
 // worker's system prompt. Mirrors docs/consumers/decompile.md#draft-goals.
 pub fn instructions() -> String {
-    include_str!("../../docs/compiler/goals/prompts/decompile-contract.md").into()
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/decompile/decompile-contract.md"
+    ))
+    .into()
 }
 
 // The internal worker's role line around the contract, its scope request, and its
 // retry. Mirrors docs/consumers/decompile.md#draft-goals.
-pub(crate) const WORKER: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../docs/compiler/goals/prompts/decompile-worker.md"
-));
+pub(crate) const WORKER: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/decompile/decompile-worker.md.mustache"
+    )));
 
 // ---------------------------------------------------------------------------
 // drafts.yaml: each submitted draft's path and content hash, what ratification reads.
@@ -242,7 +248,10 @@ pub fn submit(
     }
     if !included {
         return Err(format!(
-            "`{}` does not match the docs glob {:?}; the compiler would never read it",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/decompile/does-not-match-the-docs-glob-the-dc57f.md"
+            )),
             path, proj.docs_glob
         ));
     }
@@ -255,7 +264,10 @@ pub fn submit(
         let drafted = drafts(out).get(path).cloned();
         if on_disk.is_none() || drafted != on_disk {
             return Err(format!(
-                "`{}` already exists and is not an unedited draft: a person wrote or edited it, and a draft never overwrites that; pick another path, or edit that document by hand",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/decompile/already-exists-and-is-not-an-unedited-dfd5d.md"
+                )),
                 path
             ));
         }

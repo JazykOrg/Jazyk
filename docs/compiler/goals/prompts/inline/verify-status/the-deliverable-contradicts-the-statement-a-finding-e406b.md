@@ -1,0 +1,1 @@
+the deliverable contradicts the statement; a finding for the author (fix the docs or the code), never automatic regeneration

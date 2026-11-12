@@ -1,0 +1,1 @@
+Choose small, medium, or large and a timeout from 1 to 7200 seconds.

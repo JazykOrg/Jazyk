@@ -94,7 +94,7 @@ impl ToolSession {
         if q.is_empty() {
             return Err(ToolError::new(
                 "bad-quote",
-                "quote is empty; copy the sentence verbatim from the section".into(),
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-anchors_coverage/quote-is-empty-copy-the-sentence-verbatim-cf779.md")).into(),
             ));
         }
         // The heading is the section's title, not its body: a model that quotes it
@@ -143,7 +143,10 @@ impl ToolSession {
         Err(ToolError::new(
             "quote-not-found",
             format!(
-                "quote not found in {}#{}; copy the sentence verbatim from the section (a clause of a longer sentence is not in the document as written: when a statement is one fact of a sentence that states several, quote the whole sentence)",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-anchors_coverage/quote-not-found-in-copy-the-sentence-35663.md"
+                )),
                 doc, sec
             ),
         ))
@@ -217,7 +220,10 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "bad-argument",
                     format!(
-                        "`{}` has {} proposed mentions; omit `quote` so each keeps its own, or decide them with the section alone",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-anchors_coverage/has-proposed-mentions-omit-quote-so-each-61d84.md"
+                        )),
                         id,
                         froms.len()
                     ),
@@ -257,7 +263,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-state",
                 format!(
-                    "state `{}` must be one of: {}",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-anchors_coverage/state-must-be-one-of-90d0c.md")),
                     state,
                     SETTABLE_COVERAGE.join(", ")
                 ),

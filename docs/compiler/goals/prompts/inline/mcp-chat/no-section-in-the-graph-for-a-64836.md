@@ -1,0 +1,1 @@
+no section `{}#{}` in the graph; for a prose document edit use read_document then write_document with its hash. Compile only when the user requests compilation

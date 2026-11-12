@@ -1,0 +1,1 @@
+requirement `{rid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge

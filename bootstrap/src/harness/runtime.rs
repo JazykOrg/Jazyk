@@ -36,13 +36,22 @@ use super::{
     *,
 };
 
-const SYSTEM: &str = include_str!("../../../docs/compiler/goals/prompts/embedded-agent.md");
-const LEDGER_CONTINUATION: &str =
-    include_str!("../../../docs/compiler/goals/prompts/ledger-continuation.md");
-const COMPACTION_REQUEST: &str =
-    include_str!("../../../docs/compiler/goals/prompts/compaction-request.md");
-const COMPACTION_CONTINUATION: &str =
-    include_str!("../../../docs/compiler/goals/prompts/compaction-continuation.md");
+const SYSTEM: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/runtime/embedded-agent.md"
+));
+const LEDGER_CONTINUATION: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/runtime/ledger-continuation.md"
+));
+const COMPACTION_REQUEST: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/runtime/compaction-request.md"
+));
+const COMPACTION_CONTINUATION: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/runtime/compaction-continuation.md.mustache"
+));
 
 #[derive(Clone)]
 struct Session {
@@ -554,7 +563,13 @@ async fn drive(
             return Stop::Error(error);
         }
         if state.consecutive_tool_errors >= crate::limits::AGENT_TOOL_ERROR_LIMIT {
-            return Stop::Error(format!("Stopped after {} consecutive tool errors; inspect the failed calls before retrying", crate::limits::AGENT_TOOL_ERROR_LIMIT));
+            return Stop::Error(format!(
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/harness-runtime/stopped-after-consecutive-tool-errors-inspect-the-4a503.md"
+                )),
+                crate::limits::AGENT_TOOL_ERROR_LIMIT
+            ));
         }
         if let Some(last) = state.conversation.last() {
             if last.error_kind().is_some() {
@@ -697,10 +712,10 @@ async fn drive(
                 Ok(summary) => {
                     let mut compacted: Vec<Message> = parts.opening.into_iter().collect();
                     compacted.push(summary.message);
-                    compacted.push(
-                        Message::user()
-                            .with_text(COMPACTION_CONTINUATION.replace("{SESSION}", &args.label)),
-                    );
+                    compacted.push(Message::user().with_text(crate::payload::fill(
+                        COMPACTION_CONTINUATION,
+                        &[("SESSION", &args.label)],
+                    )));
                     compacted.extend(parts.retained);
                     state.conversation = Conversation::new_unvalidated(compacted);
                     state.compacted_size = Some(
@@ -989,7 +1004,11 @@ async fn handle_action(
                     .is_some_and(|digest| *digest != super::arguments_digest(&parameters))
                 {
                     return Err(Stop::Error(format!(
-                        "execution-uncertain: Tool call '{id}' replays with arguments that differ from its recorded receipt; reconcile it before resuming"
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/harness-runtime/execution-uncertain-tool-call-id-replays-with-3fb2f.md"
+                        )),
+                        id = id
                     )));
                 }
                 let _ = reply.send(if receipt.ok {
@@ -1031,14 +1050,19 @@ async fn handle_action(
                 args: parameters.clone(),
             });
             let result = if skipped {
-                Err(
-                    "Skipped: new human input arrived before dispatch; this call did not execute"
-                        .into(),
-                )
+                Err(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/harness-runtime/skipped-new-human-input-arrived-before-dispatch-e4c38.md"
+                ))
+                .into())
             } else if (args.cancelled)() {
                 Err("Skipped: the session was cancelled before this call started".into())
             } else if state.failed_tool_transition == Some(state.transition) {
-                Err("Skipped: an earlier call in this reply failed; inspect its result before resubmitting".into())
+                Err(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/harness-runtime/skipped-an-earlier-call-in-this-reply-2a110.md"
+                ))
+                .into())
             } else if let Some(tools) = tools_host.as_deref_mut() {
                 let call = tools.call(&name, &parameters).fuse();
                 futures::pin_mut!(call);
@@ -1274,9 +1298,10 @@ fn accept_inputs(state: &mut HarnessState, inputs: &mut Vec<Value>) -> Vec<Value
         for pending in unanswered(&state.conversation) {
             let result = match state.tool_receipts.get(&pending.id) {
                 Some(receipt) => tool_result(receipt.result.clone(), receipt.ok),
-                None => CallToolResult::error(vec![ContentBlock::text(
-                    "Skipped: new human input arrived before dispatch; this call did not execute",
-                )]),
+                None => CallToolResult::error(vec![ContentBlock::text(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/harness-runtime/skipped-new-human-input-arrived-before-dispatch-e4c38.md"
+                )))]),
             };
             skipped.add_tool_response_with_metadata(
                 pending.id,

@@ -155,7 +155,7 @@ impl McpServer {
             let mut v = board.answer();
             v["error"] = json!({"rule": "no-ready-batch", "message": match (wanted_batch, wanted_goals.is_empty()) {
                 (Some(b), _) => format!("`{}` is not a batch on the current board; pick from the batches above", b),
-                (None, false) => "the named goals do not share one ready batch (one locality, one executor); pick from the batches above".to_string(),
+                (None, false) => include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/the-named-goals-do-not-share-one-86eca.md")).to_string(),
                 _ => "no batch is ready; the board above says why".to_string(),
             }});
             return v;
@@ -194,9 +194,7 @@ impl McpServer {
             }
             if let Some(l) = crate::control::build_lease(&self.out) {
                 return json!({"error": {"rule": "build-running", "message": format!(
-                    "an internal build is running (lease `{}`, heartbeated every 30s, expires {}s after the last heartbeat). \
-                     await_changes returns when it clears. If you were spawned BY that build, its serving carries --build-token and never sees this error; \
-                     seeing it means this serving is a bystander and the board is not yours yet", l.worker, crate::control::LEASE_TTL_SECS)}});
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/an-internal-build-is-running-lease-heartbeated-1110f.md")), l.worker, crate::control::LEASE_TTL_SECS)}});
             }
         }
         if let Err(holder) =
@@ -282,7 +280,10 @@ impl McpServer {
                 crate::session::Protocol::Serving,
             );
             instructions = format!(
-                "Skills not inlined (the reply would pass the inline limit): {}. Call load_skill for each before the work; they are the method.\n\n{}",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/mcp-lifecycle/skills-not-inlined-the-reply-would-pass-cf6f3.md"
+                )),
                 inline_skills.join(", "),
                 body
             );
@@ -322,7 +323,7 @@ impl McpServer {
             json!({
                 "batch": batch.id,
                 "goals": goals.iter().map(|g| g.id.clone()).collect::<Vec<_>>(),
-                "note": "changeset open; stage findings with the write tools, mark each goal, then finish with done",
+                "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/changeset-open-stage-findings-with-the-write-a81e7.md")),
             })
         } else {
             json!({
@@ -399,18 +400,20 @@ impl McpServer {
             }
             if report.verdict.to_string().contains("blocked") {
                 // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
-                reply["verdictNote"] = json!(
-                    "blocked goals wait on a release (jazyk release generate for bind and generate rows) or a human answer (jazyk answer); they do not hold the verdict"
-                );
+                reply["verdictNote"] = json!(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/mcp-lifecycle/blocked-goals-wait-on-a-release-jazyk-39ebc.md"
+                )));
             }
             reply["coveragePct"] = json!(report.coverage_pct);
             // The verdict never travels alone (docs/compiler/compilation.md#convergence).
             let counts = s2.open_diag_counts();
             if !counts.is_empty() {
                 reply["openDiagnostics"] = json!(counts);
-                reply["diagnosticsNote"] = json!(
-                    "open diagnostics stand in the graph; the diagnostics read tool lists them"
-                );
+                reply["diagnosticsNote"] = json!(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/mcp-lifecycle/open-diagnostics-stand-in-the-graph-the-f6b3c.md"
+                )));
             }
             let board2 = crate::board::Board::compute(&self.current_project(), &self.out);
             if mandatory_ready(&board2) == 0 {

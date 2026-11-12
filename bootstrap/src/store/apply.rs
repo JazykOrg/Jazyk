@@ -97,6 +97,28 @@ impl Store {
     // deletions, recompute derived data, write the change records, journal, bump the
     // generation, write shards. Mirrors docs/compiler/graph.md#changesets.
     pub fn apply(&mut self, ops: Vec<Op>, commit: &Commit) -> CommitReport {
+        self.apply_inner(ops, commit, None)
+    }
+
+    // Chat can validate quotes against current documents without persisting a sync
+    // before the graph edit passes. The same lock, rollback, and commit cover both.
+    pub(crate) fn apply_with_docs(
+        &mut self,
+        ops: Vec<Op>,
+        commit: &Commit,
+        parsed: &crate::reconcile::ParsedDocs,
+    ) -> CommitReport {
+        let mut commit = commit.clone();
+        commit.all_or_nothing = true;
+        self.apply_inner(ops, &commit, Some(parsed))
+    }
+
+    fn apply_inner(
+        &mut self,
+        ops: Vec<Op>,
+        commit: &Commit,
+        parsed: Option<&crate::reconcile::ParsedDocs>,
+    ) -> CommitReport {
         let _flock = FileLock::acquire(&self.out);
         if let Some(why) = self.refuse("commit") {
             return CommitReport {
@@ -109,6 +131,10 @@ impl Store {
                 swept: Vec::new(),
             };
         }
+        let snapshot = commit.all_or_nothing.then(|| self.clone());
+        let sync_entries = parsed
+            .map(|parsed| self.sync_docs_for_commit(parsed))
+            .unwrap_or_default();
         let generation = self.status.generation + 1;
         let build = format!("g{}", generation);
         let mut remap: BTreeMap<String, String> = BTreeMap::new();
@@ -135,16 +161,6 @@ impl Store {
                 && !ops.iter().any(|o| matches!(o, Op::RetractDecree { .. })))
             || (commit.kind == "answer"
                 && ops.iter().any(|o| matches!(o, Op::EditDocProse { .. })));
-        // The state an all-or-nothing changeset rolls back to when an op is skipped.
-        let snapshot = commit.all_or_nothing.then(|| {
-            (
-                self.graph.clone(),
-                self.status.clone(),
-                self.docs.clone(),
-                self.decisions.clone(),
-            )
-        });
-
         let resolve = |remap: &BTreeMap<String, String>, store: &Store, id: &str| -> String {
             let id = remap.get(id).cloned().unwrap_or_else(|| id.to_string());
             store.resolve_id(&id).to_string()
@@ -165,6 +181,7 @@ impl Store {
         let (mut ops, classifications): (Vec<_>, Vec<_>) = ops
             .into_iter()
             .partition(|op| !matches!(op, Op::ClassifyInput { .. }));
+        let cached_mentions = (!classifications.is_empty()).then(|| reference_sources(&self.graph));
         ops.extend(classifications);
         // The old text must still stand in the stored section, or the document moved
         // underneath the edit and the whole pair skips: a document edited underneath
@@ -2122,6 +2139,20 @@ impl Store {
                     });
                 }
                 Op::ClassifyInput { doc, decision } => {
+                    // Entity files omit requirement-derived mentions. The loaded
+                    // cache must follow quote retractions and relocations in this
+                    // changeset before the provenance gate examines it.
+                    if let Some(cached) = &cached_mentions {
+                        let current = reference_sources(&self.graph);
+                        for (id, prior) in cached {
+                            if let Some(entity) = self.graph.entities.get_mut(id) {
+                                entity.mentions.retain(|source| {
+                                    !prior.contains(source)
+                                        || current.get(id).is_some_and(|live| live.contains(source))
+                                });
+                            }
+                        }
+                    }
                     match self.classified_input(&doc, &decision, true) {
                         Ok((hash, sections)) => {
                             if let Some(previous) = self.docs.get(&doc) {
@@ -2191,12 +2222,9 @@ impl Store {
 
         // An all-or-nothing changeset with a skipped op lands nothing: the graph
         // returns to the snapshot and the refusals are the whole report.
-        if let Some((graph, status, docs, decisions)) = snapshot {
+        if let Some(snapshot) = snapshot {
             if !skipped.is_empty() {
-                self.graph = graph;
-                self.status = status;
-                self.docs = docs;
-                self.decisions = decisions;
+                *self = snapshot;
                 return CommitReport {
                     applied: 0,
                     skipped,
@@ -2492,6 +2520,9 @@ impl Store {
             }
         }
         let entry = self.journal_entry(&build, commit, mutations);
+        for synced in &sync_entries {
+            self.write_journal(synced);
+        }
         self.write_journal(&entry);
         self.persist();
         // The renderer redraws the views the commit touched; a view whose emitted

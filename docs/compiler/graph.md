@@ -389,11 +389,11 @@ Their semantics:
   `definition`, `stereotype`, `parent`, an attribute's `type` or `value`, a view's
   `members`). On a default view it clears `default`. Paired with `edit_doc_prose` it
   is a dual write: the fact stays quoted,
-  the quote pointing at the rewritten sentence. Staged alone on a quoted fact it is a
-  decree: the fact's provenance becomes `decree`, the journal records the prior value
-  and its source, and a `provenance-pending` change record opens
-  [`ratify`](./goals/ratify.md). Staged on a derived or decreed fact it is a decree the
-  same way. See [edit paths](./compilation.md#edit-paths).
+  the quote pointing at the rewritten sentence. A graph-only edit requires explicit
+  derived provenance (`from` and `reasoning`) or an explicit human `decision`.
+  Model judgment is `derived`. Only a human decision becomes `decree`, with the
+  decision recorded as its note. The journal records the prior value and source,
+  and a `provenance-pending` change record opens [`ratify`](./goals/ratify.md). See [edit paths](./compilation.md#edit-paths).
 - `retract_decree` undoes one decree. A node created by decree is deleted, journaled
   with the retraction as reason; quoted requirements that referenced a retracted entity
   re-point to its parent, and an entity that holds children dissolves as

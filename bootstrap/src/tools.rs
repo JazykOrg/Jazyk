@@ -31,9 +31,10 @@ use self::catalog::*;
 
 pub(crate) use self::args::normalize_args;
 pub use self::catalog::{
-    catalog, toolset, toolset_for_kinds, ToolDef, BIND_TOOLS, CHAT_TOOLS, FEEDBACK_LIMIT,
-    FEEDBACK_TOOL, FILE_TOOLS, GEN_TOOLS, GOAL_TOOLS, GRAPH_WRITE_TOOLS, PAIR_SETTLE_TOOL,
-    PAIR_VERDICTS, READ_TOOLS, REVIEW_RULES, SPEND_TOOL, VERIFY_TOOLS, VIEW_TOOLS,
+    catalog, toolset, toolset_for_kinds, ToolDef, BIND_TOOLS, CHAT_GRAPH_DESCRIPTION, CHAT_TOOLS,
+    FEEDBACK_LIMIT, FEEDBACK_TOOL, FILE_TOOLS, GEN_TOOLS, GOAL_TOOLS, GRAPH_WRITE_TOOLS,
+    PAIR_SETTLE_TOOL, PAIR_VERDICTS, READ_TOOLS, REVIEW_RULES, SPEND_TOOL, VERIFY_TOOLS,
+    VIEW_TOOLS,
 };
 pub(crate) use self::catalog::{done_parameters, prompt_schema};
 pub use self::scope::{harness_owned_rule, GoalOutcome, GoalScope, WorkScope};

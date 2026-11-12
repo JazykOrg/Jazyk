@@ -16,6 +16,11 @@ Use for prose, requirements, criteria, and intended behavior changes.
   and `value` for an identified entity, requirement, or view fact.
 - Use `update_criterion` for a criterion. It can commit in chat without
   `begin_goals`. `edit_fact` does not accept criterion IDs.
+- For relevant graph repairs, use the authored mutation tools directly in writable
+  chat. No build goal or compile release is needed. Use `edit_graph` for related
+  mutations that must commit together or for an edit independent of an open batch.
+  Supply derived provenance for model judgment. Use `decision` only to record an
+  explicit human choice. Keep follow-up reconciliation pending unless authorized.
 - Do not compile merely to obtain graph IDs. A direct prose edit is valid input;
   the next authorized compile reconciles it.
 - Describe a requested behavior in docs before implementing it. If the behavior

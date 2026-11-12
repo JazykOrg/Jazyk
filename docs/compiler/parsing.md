@@ -69,13 +69,18 @@ reason appears in the whole-file envelope and in the tool response.
 
 A reconciliation session can classify its own document or a selected input linked
 from its document. Conversational graph writes can classify selected inputs too.
-The tool checks the current byte hash. A parsing failure does not prevent
+Outside an open batch, chat commits the classification immediately without
+`begin_goals` or a compile release. Inside a batch, classification stays staged
+until that batch commits. The tool checks the current byte hash in both paths.
+A parsing failure does not prevent
 classification through referring prose or conversational tools.
 
 Classification replaces the section tree and clears its coverage. The replacement
 sections need reconciliation. Before changing a document to an asset, relocate or
 retract every fact quoting that document. These mutations can share the
-classification changeset. The commit applies classification after the fact
+classification changeset. Requirement-derived entity mentions follow the live
+requirements. A retracted or relocated requirement leaves no cached quote that
+blocks classification. The commit applies classification after the fact
 mutations and rejects a change that would strand quoted provenance. Classification never deletes facts implicitly.
 Switching back to `document` requires a successful projection through its handler;
 a file without a handler keeps its normal opaque treatment.

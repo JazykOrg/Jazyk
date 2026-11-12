@@ -67,7 +67,11 @@ separated; each adds its tools to the union:
   `answer_diagnostic` ([questions in chat](./acp.md#questions-in-chat)), and the
   [project tools](./acp.md#project-tools). Compiler write and goal tools are available
   for a claimed batch. Writes stage under that batch's toolset and gates. Outside a
-  batch they are refused. A conversational edit uses the dual-write tools, moving
+  batch, authored graph mutations commit directly with the same integrity checks.
+  `edit_graph` groups related edits into an independent atomic transaction without
+  claiming goals or releasing compilation. It remains available for a separate
+  user request while a batch is open; a committed change makes that batch stale.
+  Scoped workers keep their goal restrictions. A conversational edit uses the dual-write tools, moving
   prose and graph together. In a browser tab the serving leaves
   out the binding, generation, and verification lifecycles, which need a shell
   ([chat in a tab](./wasm.md#chat)).

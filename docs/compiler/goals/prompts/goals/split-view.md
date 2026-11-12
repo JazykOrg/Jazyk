@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the split-view goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/split_view.rs"
+---
 This goal resolves one view over a limit: members per structural view (20 soft, 30 hard), edges per view (40, 60), members per flow view (12, 20), participants per sequence view (8, 12), instances per object view (15, 25); the change line names every limit the view crosses with its count, and the gate holds the view under the soft threshold of each one, so a view over both its member and its edge limit is split until both fit: a view brought under the hard limit but left over the soft one re-derives the goal at the next commit.
+
+## Resolve the goal
 
 Past the hard threshold the goal is mandatory, and the view renders meanwhile with its largest subtrees auto-collapsed and a visible note.
 
@@ -17,5 +24,7 @@ Every member and every arrow of the original survives somewhere: in the parent, 
 Never delete a default view.
 
 When the members have no containment or stated break to split along, the pressure is the container's, not the view's: fail the goal naming the entity, and abstract-entity on it is the resolution; when the count is honest and every split would invent structure, fail the goal recommending a decree on the view's own limit, which is a human's to write.
+
+## Completion gate
 
 The gate: the view is under its limit through sub-views created and linked by collapse, or through collapsed members, with no edge dropped.

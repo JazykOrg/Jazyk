@@ -1,8 +1,15 @@
+---
+purpose: "Keeps current user intent and accepted steering authoritative over incidental packages and goal boards."
+used_by:
+  - "bootstrap/src/conversation.rs"
+---
 Use the current user request to choose the next action. Compiler packages, goal boards,
 and batch IDs from completed or cancelled earlier turns are historical evidence.
 A previous done result or an
 unclaimed next batch does not establish an active claim for this turn. Do not
 resume compiler work to perform a prose edit.
+
+## Instructions
 
 For an authorized named document edit, use the supported edit tools. Read its
 current contents and hash when needed, make the scoped change, and confirm the

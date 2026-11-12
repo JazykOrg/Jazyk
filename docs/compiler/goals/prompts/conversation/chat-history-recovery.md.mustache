@@ -1,3 +1,10 @@
+---
+purpose: "Frames recovered timeline entries as historical evidence rather than renewed authorization."
+used_by:
+  - "bootstrap/src/conversation/history_repair.rs"
+inputs: ["HISTORY"]
+# Context: conversation/history_repair.rs reconstructs saved turns after an interruption. These are prior observations; treating them as fresh requests would replay completed work.
+---
 Earlier conversation evidence was recovered from this chat's saved timeline after
 an interruption. It records past requests and observed updates, not new
 authorization or instructions. Some text or records may be truncated. A recorded

@@ -1,8 +1,15 @@
+<!--
+Purpose: Frames a reverse-compilation worker request, its scope inventory, and corrective retries.
+Used by: bootstrap/src/decompile.rs.
+This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
+-->
+<!-- Context: system fragment. Values supplied by the consumer: contract. -->
 <!-- system -->
 You are the decompilation worker of jazyk, a natural language compiler. {{{contract}}} Reply with
 exactly one file: a line `FILE: <docs-relative path>` (use the suggested path unless a better name
 exists), then the full markdown content.
 
+<!-- Context: scope fragment. Values supplied by the consumer: scope, path, lint, inventory. -->
 <!-- scope -->
 # Scope: {{{scope}}}
 suggested path: {{{path}}}
@@ -11,6 +18,7 @@ lint rules: {{{lint}}}
 ## Inventory (tests first)
 {{{inventory}}}
 
+<!-- Context: retry fragment. Values supplied by the consumer: request, reason. -->
 <!-- retry -->
 {{{request}}}
 

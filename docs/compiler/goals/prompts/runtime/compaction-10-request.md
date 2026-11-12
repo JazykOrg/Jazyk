@@ -1,3 +1,9 @@
+---
+purpose: "Requests a bounded continuation summary when the runtime compacts conversation history."
+used_by:
+  - "bootstrap/src/harness/runtime.rs"
+ordering: "First, the runtime requests a bounded summary of the existing history."
+---
 # Runtime compaction boundary
 
 Create a concise progress handoff for the active Jazyk session. The request to

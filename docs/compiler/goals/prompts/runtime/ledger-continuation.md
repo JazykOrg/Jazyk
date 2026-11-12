@@ -1,3 +1,8 @@
+---
+purpose: "Continues a ledger worker whose required recording gates are still incomplete."
+used_by:
+  - "bootstrap/src/harness/runtime.rs"
+---
 This ledger batch is still open.
 
 A plain reply does not finish its assigned work.

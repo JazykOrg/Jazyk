@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the curate-view goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/curate_view.rs"
+---
 This goal decides membership for one view against the nodes the harness matched to it: new entities matching a structural view's query, or a behavior requirement the flow placement check found in no flow view and matched to this one by its document (a failure-mode statement represented in no branch arrives the same way).
+
+## Resolve the goal
 
 Load the view in full and each matched node; the skill for the view's kind (structural-views for class, object, package, component, composite, and deployment; flow-views for use case, activity, sequence, communication, and overview) says what belongs.
 
@@ -17,5 +24,7 @@ Retitle with update_view when the derived title reads as a fragment.
 Never invent a member the documents do not state, never delete a default view (exclude or collapse instead), and never satisfy a limit here by dropping members: a view the decision pushes over its limit derives split-view at commit.
 
 Editing a default view makes it curated, and its derived members keep arriving.
+
+## Completion gate
 
 The gate: every matched node is a member of the view or is excluded with a note on the view, a note naming another flow view names one that lists the node, and mark_goal_done carries evidence [{id, verdict: added | excluded}], one verdict per matched node.

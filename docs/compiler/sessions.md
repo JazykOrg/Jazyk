@@ -200,7 +200,7 @@ The fragment files:
 - [`serving-instructions.md`](./goals/prompts/serving/serving-instructions.md.mustache): an MCP
   serving's initialize instructions and the `next` guidance and notes in its replies,
   the benchmark case replies included ([MCP](../frontends/mcp.md)).
-- [`generation-steps.md`](./goals/prompts/generation/generation-steps.md.mustache): the built-in
+- [`generation-steps.md`](./goals/prompts/generation/21-generation-steps.md.mustache): the built-in
   generation worker's medium decision, its product, tests, and manifest steps, their
   corrective retries, and the criteria file for an `llm` test
   ([generation](../consumers/gen.md)).

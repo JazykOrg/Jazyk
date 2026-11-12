@@ -1,3 +1,9 @@
+---
+purpose: "Binding procedure: inspect implementation, reuse or write acceptance tests, execute them, and record criterion-level evidence."
+used_by:
+  - "docs/compiler/goals/prompts/generation/10-bind-contract.md.mustache"
+ordering: "Binding payload family. The 1x prefix groups the contract, included workflow, and criterion note; it does not order tool calls."
+---
 Bind one requirement to the deliverable.
 
 # Binding workflow

@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the place-anchors goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/place_anchors.rs"
+---
 This goal decides where the anchors alignment could not place with certainty belong in one document whose sections changed.
+
+## Resolve the goal
 
 An anchor is a requirement's source quote or an entity mention; each proposal shows where the anchor was, the sentence it quoted, and the candidate sections that hold the same or similar text after the change, and the section changes block says whether you are looking at a rename, a move, a split, or a merge, so read the loaded alignment:<document> block first.
 
@@ -17,5 +24,7 @@ Use read_section when an excerpt is not enough to judge, and search or get_entit
 Never create, update, or delete entities or requirements here, and set no coverage: this goal moves provenance and sets a flag, nothing else.
 
 Fail the goal only when the proposals cannot be decided from the documents at all; doubt resolves as reevaluate true, not as failure.
+
+## Completion gate
 
 The gate: every proposal for the document is decided; mark_goal_done is rejected with undecided-proposal naming each one still open.

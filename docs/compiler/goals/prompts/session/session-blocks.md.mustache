@@ -1,74 +1,104 @@
+<!--
+Purpose: Framing fragments used to assemble project, goal, skill, task, and loaded-context blocks.
+Used by: bootstrap/src/session/prompt.rs.
+This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
+-->
+<!-- Context: contract elided fragment. This fragment is static; the consumer selects it by name. -->
 <!-- contract-elided -->
 (same agent contract as the earlier batch in this session; unchanged)
 
+<!-- Context: skill active fragment. Values supplied by the consumer: name. -->
 <!-- skill-active -->
 [skill: {{{name}}} (active)]
 
+<!-- Context: skill delivered fragment. Values supplied by the consumer: name. -->
 <!-- skill-delivered -->
 [skill: {{{name}}} (active; delivered earlier)]
 
+<!-- Context: project fragment. This fragment is static; the consumer selects it by name. -->
 <!-- project -->
 ## Project
 
+<!-- Context: project generation fragment. Values supplied by the consumer: generation, mode. -->
 <!-- project-generation -->
 - generation {{{generation}}}, {{{mode}}} mode
 
+<!-- Context: project diagnostics none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- project-diagnostics-none -->
 - diagnostics: none open (the build's checks file theirs at the tail)
 
+<!-- Context: project diagnostics fragment. Values supplied by the consumer: counts, ratification. -->
 <!-- project-diagnostics -->
 - diagnostics: {{{counts}}} (the build's checks file theirs at the tail){{{ratification}}}
 
+<!-- Context: project diagnostic count fragment. Values supplied by the consumer: count, severity. -->
 <!-- project-diagnostic-count -->
 {{{count}}} {{{severity}}}(s)
 
+<!-- Context: project diagnostics ratification fragment. Values supplied by the consumer: count. -->
 <!-- project-diagnostics-ratification -->
 ; {{{count}}} of them ratification proposals for derived facts (criteria, groupings), nothing wrong: a human accepts or retracts them
 
+<!-- Context: project board fragment. Values supplied by the consumer: here, elsewhere, blocked, ratification. -->
 <!-- project-board -->
 - board: {{{here}}} goal(s) in this session; {{{elsewhere}}} elsewhere; {{{blocked}}} blocked on human answers{{{ratification}}}
 
+<!-- Context: project board ratification fragment. Values supplied by the consumer: count. -->
 <!-- project-board-ratification -->
  ({{{count}}} ratification proposals among them)
 
+<!-- Context: project lint fragment. Values supplied by the consumer: rules. -->
 <!-- project-lint -->
 - lint: {{{rules}}}
 
+<!-- Context: project lint rule fragment. Values supplied by the consumer: index, severity, rule. -->
 <!-- project-lint-rule -->
 [{{{index}}}] {{{severity}}}: {{{rule}}}
 
+<!-- Context: task execution fragment. This fragment is static; the consumer selects it by name. -->
 <!-- task-execution -->
 ## Task execution
 
+<!-- Context: goals fragment. This fragment is static; the consumer selects it by name. -->
 <!-- goals -->
 ## Goals
 
+<!-- Context: goal fragment. Values supplied by the consumer: id, necessity. -->
 <!-- goal -->
 - [{{{id}}}] {{{necessity}}}
 
+<!-- Context: goal contract pointer fragment. Values supplied by the consumer: kind. -->
 <!-- goal-contract-pointer -->
 Contract: as the first {{{kind}}} goal above.
 
+<!-- Context: goal change fragment. Values supplied by the consumer: change. -->
 <!-- goal-change -->
 Change: {{{change}}}
 
+<!-- Context: goal gate fragment. Values supplied by the consumer: gate. -->
 <!-- goal-gate -->
 Gate: {{{gate}}}
 
+<!-- Context: goal hints fragment. Values supplied by the consumer: hints. -->
 <!-- goal-hints -->
 Hints: {{{hints}}}
 
+<!-- Context: loaded items fragment. This fragment is static; the consumer selects it by name. -->
 <!-- loaded-items -->
 Loaded items, as load returns them:
 
+<!-- Context: loaded header fragment. Values supplied by the consumer: used, budget, skills. -->
 <!-- loaded-header -->
 ## Loaded ({{{used}}} of {{{budget}}} chars{{{skills}}})
 
+<!-- Context: loaded skills fragment. Values supplied by the consumer: chars. -->
 <!-- loaded-skills -->
 ; skills {{{chars}}} besides, uncounted
 
+<!-- Context: loaded deferred fragment. Values supplied by the consumer: ids. -->
 <!-- loaded-deferred -->
 Not loaded (over the budget; load by id when the work reaches it): {{{ids}}}
 
+<!-- Context: loaded unload fragment. Values supplied by the consumer: target, rounds. -->
 <!-- loaded-unload -->
 Consider unloading: {{{target}}} (not referenced in {{{rounds}}} rounds, no open goal touches it)

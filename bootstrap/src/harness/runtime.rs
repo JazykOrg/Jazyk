@@ -46,11 +46,11 @@ const LEDGER_CONTINUATION: &str = include_str!(concat!(
 ));
 const COMPACTION_REQUEST: &str = include_str!(concat!(
     env!("OUT_DIR"),
-    "/payloads/goals/prompts/runtime/compaction-request.md"
+    "/payloads/goals/prompts/runtime/compaction-10-request.md"
 ));
 const COMPACTION_CONTINUATION: &str = include_str!(concat!(
     env!("OUT_DIR"),
-    "/payloads/goals/prompts/runtime/compaction-continuation.md.mustache"
+    "/payloads/goals/prompts/runtime/compaction-20-continuation.md.mustache"
 ));
 
 #[derive(Clone)]

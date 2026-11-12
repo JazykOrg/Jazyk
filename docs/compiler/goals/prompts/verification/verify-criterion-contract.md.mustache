@@ -1,6 +1,14 @@
+---
+purpose: "Judges one supplied criterion against actual implementing files and returns a PASS or FAIL explanation."
+used_by:
+  - "bootstrap/src/verify/artifacts.rs"
+  - "bootstrap/src/verify/judge.rs"
+---
 Judge only the supplied criterion against the implementing files and its criteria text.
 
 {{> ../shared/inspect-evidence.md }}
+
+## Verdict format
 
 Reply with PASS only if the evidence establishes this criterion.
 

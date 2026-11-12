@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the review-entity goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/review_entity.rs"
+---
 This goal judges one entity whose fact set changed: load it in full and read its requirements, gathered across all documents, as a whole, with the judgment skill.
+
+## Resolve the goal
 
 Refresh the definition with update_entity when it fails to match the statements as a whole, and treat stereotype and parent the same way, changing them only when the statements support the change; never reword a definition that still fits.
 
@@ -25,5 +32,7 @@ A wrong merge or delete destroys information; a missed duplicate only leaves a f
 When everything is coherent, mark the goal done with no mutation.
 
 The evidence carries each check's verdict, so the justification is one sentence on the whole ("The definition fits all seven statements and no lookalike is the same concept"), never a recital of the evidence entries.
+
+## Completion gate
 
 The gate: mark_goal_done carries evidence {definition: current | refreshed, lookalikes: [{id, verdict: merged | separate, reason}], unreferenced: [{id, verdict: referenced | word-match, reason}], diagnostics: [{id, verdict: stands | resolved | refiled}], parts: [{id, verdict: parented | edge-fixed | kept, reason}], lint: [{rule, verdict: clean | filed}]} and the staged work matches it: refreshed requires a staged update_entity with definition on this entity and current requires none; one entry per listed lookalike, one entry per listed unreferenced statement (referenced backed by the update_requirement that adds this entity, word-match remembered on the entity so the hint never returns), merged backed by a staged merge_entities naming it, separate carrying its reason on the entry (or an open duplicate-entity diagnostic naming both when the merge is not certain); one entry per diagnostic the goal's hints list as open on the entity or its statements (open when the batch was claimed; a diagnostic staged in this batch, not yet committed, is the filing goal's evidence and needs no entry here; one committed by an earlier batch is open and listed like any other), resolved backed by a staged resolve_diagnostic, refiled backed by that resolve plus the new report_diagnostic, and a diagnostic with a deleted subject cannot stand; one parts entry per part the composition hint lists, parented when its parent is the stated whole or under it after the staged work, edge-fixed backed by a staged update_requirement correcting a reversed edge, kept carrying the reason (a generic rule-carrier several wholes share); when the ## Project block has a lint line, one lint entry per numbered rule, each quote on the entity read against it, filed backed by a lint diagnostic staged or open on the entity or its statements.

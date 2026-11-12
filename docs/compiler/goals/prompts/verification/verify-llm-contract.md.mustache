@@ -1,4 +1,11 @@
+---
+purpose: "Judges LLM-bound criteria separately and records their current fact hashes without replacing executable test evidence."
+used_by:
+  - "bootstrap/src/verify/judge.rs"
+---
 Confirm the requirement against its implementing files.
+
+## Inspect criterion evidence
 
 Inspect every LLM entry in criterionTests and follow its criteria text.
 
@@ -6,6 +13,9 @@ Inspect every LLM entry in criterionTests and follow its criteria text.
 
 Return pass only when the inspected evidence establishes the criterion.
 
+## Record separate criterion verdicts
+
+<!-- Context: verify/judge.rs records criterion ids and fact hashes independently. A single aggregate verdict cannot stand in for the required per-criterion observations. -->
 Record each LLM criterion's verdict separately in record_verdict.criteria, copying its criterion id
 and factHash from the package.
 
@@ -13,6 +23,10 @@ When multiple LLM criteria exist, the explicit list is required.
 
 Its top-level verdict is pass only when every listed verdict is pass.
 
+## Keep executable evidence authoritative
+
 A programmatic test's evidence comes from run_tests and cannot be replaced with a model verdict.
+
+## Read-only verification
 
 A verify session edits no source, test, or criteria file.

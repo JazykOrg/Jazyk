@@ -115,7 +115,7 @@ pub struct Medium {
 pub(crate) const STEPS: crate::payload::Fragments =
     crate::payload::Fragments(include_str!(concat!(
         env!("OUT_DIR"),
-        "/payloads/goals/prompts/generation/generation-steps.md.mustache"
+        "/payloads/goals/prompts/generation/21-generation-steps.md.mustache"
     )));
 
 impl Medium {

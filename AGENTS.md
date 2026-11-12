@@ -374,4 +374,6 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 Before writing model-facing text, follow [the prompt guide](docs/compiler/goals/prompts/README.md).
 Keep every instruction, including short corrective guidance, in the docs payloads.
 Use the common parser, Markdown structure, reusable partials, and source comments
-with known rationale. Update the inventory and parser tests when changing conventions.
+with known rationale. Keep purpose, consumers, inputs, and ordering context inside
+the prompt files instead of a separate catalog. Use numeric filename prefixes only
+for a real workflow sequence. Update parser tests when changing conventions.

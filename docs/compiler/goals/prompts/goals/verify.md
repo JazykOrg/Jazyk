@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the verify goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/verify.rs"
+---
 This goal settles one ledger row's verdict, and only an llm row reaches you: programmatic rows use run_tests, which records command or per-case task-report evidence without model judgment.
+
+## Resolve the goal
 
 Claim the row with begin_verification: its reply carries the package (the statement, its verbatim quote and its factHash, the requirement's neighborhood, the implementing files the manifest records, the criteria file with its confirm steps and its verdict contract).
 
@@ -25,6 +32,8 @@ A stale factHash is recorded but leaves the row pending, so verifying an old sta
 A criteria file that cannot be followed (an implementing path that does not exist, a step no command can run) is a reason to fail the goal with that reason, never to guess.
 
 The harness checks the ledger, not your word: a session that never recorded a verdict has not resolved the goal.
+
+## Completion gate
 
 The gate: a verdict recorded on the row by record_verdict with a factHash equal to the live statement hash; then finish with done using the serving protocol.
 

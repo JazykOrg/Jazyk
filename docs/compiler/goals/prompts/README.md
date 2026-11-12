@@ -24,7 +24,10 @@ A fragment marker is structural and consumed before Markdown comments are remove
 It is never sent to the model. Do not use a bare single-word comment as rationale
 in a legacy fragment bundle: its marker syntax is `<!-- name -->`.
 
-See the [catalog](CATALOG.md) for individual payloads and their consumers.
+Each payload records its purpose, consumers, and template inputs in frontmatter.
+Fragment bundles carry the same context in source comments because their marker
+format is parsed before Markdown metadata. Keep file-specific context in the file,
+not in a separate catalog.
 
 ## Areas
 
@@ -50,7 +53,12 @@ See the [catalog](CATALOG.md) for individual payloads and their consumers.
   Cite that source in the comment. Do not invent incidents or historical motives.
 - Keep comments in source, never in rendered instructions. Comments inside code
   examples are literal example content.
-- Update this inventory when adding an area. Check every consumer, native and WASM.
+- Record purpose, consumers, and inputs beside the prompt. Keep known rationale
+  next to the rule it explains, with a source when available.
+- Use numeric prefixes only within an ordered workflow. Binding precedes generation;
+  compaction requests precede continuation. Goal contracts and verifier alternatives
+  have no universal sequence and keep descriptive names.
+- Update the area guide when adding an area. Check every consumer, native and WASM.
 - Exercise nested includes, metadata, comments, literal braces, and unescaped values.
   Run payload tests, engine tests, formatting, WASM checks, and a release build.
 - Do not move instructions into Rust strings. Tool errors that teach a corrective

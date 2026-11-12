@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the abstract-entity goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/abstract_entity.rs"
+---
 This goal abstracts one entity over a limit: requirements per entity (50 soft, 80 hard), states per state machine on this subject (12, 20), or under the fan-out change (last paragraph) children per entity (9, 15); the change line names the limit and the count, and past the hard threshold the goal is mandatory.
+
+## Resolve the goal
 
 Load the entity in full and every requirement on it, gathered across all documents, before deciding anything: the cone is quiet, so the counts are final for this build, and you abstract once, holistically.
 
@@ -32,6 +39,8 @@ Never invent a concept the documents cannot support, never delete the parent, ne
 
 When the requirements cohere into no named groups, or the pressure is one oversized section's (section-too-large is the author's to split), fail the goal with that reason, recommending a decree on the entity's own limit when the count is honest.
 
+## Completion gate
+
 The gate: sub-entities exist with parent this entity and derived provenance, the grouped detail is moved under them, the docs proposals are staged for ratify (the whole-part statement for each re-parented existing entity), and the count is within the soft value the Change line names (the count is the statements this entity leads as their first-listed entity; a statement that only references it is its own subject's). Under the fan-out change, this node's level (its direct children; for a `scope:<scope>` target the scope's parentless entities, the flat top level of the default scope `public` when no document names a bounded context, not a scope you set for scope:<scope>) is over the children limit; the level is final for this build, and the work is grouping, not splitting.
 
 A grouping is a concept a reader of the documents would recognize and name, never a coupling artifact: the change's candidates are coupling partitions to accept, adjust with a reason, or decline.
@@ -53,5 +62,7 @@ A split the documents do not suggest is a choice: say so in the reasoning; ratif
 Never cross levels or scopes; dissolve_entity fits only a derived grouping that lost its reason, never a stated entity.
 
 Only a level with no cohesion at all (no two peers sharing a noun, a phase, or a relationship) fails the goal with that reason; a cluster you can name in your reason is a grouping to stage, never a decree to recommend.
+
+## Completion gate
 
 The gate: children at or under the limit, every grouping with at least two members, a definition, derived provenance naming exactly its members, and this node as parent.

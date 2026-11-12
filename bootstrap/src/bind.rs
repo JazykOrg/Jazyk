@@ -22,7 +22,7 @@ pub fn instructions() -> String {
 pub(crate) fn contract() -> &'static str {
     include_str!(concat!(
         env!("OUT_DIR"),
-        "/payloads/goals/prompts/generation/bind-contract.md.mustache"
+        "/payloads/goals/prompts/generation/10-bind-contract.md.mustache"
     ))
 }
 
@@ -329,7 +329,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "requirement": rid,
         "entity": entity,
         "criteria": criteria,
-        "criteriaNote": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/generation/bind-criteria-note.md")).trim(),
+        "criteriaNote": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/generation/12-bind-criteria-note.md")).trim(),
         "existingTests": existing_tests,
         "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,

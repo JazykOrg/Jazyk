@@ -1,1 +1,10 @@
+---
+purpose: >-
+  Instruction fragment: Record one requirement: a free-form statement of one atomic
+  obligation (specific, testable, entity-anchored). entities are the entity ids the
+  statement is about.
+used_by:
+  - "bootstrap/src/tools/catalog.rs"
+context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
+---
 Record one requirement: a free-form statement of one atomic obligation (specific, testable, entity-anchored). entities are the entity ids the statement is about. Exactly one of section plus quote (the verbatim source sentence copied from the section) or provenance.derived {from, reasoning} (a statement the documents do not state). Safe to retry: re-recording the same statement updates it in place. edges optionally tie two of the entities directionally (a acts on b) with a relationship type and cardinality. transition {subject, from, to, trigger?, guard?} says the subject (one of the entities) enters a state. facets are [{facet, reasoning, measure?}] with facet one of behavior, constraint, failure-mode, quality; measure only on quality.

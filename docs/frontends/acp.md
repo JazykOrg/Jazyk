@@ -415,14 +415,15 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
   deletes the requirement, one changeset. The deletion writes its
   [change records](../compiler/graph.md#change-records), so a view or instance that
   referenced the requirement gets a `retrace` goal on the next build.
-- `edit_fact({id, field, value, note?})`: any authored field on any node (an
+- `edit_fact({id, field, value, note?, provenance?, decision?})`: any authored field on any node (an
   entity's `definition` or `parent`, an attribute value, a requirement's `edges`, a
   view's members). When the fact is quote-provenanced, the agent proposes the
   sentence rewrite in conversation, the person accepts it, and the call carries the
   accepted sentence as `note`: the serving locates the quote and commits the prose
   replacement with the graph mutation as one dual write. Without an accepted
   sentence, or when the fact is `derived` or `decree`, the edit lands graph-only
-  with `decree` provenance (`note` becomes the decree's note) and a
+  with explicit derived `provenance` or an explicit human `decision`. A model's
+  inference never implicitly becomes a human decree. A
   [ratification proposal](../compiler/model/diagnostic.md#ratification-proposals)
   follows. The compiler never rewrites a source document without an accepted
   sentence. An `edit_fact` that names a default view makes it curated: the view
@@ -434,8 +435,10 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
 - Every dual write journals a `dual-write` entry, every decree a `decree` entry
   ([journal](../compiler/graph.md#journal)), so `jazyk ripple` roots the cascade at
   the chat edit.
-- Direct graph writes without a prose edit are not in the `chat` toolset. That path
-  remains only in `jazyk mcp graph --write`, the debugging surface.
+- Direct authored graph writes are available in writable chat without a compiler
+  batch or release. `edit_graph` groups related edits in one independent atomic
+  transaction. Compiler workers retain their goal scope. See
+  [conversational graph edits](../compiler/tools.md#conversational-graph-edits).
 
 ### Edit effects
 

@@ -63,7 +63,7 @@ impl Store {
     // journal an `align` entry. Both write their change records.
     // Mirrors docs/compiler/reconciler.md#dirty-set.
     pub fn sync_docs(&mut self, parsed: &crate::reconcile::ParsedDocs) -> Vec<DirtyDoc> {
-        self.sync_docs_inner(parsed, true)
+        self.sync_docs_inner(parsed, true, None)
     }
 
     // The same alignment without a write: the section trees, the dirty set, the
@@ -74,13 +74,24 @@ impl Store {
     // them, since it approves a generation number: control.rs).
     // Mirrors docs/compiler/reconciler.md#goal-derivation.
     pub fn sync_docs_in_memory(&mut self, parsed: &crate::reconcile::ParsedDocs) -> Vec<DirtyDoc> {
-        self.sync_docs_inner(parsed, false)
+        self.sync_docs_inner(parsed, false, None)
+    }
+
+    // Defer alignment persistence until the enclosing graph transaction succeeds.
+    pub(super) fn sync_docs_for_commit(
+        &mut self,
+        parsed: &crate::reconcile::ParsedDocs,
+    ) -> Vec<JournalEntry> {
+        let mut entries = Vec::new();
+        self.sync_docs_inner(parsed, false, Some(&mut entries));
+        entries
     }
 
     fn sync_docs_inner(
         &mut self,
         parsed: &crate::reconcile::ParsedDocs,
         persist: bool,
+        pending: Option<&mut Vec<JournalEntry>>,
     ) -> Vec<DirtyDoc> {
         use crate::align::Full;
         // Persisting alignment is a write like a commit: under the lock, against the
@@ -438,6 +449,9 @@ impl Store {
             }
             // Persist the synced records so context reads see the new sections.
             self.persist();
+        }
+        if let Some(pending) = pending {
+            pending.extend(entries);
         }
         self.reevaluate_items(out)
     }

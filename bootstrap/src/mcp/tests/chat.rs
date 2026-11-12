@@ -676,7 +676,7 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
 
     // A decree through edit_fact lands graph-only with its proposal.
     let v = server.edit_fact(
-            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}]}),
+            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}], "decision": "Treat this as a constraint."}),
         );
     assert_eq!(v["path"], "decree", "{}", v);
     let s = Store::load(&out);
@@ -701,9 +701,9 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
-// Chat can complete the batches it claims, without enabling direct graph surgery.
+// Chat commits direct edits and keeps compiler work staged within a batch.
 #[test]
-fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
+fn chat_graph_tools_commit_outside_and_stage_inside_the_claimed_batch() {
     let dir = bare_dir("chat-compiler-tools");
     crate::vfs::create_dir_all(dir.join("docs")).unwrap();
     crate::vfs::create_dir_all(dir.join(".jazyk")).unwrap();
@@ -733,13 +733,9 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
     };
     let args = json!({"name":"Greeter", "mention":{
             "section":"docs/a.md#/a", "quote":"The Greeter returns hello."}});
-    let rejected = call("upsert_entity", args.clone());
-    assert_eq!(rejected["isError"], true);
-    assert!(rejected["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("no-open-batch"));
-    assert!(Store::load(&out).graph.entities.is_empty());
+    let committed = call("upsert_entity", args.clone());
+    assert_ne!(committed["isError"], true, "{committed}");
+    assert_eq!(Store::load(&out).graph.entities.len(), 1);
     let batch = server.begin_goals(&json!({"arguments":{}}));
     assert!(batch["error"].is_null(), "{batch}");
     let staged = call("upsert_entity", args);
@@ -754,8 +750,8 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
         .staged
         .is_empty());
     assert!(
-        Store::load(&out).graph.entities.is_empty(),
-        "writes must remain staged"
+        Store::load(&out).graph.entities.len() == 1,
+        "the batch must not commit another write"
     );
     let wrong = call(
         "report_diagnostic",
@@ -770,7 +766,7 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
         "{wrong}"
     );
     server.abandon_goals(&json!({"arguments":{"reason":"test cleanup"}}));
-    assert!(Store::load(&out).graph.entities.is_empty());
+    assert_eq!(Store::load(&out).graph.entities.len(), 1);
     assert!(crate::control::leases(&out).is_empty());
     crate::vfs::remove_dir_all(dir).unwrap();
 }

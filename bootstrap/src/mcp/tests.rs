@@ -3,6 +3,7 @@ use super::*;
 
 mod catalog;
 mod chat;
+mod graph_edits;
 mod lifecycle;
 mod project;
 mod transport;

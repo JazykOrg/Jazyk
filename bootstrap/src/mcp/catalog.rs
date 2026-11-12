@@ -1,6 +1,12 @@
 use super::*;
 
 impl McpServer {
+    pub(super) fn conversational_graph_writer(&self) -> bool {
+        !self.bridge.reader
+            && self.bridge.only.is_none()
+            && self.modes.iter().any(|mode| mode == "chat")
+    }
+
     // Advertising follows the open batch, while enabled_tools remains the serving's
     // authorization boundary so cached or guessed writes still reach scope gates.
     fn active_tools(&self) -> Option<BTreeSet<&'static str>> {
@@ -12,6 +18,11 @@ impl McpServer {
                 .into_iter()
                 .collect::<BTreeSet<_>>();
             names.extend(LIFECYCLE);
+            if self.conversational_graph_writer() {
+                names.insert("edit_graph");
+                names.insert("edit_fact");
+                names.extend(crate::tools::GRAPH_WRITE_TOOLS);
+            }
             if kinds
                 .iter()
                 .any(|kind| matches!(kind.as_str(), "bind" | "generate" | "verify"))
@@ -52,6 +63,19 @@ impl McpServer {
                         .contains(&tool["name"].as_str().unwrap_or_default())
                     || names.contains(tool["name"].as_str().unwrap_or_default())
             });
+        }
+        if self.conversational_graph_writer() {
+            for tool in tools.iter_mut() {
+                if crate::tools::GRAPH_WRITE_TOOLS
+                    .contains(&tool["name"].as_str().unwrap_or_default())
+                {
+                    let description = tool["description"].as_str().unwrap_or_default();
+                    tool["description"] = json!(format!(
+                        "{description} {}",
+                        crate::tools::CHAT_GRAPH_DESCRIPTION
+                    ));
+                }
+            }
         }
         if tools.iter().any(|tool| {
             matches!(
@@ -368,6 +392,9 @@ impl McpServer {
                 "chat" => {
                     let mut t = toolset("mcp-compile");
                     t.extend(LIFECYCLE);
+                    if self.conversational_graph_writer() {
+                        t.push("edit_graph");
+                    }
                     // A tab has no shell, so binding, generation, and verification
                     // are not served there (docs/frontends/wasm.md#chat).
                     #[cfg(not(target_arch = "wasm32"))]

@@ -341,6 +341,11 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
+            name: "edit_graph",
+            description: "Commit related authored graph mutations as one atomic chat transaction without build goals or a compile release. Supply ordered edits {tool, arguments} using the graph write tools or graph-only edit_fact. All edits validate before one commit; failures save none. This transaction is independent of an open compiler batch and makes its snapshot stale. Use derived provenance for model judgment and decision only for an explicit human choice. No lifecycle, file, task, nested transaction, or prose dual-write calls. Follow-up reconciliation stays pending.",
+            parameters: obj(json!({"edits":{"type":"array","minItems":1,"items":{"type":"object","properties":{"tool":{"type":"string"},"arguments":{"type":"object"}},"required":["tool","arguments"],"additionalProperties":false}}}), &["edits"]),
+        },
+        ToolDef {
             name: "edit_fact",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/requires-id-field-value-criterion-ids-use-7b163.md")),
             parameters: obj(
@@ -348,7 +353,9 @@ pub fn catalog() -> Vec<ToolDef> {
                     "id": {"type": "string"},
                     "field": {"type": "string"},
                     "value": {},
-                    "note": {"type": "string"}
+                    "note": {"type": "string"},
+                    "provenance": derived_schema(),
+                    "decision": {"type": "string", "description": "The explicit human decision being recorded. Never use for model inference."}
                 }),
                 &["id", "field", "value"],
             ),
@@ -744,6 +751,8 @@ pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];
 // The chat serving's human paths, in no session's toolset and never a raw write.
 // See docs/compiler/tools.md#chat-tools.
 pub const CHAT_TOOLS: [&str; 1] = ["edit_fact"];
+
+pub const CHAT_GRAPH_DESCRIPTION: &str = "In writable chat, commits directly without a build goal or release when no batch is open. Within a batch, stages under its goal scope. Use edit_graph for related atomic edits or a separate request independent of that batch.";
 
 // The judged rules a session may file. Mirrors docs/compiler/model/diagnostic.md#rules-catalog.
 pub const REVIEW_RULES: [&str; 9] = [

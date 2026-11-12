@@ -38,6 +38,12 @@ Write tools are enabled for manual graph surgery; each call commits as its own c
 <!-- workflow -->
 Read list_jazyk_skills and read_jazyk_skill for the requested workflow.
 
+Writable chat can mutate the authored graph without a build goal or release.
+Single graph calls commit outside a batch and stage within one. Use edit_graph
+for an atomic group or a user request independent of an open batch. Compiler
+workers remain scoped to their goals. Graph edits leave follow-up goals pending
+and never start a build by themselves.
+
 Active begin_* packages and tool gates supply specific scope, instructions, and evidence.
 
 Use report_feedback for wrong or confusing Jazyk instructions or tools.

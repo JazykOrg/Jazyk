@@ -78,7 +78,9 @@ classification through referring prose or conversational tools.
 Classification replaces the section tree and clears its coverage. The replacement
 sections need reconciliation. Before changing a document to an asset, relocate or
 retract every fact quoting that document. These mutations can share the
-classification changeset. The commit applies classification after the fact
+classification changeset. Requirement-derived entity mentions follow the live
+requirements. A retracted or relocated requirement leaves no cached quote that
+blocks classification. The commit applies classification after the fact
 mutations and rejects a change that would strand quoted provenance. Classification never deletes facts implicitly.
 Switching back to `document` requires a successful projection through its handler;
 a file without a handler keeps its normal opaque treatment.

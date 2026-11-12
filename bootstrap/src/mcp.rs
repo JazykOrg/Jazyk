@@ -171,6 +171,8 @@ struct OpenBatch {
     known_open: BTreeSet<String>,
     session: ToolSession,
     rounds: u32,
+    #[serde(default)]
+    invalidated: bool,
 }
 
 // The compilation lifecycle: served beside the catalog, implemented on the server

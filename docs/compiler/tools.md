@@ -10,11 +10,13 @@ schemas, served two ways:
 Both servings dispatch the same implementations, so the tools an external agent uses are
 exactly the tools the compiler uses. Read tools are public. Write tools stage into an
 open changeset: a session's batch, an MCP batch claimed with `begin_goals`, or a raw
-changeset per call under `jazyk mcp graph --write`. Outside an open batch a write tool
-is rejected toward `begin_goals`.
+changeset per call in writable chat or under `jazyk mcp graph --write`. Chat also
+accepts independent atomic transactions through `edit_graph`. A compiler worker
+without an open batch is rejected toward `begin_goals`.
 
-An open batch advertises only its goal kinds' tools, the read and goal tools, and
-the compilation lifecycle. Hidden writes still pass the same scope checks and
+An open compiler worker advertises only its goal kinds' tools, the read and goal
+tools, and the compilation lifecycle. Writable chat keeps authored mutation tools
+and `edit_graph` visible alongside the batch tools. Hidden writes still pass the same scope checks and
 are refused outside that batch's toolset. Repair reads, `mark_goal_failed`, and
 `abandon_goals` remain available after a gate refusal.
 
@@ -918,8 +920,13 @@ The named errors a caller meets beyond the gates:
 - `session-complete`: a write tool, goal tool, `done`, `abandon_goals`, or
   `begin_goals` on a scoped serving whose batch already committed; the error names the
   batch and says to end the turn ([`--only`](../frontends/mcp.md#mcp-into-acp-sessions)).
-- A write tool or goal tool outside an open batch: rejected toward `begin_goals`.
-- A tool outside the batch's toolset is not served; a call to it is an unknown tool.
+- A compiler write or goal tool outside an open worker batch: rejected toward
+  `begin_goals`. Conversational graph writes need no batch.
+- A tool outside a worker batch's toolset is not served; a cached write still
+  reaches the `wrong-toolset` gate. Chat exposes `edit_graph` for independent edits.
+- `batch-stale`: an independent chat edit committed after the batch snapshot.
+  Abandon the batch and reload current goals before restaging. Stale work never
+  commits at end of input.
 
 ## Toolsets
 
@@ -1008,7 +1015,8 @@ serving carries the read tools, `report_feedback`, `report_spend`, `await_change
 - `jazyk mcp chat`: the compilation, binding, generation, and verification lifecycles,
   the [chat tools](#chat-tools), `update_diagnostic`, and `answer_diagnostic`. Native
   and hosted chat also expose scoped `release_work` and guarded project file tools.
-  There are no raw graph write tools outside an open batch. Prose edits use the dual
+  Authored graph write tools commit directly outside a batch. `edit_graph` groups
+  related mutations into one independent atomic changeset. Prose edits use the dual
   write path. Deliverable writes use the binding and generation ownership gates.
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).
@@ -1038,6 +1046,54 @@ Detailed lifecycle packages
 apply to requested lifecycle work. A document edit does not authorize compilation,
 generation, task execution, or a workflow release. A tool repair hint grants no
 new authority.
+
+## Conversational graph edits
+
+Writable chat exposes the authored graph mutation tools for entities,
+requirements, criteria, views, input classification, coverage, anchors, and
+findings. A single call outside a goal batch commits immediately. No compiler
+goal, `begin_goals`, or workflow release is needed. Reads and reviews remain
+read-only requests. Within authorized work, the agent may make relevant graph
+repairs without asking for a separate build. Search before creating nodes and
+explain the edit's reason and downstream work.
+
+`edit_graph` takes `edits`, a non-empty ordered list of `{tool, arguments}`.
+Each entry calls an authored graph mutation tool. It validates and stages all
+entries in one session and commits them as one atomic changeset. The mutation
+budget applies to the entire list. Nested transactions, lifecycle tools, task
+execution, file writes, and human-answer tools are not entries. Prose dual writes
+use their dedicated tools. Results contain each entry's reply, `committed`, the
+new `generation`, and any pending reconciliation effects. Failed validation or
+commit saves none of the transaction's graph mutations.
+
+Ordinary calls in an open compiler batch keep staging under its scope and gates.
+`edit_graph` is an explicit independent chat transaction, even when a batch is
+open. It does not claim or resolve that batch's goals. A successful independent
+commit reports that the batch snapshot is stale. The batch must reload and
+restage before committing. The same stale-generation check applies when another
+chat or worker commits to the set. A scoped compiler worker cannot use `edit_graph` to
+escape its goal assignment. Read-only servings cannot mutate through either path.
+
+Document parsing for a chat edit is local and uses no model. Source alignment and
+its journal entries persist only with a successful graph transaction, so quotes
+can refer to current input sections before the first build. A failed edit does
+not save an unrelated document sync.
+
+Both paths retain provenance, live references, quote location, containment,
+byte-hash, mutation budget, store version, locking, and stale-generation checks.
+They edit authored nodes. Relationships and state machines remain derived from
+requirements. Search and reconciliation hints guide judgment. A missing build
+goal is not an integrity failure. Pending goals are derived normally after the
+commit. A graph edit never releases work, starts a build or model session, runs a
+task, or publishes anything by itself.
+
+Graph-only `edit_fact` calls on entities and requirements take exactly one of
+`provenance: {derived: {from, reasoning}}` and `decision` (the user's explicit
+human decision). The former records model judgment as `derived`; the latter
+records a `decree` with the decision as its note. Neither infers a human decision
+from the fact that a model called the tool. Both retain ratification proposals.
+With neither argument, a quoted fact and an accepted sentence in `note` still use
+the prose dual-write path. View curation does not decree an entity or requirement.
 
 ## Conversational repairs
 

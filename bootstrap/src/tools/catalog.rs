@@ -286,7 +286,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "classify_input",
-            description: "Classify a selected input as asset (one whole-file blob, no parsing) or document (normal format handler). No user configuration is needed. Supply the exact original-byte SHA-256 and a specific reason. Existing quotes must be relocated or retracted first. Byte and referring-prose changes reopen asset reconciliation; the mode persists.",
+            description: "Classify a selected input as asset (one whole-file blob, no parsing) or document (normal format handler). In chat, commits immediately without an open batch or compile release; within an open batch, stages under its scope and gates. No user configuration is needed. Supply the exact original-byte SHA-256 and a specific reason. Existing quotes must be relocated or retracted first. Byte and referring-prose changes reopen asset reconciliation; the mode persists.",
             parameters: obj(json!({"path":{"type":"string"},"mode":{"type":"string","enum":["asset","document"]},"sha256":{"type":"string"},"reason":{"type":"string"}}), &["path","mode","sha256","reason"]),
         },
         ToolDef {

@@ -1058,9 +1058,13 @@ edits to `update_criterion`. No compile batch is needed solely to edit a criteri
 input without invoking a parser.
 
 `classify_input` takes `path` (project-relative), `mode` (`asset` or `document`),
-`sha256` (the original byte digest), and `reason`. It stages an atomic compiler
-decision and input-tree replacement. Its response includes the decision and the
-new reconciliation work. See [asset classification](parsing.md#asset-classification).
+`sha256` (the original byte digest), and `reason`. In chat without an open goal
+batch, it commits the decision and input-tree replacement atomically. No
+`begin_goals` or compile release is required. With an open batch, it stages the
+change under that batch's scope and gates. Both paths validate the current byte
+hash and reject stranded quoted provenance at commit. Its response includes the
+decision and replacement sections that need reconciliation. The standalone reply
+also confirms the commit and its generation. See [asset classification](parsing.md#asset-classification).
 
 ## Asset links
 

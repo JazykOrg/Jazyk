@@ -144,6 +144,38 @@ impl McpServer {
             .map(|s| s.raw.clone())
     }
 
+    // Classification outside a batch uses the same staging and commit gates.
+    pub(super) fn classify_input_chat(&self, args: &Value) -> Value {
+        let target = args["path"].as_str().unwrap_or_default();
+        let mut store = Store::load(&self.out);
+        let mut scope = WorkScope::serving("mcp-write");
+        scope.target = target.to_string();
+        let mut session = ToolSession::new(
+            store.clone(),
+            scope,
+            self.mutation_limit,
+            self.context_budget,
+        );
+        session.caller = self.caller("chat", target);
+        let mut reply = match session.dispatch("classify_input", args) {
+            Ok(value) => value,
+            Err(error) => return error.to_value(),
+        };
+        let report = store.apply(
+            std::mem::take(&mut session.staged),
+            &crate::store::Commit {
+                all_or_nothing: true,
+                ..crate::store::Commit::store("chat-classification")
+            },
+        );
+        if !report.skipped.is_empty() {
+            return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
+        }
+        reply["committed"] = json!(true);
+        reply["generation"] = json!(report.generation);
+        reply
+    }
+
     // Conversational criterion repair uses the compiler validator and commits once.
     pub(super) fn update_criterion_chat(&self, args: &Value) -> Value {
         let target = args["id"].as_str().unwrap_or_default();

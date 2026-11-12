@@ -653,6 +653,18 @@ impl McpServer {
                         Err(e) => Ok(text_result(e.to_value(), true)),
                     };
                 }
+                if name == "classify_input"
+                    && !self.bridge.reader
+                    && self.modes.iter().any(|m| m == "chat")
+                {
+                    if let Some(value) = self.session_complete_closed() {
+                        return Ok(text_result(value, true));
+                    }
+                    drop(open);
+                    let reply = self.classify_input_chat(&args);
+                    let is_err = !reply["error"].is_null();
+                    return Ok(text_result(reply, is_err));
+                }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile" || m == "chat") {
                     if let Some(v) = self.session_complete_closed() {
                         return Ok(text_result(v, true));

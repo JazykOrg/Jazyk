@@ -9,10 +9,45 @@ mod workspace;
 
 // An in-memory host record store; `.1` logs every read as `<stream>/<key>`.
 #[derive(Default)]
-pub(super) struct MemoryRecords(
-    pub(super) std::sync::Mutex<BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>>,
-    pub(super) std::sync::Mutex<Vec<String>>,
+pub(crate) struct MemoryRecords(
+    pub(crate) std::sync::Mutex<BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>>,
+    pub(crate) std::sync::Mutex<Vec<String>>,
 );
+
+// The host every test on this thread talks to: one record store that outlives the
+// workspaces a test reopens from snapshots, as a host's database does.
+thread_local! {
+    static HOST_RECORDS: Arc<MemoryRecords> = Arc::new(MemoryRecords::default());
+}
+
+pub(crate) fn host_records() -> Arc<MemoryRecords> {
+    HOST_RECORDS.with(Arc::clone)
+}
+
+// `execution` with this thread's host record store, unless it names a store (or
+// explicitly none, through `without_records`) of its own.
+pub(crate) fn with_host(execution: &Execution) -> Execution {
+    let mut execution = execution.clone();
+    if execution.records.is_none() && !NO_RECORDS.with(std::cell::Cell::get) {
+        execution.records = Some(host_records());
+    }
+    execution
+}
+
+thread_local! {
+    static NO_RECORDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// While held, test requests on this thread run as a host without a record store.
+pub(crate) struct WithoutRecords(bool);
+pub(crate) fn without_records() -> WithoutRecords {
+    WithoutRecords(NO_RECORDS.with(|n| n.replace(true)))
+}
+impl Drop for WithoutRecords {
+    fn drop(&mut self) {
+        NO_RECORDS.with(|n| n.set(self.0));
+    }
+}
 impl crate::hosted::records::RecordStore for MemoryRecords {
     fn keys(&self, s: crate::hosted::records::Stream) -> Result<Vec<(String, Value)>, String> {
         Ok(self
@@ -112,51 +147,42 @@ impl crate::hosted::records::RecordStore for MemoryRecords {
     }
 }
 
-// The conversation book as the file-backed record store holds it in a snapshot:
+// The conversation book as this thread's host record store holds it:
 // `{seq, chats: {id: chat}}`, each chat its metadata with `updates` and `history`.
 // Mirrors docs/compiler/hosted-runtime.md#host-records.
-fn stored_book(files: &Snapshot) -> Value {
-    let prefix = ".jazyk/local/records/";
-    let docs = |stream: &str| -> Vec<Value> {
-        files
-            .iter()
-            .filter(|(p, _)| p.starts_with(&format!("{prefix}{stream}/")) && p.ends_with(".json"))
-            .filter_map(|(_, b)| serde_json::from_slice::<Value>(b).ok())
-            .collect()
-    };
+fn stored_book() -> Value {
+    let records = host_records();
+    let streams = records.0.lock().unwrap();
     let mut book = json!({"seq": 0, "chats": {}});
-    for doc in docs("chat-updates") {
-        let key = doc["key"].as_str().unwrap_or_default().to_string();
-        if key == "_book" {
-            book["seq"] = doc["meta"]["seq"].clone();
+    for ((stream, key), (meta, items)) in streams.iter() {
+        if stream != "chat-updates" {
             continue;
         }
-        let mut chat = doc["meta"].clone();
+        if key == "_book" {
+            book["seq"] = meta["seq"].clone();
+            continue;
+        }
+        let mut chat = meta.clone();
         if let Some(m) = chat.as_object_mut() {
             m.remove("_updatesGen");
             m.remove("_historyGen");
         }
-        chat["updates"] = doc["items"].clone();
+        chat["updates"] = json!(items.iter().map(|(n, v)| json!([n, v])).collect::<Vec<_>>());
         chat["history"] = json!([]);
-        book["chats"][&key] = chat;
+        book["chats"][key] = chat;
     }
-    for doc in docs("chat-history") {
-        let key = doc["key"].as_str().unwrap_or_default().to_string();
-        if book["chats"].get(&key).is_some() {
-            book["chats"][&key]["history"] = Value::Array(
-                doc["items"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|i| i[1].clone())
-                    .collect(),
-            );
+    for ((stream, key), (_, items)) in streams.iter() {
+        if stream == "chat-history" && book["chats"].get(key).is_some() {
+            book["chats"][key]["history"] =
+                Value::Array(items.iter().map(|(_, v)| v.clone()).collect());
         }
     }
     book
 }
 
+// A fresh project on a fresh host: this thread's host record store starts empty.
 fn workspace(name: &str) -> Workspace {
+    host_records().0.lock().unwrap().clear();
     Workspace::new(BTreeMap::from([
         (
             ".jazyk/jazyk.toml".into(),
@@ -181,7 +207,7 @@ impl Workspace {
         body: &str,
         execution: &Execution,
     ) -> Result<Reply, String> {
-        let mut execution = execution.clone();
+        let mut execution = with_host(execution);
         if execution.transport_async.is_none() {
             execution.transport_async = execution.transport.clone().map(|source| {
                 Arc::new(move |body: String| {

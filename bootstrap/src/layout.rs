@@ -181,19 +181,11 @@ pub fn archive_dir(out: &Path, version: u32) -> PathBuf {
 // ---- logs ----
 
 /// The log directory of the project whose set directory is `out`: `JAZYK_LOG_DIR`, else
-/// the operating system's cache directory, then `<project>-<key>`. A scoped (hosted or
-/// browser) file system keeps its logs inside its own snapshot under
-/// `.jazyk/local/records/`. Mirrors docs/compiler/jazyk-folder.md#logs.
+/// the operating system's cache directory, then `<project>-<key>`. A hosted run keeps
+/// no logs in its snapshot: its records go to the host's record store.
+/// Mirrors docs/compiler/jazyk-folder.md#logs.
 pub fn project_log_dir(out: &Path) -> PathBuf {
-    let jazyk = jazyk_dir_of(out).map(Path::to_path_buf);
-    if crate::vfs::is_scoped() {
-        return match &jazyk {
-            Some(j) => project_local_dir(j).join("records"),
-            None => out.join("local").join("records"),
-        };
-    }
-    let root = jazyk
-        .as_deref()
+    let root = jazyk_dir_of(out)
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| out.to_path_buf());
@@ -202,9 +194,6 @@ pub fn project_log_dir(out: &Path) -> PathBuf {
 
 /// The log directory of the project at `root` (the folder holding `.jazyk/`).
 pub fn log_dir_for_root(root: &Path) -> PathBuf {
-    if crate::vfs::is_scoped() {
-        return project_local_dir(&root.join(".jazyk")).join("records");
-    }
     native_log_dir(root)
 }
 

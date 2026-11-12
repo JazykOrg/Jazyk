@@ -91,6 +91,10 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
     assert!(capsule["claims"].as_array().unwrap().len() >= 2);
     let mut recovered = Workspace::new(files.clone()).unwrap();
     recovered.stop_recovery(&capsule, &[]).unwrap();
+    assert!(
+        super::host_records().0.lock().unwrap().is_empty(),
+        "a compile job keeps no conversation records"
+    );
     let stopped = recovered.snapshot();
     assert!(!stopped.keys().any(|path| path.contains("/leases/")));
     assert_eq!(
@@ -98,7 +102,7 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
         b"An earlier accepted edit.\n"
     );
     for (path, bytes) in &files {
-        if !path.contains("/leases/") && !path.starts_with(".jazyk/local/records/") {
+        if !path.contains("/leases/") {
             assert_eq!(
                 stopped.get(path),
                 Some(bytes),
@@ -314,34 +318,10 @@ fn stopped_before_inference_chat_sends_the_next_human_instructions_in_full() {
     // leaves no record file in the snapshot (docs/compiler/hosted-runtime.md#host-records).
     {
         use crate::hosted::records::{RecordStore, Stream};
-        // The host already holds the conversation: move the snapshot's record files
-        // into an in-memory host store.
+        // A second host holding a copy of the conversation as it stood at the checkpoint.
         let host = Arc::new(super::MemoryRecords::default());
-        let mut moved = files.clone();
-        for (path, bytes) in &files {
-            let Some(rest) = path.strip_prefix(".jazyk/local/records/") else {
-                continue;
-            };
-            let stream = match rest.split('/').next() {
-                Some("chat-updates") => Stream::ChatUpdates,
-                Some("chat-history") => Stream::ChatHistory,
-                _ => continue,
-            };
-            let doc: Value = serde_json::from_slice(bytes).unwrap();
-            let key = doc["key"].as_str().unwrap();
-            host.put_meta(stream, key, &doc["meta"]).unwrap();
-            for item in doc["items"].as_array().unwrap() {
-                host.append(
-                    stream,
-                    key,
-                    0,
-                    item[0].as_u64().unwrap(),
-                    &[item[1].clone()],
-                )
-                .unwrap();
-            }
-            moved.remove(path);
-        }
+        *host.0.lock().unwrap() = super::host_records().0.lock().unwrap().clone();
+        let moved = files.clone();
         let mut in_host = Workspace::new(moved).unwrap();
         in_host
             .stop_recovery_with(
@@ -374,7 +354,9 @@ fn stopped_before_inference_chat_sends_the_next_human_instructions_in_full() {
         );
     }
     let mut stopped = Workspace::new(files).unwrap();
-    stopped.stop_recovery(&capsule, &[]).unwrap();
+    stopped
+        .stop_recovery_with(&capsule, &[], &with_host(&Execution::default()))
+        .unwrap();
     let mut stopped = Workspace::new(stopped.snapshot()).unwrap();
     let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let observed = requests.clone();
@@ -458,13 +440,18 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
                     })
                 })
             });
-            let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot)>));
+            // The host's database as of each durable save: process loss after the save
+            // leaves the record store, like the snapshot, as the checkpoint wrote it.
+            type Records = BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>;
+            let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot, Records)>));
             let checkpoint = saved.clone();
             let injected = Arc::new(AtomicBool::new(false));
             let inject = injected.clone();
+            let host = host_records();
             let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
                 let checkpoint = checkpoint.clone();
                 let inject = inject.clone();
+                let records = host.0.lock().unwrap().clone();
                 Box::pin(async move {
                     let next = capsule["sequence"].as_u64().unwrap() + 1;
                     capsule["sequence"] = json!(next);
@@ -473,7 +460,7 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
                         .and_then(|frames| frames.last())
                         .and_then(|frame| frame["boundary"]["phase"].as_str());
                     let fail = current_phase == Some(phase) && !inject.swap(true, Ordering::SeqCst);
-                    *checkpoint.lock().unwrap() = Some((capsule, files));
+                    *checkpoint.lock().unwrap() = Some((capsule, files, records));
                     if fail {
                         Err("checkpoint-failed: injected process loss after durable save".into())
                     } else {
@@ -489,7 +476,8 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
             };
             let stopped = value(&mut w, "POST", &path, body.clone(), &execution);
             assert_eq!(stopped["stop"], "suspended", "{phase}: {stopped}");
-            let (capsule, files) = saved.lock().unwrap().clone().unwrap();
+            let (capsule, files, records) = saved.lock().unwrap().clone().unwrap();
+            let at_checkpoint = || *host_records().0.lock().unwrap() = records.clone();
             crate::session_recovery::validate(&capsule).unwrap();
             let mut normalized: crate::harness::HarnessState =
                 serde_json::from_value(capsule["frames"][0]["harness"].clone()).unwrap();
@@ -521,6 +509,7 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
                 .contains(&json!("accepted-1")));
             let committed = matches!(phase, "after_tool" | "finished");
             assert_eq!(files.contains_key("docs/recovery.md"), committed);
+            at_checkpoint();
             let mut cancelled = Workspace::new(files.clone()).unwrap();
             let prior = value(
                 &mut cancelled,
@@ -537,7 +526,11 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
             let retained = json!({"type":"chat.update","sessionId":chat["id"],"n":next,
             "update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"Retained partial response."}}});
             cancelled
-                .stop_recovery(&capsule, &[retained.clone(), retained])
+                .stop_recovery_with(
+                    &capsule,
+                    &[retained.clone(), retained],
+                    &with_host(&Execution::default()),
+                )
                 .unwrap();
             let cancelled_history = value(
                 &mut cancelled,
@@ -647,6 +640,7 @@ fn actual_gdk_chat_restores_saved_response_tool_effect_and_finished_turn() {
                 committed,
                 "Following up dispatched a saved proposal at {phase}"
             );
+            at_checkpoint();
             let mut restored = Workspace::new(files).unwrap();
             let resumed = Execution {
                 model: "fixture".into(),
@@ -707,7 +701,7 @@ fn old_amnesic_chat_recovers_its_own_timeline_in_the_next_provider_request_once(
             json!({}),
             &Execution::default(),
         );
-        let mut book = stored_book(&w.files);
+        let mut book = stored_book();
         let chat = &mut book["chats"]["chat-1"];
         chat["state"] = json!("idle");
         chat["titled"] = json!(true);
@@ -917,7 +911,7 @@ fn owned_build_steering_recovers_cursor_and_preserves_conversation() {
         .any(|v| v["type"] == "chat.input"
             && v["messageId"] == "build-steer-1"
             && v["state"] == "delivered"));
-    let history = stored_book(&w.snapshot()).to_string();
+    let history = stored_book().to_string();
     assert!(history.contains("Stop changing coverage. Inspect the source first."));
     assert!(!history.contains("stale proposal"));
     assert!(!w

@@ -9,7 +9,7 @@ mod execution;
 mod projection;
 pub mod records;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use dispatch::dispatch;
 #[cfg(test)]
@@ -98,8 +98,8 @@ pub struct Execution {
     /// The host's global agent context and remote MCP servers for conversations
     /// (docs/frontends/agent-context.md#hosted-context).
     pub agent_context: Option<Arc<crate::agent_context::HostContext>>,
-    /// The host's record store for conversations, feedback, and transcripts; `None`
-    /// keeps them as files under `.jazyk/local/records/`
+    /// The host's record store for conversations and feedback. With `None` the run
+    /// keeps neither: chat requests answer an error and feedback is dropped
     /// (docs/compiler/hosted-runtime.md#host-records).
     pub records: Option<Arc<dyn records::RecordStore>>,
 }
@@ -224,7 +224,7 @@ impl Workspace {
     }
 
     /// Stop recovery under the host's execution, so a stopped job's conversations are
-    /// restored in the host's record store, not in the snapshot's file fallback.
+    /// restored in the host's record store. Without one there is nothing to restore.
     /// Mirrors docs/compiler/hosted-runtime.md#host-records.
     pub fn stop_recovery_with(
         &mut self,

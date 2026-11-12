@@ -222,10 +222,18 @@ stores records in named streams, each record a JSON value.
 - A version 4 workspace holds its book in `.jazyk/conversations.json`. A request reads
   it in memory; only a request that saves writes it through the store and removes the
   file, so a read never writes.
-- Without a record store (a test, a host that provides none), the workspace keeps the
-  streams as files under `.jazyk/local/records/` in its snapshot. A local run writes
-  them to the [log directory](./jazyk-folder.md#logs), a browser run to the page's
-  storage.
+- Without a record store, a hosted run keeps no conversations and no feedback, and
+  writes no record into the snapshot. A chat request, or a job request that names a
+  `conversationId`, answers `501` with the error `this host keeps no conversation
+  records`. A `report_feedback` entry is dropped, since feedback is best effort. Every
+  other request works and loads no conversations. Stop recovery restores nothing and
+  succeeds. A version 4 `.jazyk/conversations.json` stays where it is until a request
+  with a store saves.
+- Files an earlier version wrote under `.jazyk/local/records/` stay in the snapshot as
+  they are. The engine never reads, writes, or removes them; the host imports them into
+  its own store.
+- A local run writes conversations and feedback to the
+  [log directory](./jazyk-folder.md#logs), a browser run to the page's storage.
 
 The host chooses retention and compression. The engine only requires that a stream it
 reads back holds what it appended, in order, and treats a missing key as empty.

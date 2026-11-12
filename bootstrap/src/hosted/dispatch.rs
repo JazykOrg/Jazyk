@@ -19,6 +19,18 @@ pub(super) fn dispatch(method: &str, path: &str, body: &str) -> Result<Reply, St
     };
     let selected = || workspace.resolve(routed.selector.as_deref());
     let route = route.strip_prefix("/api").unwrap_or(route);
+    // Conversations live only in the host's record store; without one a request that
+    // reads or writes a conversation is refused before it does any work.
+    // Mirrors docs/compiler/hosted-runtime.md#host-records.
+    let conversational = route.starts_with("/chat/")
+        || (method == "POST"
+            && route == "/jobs"
+            && !routed.body.get("conversationId").is_none_or(Value::is_null));
+    if conversational {
+        if let Err(e) = super::records::store() {
+            return Ok(Reply::json(501, json!({ "error": e })));
+        }
+    }
     if method == "GET"
         && matches!(
             route,

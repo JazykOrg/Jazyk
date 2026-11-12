@@ -7,6 +7,111 @@ mod recovery;
 mod tasks;
 mod workspace;
 
+// An in-memory host record store; `.1` logs every read as `<stream>/<key>`.
+#[derive(Default)]
+pub(super) struct MemoryRecords(
+    pub(super) std::sync::Mutex<BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>>,
+    pub(super) std::sync::Mutex<Vec<String>>,
+);
+impl crate::hosted::records::RecordStore for MemoryRecords {
+    fn keys(&self, s: crate::hosted::records::Stream) -> Result<Vec<(String, Value)>, String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((st, _), _)| st == s.name())
+            .map(|((_, k), (m, _))| (k.clone(), m.clone()))
+            .collect())
+    }
+    fn meta(&self, s: crate::hosted::records::Stream, k: &str) -> Result<Option<Value>, String> {
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get(&(s.name().into(), k.into()))
+            .map(|(m, _)| m.clone()))
+    }
+    fn put_meta(
+        &self,
+        s: crate::hosted::records::Stream,
+        k: &str,
+        m: &Value,
+    ) -> Result<(), String> {
+        self.0
+            .lock()
+            .unwrap()
+            .entry((s.name().into(), k.into()))
+            .or_default()
+            .0 = m.clone();
+        Ok(())
+    }
+    fn append(
+        &self,
+        s: crate::hosted::records::Stream,
+        k: &str,
+        _g: u32,
+        from: u64,
+        items: &[Value],
+    ) -> Result<(), String> {
+        let mut m = self.0.lock().unwrap();
+        let e = m.entry((s.name().into(), k.into())).or_default();
+        for (i, v) in items.iter().enumerate() {
+            let n = from + i as u64;
+            if !e.1.iter().any(|(x, _)| *x == n) {
+                e.1.push((n, v.clone()));
+            }
+        }
+        Ok(())
+    }
+    fn replace(
+        &self,
+        s: crate::hosted::records::Stream,
+        k: &str,
+        _g: u32,
+        items: &[Value],
+    ) -> Result<(), String> {
+        self.0
+            .lock()
+            .unwrap()
+            .entry((s.name().into(), k.into()))
+            .or_default()
+            .1 = items
+            .iter()
+            .cloned()
+            .enumerate()
+            .map(|(n, v)| (n as u64, v))
+            .collect();
+        Ok(())
+    }
+    fn read(
+        &self,
+        s: crate::hosted::records::Stream,
+        k: &str,
+        after: Option<u64>,
+        limit: usize,
+    ) -> Result<Vec<(u64, Value)>, String> {
+        self.1.lock().unwrap().push(format!("{}/{}", s.name(), k));
+        Ok(self
+            .0
+            .lock()
+            .unwrap()
+            .get(&(s.name().into(), k.into()))
+            .map(|(_, v)| {
+                v.iter()
+                    .filter(|(n, _)| after.is_none_or(|a| *n > a))
+                    .take(limit)
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default())
+    }
+    fn delete(&self, s: crate::hosted::records::Stream, k: &str) -> Result<(), String> {
+        self.0.lock().unwrap().remove(&(s.name().into(), k.into()));
+        Ok(())
+    }
+}
+
 // The conversation book as the file-backed record store holds it in a snapshot:
 // `{seq, chats: {id: chat}}`, each chat its metadata with `updates` and `history`.
 // Mirrors docs/compiler/hosted-runtime.md#host-records.

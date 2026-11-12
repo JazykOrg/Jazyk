@@ -139,6 +139,7 @@ pub(crate) fn build_inputs(id: &str) -> Vec<Value> {
 }
 
 pub(crate) fn build_input_delivered(id: &str, input: Value) {
+    ensure_loaded(id);
     BOOK.with(|b| {
         if let Some(chat) = b.borrow_mut().chats.get_mut(id) {
             crate::harness::push_user_text(
@@ -176,6 +177,7 @@ fn snapshot() -> Vec<Value> {
 // The turn's receipt: every call other than a read, from the turn's own tool
 // results, never from the reply. Mirrors docs/frontends/gui.md#turn-effects.
 fn turn_effects(id: &str, message_id: &str) -> Value {
+    ensure_loaded(id);
     fn read(tool: &str) -> bool {
         crate::tools::toolset("mcp-read").contains(&tool)
             || matches!(tool, "read_text_file" | "list_files" | "list_document_sets")
@@ -257,6 +259,7 @@ fn publish_sessions() {
 
 // One numbered update into the transcript, and to the page.
 fn append(id: &str, update: Value) {
+    ensure_loaded(id);
     let n = BOOK.with(|b| {
         let mut b = b.borrow_mut();
         let c = b.chats.get_mut(id)?;
@@ -298,6 +301,7 @@ pub(crate) fn replay_updates(events: &[Value]) -> Result<(), String> {
         let (Some(id), Some(n)) = (event["sessionId"].as_str(), event["n"].as_u64()) else {
             continue;
         };
+        ensure_loaded(id);
         let needed = BOOK.with(|b| {
             b.borrow()
                 .chats
@@ -366,6 +370,7 @@ pub fn list() -> Value {
 }
 
 pub fn get(id: &str) -> Option<Value> {
+    ensure_loaded(id);
     BOOK.with(|b| {
         let b = b.borrow();
         let c = b.chats.get(id)?;
@@ -577,6 +582,7 @@ fn explain(err: &str) -> String {
 // or the refusal. The turn's progress has already reached the page as events.
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
 pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
+    ensure_loaded(id);
     let text = body["text"].as_str().unwrap_or("").trim().to_string();
     let found = BOOK.with(|b| b.borrow().chats.get(id).map(|c| c.state.clone()));
     let Some(state) = found else {
@@ -959,6 +965,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
 
 // Record delivery only after the loop inserted the human text into history.
 fn delivered(id: &str, mut input: Value) {
+    ensure_loaded(id);
     if input["state"] != "failed" {
         input["state"] = json!("delivered");
     }
@@ -984,10 +991,12 @@ fn delivered(id: &str, mut input: Value) {
 }
 
 pub fn export_history() -> Value {
+    ensure_all_loaded();
     BOOK.with(|b| json!({"version":1,"book": &*b.borrow()}))
 }
 
 pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
+    ensure_all_loaded();
     inputs.sort_by_key(|input| input["sequence"].as_u64().unwrap_or(0));
     for input in inputs {
         let (Some(id), Some(mid)) = (input["sessionId"].as_str(), input["messageId"].as_str())
@@ -1022,6 +1031,7 @@ pub(crate) fn restore_input_outcomes(mut inputs: Vec<Value>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn restore_stopped_history(key: &str, history: Vec<Value>) {
+    ensure_all_loaded();
     BOOK.with(|book| {
         for chat in book.borrow_mut().chats.values_mut() {
             if chat.state == "running"
@@ -1039,6 +1049,7 @@ pub(crate) fn restore_stopped_history(key: &str, history: Vec<Value>) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn stop_recovered() {
+    ensure_all_loaded();
     let running = BOOK.with(|b| {
         b.borrow()
             .chats
@@ -1053,6 +1064,7 @@ pub(crate) fn stop_recovered() {
     }
 }
 pub fn import_history(body: &Value) -> Result<Value, String> {
+    ensure_all_loaded();
     if body["version"] != 1 {
         return Err("unsupported conversation history version".into());
     }
@@ -1082,7 +1094,14 @@ pub fn import_history(body: &Value) -> Result<Value, String> {
 // workspace snapshot: a request loads it, and a save writes only what changed since the
 // load. Mirrors docs/compiler/hosted-runtime.md#host-records.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) struct Scope(Book, Option<Stored>);
+pub(crate) struct Scope {
+    previous_book: Book,
+    previous_stored: Option<Stored>,
+    previous_unloaded: std::collections::BTreeSet<String>,
+    // A version 4 book file read into memory: the first save writes it through the
+    // store and removes the file; a read request leaves both untouched.
+    legacy: bool,
+}
 
 // What the record store holds for the book as last loaded or saved, so a save writes
 // only the difference.
@@ -1116,6 +1135,54 @@ const BOOK_KEY: &str = "_book";
 #[cfg(not(target_arch = "wasm32"))]
 const LEGACY_BOOK: &str = "/project/.jazyk/conversations.json";
 
+// A hosted request loads every conversation's metadata and no conversation's records:
+// the timeline and the model history are read the first time a request touches that
+// conversation. Mirrors docs/compiler/hosted-runtime.md#host-records.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static UNLOADED: RefCell<std::collections::BTreeSet<String>> =
+        const { RefCell::new(std::collections::BTreeSet::new()) };
+}
+
+// Read one conversation's records into the book, if the request has not yet. A record
+// store that fails to read fails the request: a conversation that looked empty would
+// later be saved over its own records.
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_loaded(id: &str) {
+    if !UNLOADED.with(|u| u.borrow().contains(id)) {
+        return;
+    }
+    load_stored(id);
+    let (updates, history) = STORED.with(|s| {
+        s.borrow()
+            .as_ref()
+            .and_then(|s| s.chats.get(id))
+            .map(|c| (c.updates.clone(), c.history.clone()))
+            .unwrap_or_default()
+    });
+    BOOK.with(|b| {
+        if let Some(c) = b.borrow_mut().chats.get_mut(id) {
+            c.updates = updates;
+            c.history = history;
+        }
+    });
+    UNLOADED.with(|u| u.borrow_mut().remove(id));
+}
+
+// Every conversation, for what walks or replaces the whole book.
+#[cfg(not(target_arch = "wasm32"))]
+fn ensure_all_loaded() {
+    let ids: Vec<String> = UNLOADED.with(|u| u.borrow().iter().cloned().collect());
+    for id in ids {
+        ensure_loaded(&id);
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn ensure_loaded(_: &str) {}
+#[cfg(target_arch = "wasm32")]
+fn ensure_all_loaded() {}
+
 #[cfg(not(target_arch = "wasm32"))]
 fn chat_meta(chat: &Value) -> Value {
     let mut meta = chat.clone();
@@ -1127,22 +1194,23 @@ fn chat_meta(chat: &Value) -> Value {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn load_book(store: &dyn crate::hosted::records::RecordStore) -> Result<(Book, Stored), String> {
+fn load_book(
+    store: &dyn crate::hosted::records::RecordStore,
+) -> Result<(Book, Stored, std::collections::BTreeSet<String>), String> {
     use crate::hosted::records::Stream;
     let mut book = Book::default();
     let mut stored = Stored::default();
+    let mut unloaded = std::collections::BTreeSet::new();
     for (key, meta) in store.keys(Stream::ChatUpdates)? {
         if key == BOOK_KEY {
             book.seq = meta["seq"].as_u64().unwrap_or(0);
             stored.seq = book.seq;
             continue;
         }
-        let updates = store.read(Stream::ChatUpdates, &key, None, usize::MAX)?;
-        let history: Vec<Value> = store
-            .read(Stream::ChatHistory, &key, None, usize::MAX)?
-            .into_iter()
-            .map(|(_, v)| v)
-            .collect();
+        // Records stay in the store until the request touches this conversation.
+        let updates: Vec<(u64, Value)> = Vec::new();
+        let history: Vec<Value> = Vec::new();
+        unloaded.insert(key.clone());
         let updates_gen = meta["_updatesGen"].as_u64().unwrap_or(0) as u32;
         let history_gen = meta["_historyGen"].as_u64().unwrap_or(0) as u32;
         let mut full = meta.clone();
@@ -1169,7 +1237,7 @@ fn load_book(store: &dyn crate::hosted::records::RecordStore) -> Result<(Book, S
         );
         book.chats.insert(key, chat);
     }
-    Ok((book, stored))
+    Ok((book, stored, unloaded))
 }
 
 // Write the book's difference from what the store holds, then remember the book as
@@ -1274,8 +1342,8 @@ pub(crate) fn persist_book() -> Result<(), String> {
 impl Scope {
     pub(crate) fn enter() -> Result<Self, String> {
         let store = crate::hosted::records::store();
-        // A version 4 snapshot kept the book in one file: read it once, write it
-        // through the store, and remove the file.
+        // A version 4 snapshot kept the book in one file. It is read here, and written
+        // through the store and removed only when the request saves.
         let legacy = match crate::vfs::read_to_string(LEGACY_BOOK) {
             Ok(text) => Some(
                 serde_json::from_str::<Book>(&text)
@@ -1284,30 +1352,66 @@ impl Scope {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
             Err(e) => return Err(e.to_string()),
         };
-        // An imported book is written as a difference from what the store already
-        // holds, so a key the store has is rewritten, never appended to twice.
-        let (book, stored) = match legacy {
-            Some(book) => (book, load_book(&*store)?.1),
-            None => load_book(&*store)?,
-        };
+        let (stored_book, stored, unloaded) = load_book(&*store)?;
+        let is_legacy = legacy.is_some();
+        let book = legacy.unwrap_or(stored_book);
         let previous_book = BOOK.with(|b| b.replace(book));
         let previous_stored = STORED.with(|s| s.replace(Some(stored)));
-        let scope = Self(previous_book, previous_stored);
-        if crate::vfs::read_to_string(LEGACY_BOOK).is_ok() {
-            persist_book()?;
-            crate::vfs::remove_file(LEGACY_BOOK).map_err(|e| e.to_string())?;
+        let previous_unloaded = UNLOADED.with(|u| u.replace(unloaded));
+        if is_legacy {
+            // The legacy book is whole in memory. An imported book is written as a
+            // difference from what the store already holds, so a key the store has is
+            // rewritten, never appended to twice: read every stored key's records.
+            let ids: Vec<String> =
+                UNLOADED.with(|u| std::mem::take(&mut *u.borrow_mut()).into_iter().collect());
+            for id in ids {
+                load_stored(&id);
+            }
         }
-        Ok(scope)
+        Ok(Self {
+            previous_book,
+            previous_stored,
+            previous_unloaded,
+            legacy: is_legacy,
+        })
     }
     pub(crate) fn save(&self) -> Result<(), String> {
-        persist_book()
+        persist_book()?;
+        if self.legacy && crate::vfs::read_to_string(LEGACY_BOOK).is_ok() {
+            crate::vfs::remove_file(LEGACY_BOOK).map_err(|e| e.to_string())?;
+        }
+        Ok(())
     }
 }
+
+// Read a key's stored records into `STORED` only, leaving the book as it is.
+#[cfg(not(target_arch = "wasm32"))]
+fn load_stored(id: &str) {
+    use crate::hosted::records::Stream;
+    let store = crate::hosted::records::store();
+    let updates = store
+        .read(Stream::ChatUpdates, id, None, usize::MAX)
+        .unwrap_or_else(|e| panic!("cannot read conversation {id}: {e}"));
+    let history: Vec<Value> = store
+        .read(Stream::ChatHistory, id, None, usize::MAX)
+        .unwrap_or_else(|e| panic!("cannot read conversation {id}: {e}"))
+        .into_iter()
+        .map(|(_, v)| v)
+        .collect();
+    STORED.with(|s| {
+        if let Some(chat) = s.borrow_mut().as_mut().and_then(|s| s.chats.get_mut(id)) {
+            chat.updates = updates;
+            chat.history = history;
+        }
+    });
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Scope {
     fn drop(&mut self) {
-        BOOK.with(|b| b.replace(std::mem::take(&mut self.0)));
-        STORED.with(|s| s.replace(self.1.take()));
+        BOOK.with(|b| b.replace(std::mem::take(&mut self.previous_book)));
+        STORED.with(|s| s.replace(self.previous_stored.take()));
+        UNLOADED.with(|u| u.replace(std::mem::take(&mut self.previous_unloaded)));
     }
 }
 

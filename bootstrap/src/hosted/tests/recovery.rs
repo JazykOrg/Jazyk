@@ -310,6 +310,69 @@ fn stopped_before_inference_chat_sends_the_next_human_instructions_in_full() {
     );
     assert_eq!(stopped["stop"], "suspended");
     let (capsule, files) = saved.lock().unwrap().clone().unwrap();
+    // The same Stop under a host record store restores the conversation there and
+    // leaves no record file in the snapshot (docs/compiler/hosted-runtime.md#host-records).
+    {
+        use crate::hosted::records::{RecordStore, Stream};
+        // The host already holds the conversation: move the snapshot's record files
+        // into an in-memory host store.
+        let host = Arc::new(super::MemoryRecords::default());
+        let mut moved = files.clone();
+        for (path, bytes) in &files {
+            let Some(rest) = path.strip_prefix(".jazyk/local/records/") else {
+                continue;
+            };
+            let stream = match rest.split('/').next() {
+                Some("chat-updates") => Stream::ChatUpdates,
+                Some("chat-history") => Stream::ChatHistory,
+                _ => continue,
+            };
+            let doc: Value = serde_json::from_slice(bytes).unwrap();
+            let key = doc["key"].as_str().unwrap();
+            host.put_meta(stream, key, &doc["meta"]).unwrap();
+            for item in doc["items"].as_array().unwrap() {
+                host.append(
+                    stream,
+                    key,
+                    0,
+                    item[0].as_u64().unwrap(),
+                    &[item[1].clone()],
+                )
+                .unwrap();
+            }
+            moved.remove(path);
+        }
+        let mut in_host = Workspace::new(moved).unwrap();
+        in_host
+            .stop_recovery_with(
+                &capsule,
+                &[],
+                &Execution {
+                    records: Some(host.clone()),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        assert!(
+            !in_host
+                .snapshot()
+                .keys()
+                .any(|p| p.starts_with(".jazyk/local/records/")),
+            "Stop wrote records into the snapshot"
+        );
+        let id = chat["id"].as_str().unwrap();
+        let meta = host.meta(Stream::ChatUpdates, id).unwrap().unwrap();
+        assert_eq!(meta["state"], "idle", "{meta}");
+        let updates = host
+            .read(Stream::ChatUpdates, id, None, usize::MAX)
+            .unwrap();
+        assert!(
+            updates
+                .iter()
+                .any(|(_, u)| u["sessionUpdate"] == "turn_end"),
+            "{updates:?}"
+        );
+    }
     let mut stopped = Workspace::new(files).unwrap();
     stopped.stop_recovery(&capsule, &[]).unwrap();
     let mut stopped = Workspace::new(stopped.snapshot()).unwrap();

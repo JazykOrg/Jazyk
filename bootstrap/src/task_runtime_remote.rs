@@ -39,7 +39,7 @@ pub fn validate_host(root: &Path) -> Result<(), String> {
     Ok(())
 }
 fn ownership_lock(root: &Path) -> Result<fs::File, String> {
-    let dir = root.join(".jazyk/runtime/remote_runs");
+    let dir = super::runtime_dir(root).join("remote_runs");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let file = fs::OpenOptions::new()
         .write(true)
@@ -127,8 +127,8 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
             .as_str()
             .filter(|s| valid_id(s))
             .ok_or("Invalid operation key")?;
-        let path = root
-            .join(".jazyk/runtime/remote_runs")
+        let path = super::runtime_dir(root)
+            .join("remote_runs")
             .join(format!("pending-{key}.json"));
         if !path.exists() {
             fs::write(
@@ -148,7 +148,7 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
             .filter(|s| valid_id(s))
             .ok_or("Cloud run ID missing")?;
         let _lock = ownership_lock(root)?;
-        let dir = root.join(".jazyk/runtime/remote_runs");
+        let dir = super::runtime_dir(root).join("remote_runs");
         fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join(format!("{id}.json"));
         if pending
@@ -200,8 +200,8 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
     }
     if matches!(operation, "inspect_run" | "wait_run") && value["terminated"] == true {
         if let Some(id) = args["run_id"].as_str().filter(|s| valid_id(s)) {
-            let path = root
-                .join(".jazyk/runtime/remote_runs")
+            let path = super::runtime_dir(root)
+                .join("remote_runs")
                 .join(format!("{id}.json"));
             if !path.exists() {
                 return Ok(value);
@@ -236,7 +236,7 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
     Ok(value)
 }
 pub fn cancel_owned(root: &Path, fence: &Path) -> Result<(), String> {
-    let dir = root.join(".jazyk/runtime/remote_runs");
+    let dir = super::runtime_dir(root).join("remote_runs");
     if !dir.exists() {
         return Ok(());
     }
@@ -261,8 +261,8 @@ pub fn watch(root: &Path, id: &str) -> Result<(), String> {
     if !valid_id(id) {
         return Err("Invalid remote run ID".into());
     }
-    let path = root
-        .join(".jazyk/runtime/remote_runs")
+    let path = super::runtime_dir(root)
+        .join("remote_runs")
         .join(format!("{id}.json"));
     let record: Value =
         serde_json::from_str(&fs::read_to_string(&path).map_err(|e| e.to_string())?)

@@ -275,23 +275,33 @@ impl JobManager {
     }
 
     fn stop_paths(st: &SharedState, kind: &JobKind) -> Vec<std::path::PathBuf> {
-        match kind {
-            JobKind::Scoped { set_id, .. } => vec![st
-                .proj()
-                .root
-                .join(".jazyk")
-                .join(set_id)
-                .join("jobs-stopped")],
+        let outs = match kind {
+            JobKind::Scoped { set_id, .. } => vec![st.proj().root.join(".jazyk").join(set_id)],
             JobKind::CompileSets { set_ids, .. } => set_ids
                 .iter()
-                .map(|id| st.proj().root.join(".jazyk").join(id).join("jobs-stopped"))
+                .map(|id| st.proj().root.join(".jazyk").join(id))
                 .collect(),
-            _ => vec![st.out.join("jobs-stopped")],
-        }
+            _ => vec![st.out.clone()],
+        };
+        outs.iter().map(|out| Self::stop_path(out)).collect()
+    }
+
+    // One set's stop fence, `local/jobs-stopped`. A fence an earlier version left at the
+    // top of the set directory moves there first, so a Stop stays in effect.
+    // Mirrors docs/compiler/jazyk-folder.md#files-from-earlier-versions.
+    fn stop_path(out: &std::path::Path) -> std::path::PathBuf {
+        let path = crate::layout::jobs_stopped_file(out);
+        crate::layout::adopt_legacy(&crate::layout::legacy_jobs_stopped_file(out), &path);
+        path
     }
 
     pub fn automatic_stopped(&self, st: &SharedState) -> bool {
-        crate::vfs::exists(&st.out.join("jobs-stopped"))
+        crate::vfs::exists(&Self::stop_path(&st.out))
+    }
+
+    // A GUI job's stop flag, read by the task runs it owns.
+    fn job_fence(st: &SharedState, id: u64) -> std::path::PathBuf {
+        crate::layout::job_cancellation_dir(&st.root.join(".jazyk")).join(id.to_string())
     }
 
     fn submit_inner(&self, st: &SharedState, kind: JobKind, automatic: bool) -> Option<u64> {
@@ -480,10 +490,7 @@ impl JobManager {
         for stopped in &ids {
             let job = inner.jobs.get_mut(stopped).unwrap();
             job.cancel.store(true, Ordering::Relaxed);
-            let fence = st
-                .root
-                .join(".jazyk/job-cancellation")
-                .join(stopped.to_string());
+            let fence = Self::job_fence(st, *stopped);
             let _ = crate::vfs::create_dir_all(fence.parent().unwrap());
             let _ = crate::vfs::write(&fence, b"cancelled");
             if job.state == "queued" {
@@ -677,7 +684,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         // A panic inside the run fails this job and leaves the worker standing;
         // otherwise the thread would die with the job marked running forever.
         // Mirrors docs/frontends/gui.md#jobs.
-        let fence = st.root.join(".jazyk/job-cancellation").join(id.to_string());
+        let fence = JobManager::job_fence(&st, id);
         let _ = crate::vfs::remove_file(&fence);
         let _runtime_owner = crate::task_runtime::CancellationScope::enter(Some(&fence));
         let _selection = selection.clone().map(crate::selection::enter);
@@ -1416,6 +1423,23 @@ pub async fn get_trace_event(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A Stop fence lives in the set's `local/`; one an earlier version left at the top
+    // of the set directory moves there and stays in effect.
+    // Mirrors docs/compiler/jazyk-folder.md#files-from-earlier-versions.
+    #[test]
+    fn the_stop_fence_lives_under_local_and_an_earlier_one_moves_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = dir.path().join(".jazyk/my-set-ks8mf");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("jobs-stopped"), "stopped").unwrap();
+        let path = JobManager::stop_path(&out);
+        assert_eq!(path, out.join("local/jobs-stopped"));
+        assert!(path.exists(), "an earlier Stop stays in effect");
+        assert!(!out.join("jobs-stopped").exists());
+        std::fs::remove_file(&path).unwrap();
+        assert!(!JobManager::stop_path(&out).exists());
+    }
 
     #[test]
     fn elision_cuts_long_strings_and_marks_the_event() {

@@ -103,6 +103,11 @@ pub fn append(out: &Path, entry: &Entry) {
         }
         return;
     }
+    // A hosted run without a record store keeps no feedback: the entry is dropped, never
+    // written into the workspace snapshot (docs/compiler/hosted-runtime.md#host-records).
+    if crate::vfs::is_scoped() {
+        return;
+    }
     let file = path(out);
     if let Some(parent) = file.parent() {
         crate::vfs::create_dir_all(parent).ok();
@@ -133,6 +138,9 @@ pub fn read(out: &Path, limit: usize) -> Vec<Value> {
         entries.reverse();
         entries.truncate(limit);
         return entries;
+    }
+    if crate::vfs::is_scoped() {
+        return Vec::new();
     }
     let Ok(text) = crate::vfs::read_to_string(path(out)) else {
         return Vec::new();

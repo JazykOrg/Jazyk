@@ -462,6 +462,11 @@ fn chat_histories_roundtrip_and_panics_restore_all_context() {
         events: Some(Arc::new(move |v| sink.lock().unwrap().push(v.clone()))),
         ..Default::default()
     };
+    // Beta is another project: its host keeps its conversations apart from Alpha's.
+    let e_beta = Execution {
+        records: Some(Arc::new(MemoryRecords::default())),
+        ..e.clone()
+    };
     let chat = value(&mut a, "POST", "/api/chat/sessions", json!({}), &e);
     value(
         &mut a,
@@ -475,7 +480,7 @@ fn chat_histories_roundtrip_and_panics_restore_all_context() {
     assert_eq!(list["sessions"].as_array().unwrap().len(), 1);
     assert!(list.to_string().contains("hello alpha"));
     assert_eq!(
-        value(&mut b, "GET", "/api/chat/sessions", Value::Null, &e)["sessions"],
+        value(&mut b, "GET", "/api/chat/sessions", Value::Null, &e_beta)["sessions"],
         json!([])
     );
     assert!(events
@@ -484,11 +489,16 @@ fn chat_histories_roundtrip_and_panics_restore_all_context() {
         .iter()
         .any(|v| v["type"] == "chat.update"));
     let before = restored.snapshot();
+    // A request that panics rolls its snapshot back; the host discards what it wrote to
+    // its record store with it, so it writes to a scratch copy here.
+    let scratch = Arc::new(MemoryRecords::default());
+    *scratch.0.lock().unwrap() = host_records().0.lock().unwrap().clone();
     let panic = Execution {
         transport: Some(Arc::new(|_| {
             crate::llm::add_tokens(999);
             panic!("test callback panic")
         })),
+        records: Some(scratch),
         ..Default::default()
     };
     assert!(restored
@@ -615,9 +625,7 @@ fn a_version_4_conversation_file_moves_into_the_record_store_once() {
     let read_only = w.snapshot();
     assert!(read_only.contains_key(".jazyk/conversations.json"));
     assert!(
-        !read_only
-            .keys()
-            .any(|p| p.starts_with(".jazyk/local/records/")),
+        host_records().0.lock().unwrap().is_empty(),
         "a read writes no records"
     );
     value(
@@ -629,7 +637,8 @@ fn a_version_4_conversation_file_moves_into_the_record_store_once() {
     );
     let files = w.snapshot();
     assert!(!files.contains_key(".jazyk/conversations.json"));
-    let stored = stored_book(&files);
+    assert!(!files.keys().any(|p| p.starts_with(".jazyk/local/records/")));
+    let stored = stored_book();
     assert_eq!(stored["chats"]["chat-1"]["title"], "Old talk");
     assert_eq!(
         stored["chats"]["chat-1"]["history"][0]["content"],
@@ -676,4 +685,89 @@ fn a_host_record_store_keeps_conversations_out_of_the_snapshot() {
     let reads = memory.1.lock().unwrap().clone();
     assert!(reads.iter().any(|r| r.ends_with("/chat-2")), "{reads:?}");
     assert!(!reads.iter().any(|r| r.ends_with("/chat-1")), "{reads:?}");
+}
+
+// A host without a record store keeps no conversations: chat requests answer an error
+// before any work, feedback is dropped, other requests work, and nothing lands in the
+// snapshot. Records an earlier version left there stay untouched for the host to
+// import. Mirrors docs/compiler/hosted-runtime.md#host-records.
+#[test]
+fn a_host_without_a_record_store_keeps_no_conversations() {
+    let _none = without_records();
+    let mut w = workspace("No records");
+    let legacy = b"{\"key\":\"chat-1\",\"meta\":{},\"generation\":0,\"items\":[]}".to_vec();
+    w.files.insert(
+        ".jazyk/local/records/chat-updates/chat-1.json".into(),
+        legacy.clone(),
+    );
+    w.files.insert(
+        ".jazyk/conversations.json".into(),
+        b"{\"seq\":0,\"chats\":{}}".to_vec(),
+    );
+    let before = w.snapshot();
+    let e = Execution {
+        model: "must-not-run".into(),
+        transport: Some(Arc::new(|_| {
+            panic!("a refused chat must not reach the model")
+        })),
+        ..Default::default()
+    };
+    for (method, path, body) in [
+        ("POST", "/api/chat/sessions", "{}"),
+        ("GET", "/api/chat/sessions", ""),
+        (
+            "POST",
+            "/api/chat/sessions/chat-1/prompt",
+            r#"{"text":"hi"}"#,
+        ),
+        (
+            "POST",
+            "/api/jobs",
+            r#"{"kind":"compile","conversationId":"chat-1","jobId":7}"#,
+        ),
+    ] {
+        let reply = w.request_test(method, path, body, &e).unwrap();
+        assert_eq!(reply.status, 501, "{method} {path}");
+        let error: Value = serde_json::from_slice(&reply.body).unwrap();
+        assert_eq!(error["error"], crate::hosted::records::NO_RECORDS);
+    }
+    assert_eq!(
+        w.snapshot(),
+        before,
+        "a refused request changed the snapshot"
+    );
+    // Requests that touch no conversation work and leave the records alone.
+    let reply = w
+        .request_test("GET", "/api/capabilities", "", &Execution::default())
+        .unwrap();
+    assert_eq!(reply.status, 200);
+    let files = w.snapshot();
+    assert_eq!(
+        files[".jazyk/local/records/chat-updates/chat-1.json"],
+        legacy
+    );
+    assert!(files.contains_key(".jazyk/conversations.json"));
+    // Feedback is best effort: without a store it is dropped, not written to files.
+    let _fs = crate::vfs::Scope::enter(&files);
+    let out = root().join(".jazyk/ds_main");
+    crate::feedback::append(
+        &out,
+        &crate::feedback::Entry {
+            at: "2026-11-12T00:00:00Z".into(),
+            kind: "other".into(),
+            subject: String::new(),
+            message: "dropped".into(),
+            source: String::new(),
+            task: String::new(),
+            target: String::new(),
+            batch: Vec::new(),
+            model: String::new(),
+            codec: String::new(),
+            generation: 0,
+            run: None,
+            client: None,
+        },
+    );
+    assert!(crate::feedback::read(&out, 10).is_empty());
+    assert_eq!(crate::vfs::scoped_snapshot().unwrap(), files);
 }

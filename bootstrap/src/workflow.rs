@@ -1111,8 +1111,15 @@ mod tests {
             Arc, Mutex,
         };
         let mut workspace = crate::hosted::Workspace::new(pending_workspace(2, 2, false)).unwrap();
+        // The host keeps the conversation in its record store across requests.
+        let records: Arc<dyn crate::hosted::records::RecordStore> =
+            Arc::new(crate::hosted::tests::MemoryRecords::default());
+        let hosted = crate::hosted::Execution {
+            records: Some(records.clone()),
+            ..Default::default()
+        };
         let created = workspace
-            .request("POST", "/api/chat/sessions", "{}", &Default::default())
+            .request("POST", "/api/chat/sessions", "{}", &hosted)
             .unwrap();
         let chat: Value = serde_json::from_slice(&created.body).unwrap();
         let calls = Arc::new(AtomicUsize::new(0));
@@ -1130,6 +1137,7 @@ mod tests {
                     .unwrap()
                     .push(serde_json::to_value(event).unwrap())
             })),
+            records: Some(records.clone()),
             ..Default::default()
         };
         let request = json!({"kind":"workflow","setId":"ds_main","conversationId":chat["id"],"jobId":494,
@@ -1165,7 +1173,7 @@ mod tests {
                 "GET",
                 &format!("/api/chat/sessions/{}", chat["id"].as_str().unwrap()),
                 "",
-                &Default::default(),
+                &hosted,
             )
             .unwrap();
         let timeline: Value = serde_json::from_slice(&reply.body).unwrap();

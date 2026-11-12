@@ -1245,7 +1245,13 @@ fn load_book(
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn persist_book() -> Result<(), String> {
     use crate::hosted::records::Stream;
-    let store = crate::hosted::records::store();
+    let store = match crate::hosted::records::store() {
+        Ok(store) => store,
+        // Without the host's store there is no conversation to keep. A book that holds
+        // none has nothing to write; one that does would be lost, so the save fails.
+        Err(_) if BOOK.with(|b| b.borrow().chats.is_empty()) => return Ok(()),
+        Err(e) => return Err(e),
+    };
     let before = STORED.with(|s| s.borrow().clone()).unwrap_or_default();
     let (seq, current): (u64, BTreeMap<String, Value>) = BOOK.with(|b| {
         let b = b.borrow();
@@ -1341,7 +1347,16 @@ pub(crate) fn persist_book() -> Result<(), String> {
 #[cfg(not(target_arch = "wasm32"))]
 impl Scope {
     pub(crate) fn enter() -> Result<Self, String> {
-        let store = crate::hosted::records::store();
+        // Without the host's store the request holds an empty book: it loads no
+        // conversation and leaves a version 4 file where it is.
+        let Ok(store) = crate::hosted::records::store() else {
+            return Ok(Self {
+                previous_book: BOOK.with(|b| b.replace(Book::default())),
+                previous_stored: STORED.with(|s| s.replace(Some(Stored::default()))),
+                previous_unloaded: UNLOADED.with(|u| u.replace(Default::default())),
+                legacy: false,
+            });
+        };
         // A version 4 snapshot kept the book in one file. It is read here, and written
         // through the store and removed only when the request saves.
         let legacy = match crate::vfs::read_to_string(LEGACY_BOOK) {
@@ -1388,7 +1403,9 @@ impl Scope {
 #[cfg(not(target_arch = "wasm32"))]
 fn load_stored(id: &str) {
     use crate::hosted::records::Stream;
-    let store = crate::hosted::records::store();
+    // A conversation is unloaded only when a store listed it.
+    let store = crate::hosted::records::store()
+        .unwrap_or_else(|e| panic!("cannot read conversation {id}: {e}"));
     let updates = store
         .read(Stream::ChatUpdates, id, None, usize::MAX)
         .unwrap_or_else(|e| panic!("cannot read conversation {id}: {e}"));

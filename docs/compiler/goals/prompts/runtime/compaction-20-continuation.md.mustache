@@ -3,6 +3,7 @@ purpose: "Resumes the active session after compaction while preserving authorita
 used_by:
   - "bootstrap/src/harness/runtime.rs"
 inputs: ["SESSION"]
+ordering: "After the summary is installed, the runtime resumes the active session with this reminder."
 ---
 <!-- harness/runtime.rs retains authoritative instructions separately from the compaction summary. This reminder preserves that boundary after resumption. -->
 Continue the active session `{{{SESSION}}}`.

@@ -88,7 +88,8 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
 - Committed and local state (`docs/compiler/jazyk-folder.md` lists every file): a set
   directory's top level commits the current state of the graph and nothing about how it
   got there: `store.yaml` (the version), the node files (diagnostics included), the
-  decisions under `graph/decisions/` (lookalikes kept apart, requirement pairs judged,
+  decisions under `graph/decisions/` (input files classified as asset or document
+  (kept across byte changes), lookalikes kept apart, requirement pairs judged,
   entities reviewed, instances conformed, requirements judged not structural, view query
   matches reviewed; each with
   hashes of what it judged, so it lapses by itself), `sources/` section trees, and `gen/`

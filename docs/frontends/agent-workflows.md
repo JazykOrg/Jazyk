@@ -20,6 +20,8 @@ The main policy contains rules needed on every turn:
 - Keep code within requirements, or update the docs first for an authorized
   behavior change. Do not invent requirements to justify an implementation.
 - Inspect current evidence, preserve unrelated work, and use current hashes.
+- Resolve document links from the containing file, then pass project-relative
+  paths to project file tools. Check the path before declaring a file missing.
 - Surface ambiguity and contradictions. Never edit compiler state by hand.
 - Load a workflow skill before its procedure. Follow active packages and gates.
 - Report saved changes, evidence, remaining synchronization, and publication
@@ -30,6 +32,25 @@ and worker packages embed that same skill body when it is needed.
 Runtime mechanics remain in the embedded agent contract. Worker contracts and
 `begin_*` replies retain batch-specific scope, gates, and evidence. They do not
 replace the conversational policy with a separate copy.
+
+## File paths
+
+Initialization context names the project filesystem root used by Jazyk. It can
+be a local directory or a virtual root in a hosted or browser workspace. It does
+not establish an external agent's shell working directory.
+
+Project file tools such as `read_document` and `inspect_input` take paths from
+that root. Markdown links resolve from the directory containing the document.
+Resolve `.` and `..`, remove URL fragments and queries for a file read, and pass
+the resulting project-relative path. A fragment-only link stays in the same file.
+External URLs and site routes require their own URL context. Do not treat them
+as project file paths. A tool that documents another base, such as a deliverable
+directory, keeps that base.
+
+E.g.: in `content/menu-top.md`, `docs/index.md#intro` names
+`content/docs/index.md`, and `../docs/index.md` names `docs/index.md`.
+A missing read establishes only that the requested path is missing. Check the
+containing document and the available file inventory before proposing a new file.
 
 ## Deferred skills
 

@@ -390,7 +390,13 @@ fn workflow_policy_and_skills_match_agents_mcp_acp_and_restricted_servings() {
             },
         );
         let init = server.handle("initialize", &json!({})).unwrap();
-        assert!(init["instructions"].as_str().unwrap().starts_with(&policy));
+        let instructions = init["instructions"].as_str().unwrap();
+        assert!(instructions.starts_with(&policy));
+        assert!(instructions.contains("Jazyk project filesystem root (JSON string):"));
+        assert!(instructions.contains(&json!(dir.to_string_lossy()).to_string()));
+        assert!(instructions.contains("`content/docs/index.md`"));
+        assert!(instructions.contains("`../docs/index.md` resolves to `docs/index.md`"));
+        assert!(instructions.contains("It does not prove the link's intended target is missing"));
         let catalog = server.handle("tools/list", &json!({})).unwrap();
         for name in crate::agent_workflows::TOOLS {
             let tool = catalog["tools"]

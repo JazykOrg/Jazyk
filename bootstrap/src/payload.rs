@@ -433,7 +433,7 @@ mod tests {
         (
             "integration-context.md",
             crate::project_context::INSTRUCTIONS,
-            &["context"],
+            &["root", "context"],
         ),
     ];
 

@@ -19,7 +19,10 @@ pub const INSTRUCTIONS: &str = include_str!(concat!(
 pub fn instructions(root: &Path) -> String {
     let text = crate::payload::fill(
         INSTRUCTIONS.trim_end_matches('\n'),
-        &[("context", &read(root).to_string())],
+        &[
+            ("context", &read(root).to_string()),
+            ("root", &json!(root.to_string_lossy()).to_string()),
+        ],
     );
     format!("\n{}\n", text)
 }

@@ -3,45 +3,35 @@ Purpose: Turns a recorded human diagnostic answer into a scoped follow-up reques
 Used by: bootstrap/src/answer.rs.
 This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
 -->
-<!-- Context: heading fragment. Values supplied by the consumer: id, rule, severity, finding. -->
 <!-- heading -->
 A human answered a standing question on diagnostic {{{id}}} ({{{rule}}}, {{{severity}}}).
 
 Finding: {{{finding}}}
 
-<!-- Context: question fragment. Values supplied by the consumer: question. -->
 <!-- question -->
 Question: {{{question}}}
 
-<!-- Context: answer fragment. Values supplied by the consumer: answer. -->
 <!-- answer -->
 The human's answer: "{{{answer}}}"
 
-<!-- Context: subjects fragment. This fragment is static; the consumer selects it by name. -->
 <!-- subjects -->
 Subjects:
 
-<!-- Context: subject quoted fragment. Values supplied by the consumer: id, statement, doc, section, quote. -->
 <!-- subject-quoted -->
 - {{{id}}}: {{{statement}}} (quoted from {{{doc}}}#{{{section}}}: "{{{quote}}}")
 
-<!-- Context: subject derived fragment. Values supplied by the consumer: id, statement, provenance. -->
 <!-- subject-derived -->
 - {{{id}}}: {{{statement}}} ({{{provenance}}})
 
-<!-- Context: subject criterion fragment. Values supplied by the consumer: id, criterion. -->
 <!-- subject-criterion -->
 - {{{id}}}: acceptance criterion {{{criterion}}}
 
-<!-- Context: subject entity fragment. Values supplied by the consumer: id, name, definition. -->
 <!-- subject-entity -->
 - {{{id}}} ({{{name}}}): {{{definition}}}
 
-<!-- Context: subject fragment. Values supplied by the consumer: id. -->
 <!-- subject -->
 - {{{id}}}
 
-<!-- Context: act fragment. Values supplied by the consumer: id. -->
 <!-- act -->
 Treat the human's answer as instructions, never as literal replacement document text.
 

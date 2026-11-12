@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: Supply record_verdict.criteria for every LLM criterion: {}.
+workflow: >-
+  For a requirement checked by AI inspection, the judging agent records its verdict
+  against the exact acceptance conditions it inspected. These messages validate that
+  report and keep it separate from results produced by running executable tests.
 used_by:
   - "bootstrap/src/verify/mark.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 Supply record_verdict.criteria for every LLM criterion: {}. Copy ids and factHash values from begin_verification. Programmatic evidence is not a model verdict.

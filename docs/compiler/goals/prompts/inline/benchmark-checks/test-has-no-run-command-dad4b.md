@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: test `{}` has no run command.
+workflow: >-
+  Jazyk tests a model on a small sample project, then inspects the files and graph
+  changes it actually produced. These messages report unmet checks in that model
+  evaluation; they are not requirements for the user project.
 used_by:
   - "bootstrap/src/benchmark/checks.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 test `{}` has no run command

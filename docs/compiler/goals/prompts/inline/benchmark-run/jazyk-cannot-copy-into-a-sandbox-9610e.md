@@ -1,8 +1,8 @@
 ---
-purpose: >-
-  Instruction fragment: jazyk: cannot copy {} into a sandbox: {}.
+workflow: >-
+  The benchmark command asks a model to perform representative Jazyk tasks. These
+  messages explain why an evaluation could not run or produce a usable measurement.
 used_by:
   - "bootstrap/src/benchmark/run.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 jazyk: cannot copy {} into a sandbox: {}

@@ -73,6 +73,11 @@ pub(super) fn header_for(path: &Path) -> Option<String> {
             LOCAL,
             Some("state-machine"),
         ),
+        ("decisions", "inputs", _) => (
+            "Input processing decision.",
+            PLAIN,
+            Some("input"),
+        ),
         ("decisions", "lookalikes", _) => (
             "Jazyk decision: two similar entities judged to be different things.",
             PLAIN,
@@ -248,6 +253,14 @@ pub(super) fn load_decisions(
     errors: &mut Vec<String>,
 ) -> (Decisions, Vec<LookalikeVerdict>) {
     let mut d = Decisions::default();
+    for (id, v) in read_decision_files(&layout::decisions_dir(out, "inputs"), errors) {
+        match serde_json::from_value::<InputDecision>(v) {
+            Ok(decision) => {
+                d.inputs.insert(id, decision);
+            }
+            Err(e) => errors.push(format!("input decision {id}: {e}")),
+        }
+    }
     let mut lookalikes = Vec::new();
     for (id, v) in read_decision_files(&layout::decisions_dir(out, "lookalikes"), errors) {
         lookalikes.push(LookalikeVerdict {
@@ -311,6 +324,9 @@ pub(super) fn save_decisions(out: &Path, d: &Decisions, lookalikes: &[LookalikeV
         report_write(&path, write_yaml(&path, &value));
         written.insert(path);
     };
+    for (id, decision) in &d.inputs {
+        put("inputs", id, decision_value(id, decision));
+    }
     for l in lookalikes {
         put(
             "lookalikes",

@@ -273,6 +273,8 @@ impl ToolSession {
             "resolve_diagnostic" => self.resolve_diagnostic_tool(args),
             "upsert_view" | "update_view" | "delete_view" => self.view_tool(name, args),
             "edit_fact" => self.edit_fact(args),
+            "inspect_input" => self.inspect_input_tool(args),
+            "classify_input" => self.classify_input_tool(args),
             "set_coverage" => self.set_coverage_tool(args),
             "generation_tasks" => self.generation_tasks_tool(args),
             "begin_generation" => self.begin_generation_tool(args),
@@ -287,6 +289,9 @@ impl ToolSession {
             "record_verdict" => self.record_verdict_tool(args),
             name if crate::task_runtime::TOOLS.contains(&name) => {
                 self.task_runtime_tool(name, args)
+            }
+            "link_asset" | "inspect_asset_link" | "remove_asset_link" => {
+                self.asset_link_tool(name, args)
             }
             "read_text_file" | "write_text_file" | "list_files" => self.file_tool(name, args),
             "report_spend" => self.report_spend_tool(args),

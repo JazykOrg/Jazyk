@@ -47,6 +47,31 @@ pub fn seed_file(path: &str, bytes: &[u8]) {
     crate::vfs::seed(std::path::Path::new(path), bytes.to_vec());
 }
 
+#[wasm_bindgen]
+pub fn seed_symlink(path: &str, target: &str) -> Result<(), JsValue> {
+    let path = std::path::Path::new(path);
+    let relative = path
+        .strip_prefix("/project")
+        .map_err(|_| JsValue::from_str("link path must stay inside the project"))?;
+    if std::path::Path::new(target).is_absolute()
+        || crate::md::resolve_rel(&relative.to_string_lossy(), target).is_none()
+    {
+        return Err(JsValue::from_str(
+            "link target must stay inside the project",
+        ));
+    }
+    crate::vfs::seed_link(path, std::path::Path::new(target));
+    Ok(())
+}
+
+#[wasm_bindgen]
+pub fn read_link(path: &str) -> Option<String> {
+    crate::vfs::read_link(std::path::Path::new(path))
+        .ok()?
+        .to_str()
+        .map(str::to_owned)
+}
+
 // Empty the tree. The host calls this before seeding another project, so a second
 // demo opened in the tab does not inherit the first one's files.
 #[wasm_bindgen]

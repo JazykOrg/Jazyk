@@ -483,3 +483,17 @@ object. The engine parses and validates it through the shared GDK. Streaming hos
 forward answer deltas as `content` and provider summary deltas as
 `reasoning_summary`. The final object remains authoritative for tool execution.
 An older endpoint host can keep using Chat Completions.
+
+## Symlink entries
+
+The in-memory filesystem distinguishes regular file bytes from a symlink's relative
+target. `seed_symlink` restores a link entry; `read_link` inspects it without following
+it. Reads and canonical paths resolve links with cycle detection. Removing a link
+removes only the link. Text writes cannot edit assets through links. Snapshots and
+browser persistence retain entry types, including dangling links, without a manifest
+file. The worker emits a `symlink` filesystem event with the path and target.
+
+A browser folder connection retains a symlink write as a pending change when its
+folder API cannot create native links. It must not replace the link with a copy.
+Native connections write actual filesystem symlinks. Standalone delivery and task
+exports resolve allowed asset links into regular file bytes.

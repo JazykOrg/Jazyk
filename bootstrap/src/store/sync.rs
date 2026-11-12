@@ -87,6 +87,9 @@ impl Store {
         // generation it loaded. Mirrors docs/compiler/graph.md#concurrency.
         let _flock = persist.then(|| FileLock::acquire(&self.out));
         let persist = persist && self.refuse("align").is_none();
+        self.decisions
+            .inputs
+            .retain(|doc, _| parsed.contains_key(doc));
         let mut entries: Vec<JournalEntry> = Vec::new();
         let mut removed_docs: Vec<String> = Vec::new();
         let changed: BTreeSet<String> = self

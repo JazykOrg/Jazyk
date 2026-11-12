@@ -571,7 +571,7 @@ mod tests {
     #[test]
     fn stop_receipts_preserve_foreign_replacements_and_require_scoped_vfs() {
         let saved = {
-            let _fs = crate::vfs::Scope::enter(&Default::default());
+            let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
             let _scope = Scope::enter(None);
             let out = std::path::Path::new("/project/.jazyk/ds_main");
             crate::control::claim(out, "ledger:owned", "worker-one").unwrap();

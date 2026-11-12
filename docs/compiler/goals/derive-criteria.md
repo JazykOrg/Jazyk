@@ -102,6 +102,8 @@ run did). A section past the loaded set's budget arrives as a handle. The contra
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `derive-criteria` toolset ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,

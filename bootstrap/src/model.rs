@@ -1326,6 +1326,8 @@ pub const LOOKALIKE_SEPARATE: &str = "separate";
 // Mirrors docs/compiler/jazyk-folder.md#graphdecisionskindidyaml.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Decisions {
+    #[serde(default)]
+    pub inputs: BTreeMap<String, InputDecision>,
     // `a~b` (smaller id first) to the pair's verdict and both statement hashes.
     #[serde(default)]
     pub pairs: BTreeMap<String, PairDecision>,
@@ -1349,7 +1351,15 @@ pub struct PairDecision {
     pub statements: BTreeMap<String, String>,
 }
 
-pub const DECISION_KINDS: [&str; 6] = [
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct InputDecision {
+    pub mode: String,
+    pub sha256: String,
+    pub reason: String,
+}
+
+pub const DECISION_KINDS: [&str; 7] = [
+    "inputs",
     "lookalikes",
     "pairs",
     "reviews",

@@ -2289,7 +2289,7 @@ fn responses_receipt_recovery_keeps_opaque_continuation_and_does_not_repeat_infe
 
 #[test]
 fn complex_history_keeps_output_headroom_without_early_compaction() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let mut host = Host::new(vec![response("finished")]);
     let mut history = vec![
         json!({"role":"user","content":"u".repeat(100_000)}),

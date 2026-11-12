@@ -79,9 +79,10 @@ fn walk(
             }
             walk(&p, base, acc, seen, products, product_only);
         } else if let Ok(rel) = p.strip_prefix(base) {
-            if !p
-                .vcanonicalize()
-                .is_ok_and(|p| p.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into())))
+            if !crate::vfs::is_symlink(&p)
+                && !p.vcanonicalize().is_ok_and(|p| {
+                    p.starts_with(base.vcanonicalize().unwrap_or_else(|_| base.into()))
+                })
             {
                 continue;
             }
@@ -135,7 +136,13 @@ pub fn project_files(root: &Path, deliverable: &Path, out: &Path, docs_glob: &[S
                 && !root.join(&path).starts_with(out)
                 && (crate::task_runtime::matches(&products, &path)
                     || (!input && root.join(&path).starts_with(deliverable)));
-            json!({ "path": path, "size": size, "memberships":memberships, "product":product, "writable": writable_path(root, out, &path).is_ok() })
+            let mut value=json!({ "path": path, "size": size, "memberships":memberships, "product":product, "writable": writable_path(root, out, &path).is_ok() });
+            if let Ok(target)=crate::vfs::read_link(&root.join(&path)) {
+                value["entryType"]=json!("symlink");
+                value["symlinkTarget"]=json!(target.to_string_lossy());
+                value["writable"]=json!(false);
+            }
+            value
         })
         .collect();
     json!({
@@ -185,7 +192,17 @@ fn safe(root: &Path, rel: &str) -> Option<PathBuf> {
     }
     let base = root.vcanonicalize().ok()?;
     let canon = root.join(rel).vcanonicalize().ok()?;
-    if !canon.starts_with(&base) || !canon.vexists() {
+    if !canon.starts_with(&base)
+        || !canon.vexists()
+        || !rel_ok(
+            root,
+            &canon
+                .strip_prefix(&base)
+                .ok()?
+                .to_string_lossy()
+                .replace('\\', "/"),
+        )
+    {
         return None;
     }
     Some(canon)
@@ -278,6 +295,44 @@ pub fn create_project_file(
 ) -> Result<serde_json::Value, Refusal> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     let abs = writable_path(root, out, rel)?;
+    if let Some(target) = body["symlinkTarget"].as_str() {
+        if body.get("text").is_some() || body.get("base64").is_some() {
+            return Err((
+                400,
+                "provide symlinkTarget or file contents, not both".into(),
+            ));
+        }
+        let resolved = crate::md::resolve_rel(rel, target)
+            .ok_or((400, "symlink target leaves the project".into()))?;
+        if std::path::Path::new(target).is_absolute()
+            || target.contains('\\')
+            || !crate::document_sets::safe_relative(root, &resolved)
+            || crate::vfs::is_symlink(&root.join(&resolved))
+            || !root.join(&resolved).vis_file()
+        {
+            return Err((
+                400,
+                "symlink target must be a direct eligible project file".into(),
+            ));
+        }
+        if abs.vexists() || crate::vfs::is_symlink(&abs) {
+            return Err((409, format!("{rel} already exists")));
+        }
+        if abs
+            .parent()
+            .into_iter()
+            .flat_map(|p| p.ancestors())
+            .take_while(|p| *p != root)
+            .any(crate::vfs::is_symlink)
+        {
+            return Err((400, "symlink parents are not supported".into()));
+        }
+        crate::vfs::create_dir_all(abs.parent().ok_or((400, "invalid symlink path".into()))?)
+            .map_err(|e| (500, e.to_string()))?;
+        crate::vfs::symlink_file(std::path::Path::new(target), &abs)
+            .map_err(|e| (500, e.to_string()))?;
+        return Ok(json!({"path":rel,"entryType":"symlink","symlinkTarget":target}));
+    }
     let bytes = if let Some(text) = body["text"].as_str() {
         text.as_bytes().to_vec()
     } else if let Some(encoded) = body["base64"].as_str() {
@@ -321,6 +376,12 @@ pub fn write_project_text(
     body: &serde_json::Value,
 ) -> Result<serde_json::Value, Refusal> {
     let abs = writable_path(root, out, rel)?;
+    if crate::vfs::is_symlink(&abs) {
+        return Err((
+            405,
+            "remove or replace the symlink entry before writing; its target is an input".into(),
+        ));
+    }
     let text = body["text"]
         .as_str()
         .ok_or((400, "text is required".to_string()))?;
@@ -343,7 +404,7 @@ pub fn write_project_text(
 // File management shares the write boundary with project text edits.
 pub fn delete_project_file(root: &Path, out: &Path, rel: &str) -> Result<Value, Refusal> {
     let abs = writable_path(root, out, rel)?;
-    if !abs.vis_file() {
+    if !abs.vis_file() && !crate::vfs::is_symlink(&abs) {
         return Err((404, format!("no file {rel}")));
     }
     crate::vfs::remove_file(abs).map_err(|e| (500, e.to_string()))?;

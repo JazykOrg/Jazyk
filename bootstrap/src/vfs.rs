@@ -118,6 +118,12 @@ mod imp {
         std::fs::read(p)
     }
     pub fn write(p: impl AsRef<Path>, c: impl AsRef<[u8]>) -> io::Result<()> {
+        if super::is_symlink(p.as_ref()) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "remove the symlink before writing",
+            ));
+        }
         if super::is_scoped() {
             return super::memory::write(super::checked(p.as_ref())?, c);
         }
@@ -267,6 +273,7 @@ mod memory {
     // RefCell is the whole of the locking story.
     thread_local! {
         static FILES: RefCell<BTreeMap<PathBuf, Vec<u8>>> = const { RefCell::new(BTreeMap::new()) };
+        static LINKS: RefCell<BTreeMap<PathBuf, PathBuf>> = const { RefCell::new(BTreeMap::new()) };
         static DIRS: RefCell<BTreeSet<PathBuf>> = const { RefCell::new(BTreeSet::new()) };
         // Raised by every change to the tree, so a value computed from it stays
         // valid exactly while this holds still.
@@ -282,13 +289,18 @@ mod memory {
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    pub(super) type Tree = (BTreeMap<PathBuf, Vec<u8>>, BTreeSet<PathBuf>);
+    pub(super) type Tree = (
+        BTreeMap<PathBuf, Vec<u8>>,
+        BTreeSet<PathBuf>,
+        BTreeMap<PathBuf, PathBuf>,
+    );
     #[cfg(not(target_arch = "wasm32"))]
     pub(super) fn replace(tree: Tree) -> Tree {
         changed();
         (
             FILES.with(|f| f.replace(tree.0)),
             DIRS.with(|d| d.replace(tree.1)),
+            LINKS.with(|l| l.replace(tree.2)),
         )
     }
 
@@ -319,7 +331,7 @@ mod memory {
     }
 
     pub fn read(p: impl AsRef<Path>) -> io::Result<Vec<u8>> {
-        let p = norm(p.as_ref());
+        let p = canonicalize(p)?;
         FILES
             .with(|f| f.borrow().get(&p).cloned())
             .ok_or_else(|| not_found(&p))
@@ -334,6 +346,12 @@ mod memory {
     pub fn write(p: impl AsRef<Path>, c: impl AsRef<[u8]>) -> io::Result<()> {
         changed();
         let p = norm(p.as_ref());
+        if is_symlink(&p) {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "remove the symlink before writing",
+            ));
+        }
         if let Some(parent) = p.parent() {
             create_dir_all(parent)?;
         }
@@ -366,10 +384,11 @@ mod memory {
     pub fn remove_file(p: impl AsRef<Path>) -> io::Result<()> {
         changed();
         let p = norm(p.as_ref());
-        FILES
-            .with(|f| f.borrow_mut().remove(&p))
-            .map(|_| ())
-            .ok_or_else(|| not_found(&p))?;
+        let link = LINKS.with(|links| links.borrow_mut().remove(&p)).is_some();
+        let file = FILES.with(|f| f.borrow_mut().remove(&p)).is_some();
+        if !link && !file {
+            return Err(not_found(&p));
+        }
         #[cfg(target_arch = "wasm32")]
         crate::wasm::fs_bridge::removed(&p, false);
         Ok(())
@@ -388,6 +407,7 @@ mod memory {
         changed();
         let p = norm(p.as_ref());
         FILES.with(|f| f.borrow_mut().retain(|k, _| !k.starts_with(&p)));
+        LINKS.with(|l| l.borrow_mut().retain(|k, _| !k.starts_with(&p)));
         DIRS.with(|d| {
             let keep: Vec<PathBuf> = d
                 .borrow()
@@ -413,8 +433,32 @@ mod memory {
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect()
         });
-        if moved.is_empty() {
+        let links: Vec<_> = LINKS.with(|links| {
+            links
+                .borrow()
+                .iter()
+                .filter(|(p, _)| *p == &a || p.starts_with(&a))
+                .map(|(p, t)| (p.clone(), t.clone()))
+                .collect()
+        });
+        if moved.is_empty() && links.is_empty() {
             return Err(not_found(&a));
+        }
+        for (path, target) in links {
+            let rest = path.strip_prefix(&a).expect("selected prefix");
+            let dest = if rest.as_os_str().is_empty() {
+                b.clone()
+            } else {
+                b.join(rest)
+            };
+            LINKS.with(|links| links.borrow_mut().remove(&path));
+            FILES.with(|files| files.borrow_mut().remove(&dest));
+            LINKS.with(|links| links.borrow_mut().insert(dest.clone(), target.clone()));
+            #[cfg(target_arch = "wasm32")]
+            {
+                crate::wasm::fs_bridge::removed(&path, false);
+                crate::wasm::fs_bridge::linked(&dest, &target);
+            }
         }
         // The host mirrors this tree (a folder on disk, browser storage), so each
         // source leaves the way a removed file does, or the mirror keeps both.
@@ -461,7 +505,48 @@ mod memory {
     }
 
     pub fn canonicalize(p: impl AsRef<Path>) -> io::Result<PathBuf> {
-        Ok(norm(p.as_ref()))
+        let mut path = norm(p.as_ref());
+        let mut seen = BTreeSet::new();
+        loop {
+            if !seen.insert(path.clone()) {
+                return Err(io::Error::new(io::ErrorKind::InvalidInput, "symlink cycle"));
+            }
+            let Some(target) = LINKS.with(|l| l.borrow().get(&path).cloned()) else {
+                return Ok(path);
+            };
+            path = norm(&path.parent().unwrap_or(Path::new("/")).join(target));
+        }
+    }
+    pub fn is_symlink(p: &Path) -> bool {
+        LINKS.with(|l| l.borrow().contains_key(&norm(p)))
+    }
+    pub fn read_link(p: &Path) -> io::Result<PathBuf> {
+        LINKS
+            .with(|l| l.borrow().get(&norm(p)).cloned())
+            .ok_or_else(|| not_found(p))
+    }
+    pub fn symlink_file(target: &Path, path: &Path) -> io::Result<()> {
+        let path = norm(path);
+        if exists(&path) || is_symlink(&path) {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "destination exists",
+            ));
+        }
+        create_dir_all(path.parent().ok_or_else(|| not_found(&path))?)?;
+        LINKS.with(|l| l.borrow_mut().insert(path.clone(), target.to_path_buf()));
+        changed();
+        #[cfg(target_arch = "wasm32")]
+        crate::wasm::fs_bridge::linked(&path, target);
+        Ok(())
+    }
+    pub fn seed_link(path: &Path, target: &Path) {
+        changed();
+        if let Some(parent) = path.parent() {
+            let _ = create_dir_all(parent);
+        }
+        FILES.with(|f| f.borrow_mut().remove(&norm(path)));
+        LINKS.with(|l| l.borrow_mut().insert(norm(path), target.to_path_buf()));
     }
 
     pub fn exists(p: &Path) -> bool {
@@ -469,7 +554,7 @@ mod memory {
     }
 
     pub fn is_file(p: &Path) -> bool {
-        let p = norm(p);
+        let Ok(p) = canonicalize(p) else { return false };
         FILES.with(|f| f.borrow().contains_key(&p))
     }
 
@@ -514,6 +599,11 @@ mod memory {
                 .range::<Path, _>(under)
                 .take_while(|(k, _)| k.starts_with(&dir))
             {
+                note(k, false);
+            }
+        });
+        LINKS.with(|l| {
+            for k in l.borrow().keys().filter(|k| k.starts_with(&dir)) {
                 note(k, false);
             }
         });
@@ -574,11 +664,14 @@ mod memory {
         if let Some(parent) = p.parent() {
             let _ = create_dir_all(parent);
         }
+        LINKS.with(|links| links.borrow_mut().remove(&p));
         FILES.with(|f| f.borrow_mut().insert(p, bytes));
     }
 
     pub fn list_all() -> Vec<PathBuf> {
-        FILES.with(|f| f.borrow().keys().cloned().collect())
+        let mut paths: BTreeSet<_> = FILES.with(|f| f.borrow().keys().cloned().collect());
+        LINKS.with(|l| paths.extend(l.borrow().keys().cloned()));
+        paths.into_iter().collect()
     }
 
     // Empty the tree, so a project seeded after another starts from nothing rather
@@ -588,6 +681,7 @@ mod memory {
         changed();
         FILES.with(|f| f.borrow_mut().clear());
         DIRS.with(|d| d.borrow_mut().clear());
+        LINKS.with(|l| l.borrow_mut().clear());
     }
 }
 
@@ -600,8 +694,7 @@ pub fn is_symlink(p: &Path) -> bool {
     if !is_scoped() {
         return std::fs::symlink_metadata(p).is_ok_and(|m| m.file_type().is_symlink());
     }
-    let _ = p;
-    false
+    memory::is_symlink(p)
 }
 
 // The in-memory tree's change count (the browser engine's files): a value computed
@@ -622,23 +715,34 @@ pub fn is_scoped() -> bool {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn scoped_snapshot() -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+pub(crate) fn scoped_snapshot() -> Result<crate::file_tree::Snapshot, String> {
     if !is_scoped() {
         return Err("No hosted workspace is installed on this thread.".into());
     }
-    memory::list_all()
-        .into_iter()
-        .map(|path| {
-            let name = path
-                .strip_prefix("/project")
-                .map_err(|_| "Path outside hosted workspace".to_string())?
-                .to_str()
-                .ok_or("Invalid workspace path")?
-                .replace('\\', "/");
-            let bytes = memory::read(&path).map_err(|e| e.to_string())?;
-            Ok((name, bytes))
-        })
-        .collect()
+    memory_snapshot()
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn memory_snapshot() -> Result<crate::file_tree::Snapshot, String> {
+    let mut snapshot = crate::file_tree::Snapshot::new();
+    for path in memory::list_all() {
+        let name = path
+            .strip_prefix("/project")
+            .map_err(|_| "Path outside hosted workspace")?
+            .to_str()
+            .ok_or("Invalid workspace path")?
+            .replace('\\', "/");
+        if memory::is_symlink(&path) {
+            let target = memory::read_link(&path).map_err(|e| e.to_string())?;
+            snapshot.insert_symlink(
+                name,
+                target.to_str().ok_or("Invalid symlink target")?.into(),
+            );
+        } else {
+            snapshot.insert(name, memory::read(&path).map_err(|e| e.to_string())?);
+        }
+    }
+    Ok(snapshot)
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -663,11 +767,19 @@ pub(crate) struct Scope {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl Scope {
-    pub(crate) fn enter(files: &std::collections::BTreeMap<String, Vec<u8>>) -> Self {
+    pub(crate) fn enter(files: &impl crate::file_tree::FileTree) -> Self {
         let previous = memory::replace(Default::default());
         let scoped = SCOPED.with(|s| s.replace(true));
-        for (name, bytes) in files {
-            memory::seed(&Path::new("/project").join(name), bytes.clone());
+        for (name, bytes) in files.files() {
+            let path = Path::new("/project").join(name);
+            if files.is_symlink(name) {
+                memory::seed_link(
+                    &path,
+                    Path::new(std::str::from_utf8(bytes).expect("validated link target")),
+                );
+            } else {
+                memory::seed(&path, bytes.clone());
+            }
         }
         memory::create_dir_all("/project").expect("virtual root");
         Self {
@@ -676,18 +788,8 @@ impl Scope {
             _thread: std::marker::PhantomData,
         }
     }
-    pub(crate) fn snapshot(&self) -> std::collections::BTreeMap<String, Vec<u8>> {
-        memory::list_all()
-            .into_iter()
-            .filter_map(|path| {
-                let name = path
-                    .strip_prefix("/project")
-                    .ok()?
-                    .to_str()?
-                    .replace('\\', "/");
-                Some((name, memory::read(&path).ok()?))
-            })
-            .collect()
+    pub(crate) fn snapshot(&self) -> crate::file_tree::Snapshot {
+        memory_snapshot().expect("validated workspace entries")
     }
 }
 #[cfg(not(target_arch = "wasm32"))]
@@ -698,12 +800,37 @@ impl Drop for Scope {
     }
 }
 
+/// Inspect and create file symlinks in native and virtual filesystems.
+pub fn read_link(path: &Path) -> io::Result<PathBuf> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !is_scoped() {
+        return std::fs::read_link(path);
+    }
+    memory::read_link(path)
+}
+
+pub fn symlink_file(target: &Path, path: &Path) -> io::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    if !is_scoped() {
+        #[cfg(unix)]
+        return std::os::unix::fs::symlink(target, path);
+        #[cfg(windows)]
+        return std::os::windows::fs::symlink_file(target, path);
+    }
+    memory::symlink_file(target, path)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn seed_link(path: &Path, target: &Path) {
+    memory::seed_link(path, target);
+}
+
 #[cfg(test)]
 mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn scoped_native_joins_round_trip_portable_snapshot_names_and_stay_confined() {
-        let _scope = super::Scope::enter(&Default::default());
+        let _scope = super::Scope::enter(&crate::file_tree::Snapshot::new());
         let file = std::path::Path::new("/project")
             .join("docs")
             .join("main.md");
@@ -725,7 +852,7 @@ mod tests {
     #[test]
     fn an_implied_memory_directory_holds_only_its_own_files() {
         use std::path::{Path, PathBuf};
-        let _scope = super::Scope::enter(&Default::default());
+        let _scope = super::Scope::enter(&crate::file_tree::Snapshot::new());
         let files: std::collections::BTreeMap<PathBuf, Vec<u8>> = [
             "/project/a/b c/x.md",
             "/project/a/bx",
@@ -735,7 +862,7 @@ mod tests {
         .into_iter()
         .map(|p| (PathBuf::from(p), b"x".to_vec()))
         .collect();
-        super::memory::replace((files, Default::default()));
+        super::memory::replace((files, Default::default(), Default::default()));
         assert!(super::memory::is_dir(Path::new("/project/a")));
         assert!(super::memory::is_dir(Path::new("/project/a/b c")));
         assert!(super::memory::is_dir(Path::new("/project/z/deep")));

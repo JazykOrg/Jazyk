@@ -136,9 +136,14 @@ impl Store {
             || (commit.kind == "answer"
                 && ops.iter().any(|o| matches!(o, Op::EditDocProse { .. })));
         // The state an all-or-nothing changeset rolls back to when an op is skipped.
-        let snapshot = commit
-            .all_or_nothing
-            .then(|| (self.graph.clone(), self.status.clone(), self.docs.clone()));
+        let snapshot = commit.all_or_nothing.then(|| {
+            (
+                self.graph.clone(),
+                self.status.clone(),
+                self.docs.clone(),
+                self.decisions.clone(),
+            )
+        });
 
         let resolve = |remap: &BTreeMap<String, String>, store: &Store, id: &str| -> String {
             let id = remap.get(id).cloned().unwrap_or_else(|| id.to_string());
@@ -155,6 +160,12 @@ impl Store {
         } else {
             ops
         };
+        // Processing-mode transitions see the final graph mutations, including
+        // quote relocations and retractions staged in the same changeset.
+        let (mut ops, classifications): (Vec<_>, Vec<_>) = ops
+            .into_iter()
+            .partition(|op| !matches!(op, Op::ClassifyInput { .. }));
+        ops.extend(classifications);
         // The old text must still stand in the stored section, or the document moved
         // underneath the edit and the whole pair skips: a document edited underneath
         // loses the edit, never its consistency.
@@ -2110,6 +2121,47 @@ impl Store {
                         text,
                     });
                 }
+                Op::ClassifyInput { doc, decision } => {
+                    match self.classified_input(&doc, &decision, true) {
+                        Ok((hash, sections)) => {
+                            if let Some(previous) = self.docs.get(&doc) {
+                                for section in previous
+                                    .sections
+                                    .keys()
+                                    .filter(|s| !sections.contains_key(*s))
+                                {
+                                    batch.push(
+                                        applied.len() + 1,
+                                        CHANGE_SECTION_REMOVED,
+                                        &format!("{doc}#{section}"),
+                                        "section",
+                                        serde_json::json!({"doc":doc,"section":section}),
+                                    );
+                                }
+                            }
+                            for section in sections.keys() {
+                                batch.push(
+                                    applied.len() + 1,
+                                    CHANGE_SECTION_DIRTY,
+                                    &format!("{doc}#{section}"),
+                                    "section",
+                                    serde_json::json!({"doc":doc,"section":section}),
+                                );
+                            }
+                            self.docs.insert(
+                                doc.clone(),
+                                DocRecord {
+                                    content_hash: hash,
+                                    sections,
+                                    coverage: BTreeMap::new(),
+                                },
+                            );
+                            self.decisions.inputs.insert(doc.clone(), decision.clone());
+                            applied.push(Op::ClassifyInput { doc, decision });
+                        }
+                        Err(e) => skipped.push(format!("classify_input: {e}")),
+                    }
+                }
                 Op::SetCoverage {
                     doc,
                     section,
@@ -2139,11 +2191,12 @@ impl Store {
 
         // An all-or-nothing changeset with a skipped op lands nothing: the graph
         // returns to the snapshot and the refusals are the whole report.
-        if let Some((graph, status, docs)) = snapshot {
+        if let Some((graph, status, docs, decisions)) = snapshot {
             if !skipped.is_empty() {
                 self.graph = graph;
                 self.status = status;
                 self.docs = docs;
+                self.decisions = decisions;
                 return CommitReport {
                     applied: 0,
                     skipped,

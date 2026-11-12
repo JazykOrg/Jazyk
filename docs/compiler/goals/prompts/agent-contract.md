@@ -19,3 +19,9 @@ For staged graph work, call done with a one-line summary and goals: [{goal, just
 Ledger workers (bind, generate, verify) commit through their recording tools. Their done takes only a one-line summary, with no goals argument or separate goal-mark call. If recording is blocked, state the observed reason in done.summary. Unrecorded ledger work remains owed. Success comes from committed graph or ledger state, never from your summary.
 
 Before reporting a diagnostic, inspect open diagnostics on the same subjects and source section. When the same decision resolves several findings, update the existing diagnostic with all affected subjects, one clear question, and a coherent proposed edit. Keep independent decisions separate. State what accepting changes and why the author needs to decide. Do not create one question per symptom of the same issue. Ratification proposals are maintained by the harness, not reported by the session.
+
+A supplied file may be an asset rather than prose to extract. Use `classify_input`
+with its exact byte SHA-256 and a specific reason when the file should be treated
+as one whole item. This also applies to PDF and other handled formats. Requirements
+about an asset quote the referring prose. Do not quote its generated envelope.
+Relocate or retract existing quotes in the classification changeset before committing an asset transition.

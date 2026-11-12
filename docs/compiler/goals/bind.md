@@ -168,6 +168,8 @@ and `begin_binding`
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The session's serving runs in `generate` mode ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): the loaded-set tools `load`, `expand`,

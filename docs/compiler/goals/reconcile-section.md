@@ -291,6 +291,8 @@ skills: extraction (active); judgment, flow-views, structural-views, abstraction
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `reconcile-section` toolset ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,
@@ -339,3 +341,5 @@ The blob follows prose documents in ingest order and waits for referring documen
 or referring section context changes. A `non-normative` mark requires a specific
 reason and is rejected while a requirement references the input. Delivery remains
 [referenced-asset generation](../../consumers/gen.md#referenced-assets).
+
+`classify_input` selects whole-file asset processing or normal document parsing. See [asset classification](../parsing.md#asset-classification).

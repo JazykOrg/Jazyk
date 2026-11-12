@@ -16,12 +16,12 @@ impl McpServer {
                 .iter()
                 .any(|kind| matches!(kind.as_str(), "bind" | "generate" | "verify"))
             {
-                names.extend(["read_text_file", "list_files"]);
+                names.extend(["read_text_file", "list_files", "inspect_asset_link"]);
                 if kinds
                     .iter()
                     .any(|kind| matches!(kind.as_str(), "bind" | "generate"))
                 {
-                    names.insert("write_text_file");
+                    names.extend(["write_text_file", "link_asset", "remove_asset_link"]);
                 }
             }
             if kinds
@@ -321,12 +321,15 @@ impl McpServer {
                     // own: a verify session reads and runs, never writes.
                     // Mirrors docs/compiler/goals/verify.md#tools.
                     if self.bridge.serve_files {
-                        t.extend(
-                            crate::tools::FILE_TOOLS
-                                .iter()
-                                .copied()
-                                .filter(|t| !matches!(*t, "write_text_file" | "run_command")),
-                        );
+                        t.extend(crate::tools::FILE_TOOLS.iter().copied().filter(|t| {
+                            !matches!(
+                                *t,
+                                "write_text_file"
+                                    | "link_asset"
+                                    | "remove_asset_link"
+                                    | "run_command"
+                            )
+                        }));
                     }
                     t
                 }

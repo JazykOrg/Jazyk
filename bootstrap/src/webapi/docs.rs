@@ -139,6 +139,18 @@ pub fn doc_content(proj: &Project, rel: &str) -> DocRead {
         Ok(a) => a,
         Err(why) => return DocRead::Invalid(invalid_path(rel, why)),
     };
+    if let Some(decision) = crate::input::asset_decision(proj, rel) {
+        return match crate::vfs::read(&abs) {
+            Ok(bytes) => {
+                let envelope = json!({"path":rel,"size":bytes.len(),"sha256":crate::task_runtime::digest(&bytes),"classification":decision});
+                let text = envelope.to_string();
+                DocRead::Found(
+                    json!({"path":rel,"text":text,"hash":crate::model::hash_hex(&text),"asset":true,"quotable":false,"sha256":envelope["sha256"],"classification":decision}),
+                )
+            }
+            Err(error) => DocRead::Missing(format!("cannot read {rel}: {error}")),
+        };
+    }
     match crate::md::read_doc(&abs) {
         Ok(text) => {
             let hash = crate::model::hash_hex(&text);

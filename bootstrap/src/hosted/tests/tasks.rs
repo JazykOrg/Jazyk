@@ -18,7 +18,7 @@ fn shared_task_suite_dispatches_once_per_pass_and_keeps_case_and_owner_evidence_
 
     let submissions = Arc::new(Mutex::new(BTreeMap::<String, Value>::new()));
     for owner in ["owner-a", "owner-b"] {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let _state = crate::scoped_state::Scope::enter();
         let root = std::path::Path::new("/project");
         let out = root.join(".jazyk/ds_main");

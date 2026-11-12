@@ -1024,3 +1024,13 @@ thresholds and no goal resolves it, so it is not a row of the table above.
   read-only with `store-busy`, never as a mix of two commits.
 - A store in an in-memory workspace is read and written by one thread, so a reader never
   meets a commit in progress there and a marker in it is always a leftover.
+
+## Input processing decisions
+
+`graph/decisions/inputs/` stores model-owned `asset` or `document` classifications.
+These are committed decisions, keyed by the project-relative file path. Each has
+`mode`, `sha256`, and `reason`. Unlike content judgments, the processing mode
+survives byte changes. `sha256` records the bytes at classification and guards the
+write. The input inventory's current byte hash reopens reconciliation when those
+bytes change. The decision's old hash never makes current bytes look reconciled.
+See [asset classification](parsing.md#asset-classification).

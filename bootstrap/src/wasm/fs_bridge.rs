@@ -13,6 +13,8 @@ extern "C" {
     fn enable_fs_sink_js();
     #[wasm_bindgen(js_name = fsWrite)]
     fn fs_write(path: &str, bytes: &[u8]);
+    #[wasm_bindgen(js_name = fsSymlink)]
+    fn fs_symlink(path: &str, target: &str);
     #[wasm_bindgen(js_name = fsRemove)]
     fn fs_remove(path: &str, dir: bool);
 }
@@ -30,5 +32,11 @@ pub fn wrote(path: &Path, bytes: &[u8]) {
 pub fn removed(path: &Path, dir: bool) {
     if fs_enabled() {
         fs_remove(&path.to_string_lossy(), dir);
+    }
+}
+
+pub fn linked(path: &Path, target: &Path) {
+    if fs_enabled() {
+        fs_symlink(&path.to_string_lossy(), &target.to_string_lossy());
     }
 }

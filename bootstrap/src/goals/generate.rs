@@ -93,6 +93,9 @@ impl GoalKind for Generate {
     }
     fn toolset(&self) -> &'static [&'static str] {
         &[
+            "link_asset",
+            "inspect_asset_link",
+            "remove_asset_link",
             "generation_tasks",
             "begin_generation",
             "record_generation",

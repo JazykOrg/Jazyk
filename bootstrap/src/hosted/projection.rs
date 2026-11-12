@@ -12,6 +12,7 @@ pub(super) fn project_projection(
         source: Default::default(),
         files: Default::default(),
         criteria: Default::default(),
+        symlinks: Default::default(),
         graph_generation: 0,
     };
     let contexts: Vec<_> = if w.sets.is_empty() {
@@ -26,6 +27,7 @@ pub(super) fn project_projection(
         let projected = set_projection(files, authored, &p)?;
         combined.source.extend(projected.source);
         combined.files.extend(projected.files);
+        combined.symlinks.extend(projected.symlinks);
         for (id, v) in projected.criteria {
             let id = p
                 .set_id
@@ -59,7 +61,10 @@ fn set_projection(
         if !path.vis_file() {
             return None;
         }
-        let path = crate::vfs::canonicalize(path).ok()?;
+        let resolved = crate::vfs::canonicalize(path).ok()?;
+        if !resolved.starts_with(root()) {
+            return None;
+        }
         Some(path.strip_prefix(root()).ok()?.to_str()?.replace('\\', "/"))
     };
     let internal = |name: &str| {
@@ -177,8 +182,14 @@ fn set_projection(
                 .map_err(|e| e.to_string())
         })
         .collect::<Result<_, _>>()?;
+    let symlinks = candidate
+        .keys()
+        .filter(|path| files.is_symlink(path))
+        .cloned()
+        .collect();
     Ok(Projection {
         source,
+        symlinks,
         files: candidate,
         criteria,
         graph_generation: store.status.generation,

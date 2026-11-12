@@ -59,7 +59,7 @@ fn document_diagnostic_guidance_takes_priority_over_candidate_repair() {
 
 #[test]
 fn explicitly_selected_unbound_requirement_cannot_report_all_passed() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = fixture(out);
     let mut ledger = Ledger::load(out);
@@ -77,7 +77,7 @@ fn explicitly_selected_unbound_requirement_cannot_report_all_passed() {
 
 #[test]
 fn hosted_programmatic_tests_remain_pending_ci_without_false_verdicts() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = fixture(out);
     let before = Ledger::load(out);

@@ -4,7 +4,7 @@ use crate::model::*;
 
 #[test]
 fn task_verification_package_uses_report_evidence() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = fixture(out);
     let mut ledger = Ledger::load(out);
@@ -80,7 +80,7 @@ fn verdict_parse_matches_whole_words_only() {
 
 #[test]
 fn task_reports_update_each_criterion_without_refreshing_its_statement() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (mut store, gs) = fixture(out);
     let mut ledger = Ledger::load(out);
@@ -156,7 +156,7 @@ fn criterion_judgments(store: &Store, values: [&str; 2]) -> Value {
 
 #[test]
 fn llm_criteria_are_packaged_and_recorded_independently_and_atomically() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = multi_llm_fixture(out);
     let package = task(&store, "req:shop-1", &gs).unwrap();
@@ -221,7 +221,7 @@ fn llm_criteria_are_packaged_and_recorded_independently_and_atomically() {
 
 #[test]
 fn fresh_task_report_does_not_launder_an_old_llm_verdict_after_source_changes() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = multi_llm_fixture(out);
     let mut ledger = Ledger::load(out);
@@ -267,7 +267,7 @@ fn fresh_task_report_does_not_launder_an_old_llm_verdict_after_source_changes() 
 
 #[test]
 fn mixed_programmatic_headline_keeps_both_guides_and_independent_evidence() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = multi_llm_fixture(out);
     let mut ledger = Ledger::load(out);
@@ -364,7 +364,7 @@ fn built_in_verifier_judges_every_llm_criterion_and_handles_inconclusive_output(
                 .expect("Exactly one request per criterion"))
         }
     }
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let _command = crate::session_recovery::Scope::enter(None);
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = multi_llm_fixture(out);
@@ -429,7 +429,7 @@ fn a_review_transport_error_stops_before_the_next_criterion() {
             Err("Review model transport closed.".into())
         }
     }
-    let _vfs = crate::vfs::Scope::enter(&Default::default());
+    let _vfs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk/review-error");
     let (store, gs) = multi_llm_fixture(out);
     let before = Ledger::load(out);

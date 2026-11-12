@@ -280,6 +280,16 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
+            name: "inspect_input",
+            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size and persisted processing decision. Use before classify_input, including for PDF inputs whose parsing fails.",
+            parameters: obj(json!({"path":{"type":"string"}}), &["path"]),
+        },
+        ToolDef {
+            name: "classify_input",
+            description: "Classify a selected input as asset (one whole-file blob, no parsing) or document (normal format handler). No user configuration is needed. Supply the exact original-byte SHA-256 and a specific reason. Existing quotes must be relocated or retracted first. Byte and referring-prose changes reopen asset reconciliation; the mode persists.",
+            parameters: obj(json!({"path":{"type":"string"},"mode":{"type":"string","enum":["asset","document"]},"sha256":{"type":"string"},"reason":{"type":"string"}}), &["path","mode","sha256","reason"]),
+        },
+        ToolDef {
             name: "set_coverage",
             description: "Mark a section covered (its content is reflected in the graph) or non-normative (it states no requirements). Setting state to non-normative requires a note saying why.",
             parameters: obj(
@@ -509,6 +519,21 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "link_asset",
+            description: "Create a relative file symlink from selected Source path to selected asset target, both project-relative. Supply target sha256 from inspect_input. Refuses existing destinations, target links, unsafe paths and other entity owners. Record the destination in the generation file manifest.",
+            parameters: obj(json!({"path":{"type":"string"},"target":{"type":"string"},"sha256":{"type":"string"}}), &["path","target","sha256"]),
+        },
+        ToolDef {
+            name: "inspect_asset_link",
+            description: "Inspect a project-relative asset symlink: relative target, resolved input and exact current byte hash. Broken or unsafe links return an explicit error.",
+            parameters: obj(json!({"path":{"type":"string"}}), &["path"]),
+        },
+        ToolDef {
+            name: "remove_asset_link",
+            description: "Remove a Source asset symlink without deleting its target. expectedTarget must equal the stored relative target from inspection. Source and ownership gates apply.",
+            parameters: obj(json!({"path":{"type":"string"},"expectedTarget":{"type":"string"}}), &["path","expectedTarget"]),
+        },
+        ToolDef {
             name: "write_text_file",
             description: "Write one deliverable file atomically. For a small edit, pass old_text matching exactly once and expectedHash from the last read or write; content replaces that literal text. old_text requires expectedHash and cannot combine with append true. An optional expectedHash guards any write mode; a conflict changes nothing. With append true, content goes at the end. Replies include the whole-file hash. path is relative to the deliverable. Source and ownership gates apply to every mode; preserve unrelated content.",
             parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, "old_text": {"type": "string"}, "expectedHash": {"type": "string"}}), &["path", "content"]),
@@ -610,7 +635,7 @@ pub fn catalog() -> Vec<ToolDef> {
     ]
 }
 
-pub const READ_TOOLS: [&str; 9] = [
+pub const READ_TOOLS: [&str; 10] = [
     "load",
     "expand",
     "unload",
@@ -620,6 +645,7 @@ pub const READ_TOOLS: [&str; 9] = [
     "get_entity",
     "get_view",
     "diagnostics",
+    "inspect_input",
 ];
 
 // The calls without side effects whose answer the repeated-call guard recomputes before
@@ -639,7 +665,7 @@ pub(super) const REANSWERABLE_TOOLS: [&str; 10] = [
 
 // The graph write tools, each all or nothing at staging.
 // Mirrors docs/compiler/tools.md#write-tools.
-pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
+pub const GRAPH_WRITE_TOOLS: [&str; 22] = [
     "upsert_entity",
     "update_entity",
     "delete_entity",
@@ -652,6 +678,7 @@ pub const GRAPH_WRITE_TOOLS: [&str; 21] = [
     "upsert_criterion",
     "update_criterion",
     "delete_criterion",
+    "classify_input",
     "set_coverage",
     "report_diagnostic",
     "update_diagnostic",
@@ -702,7 +729,14 @@ pub const VERIFY_TOOLS: [&str; 4] = [
 ];
 
 // In-process only: a generation turn's file tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 3] = ["read_text_file", "write_text_file", "list_files"];
+pub const FILE_TOOLS: [&str; 6] = [
+    "read_text_file",
+    "write_text_file",
+    "list_files",
+    "link_asset",
+    "inspect_asset_link",
+    "remove_asset_link",
+];
 
 // The view tools, served beside the write tools. See docs/compiler/tools.md#view-tools.
 pub const VIEW_TOOLS: [&str; 3] = ["upsert_view", "update_view", "delete_view"];

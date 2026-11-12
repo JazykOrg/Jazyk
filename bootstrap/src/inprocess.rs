@@ -505,7 +505,7 @@ mod ledger_failure_tests {
 
     #[test]
     fn verification_runner_can_read_implementing_files_without_file_or_matcher_writes() {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         crate::vfs::create_dir_all("/project/.jazyk").unwrap();
         crate::vfs::create_dir_all("/project/src").unwrap();
         crate::vfs::write(

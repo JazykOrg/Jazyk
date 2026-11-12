@@ -368,3 +368,42 @@ impl ToolSession {
         Ok(json!({"set": true}))
     }
 }
+
+impl ToolSession {
+    pub(super) fn classify_input_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let doc = Self::str_arg(args, "path")?;
+        let decision = InputDecision {
+            mode: Self::str_arg(args, "mode")?,
+            sha256: Self::str_arg(args, "sha256")?,
+            reason: Self::str_arg(args, "reason")?,
+        };
+        if !self.scope.goals.is_empty() {
+            let owned = self.scope.reconcile_scopes().iter().any(|goal| {
+                let Some(source) = goal.doc.as_deref() else { return false };
+                source == doc || self.snapshot.docs.get(source).is_some_and(|record| {
+                    let text = crate::input::projection_text(&record.sections);
+                    crate::input::reference_links(source,&text).iter().any(|(href,_)| {
+                        matches!(crate::gen::assets::target_input(source,href),crate::gen::assets::Target::Local(path) if path == doc)
+                    })
+                })
+            });
+            if !owned {
+                return Err(ToolError::new(
+                    "out-of-scope",
+                    "classify the current reconciliation document or an input it references".into(),
+                ));
+            }
+        }
+        let preview = &self.snapshot;
+        let (_, sections) = preview
+            .classified_input(&doc, &decision, false)
+            .map_err(|e| ToolError::new("input-classification", e))?;
+        self.stage(Op::ClassifyInput {
+            doc: doc.clone(),
+            decision: decision.clone(),
+        })?;
+        Ok(
+            json!({"path":doc,"classification":decision,"sections":sections.keys().collect::<Vec<_>>(),"notice":"Classification replaces section coverage. Reconcile the replacement input after commit."}),
+        )
+    }
+}

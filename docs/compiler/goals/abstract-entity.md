@@ -346,6 +346,8 @@ The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `abstract-entity` [toolset](../tools.md#toolsets): the
 [read tools](../tools.md#read-tools) (`load`, `expand`, `unload`, `graph_status`, `search`, `read_section`, `get_entity`, `get_view`, `diagnostics`), the [goal tools](../tools.md#goal-tools) (`mark_goal_done`, `mark_goal_failed`, `load_skill`, `done`),
 `upsert_entity`, `update_entity`, `upsert_requirement`, `update_requirement`, the

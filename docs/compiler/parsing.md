@@ -49,6 +49,37 @@ including whole-file envelopes for opaque inputs.
   identifies the exact original bytes. An empty prose document yields `empty-file`;
   an empty blob still requires a decision.
 
+## Asset classification
+
+A model may classify any selected input as an asset with `classify_input`.
+An asset remains in the document set at its existing path. Classification is a
+persistent compiler decision, not a configuration rule or a semantic node kind.
+The decision records the path, processing mode (`asset` or `document`), original
+byte SHA-256, and a specific reason under `graph/decisions/inputs/`.
+
+Check the decision before invoking a format handler. An asset has one `blob`
+section at `/`, even when its extension has a handler. Do not extract PDF text,
+subsections, or quotes from an asset. Referring prose states its obligations.
+The existing whole-file coverage and incoming-reference rules apply.
+
+Byte changes retain the processing mode and reopen whole-file reconciliation.
+Referring prose changes also reopen it. A model can reconsider the classification
+without user configuration. An unchanged asset creates no work. A classification
+reason appears in the whole-file envelope and in the tool response.
+
+A reconciliation session can classify its own document or a selected input linked
+from its document. Conversational graph writes can classify selected inputs too.
+The tool checks the current byte hash. A parsing failure does not prevent
+classification through referring prose or conversational tools.
+
+Classification replaces the section tree and clears its coverage. The replacement
+sections need reconciliation. Before changing a document to an asset, relocate or
+retract every fact quoting that document. These mutations can share the
+classification changeset. The commit applies classification after the fact
+mutations and rejects a change that would strand quoted provenance. Classification never deletes facts implicitly.
+Switching back to `document` requires a successful projection through its handler;
+a file without a handler keeps its normal opaque treatment.
+
 ## Section tree
 
 A heading is one to six `#` followed by a space, a tab, or the end of the line,

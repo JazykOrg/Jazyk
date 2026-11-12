@@ -1051,3 +1051,32 @@ is open. It validates the same fields as a compiler criterion update and keeps
 existing evidence links. The call requires at least one field to change. With an open batch, the update stays staged behind its
 gates. `edit_fact` names its supported node kinds explicitly and directs criterion
 edits to `update_criterion`. No compile batch is needed solely to edit a criterion.
+
+## Input classification
+
+`inspect_input` returns the byte hash, size, and classification of a selected
+input without invoking a parser.
+
+`classify_input` takes `path` (project-relative), `mode` (`asset` or `document`),
+`sha256` (the original byte digest), and `reason`. It stages an atomic compiler
+decision and input-tree replacement. Its response includes the decision and the
+new reconciliation work. See [asset classification](parsing.md#asset-classification).
+
+## Asset links
+
+`link_asset` creates a relative file symlink at a Source `path` to an asset `target`.
+Both arguments are project-relative. `sha256` guards the target bytes. The target
+must be a selected, classified or opaque asset in this set. Source selection,
+entity ownership, protected-path, and project-boundary gates apply. A destination
+must not exist. The tool never overwrites an existing file or link.
+
+`inspect_asset_link` returns the stored relative target, resolved project path,
+current byte hash, and availability. `remove_asset_link` removes only the link,
+with `expectedTarget` guarding the stored relative target. It never deletes the
+asset. Text writes refuse a symlink or a path resolving into input documents.
+
+Only direct relative file links are supported. Directory links, target link chains,
+cycles, missing targets, protected paths, and external or nested-project targets
+are rejected. Target changes remain asset input changes and invalidate dependent
+generation evidence. Native filesystems keep actual symlinks. Virtual filesystems keep symlink entries
+with relative targets. No separate project file records link targets.

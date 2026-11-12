@@ -144,7 +144,14 @@ pub(crate) fn validate_criteria_file(
 
 pub fn hash_file(path: &Path) -> String {
     crate::vfs::read(path)
-        .map(|b| hash_hex(&String::from_utf8_lossy(&b)))
+        .map(|b| {
+            if let Ok(target) = crate::vfs::read_link(path) {
+                return crate::task_runtime::digest(
+                    &[target.to_string_lossy().as_bytes(), b"\0", &b].concat(),
+                );
+            }
+            hash_hex(&String::from_utf8_lossy(&b))
+        })
         .unwrap_or_default()
 }
 

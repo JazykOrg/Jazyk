@@ -203,7 +203,7 @@ mod tests {
         assert_eq!(agent_rounds_from(Some("0")), 1);
         assert_eq!(agent_rounds_from(Some("2")), 2);
         assert_eq!(agent_rounds_from(Some("72")), 72);
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         assert_eq!(agent_max_rounds(), AGENT_MAX_ROUNDS);
         assert_eq!(SESSION_ROUNDS, 24, "graph batch sizing is independent");
     }

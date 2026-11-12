@@ -106,7 +106,7 @@ impl Fixture {
             }
         });
         Self {
-            files,
+            files: files.into(),
             runtime,
             ready,
             reads,
@@ -636,7 +636,7 @@ fn task_input_snapshots_exclude_nested_projects_and_private_state_on_both_filesy
             .contains("Protected output"));
     }
     {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         seed_and_check(Path::new("/project"));
     }
     let root = std::env::temp_dir().join(format!(

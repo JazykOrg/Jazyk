@@ -17,6 +17,7 @@ pub mod agent_workflows;
 pub mod agents_md;
 pub mod align;
 pub mod answer;
+pub mod asset_links;
 pub mod bind;
 pub mod board;
 pub mod card;
@@ -34,6 +35,7 @@ pub mod documents;
 pub mod edit_watch;
 pub mod effects;
 pub mod feedback;
+pub mod file_tree;
 pub mod gen;
 pub mod goals;
 pub mod harness;
@@ -205,3 +207,6 @@ mod site_schemas {
 pub mod asciidoc;
 
 pub mod rst;
+
+#[cfg(test)]
+mod asset_tests;

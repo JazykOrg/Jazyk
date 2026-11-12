@@ -313,14 +313,19 @@ pub fn snapshot(root: &Path) -> Result<BTreeMap<String, String>, String> {
             if relative != ".jazyk" && !input_allowed(&relative) {
                 continue;
             }
-            #[cfg(not(target_arch = "wasm32"))]
-            if !crate::vfs::is_scoped()
-                && std::fs::symlink_metadata(&path)
-                    .map_err(|e| e.to_string())?
-                    .file_type()
-                    .is_symlink()
-            {
-                continue;
+            if crate::vfs::is_symlink(&path) {
+                let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
+                let selected_source = workspace
+                    .sets
+                    .iter()
+                    .filter_map(|set| workspace.resolve(Some(&set.id)).ok())
+                    .any(|project| {
+                        crate::gen::GenSettings::resolve(&project).allows_source(&relative)
+                    });
+                if !selected_source {
+                    continue;
+                }
+                crate::asset_links::target(root, &relative)?;
             }
             if entry.is_dir() {
                 if crate::vfs::exists(&path.join(".jazyk/jazyk.toml")) {

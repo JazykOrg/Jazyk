@@ -1,11 +1,10 @@
 ---
-purpose: >-
-  Instruction fragment: Claim one goal of the batch resolved. justification is mandatory
-  and concise: one or two sentences of why the gate holds, never an essay. evidence
-  carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict:
-  duplicate|contradiction|consistent, carried_by?}.
+workflow: >-
+  These are descriptions of tools available to the model while it reads and edits the
+  project graph. The graph stores concepts mentioned in the docs, requirements stated
+  about them, supporting evidence, diagrams, and unresolved findings. The description
+  tells the model what an operation means and how to supply its arguments.
 used_by:
   - "bootstrap/src/tools/catalog.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 Claim one goal of the batch resolved. justification is mandatory and concise: one or two sentences of why the gate holds, never an essay. evidence carries what the kind's gate reads, one shape per kind: rejudge-pair {verdict: duplicate|contradiction|consistent, carried_by?}; review-entity {definition: current|refreshed, lookalikes: [{id, verdict: merged|separate, reason}], unreferenced: [{id, verdict: referenced|word-match, reason}], diagnostics: [{id, verdict: stands|resolved|refiled}], parts: [{id, verdict: parented|edge-fixed|kept, reason}], lint: [{rule, verdict: clean|filed}]} (one entry per lookalike, unreferenced statement, open diagnostic, and composition part the goal's hints list, and one lint entry per numbered rule on the ## Project lint line; omit the lists when the hints and the project list none, and a diagnostic staged in this batch is its filing goal's evidence, not an entry here, while one committed by an earlier batch is listed and takes an entry); declare-edges "declared" or "not-structural"; dedupe-candidates "merged" or "separate"; curate-view [{id, verdict: added|excluded}] per matched node; conform-instance {attributes: [{name, verdict: conforms|missing|nonconformant}], links: [{to, verdict, carried_by?}]} (one per declared attribute, inherited included, and per link); derive-criteria {requirements: [{id, criteria: [ids], verdict: complete|stated-only|open-question}]} (an object, one entry per requirement the goal listed); other kinds read the staged work alone. The claim is validated against the goal kind's gate over the store plus the staged work: a listed item without a verdict is refused as *-unjudged, a verdict the staged work does not carry as *-unbacked, each naming the repair.

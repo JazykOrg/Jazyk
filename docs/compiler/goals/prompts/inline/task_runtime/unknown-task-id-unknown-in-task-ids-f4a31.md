@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: Unknown task ID '{unknown}' in task_ids.
+workflow: >-
+  A project can save commands such as its test suite as named tasks. Jazyk runs those
+  commands in an isolated environment and retains their logs, outputs, and test reports.
+  These messages validate task settings or explain how to inspect a retained run.
 used_by:
   - "bootstrap/src/task_runtime.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 Unknown task ID '{unknown}' in task_ids. Omit task_ids for the full list.

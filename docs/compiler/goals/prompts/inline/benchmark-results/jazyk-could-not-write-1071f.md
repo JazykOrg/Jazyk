@@ -1,8 +1,8 @@
 ---
-purpose: >-
-  Instruction fragment: jazyk: could not write {}: {}.
+workflow: >-
+  The benchmark command saves its measured model results on this machine. This message
+  reports a failure to write those results; it is output from the benchmark command.
 used_by:
   - "bootstrap/src/benchmark/results.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 jazyk: could not write {}: {}

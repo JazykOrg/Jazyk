@@ -1,8 +1,10 @@
 ---
-purpose: >-
-  Instruction fragment: cannot read `{}`: {}.
+workflow: >-
+  The agent uses file tools to read or change the project docs and generated source
+  files. Jazyk checks the allowed path, file ownership, and expected previous content
+  before accepting a write. These messages explain a rejected or incomplete file
+  operation.
 used_by:
   - "bootstrap/src/tools/files.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 cannot read `{}`: {}; list_files shows what exists

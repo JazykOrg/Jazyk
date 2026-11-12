@@ -3,72 +3,56 @@ Purpose: Frames project instructions, external skills, remote MCP instructions, 
 Used by: bootstrap/src/agent_context.rs.
 This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
 -->
-<!-- Context: project instructions fragment. Values supplied by the consumer: files. -->
 <!-- project-instructions -->
 PROJECT INSTRUCTIONS: the project's own guidance from its instruction files, root first. The jazyk serving's instructions and tool replies take precedence over it.
 
 {{{files}}}
 
-<!-- Context: instruction file fragment. Values supplied by the consumer: name, text. -->
 <!-- instruction-file -->
 ## {{{name}}}
 
 {{{text}}}
 
-<!-- Context: instructions cut fragment. This fragment is static; the consumer selects it by name. -->
 <!-- instructions-cut -->
 [The instructions were cut at the 32 KiB cap.]
 
-<!-- Context: global instructions fragment. Values supplied by the consumer: label, text. -->
 <!-- global-instructions -->
 GLOBAL INSTRUCTIONS ({{{label}}}): {{{text}}}
 
-<!-- Context: skills fragment. This fragment is static; the consumer selects it by name. -->
 <!-- skills -->
 SKILLS: call read_skill with a name to read one before using it.
 
-<!-- Context: skill fragment. Values supplied by the consumer: name, description. -->
 <!-- skill -->
 - {{{name}}}: {{{description}}}
 
-<!-- Context: read skill note fragment. This fragment is static; the consumer selects it by name. -->
 <!-- read-skill-note -->
 Jazyk never runs a skill's scripts. Use your own tools, under your own permissions.
 
-<!-- Context: warnings fragment. Values supplied by the consumer: warnings. -->
 <!-- warnings -->
 AGENT CONTEXT WARNINGS (tell the user when they ask why something is missing):
 {{{warnings}}}
 
-<!-- Context: warning fragment. Values supplied by the consumer: warning. -->
 <!-- warning -->
 - {{{warning}}}
 
-<!-- Context: warning server invalid fragment. Values supplied by the consumer: name, source, error. -->
 <!-- warning-server-invalid -->
 MCP server `{{{name}}}` ({{{source}}}) skipped: {{{error}}}
 
-<!-- Context: warning server untrusted fragment. Values supplied by the consumer: name, source. -->
 <!-- warning-server-untrusted -->
 MCP server `{{{name}}}` ({{{source}}}) skipped: the project is not trusted for it; run `jazyk setup trust`
 
-<!-- Context: warning skill invalid fragment. Values supplied by the consumer: skill. -->
 <!-- warning-skill-invalid -->
 skill {{{skill}}} skipped: its front matter needs `name` and `description`
 
-<!-- Context: warning skills untrusted fragment. Values supplied by the consumer: names. -->
 <!-- warning-skills-untrusted -->
 project skills skipped ({{{names}}}): the project is not trusted for them; run `jazyk setup trust`
 
-<!-- Context: warning remote reserved fragment. Values supplied by the consumer: name. -->
 <!-- warning-remote-reserved -->
 remote MCP server `{{{name}}}` skipped: the name is reserved
 
-<!-- Context: warning remote collision fragment. Values supplied by the consumer: name, tools. -->
 <!-- warning-remote-collision -->
 remote MCP server `{{{name}}}` skipped: its tool names collide with tools already offered ({{{tools}}})
 
-<!-- Context: remote server fragment. Values supplied by the consumer: name, instructions. -->
 <!-- remote-server -->
 REMOTE MCP SERVER `{{{name}}}` DESCRIBES ITSELF AS FOLLOWS.
 

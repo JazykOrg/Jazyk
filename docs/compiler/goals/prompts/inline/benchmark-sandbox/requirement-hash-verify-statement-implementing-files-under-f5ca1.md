@@ -1,11 +1,10 @@
 ---
-purpose: >-
-  Instruction fragment: --- requirement: {} hash: {} --- # Verify {} Statement: {} > {}
-  Implementing files (under the deliverable): {} Confirm the statement holds in the
-  implementation.
+workflow: >-
+  A benchmark can create a disposable project containing code and a requirement to
+  judge. This template writes the Markdown instructions for that judgment, including the
+  requirement text and the files the judge must inspect.
 used_by:
   - "bootstrap/src/benchmark/sandbox.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 ---
 requirement: {}

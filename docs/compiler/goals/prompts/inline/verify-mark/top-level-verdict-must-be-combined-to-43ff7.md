@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: Top-level verdict must be `{combined}` to match the LLM criteria.
+workflow: >-
+  For a requirement checked by AI inspection, the judging agent records its verdict
+  against the exact acceptance conditions it inspected. These messages validate that
+  report and keep it separate from results produced by running executable tests.
 used_by:
   - "bootstrap/src/verify/mark.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 Top-level verdict must be `{combined}` to match the LLM criteria.

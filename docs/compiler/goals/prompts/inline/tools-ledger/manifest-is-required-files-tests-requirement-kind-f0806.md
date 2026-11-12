@@ -1,9 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: manifest is required: {files: [...], tests: [{requirement, kind,
-  label, artifact, name, run}]}.
+workflow: >-
+  The agent records which generated files implement each documented requirement and how
+  each requirement is tested. These tools save that accounting, called the generation
+  and verification ledger. These messages explain what a valid recording must include.
 used_by:
   - "bootstrap/src/tools/ledger.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}

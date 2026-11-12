@@ -3,7 +3,6 @@ Purpose: MCP initialization, capability framing, next-step guidance, and workflo
 Used by: bootstrap/src/mcp/server.rs.
 This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
 -->
-<!-- Context: initialize fragment. Values supplied by the consumer: policy, capabilities. -->
 <!-- initialize -->
 {{{policy}}}
 
@@ -11,19 +10,15 @@ This is a fragment bundle: marker names are selected by code, not a sequence of 
 
 {{{capabilities}}}
 
-<!-- Context: project unloadable fragment. Values supplied by the consumer: config, error. -->
 <!-- project-unloadable -->
 The project file `{{{config}}}` does not load: {{{error}}}. Tools that need the project refuse until it is repaired; edit the file with your own tools.
 
-<!-- Context: toolsets fragment. Values supplied by the consumer: modes. -->
 <!-- toolsets -->
 Served toolsets: {{{modes}}}. The actual tools/list catalog is authoritative.
 
-<!-- Context: initialized fragment. This fragment is static; the consumer selects it by name. -->
 <!-- initialized -->
 The project is already initialized. There is nothing to scaffold.
 
-<!-- Context: uninitialized fragment. This fragment is static; the consumer selects it by name. -->
 <!-- uninitialized -->
 NO PROJECT HERE: there is no jazyk.toml or graph yet.
 
@@ -31,19 +26,15 @@ For an authorized setup, use init_project if served, then reopen the conversatio
 
 Inspection and workflow skill tools need no graph.
 
-<!-- Context: tab fragment. This fragment is static; the consumer selects it by name. -->
 <!-- tab -->
 This serving runs in a browser tab without a shell. Binding, generation, and verification are not served here.
 
-<!-- Context: writer build note fragment. This fragment is static; the consumer selects it by name. -->
 <!-- writer-build-note -->
 Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets.
 
-<!-- Context: graph write fragment. This fragment is static; the consumer selects it by name. -->
 <!-- graph-write -->
 Write tools are enabled for manual graph surgery; each call commits as its own changeset.
 
-<!-- Context: workflow fragment. This fragment is static; the consumer selects it by name. -->
 <!-- workflow -->
 Read list_jazyk_skills and read_jazyk_skill for the requested workflow.
 
@@ -51,70 +42,54 @@ Active begin_* packages and tool gates supply specific scope, instructions, and 
 
 Use report_feedback for wrong or confusing Jazyk instructions or tools.
 
-<!-- Context: reader fragment. This fragment is static; the consumer selects it by name. -->
 <!-- reader -->
 This serving can only read the project. No tool here changes documents or the graph. Binding, generation, verification, shell execution, and publication are unavailable.
 
-<!-- Context: tab build note fragment. This fragment is static; the consumer selects it by name. -->
 <!-- tab-build-note -->
 You cannot start a build: the Build button at the top of the page builds the documents into the graph. When asked to build, say so.
 
-<!-- Context: begin goals next fragment. This fragment is static; the consumer selects it by name. -->
 <!-- begin-goals-next -->
 load what the goals name, stage findings, then done with a one-line summary and final goals claims ({goal, justification, evidence?}) in the same call
 
-<!-- Context: compile incomplete fragment. Values supplied by the consumer: failed. -->
 <!-- compile-incomplete -->
 compilation incomplete: {{{failed}}} failed goal(s) stand; a change on a goal's subject or a human retry from the board reopens it, and jazyk explain <goal> shows the reason
 
-<!-- Context: compile converged fragment. This fragment is static; the consumer selects it by name. -->
 <!-- compile-converged -->
 compilation converged
 
-<!-- Context: optional ready fragment. Values supplied by the consumer: count. -->
 <!-- optional-ready -->
 {{{count}}} optional goal(s) stay claimable; beginNext stops at convergence, so begin_goals takes the
 next batch when you want it, and stopping here is right when your instruction was to converge (the
 verdict does not wait for them)
 
-<!-- Context: generation ready fragment. Values supplied by the consumer: count. -->
 <!-- generation-ready -->
 {{{count}}} generation goal(s) ready (generation_tasks lists them)
 
-<!-- Context: nothing pending fragment. This fragment is static; the consumer selects it by name. -->
 <!-- nothing-pending -->
 nothing pending
 
-<!-- Context: next batch fragment. Values supplied by the consumer: batch. -->
 <!-- next-batch -->
 begin_goals claims the next batch ({{{batch}}})
 
-<!-- Context: no batch ready fragment. This fragment is static; the consumer selects it by name. -->
 <!-- no-batch-ready -->
 no goal is ready; goals lists the board with blockedBy per goal
 
-<!-- Context: began note fragment. This fragment is static; the consumer selects it by name. -->
 <!-- began-note -->
 the next batch is claimed; if this commit was your last, abandon_goals releases it untouched and leaves no trace
 
-<!-- Context: ledger nothing owed fragment. This fragment is static; the consumer selects it by name. -->
 <!-- ledger-nothing-owed -->
 nothing owed
 
-<!-- Context: ledger gated fragment. Values supplied by the consumer: begin. -->
 <!-- ledger-gated -->
 every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {{{begin}}} claims one
 
-<!-- Context: ledger ready fragment. Values supplied by the consumer: begin. -->
 <!-- ledger-ready -->
 {{{begin}}} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal
 
-<!-- Context: ledger stale fragment. Values supplied by the consumer: count. -->
 <!-- ledger-stale -->
 {{{count}}} row(s) went stale since their last run (a test or implementation file changed); run_tests
 re-baselines them, and any generation work they hold returns to this list afterwards
 
-<!-- Context: source mapping fragment. This fragment is static; the consumer selects it by name. -->
 <!-- source-mapping -->
 The document set has no source mapping.
 
@@ -127,70 +102,53 @@ Reload goals to resolve criteria, then generation_tasks.
 
 An empty generation list is not a completed deliverable.
 
-<!-- Context: status next goals fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-goals -->
 goals lists the board
 
-<!-- Context: status next binding fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-binding -->
 binding_tasks lists the work
 
-<!-- Context: status next generation fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-generation -->
 generation_tasks lists the work
 
-<!-- Context: status next verification fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-verification -->
 verification_tasks lists the work
 
-<!-- Context: status next gated fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-gated -->
 work is gated; a release (`jazyk release` or the GUI) opens it, and this poll returns when it lands
 
-<!-- Context: status next none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- status-next-none -->
 nothing to do
 
-<!-- Context: released generate fragment. This fragment is static; the consumer selects it by name. -->
 <!-- released-generate -->
 generation_tasks, then verification_tasks; binding_tasks is available for explicit inspection
 
-<!-- Context: released compile fragment. This fragment is static; the consumer selects it by name. -->
 <!-- released-compile -->
 goals
 
-<!-- Context: decompile none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- decompile-none -->
 no unclaimed files; every deliverable file is named by a binding
 
-<!-- Context: decompile next fragment. This fragment is static; the consumer selects it by name. -->
 <!-- decompile-next -->
 begin_decompile on a released scope; gated scopes await `jazyk decompile` or the GUI
 
-<!-- Context: init next fragment. This fragment is static; the consumer selects it by name. -->
 <!-- init-next -->
 edit docs/README.md, then compile
 
-<!-- Context: benchmark scored fragment. This fragment is static; the consumer selects it by name. -->
 <!-- benchmark-scored -->
 all cases scored; call benchmark_report with an honest model name
 
-<!-- Context: benchmark begin fragment. This fragment is static; the consumer selects it by name. -->
 <!-- benchmark-begin -->
 begin_case {case: <name>} claims that case; with no name, the first pending one
 
-<!-- Context: benchmark pending fragment. Values supplied by the consumer: count. -->
 <!-- benchmark-pending -->
 {{{count}}} case(s) pending; begin_case claims the next
 
-<!-- Context: benchmark case fragment. This fragment is static; the consumer selects it by name. -->
 <!-- benchmark-case -->
 do the work, then finish_case
 
-<!-- Context: benchmark verify fragment. This fragment is static; the consumer selects it by name. -->
 <!-- benchmark-verify -->
 Judge whether the implementing files satisfy the statement. Read them with your own tools. finish_case with verdict pass or fail and one-line evidence.
 
-<!-- Context: benchmark generate fragment. This fragment is static; the consumer selects it by name. -->
 <!-- benchmark-generate -->
 write real files into deliverableDir with your own tools; record_generation and run_tests act on this sandbox while the case is open

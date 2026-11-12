@@ -1,9 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: a programmatic test needs test.run: a saved task:<id> with JUnit
-  evidence or a legacy command whose exit code supplies the verdict.
+workflow: >-
+  Before Jazyk generates missing code, it tries to connect each documented requirement
+  to existing implementation and tests. That connection is called a binding. These
+  messages guide or validate the record of which files and tests support a requirement.
 used_by:
   - "bootstrap/src/bind.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 a programmatic test needs test.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict

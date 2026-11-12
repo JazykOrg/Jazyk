@@ -1,0 +1,1 @@
+Stopped after {} consecutive tool errors; inspect the failed calls before retrying

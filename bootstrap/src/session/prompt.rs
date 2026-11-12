@@ -4,33 +4,45 @@ use super::*;
 
 // The fixed session contract; every kind-specific instruction arrives as data inside
 // the assembled prompt. Mirrors docs/compiler/sessions.md#the-prompt.
-pub(super) const AGENT_CONTRACT: &str =
-    include_str!("../../../docs/compiler/goals/prompts/agent-contract.md");
+pub(super) const AGENT_CONTRACT: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/session/agent-contract.md.mustache"
+));
 
 // The feedback contract, filled into the contract's `{feedback}` slot.
-pub(super) const FEEDBACK_NOTE: &str =
-    include_str!("../../../docs/compiler/goals/prompts/feedback-note.md");
+pub(super) const FEEDBACK_NOTE: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/session/feedback-note.md"
+));
 
 // The per-kind gate lines and the prompt's block framing.
 // Mirrors docs/compiler/sessions.md#payload-files.
 pub(crate) const GATES: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../../docs/compiler/goals/prompts/gates.md"
+    concat!(env!("OUT_DIR"), "/payloads/goals/prompts/session/gates.md")
 ));
-pub(crate) const BLOCKS: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../../docs/compiler/goals/prompts/session-blocks.md"
-));
+pub(crate) const BLOCKS: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/session/session-blocks.md.mustache"
+    )));
 
 // The protocol line; {target} is the batch id.
-const WORKER_PROTOCOL: &str =
-    include_str!("../../../docs/compiler/goals/prompts/worker-protocol.md");
+const WORKER_PROTOCOL: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/session/worker-protocol.md.mustache"
+));
 // A session run in process with its batch already open: no claim, no begin_goals.
 // Mirrors docs/compiler/sessions.md#the-prompt.
-const OPEN_BATCH_PROTOCOL: &str =
-    include_str!("../../../docs/compiler/goals/prompts/open-batch-protocol.md");
+const OPEN_BATCH_PROTOCOL: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/session/open-batch-protocol.md.mustache"
+));
 // The protocol line for a prompt returned by begin_goals itself: the batch is already
 // claimed when the agent reads it. Mirrors docs/compiler/sessions.md#the-prompt.
-const SERVING_PROTOCOL: &str =
-    include_str!("../../../docs/compiler/goals/prompts/serving-protocol.md");
+const SERVING_PROTOCOL: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/session/serving-protocol.md.mustache"
+));
 
 // Which side of the claim the prompt is read from: ahead of it (an ACP session prompt,
 // a preview) or after it (the instructions a standalone MCP serving returns).

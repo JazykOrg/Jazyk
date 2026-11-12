@@ -4,35 +4,38 @@ use super::*;
 pub const SKILLS: [(&str, &str); 8] = [
     (
         "extraction",
-        include_str!("../../../docs/compiler/skills/extraction.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/extraction.md")),
     ),
     (
         "edges",
-        include_str!("../../../docs/compiler/skills/edges.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/edges.md")),
     ),
     (
         "judgment",
-        include_str!("../../../docs/compiler/skills/judgment.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/judgment.md")),
     ),
     (
         "criteria",
-        include_str!("../../../docs/compiler/skills/criteria.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/criteria.md")),
     ),
     (
         "flow-views",
-        include_str!("../../../docs/compiler/skills/flow-views.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/flow-views.md")),
     ),
     (
         "structural-views",
-        include_str!("../../../docs/compiler/skills/structural-views.md"),
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/structural-views.md"
+        )),
     ),
     (
         "abstraction",
-        include_str!("../../../docs/compiler/skills/abstraction.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/abstraction.md")),
     ),
     (
         "conformance",
-        include_str!("../../../docs/compiler/skills/conformance.md"),
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/conformance.md")),
     ),
 ];
 

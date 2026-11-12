@@ -1,0 +1,1 @@
+Runner {run} also covers tests outside the selection. Select their containing folder or configure separate scoped tasks.

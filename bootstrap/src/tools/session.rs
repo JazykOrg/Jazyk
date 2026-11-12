@@ -399,7 +399,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "mutation-budget",
                 format!(
-                    "the changeset's mutation budget ({}) is exhausted; mark the goals whose work landed, call done, and the rest continue in the next batch",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-session/the-changeset-s-mutation-budget-is-exhausted-5319c.md"
+                    )),
                     self.mutation_limit
                 ),
             ));

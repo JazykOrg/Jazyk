@@ -38,9 +38,11 @@ source-layout = "repository"
 [lib]''', 1)
     manifest = manifest.replace('edition = "2021"', '''edition = "2021"
 readme = "README.md"
-include = ["vendor/rst-grammar/**", "editors/**", "bootstrap/src/**", "bootstrap/examples/**", "bootstrap/fixtures/**", "bootstrap/tests/**", "bootstrap/editors/**", "docs/**", "runtime-worker/**", "LICENSE", "README.md"]''', 1)
+include = ["build.rs", "prompt_parser.rs", "vendor/rst-grammar/**", "editors/**", "bootstrap/src/**", "bootstrap/examples/**", "bootstrap/fixtures/**", "bootstrap/tests/**", "bootstrap/editors/**", "docs/**", "runtime-worker/**", "LICENSE", "README.md"]''', 1)
     (output / 'Cargo.toml').write_text(manifest)
     shutil.copy2(ROOT / 'bootstrap/Cargo.lock', output / 'Cargo.lock')
+    for name in ('build.rs', 'prompt_parser.rs'):
+        shutil.copy2(ROOT / 'bootstrap' / name, output / name)
     shutil.copy2(ROOT / 'LICENSE', output / 'LICENSE')
     (output / 'README.md').write_text('''# Jazyk
 

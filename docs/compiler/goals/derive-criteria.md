@@ -98,7 +98,7 @@ the source section of each listed requirement in full, once per section: the val
 criterion needs live there, and a session that had to fetch them spent one to nine
 `read_section` rounds before its first criterion (every criteria session of one f2
 run did). A section past the loaded set's budget arrives as a handle. The contract paragraph is
-`goals/prompts/derive-criteria.md`.
+`goals/prompts/goals/derive-criteria.md`.
 
 ## Tools
 

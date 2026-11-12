@@ -1,0 +1,1 @@
+provenance dropped: the call carried {} and a derivation; a fact the documents state keeps its quote as its one provenance, so send `provenance` only for what no sentence states

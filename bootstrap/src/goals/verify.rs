@@ -102,6 +102,9 @@ impl GoalKind for Verify {
         ledger_violation(cx, crate::verify::gate(cx.store, cx.gen, &cx.goal.target))
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/verify.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/verify.md"
+        ))
     }
 }

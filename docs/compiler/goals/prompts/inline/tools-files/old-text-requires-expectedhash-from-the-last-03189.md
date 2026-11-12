@@ -1,0 +1,1 @@
+old_text requires expectedHash from the last read or write and cannot combine with append: true; no bytes changed

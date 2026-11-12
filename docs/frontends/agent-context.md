@@ -17,7 +17,7 @@ name.
 
 | Layer | Native | Hosted |
 |---|---|---|
-| Built in | the [agent prompt](../compiler/goals/prompts/embedded-agent.md) and the session's jazyk serving | the same |
+| Built in | the [agent prompt](../compiler/goals/prompts/runtime/embedded-agent.md) and the session's jazyk serving | the same |
 | Global | `~/.jazyk/AGENTS.md`, `[mcp.servers]` in `~/.jazyk/config.toml`, `~/.agents/skills`, `~/.jazyk/skills` | the host's account and organization settings |
 | Project | the files below, read from the working tree | the same files, read from the workspace snapshot |
 | Client | the servers the ACP client names in `session/new` | none |
@@ -195,7 +195,7 @@ Jazyk keeps one marked section in the project's `AGENTS.md`:
 
 Immediately after the opening marker, a Markdown comment identifies Jazyk as
 the writer and names the config opt-out. The remaining text is the shared
-[main policy template](../compiler/goals/prompts/agent-main.mustache), rendered
+[main policy template](../compiler/goals/prompts/conversation/agent-main.md.mustache), rendered
 with the project's document sets. MCP, ACP, and Cloud use the same policy.
 [Workflow skills](./agent-workflows.md) carry procedures loaded on demand.
 Active `begin_*` packages and tool gates supply the current scope and evidence.

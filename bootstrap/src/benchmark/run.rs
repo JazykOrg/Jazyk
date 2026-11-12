@@ -48,7 +48,7 @@ pub fn run_goal(llm: &Llm, root: &std::path::Path, goal_id: &str, force: bool) -
     crate::vfs::remove_dir_all(&tmp).ok();
     if let Err(e) = copy_tree(root, &tmp) {
         eprintln!(
-            "jazyk: cannot copy {} into a sandbox: {}",
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-run/jazyk-cannot-copy-into-a-sandbox-9610e.md")),
             root.display(),
             e
         );
@@ -279,7 +279,10 @@ fn run_traced_filtered(
     // One tiny completion before grading: a dead or misrouted endpoint fails one
     // probe, not every benchmark case.
     if let Err(e) = llm.chat(
-        "Reply with the single word: ok",
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/benchmark-run/reply-with-the-single-word-ok-80284.md"
+        )),
         "ok?",
         "bench preflight",
         "preflight",
@@ -383,7 +386,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
                                     true,
                                     &judge_trace,
                                 ) {
-                                    fail = Some(format!("judge run failed: {}", e));
+                                    fail = Some(format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-run/judge-run-failed-7edbe.md")), e));
                                 }
                             }
                             Err(e) => fail = Some(format!("judge runner failed: {}", e)),
@@ -640,7 +643,7 @@ verdict: unmeasured  the endpoint never produced a completion ({})",
     // An unmeasured native run never overwrites a real grade.
     // Mirrors docs/benchmark/benchmark.md#results-file.
     if codec_reports.is_empty() {
-        eprintln!("jazyk: benchmark measured nothing: the endpoint never returned a completion; results not written");
+        eprintln!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-run/jazyk-benchmark-measured-nothing-the-endpoint-never-e5fab.md")));
         return 2;
     }
     write_results(out, &llm.model, &codec_reports);

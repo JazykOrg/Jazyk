@@ -166,29 +166,14 @@ fails, or parks them. Declarative prose states obligations: sessions restate it 
   (graph.schema.yaml, tools.schema.yaml, project-settings.schema.yaml: draft-07 JSON
   Schema in YAML, `$id` `https://jazyk.org/schemas/*.json`). `docs/site.md` specs
   jazyk.org; `docs/TODO.md` is the live work list.
-- Payloads: `docs/compiler/goals/prompts/` holds every model-facing text
-  (`docs/compiler/sessions.md#payload-files`): agent-contract.md (its `{feedback}` slot
-  takes feedback-note.md), worker-protocol.md, serving-protocol.md,
-  open-batch-protocol.md, one contract paragraph per model-executed goal kind, the
-  generation and verification contracts (bind-contract.md, bind-criteria-note.md,
-  generate-contract.md, decompile-contract.md, the `verify-*-contract.md` files), the
-  chat, compaction, embedded-agent, and continuation texts, the conversational policy
-  (agent-main.mustache, agent-skill-tools.json), and the fragment files of many short
-  sections each opened by a `<!-- name -->` marker (gates.md, session-blocks.md,
-  agent-context.md, serving-instructions.md, generation-steps.md, judge-input.md,
-  decompile-worker.md, answer-handling.md; integration-context.md). `payload.rs` reads
-  the fragments and fills placeholders. `docs/compiler/skills/` holds the session
-  skills (extraction, edges, judgment, criteria, flow-views, structural-views,
-  abstraction, conformance) and `skills/agent/` the workflow skills an agent reads
-  with `read_jazyk_skill` (inspect-project, edit-documentation, change-code, compile,
-  generate, bind, verify, reverse-compile, execute-task, recover-workflow, publish).
-  Both are embedded into the binary at compile time (`include_str!`), so docs and code
-  share the same bytes by construction. Edit the files, never reintroduce string
-  constants in code; tool descriptions are the one exception and live in the tool
-  registry. Both directories are excluded from the docs glob (they are instructions to
-  a model, not prose about jazyk). Placeholders are `{name}` (lowercase, one pass, e.g.
-  `{target}` in worker-protocol and serving-protocol: the batch id), except
-  `{GROUP}` in generate-contract.
+- Payloads: `docs/compiler/goals/prompts/` groups model-facing text by consumer.
+  Read its `README.md` before changing any prompt. The common source parser is
+  `bootstrap/prompt_parser.rs`; `build.rs` prepares and embeds Markdown payloads.
+  `.md.mustache` files use Mustache variables, comments, and file-relative includes.
+  `payload.rs` renders values once and selects legacy fragment sections.
+  `docs/compiler/skills/` holds domain skills and `skills/agent/` workflow skills.
+  Both directories are excluded from the docs glob. Raw skill frontmatter supplies
+  catalog metadata; only the parsed body is delivered to the model.
 - `docs/frontends/`: cli.md, acp.md, mcp.md, lsp.md, gui.md (local API and
   launcher), wasm.md (portable browser engine), protocol.md (editor/engine
   compatibility), viewer.md, agent-context.md (instructions, MCP servers, and skills a
@@ -382,3 +367,10 @@ dashes. docs is also the compiler's own input, so keep statements extractable.
 - Git remote: `git@github.com:JazykOrg/Jazyk.git`. A push to `master` that changes
   `site/` or its deployment workflow publishes jazyk.org via GitHub Actions.
   Engine-only pushes do not deploy or start engine CI.
+
+## Prompt maintenance
+
+Before writing model-facing text, follow [the prompt guide](docs/compiler/goals/prompts/README.md).
+Keep every instruction, including short corrective guidance, in the docs payloads.
+Use the common parser, Markdown structure, reusable partials, and source comments
+with known rationale. Update the inventory and parser tests when changing conventions.

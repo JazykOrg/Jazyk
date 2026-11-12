@@ -1,0 +1,1 @@
+these rows' test or files bytes moved since their last run, so the verdict was dropped; `jazyk test` reruns them

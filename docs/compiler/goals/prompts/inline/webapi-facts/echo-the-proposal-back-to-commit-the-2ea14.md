@@ -1,0 +1,1 @@
+echo the proposal back to commit the dual write; decree: true declines it

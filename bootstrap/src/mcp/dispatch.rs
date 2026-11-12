@@ -74,7 +74,7 @@ impl McpServer {
                     .filter(|t| enabled.contains(&t.name))
                     .map(|t| json!({"name": t.name, "description": t.description, "inputSchema": t.parameters}))
                     .collect();
-                tools.push(json!({"name":"project_context","description":"Read this project's repository URL, selected/default branches, sync metadata, and available integration actions. No setId required. Does not push, deploy, or grant permission.","inputSchema":{"type":"object","properties":{},"additionalProperties":false}}));
+                tools.push(json!({"name":"project_context","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/read-this-project-s-repository-url-selected-96d02.md")),"inputSchema":{"type":"object","properties":{},"additionalProperties":false}}));
                 if self.modes.len() == 1 && self.modes[0] == "runtime" {
                     return Ok(json!({"tools": tools}));
                 }
@@ -102,16 +102,16 @@ impl McpServer {
                     tools.push(json!({
                         "name": "begin_goals",
                         "description": "Claim the named batch (batch, an id from goals), the named goals as one batch (goals, when one scheduled batch holds them all), or the next ready batch. Opens the changeset and returns the assembled session prompt as instructions and the initially loaded set as package. One batch open at a time.",
-                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string", "description": "a batch id from goals, e.g. b412-1"}, "goals": {"type": "array", "items": {"type": "string"}, "description": "goal ids sharing one locality and one executor"}, "full": {"type": "boolean", "description": "repeat the agent contract and the skills even when this serving already delivered them"}}, "additionalProperties": false}
+                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string", "description": "a batch id from goals, e.g. b412-1"}, "goals": {"type": "array", "items": {"type": "string"}, "description": "goal ids sharing one locality and one executor"}, "full": {"type": "boolean", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/repeat-the-agent-contract-and-the-skills-8b332.md"))}}, "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "done",
-                        "description": "Resolve final goals and finish the open batch in one call. goals entries carry {goal, justification, evidence?} under the same gates as mark_goal_done. Run all batch gates and commit atomically; a refusal names the repair and preserves earlier work. The reply names the next ready batch (beginNext: true also claims it). The finish that empties the board reports the verdict and counts.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/resolve-final-goals-and-finish-the-open-70cf2.md")),
                         "inputSchema": crate::tools::done_parameters(true)
                     }));
                     tools.push(json!({
                         "name": "abandon_goals",
-                        "description": "Drop the open changeset without committing. The batch's goals return to open.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/drop-the-open-changeset-without-committing-the-fc970.md")),
                         "inputSchema": {"type": "object", "properties": {"reason": {"type": "string"}}, "additionalProperties": false}
                     }));
                 }
@@ -136,12 +136,12 @@ impl McpServer {
                 if self.modes.iter().any(|m| m == "benchmark") {
                     tools.push(json!({
                         "name": "benchmark_cases",
-                        "description": "The benchmark case list with each case's tier and state, and the run's progress. Next: begin_case.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/the-benchmark-case-list-with-each-case-1dc00.md")),
                         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "begin_case",
-                        "description": "Claim the named case or the first pending one, against a throwaway sandbox. The reply carries the same instructions and package an in-process turn gets; do the work exactly as if it were real. One case open at a time.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/claim-the-named-case-or-the-first-7014a.md")),
                         "inputSchema": {"type": "object", "properties": {"case": {"type": "string"}}, "additionalProperties": false}
                     }));
                     tools.push(json!({
@@ -151,7 +151,7 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "benchmark_report",
-                        "description": "Close the run: tier scores, workflow verdicts, efficiency over the scored cases, appended to the machine-wide history under the given model name (name the agent honestly, e.g. claude-sonnet-4.6 (agent)).",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/close-the-run-tier-scores-workflow-verdicts-cbcac.md")),
                         "inputSchema": {"type": "object", "properties": {"model": {"type": "string"}}, "additionalProperties": false}
                     }));
                 }
@@ -163,12 +163,12 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "begin_decompile",
-                        "description": "The draft package for one scope: the inventory slice with file contents (tests first: they are the primary evidence), the lint rules, the suggested path, and the drafting contract. Read the code with your own tools, draft one markdown document stating what it observably does, then submit_draft.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/the-draft-package-for-one-scope-the-6b78c.md")),
                         "inputSchema": {"type": "object", "properties": {"scope": {"type": "string"}}, "required": ["scope"], "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "submit_draft",
-                        "description": "Validate and land the draft in the docs tree: path is project-relative and must match the docs glob; content is the full markdown (one H1, short declarative sentences, no em dashes, every statement citing its evidence in backticks). Records the draft hash for ratification and consumes the scope's release. The compiler picks the file up like any hand-written document.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/validate-and-land-the-draft-in-the-3dba3.md")),
                         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}, "scope": {"type": "string"}}, "required": ["path", "content"], "additionalProperties": false}
                     }));
                 }
@@ -208,12 +208,12 @@ impl McpServer {
                     }));
                     tools.push(json!({
                         "name": "answer_diagnostic",
-                        "description": "Record a human answer to a diagnostic's prompt, relayed from conversation. Pass option (index) for a chosen option or text for a freeform reply. An edit option applies as a dual write and resolves the finding before this returns; any other answer is recorded and the reply hands the handling contract back to you: act on it with the tools, then resolve_diagnostic.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/record-a-human-answer-to-a-diagnostic-770a7.md")),
                         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "option": {"type": "integer", "minimum": 0}, "text": {"type": "string"}}, "required": ["id"], "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "update_diagnostic",
-                        "description": "Replace the question attached to an open diagnostic (null prompt removes it). Never touches a human answer or triage.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/replace-the-question-attached-to-an-open-bae21.md")),
                         "inputSchema": {"type": "object", "properties": {"id": {"type": "string"}, "prompt": crate::tools::prompt_schema()}, "required": ["id"], "additionalProperties": false}
                     }));
                     // Scaffolding is offered only where there is something to scaffold,
@@ -241,7 +241,7 @@ impl McpServer {
                     tools.push(Self::recent_edits_tool());
                     tools.push(json!({
                         "name": "await_changes",
-                        "description": "Long poll: returns when the graph moves, a documentation or source file changes (woken by file events), or the ledger or a watched deliverable file changes, or at the timeout (default 300s, at most 3600s; 0 waits the full 3600s, use only when your client does not bound tool calls). Carries the task counts per queue and which tool lists the work. Never call it with a task open; finish with done first.",
+                        "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/long-poll-returns-when-the-graph-moves-1512b.md")),
                         "inputSchema": {"type": "object", "properties": {"timeout_seconds": {"type": "integer", "description": "seconds before returning unchanged, at most 3600; 0 = wait 3600"}}, "additionalProperties": false}
                     }));
                 }
@@ -659,7 +659,10 @@ impl McpServer {
                     // (docs/frontends/mcp.md#generation-and-verification-over-mcp).
                     let lifecycle = self.modes.iter().any(|m| m == "generate" || m == "bind");
                     let message = if lifecycle {
-                        "no batch is open; begin_goals first, then stage writes into it. During binding or generation there is no batch: record the row's verdict, and a contradiction the tests expose reaches the author through the failing-binding check at the next check run; report_diagnostic belongs to compile sessions"
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/mcp-dispatch/no-batch-is-open-begin-goals-first-82da8.md"
+                        ))
                     } else {
                         "no batch is open; begin_goals first, then stage writes into it"
                     };
@@ -942,7 +945,7 @@ impl McpServer {
                     && name != crate::tools::SPEND_TOOL
                 {
                     return Ok(text_result(
-                        json!({"error": {"rule": "no-build", "message": "no graph found; run `jazyk compile` first (or connect a compile serving)"}}),
+                        json!({"error": {"rule": "no-build", "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/no-graph-found-run-jazyk-compile-first-62ec5.md"))}}),
                         true,
                     ));
                 }

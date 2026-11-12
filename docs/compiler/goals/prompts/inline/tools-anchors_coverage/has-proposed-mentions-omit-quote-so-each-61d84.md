@@ -1,0 +1,1 @@
+`{}` has {} proposed mentions; omit `quote` so each keeps its own, or decide them with the section alone

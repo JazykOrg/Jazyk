@@ -1,0 +1,1 @@
+Wait briefly for a run update, then return its durable status. Repeating does not extend its deadline.

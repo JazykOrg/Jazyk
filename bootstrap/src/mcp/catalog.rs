@@ -67,13 +67,29 @@ impl McpServer {
             };
             for tool in tools {
                 let action = match tool["name"].as_str() {
-                    Some("read_text_file") => "Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines. Private state and credentials are excluded.",
-                    Some("write_text_file") => "Write a Source file, creating parents. Read first: if the read returns owner and begin_generation, claim that entity before writing. Successful record_generation ends the claim. append adds content. Source selection and entity ownership are enforced.",
-                    Some("list_files") => "List eligible files. path narrows to a subdirectory; returned paths use the same root.",
+                    Some("read_text_file") => include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/read-an-eligible-file-capped-at-kib-6dc40.md"
+                    )),
+                    Some("write_text_file") => include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/write-a-source-file-creating-parents-read-a03a7.md"
+                    )),
+                    Some("list_files") => include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/list-eligible-files-path-narrows-to-a-461c3.md"
+                    )),
                     _ => continue,
                 };
                 tool["description"] = json!(format!("{action} Paths are relative to the {base} `{}`. Keep Source subdirectory names. Markdown hrefs are document-relative; use referencedAssets.path for supplied inputs.", root.display()));
-                tool["inputSchema"]["properties"]["path"]["description"] = json!(format!("Relative to the {base} `{}`; use paths from list_files or referencedAssets.path, without `..`.", root.display()));
+                tool["inputSchema"]["properties"]["path"]["description"] = json!(format!(
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/relative-to-the-base-use-paths-from-5898c.md"
+                    )),
+                    root.display(),
+                    base = base
+                ));
             }
         }
     }
@@ -179,13 +195,27 @@ impl McpServer {
                 "source":{"type":"array","items":{"type":"string"}}},"required":["id"],"additionalProperties":false}},
             "required":["baseHash","set"],"additionalProperties":false});
         let mut tools = vec![
-            json!({"name":"list_document_sets","description":"Inspect document-set selections and their current configuration hash before repairing this worker's Source mapping.",
+            json!({"name":"list_document_sets","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-catalog/inspect-document-set-selections-and-their-current-e9a33.md")),
             "inputSchema":{"type":"object","properties":{},"additionalProperties":false}}),
         ];
-        for (name,description) in [
-            ("preview_document_set","Preview matcher changes to this worker's current document set without writing. Use its id, baseHash from list_document_sets, and singular set.source."),
-            ("update_document_set","Repair docs, source or roots matchers on this worker's current document set. Preserve its id and unrelated selections; use baseHash from list_document_sets. New Source patterns apply to the next file write.")
-        ] { tools.push(json!({"name":name,"description":description,"inputSchema":schema})); }
+        for (name, description) in [
+            (
+                "preview_document_set",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/mcp-catalog/preview-matcher-changes-to-this-worker-s-5703b.md"
+                )),
+            ),
+            (
+                "update_document_set",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/mcp-catalog/repair-docs-source-or-roots-matchers-on-d7ca5.md"
+                )),
+            ),
+        ] {
+            tools.push(json!({"name":name,"description":description,"inputSchema":schema}));
+        }
         tools
     }
 

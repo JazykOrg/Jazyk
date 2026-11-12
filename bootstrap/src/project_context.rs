@@ -11,8 +11,10 @@ pub fn read(root: &Path) -> Value {
 
 // The integration facts as initialize instructions, framed as metadata.
 // Mirrors docs/frontends/mcp.md#project-integration-context.
-pub const INSTRUCTIONS: &str =
-    include_str!("../../docs/compiler/goals/prompts/integration-context.md");
+pub const INSTRUCTIONS: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/conversation/integration-context.md.mustache"
+));
 
 pub fn instructions(root: &Path) -> String {
     let text = crate::payload::fill(

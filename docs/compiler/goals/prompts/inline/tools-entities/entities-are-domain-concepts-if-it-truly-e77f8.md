@@ -1,0 +1,1 @@
+`{}` {}; entities are domain concepts. If it truly is one, repeat the call with a `note` explaining why

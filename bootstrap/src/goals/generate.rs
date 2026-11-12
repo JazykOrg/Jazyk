@@ -113,6 +113,9 @@ impl GoalKind for Generate {
         )
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/generate.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/generate.md"
+        ))
     }
 }

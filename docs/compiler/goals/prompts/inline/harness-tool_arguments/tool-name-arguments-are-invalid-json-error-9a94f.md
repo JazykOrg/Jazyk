@@ -1,0 +1,1 @@
+Tool `{name}` arguments are invalid JSON: {error}. This call did not execute. Raw argument length: {characters} characters ({} bytes). Error excerpt (at most 128 characters, {omitted} omitted): {excerpt:?}. Provider finish_reason: {reason}. {limit} Correct the JSON escaping and propose the call again.

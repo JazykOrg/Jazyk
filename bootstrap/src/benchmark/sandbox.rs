@@ -227,7 +227,7 @@ pub fn seed_verification(
     let files: Vec<String> = case.deliverable.keys().cloned().collect();
     let artifact = format!("criteria/req-{}.md", crate::gen::req_slug(rid));
     let criteria = format!(
-        "---\nrequirement: {}\nhash: {}\n---\n\n# Verify {}\n\nStatement: {}\n\n> {}\n\nImplementing files (under the deliverable):\n{}\n\nConfirm the statement holds in the implementation. Verdict contract: reply PASS or FAIL with reasoning.\n",
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-sandbox/requirement-hash-verify-statement-implementing-files-under-f5ca1.md")),
         rid,
         hash_hex(&r.statement),
         rid,

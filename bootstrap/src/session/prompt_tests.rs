@@ -301,7 +301,7 @@ fn every_contract_paragraph_names_its_goal_first() {
     let s = agent_contract();
     assert!(s.contains("report_feedback"));
     let rest = AGENT_CONTRACT
-        .split_once("{feedback}")
+        .split_once("{{{feedback}}}")
         .map(|(_, r)| r)
         .unwrap();
     assert!(s.ends_with(rest), "nothing of the contract is lost");

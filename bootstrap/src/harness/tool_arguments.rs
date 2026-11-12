@@ -28,7 +28,20 @@ pub(crate) fn json_error_feedback(
     } else {
         "The shortened excerpt does not imply provider output truncation."
     };
-    Some(format!("Tool `{name}` arguments are invalid JSON: {error}. This call did not execute. Raw argument length: {characters} characters ({} bytes). Error excerpt (at most 128 characters, {omitted} omitted): {excerpt:?}. Provider finish_reason: {reason}. {limit} Correct the JSON escaping and propose the call again.", arguments.len()))
+    Some(format!(
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/harness-tool_arguments/tool-name-arguments-are-invalid-json-error-9a94f.md"
+        )),
+        arguments.len(),
+        name = name,
+        error = error,
+        characters = characters,
+        omitted = omitted,
+        excerpt = excerpt,
+        reason = reason,
+        limit = limit
+    ))
 }
 
 #[cfg(test)]

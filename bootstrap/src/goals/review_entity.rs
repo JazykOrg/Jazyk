@@ -390,6 +390,9 @@ impl GoalKind for ReviewEntity {
         out
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/review-entity.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/review-entity.md"
+        ))
     }
 }

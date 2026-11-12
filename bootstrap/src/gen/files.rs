@@ -56,7 +56,11 @@ pub(crate) fn validate_criteria_file(
             .and_then(|e| e.to_str())
             .is_some_and(|e| matches!(e, "md" | "markdown"))
         {
-            return Err("use a separate Markdown criteria file, not executable test source".into());
+            return Err(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-files/use-a-separate-markdown-criteria-file-not-639f3.md"
+            ))
+            .into());
         }
         let content = crate::vfs::read_to_string(path).map_err(|e| e.to_string())?;
         let mut parser = Parser::new_ext(&content, Options::ENABLE_YAML_STYLE_METADATA_BLOCKS)
@@ -90,10 +94,11 @@ pub(crate) fn validate_criteria_file(
                 .as_deref()
                 .is_some_and(|set| Some(set) != store.out.file_name().and_then(|s| s.to_str()))
             {
-                return Err(
-                    "criteria IDs belong to a different document set; copy criteriaFrontMatter"
-                        .into(),
-                );
+                return Err(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-files/criteria-ids-belong-to-a-different-document-356db.md"
+                ))
+                .into());
             }
             Ok(store.resolve_id(&local).to_string())
         };
@@ -133,13 +138,24 @@ pub(crate) fn validate_criteria_file(
                 .iter()
                 .all(|expected| words.iter().any(|word| word.eq_ignore_ascii_case(expected)))
         {
-            return Err(
-                "the body must contain inspection steps and explicit PASS and FAIL outcomes".into(),
-            );
+            return Err(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-files/the-body-must-contain-inspection-steps-and-e4f16.md"
+            ))
+            .into());
         }
         Ok(())
     };
-    check().map_err(|e| format!("invalid llm criteria artifact `{}`: {e}. Write a valid criteria file before recording; never substitute a programmatic test file", path.display()))
+    check().map_err(|e| {
+        format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/gen-files/invalid-llm-criteria-artifact-e-write-a-9f7db.md"
+            )),
+            path.display(),
+            e = e
+        )
+    })
 }
 
 pub fn hash_file(path: &Path) -> String {
@@ -298,7 +314,10 @@ pub fn unroot(deliverable: &Path, rel: &str) -> Option<String> {
 // The reply's note for a path `unroot` moved under the root.
 pub fn unroot_note(from: &str, to: &str) -> String {
     format!(
-        "`{}` restates the deliverable directory's own name; paths are relative to the deliverable, so this is `{}`. Write paths without that prefix",
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-files/restates-the-deliverable-directory-s-own-name-9683e.md"
+        )),
         from.trim(),
         if to.is_empty() { "." } else { to }
     )

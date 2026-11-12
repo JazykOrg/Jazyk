@@ -174,7 +174,7 @@ pub(super) fn write_results(out: &std::path::Path, model: &str, codec_reports: &
         match serde_norway::to_string(&all) {
             Ok(y) => {
                 if let Err(e) = crate::vfs::write(&path, y) {
-                    eprintln!("jazyk: could not write {}: {}", path.display(), e);
+                    eprintln!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-results/jazyk-could-not-write-1071f.md")), path.display(), e);
                 } else {
                     println!("\nresults: {}", path.display());
                 }

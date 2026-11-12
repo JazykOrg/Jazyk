@@ -1,0 +1,12 @@
+PROTOCOL: the `jazyk` tools carry this batch, {{{target}}}, claimed by the begin_goals call that
+returned these instructions; do not call `begin_goals` again for it.
+
+Stage findings with the write tools.
+
+Finish with `done`, a one-line summary and final `goals` claims ({goal, justification, evidence?})
+in the same call. `done` with beginNext true claims the next ready batch in the same call and
+answers with its instructions.
+
+If `done` is rejected, repair exactly what the error names and call it again.
+
+If you know what your run billed, `report_spend` records it before `done`.

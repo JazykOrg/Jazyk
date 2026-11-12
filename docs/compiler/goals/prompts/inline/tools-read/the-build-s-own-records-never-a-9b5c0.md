@@ -1,0 +1,1 @@
+the build's own records, never a session's to resolve; pass rule to list them

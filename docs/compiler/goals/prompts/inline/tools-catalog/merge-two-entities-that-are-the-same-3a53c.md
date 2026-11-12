@@ -1,0 +1,1 @@
+Merge two entities that are the same concept. keep survives; absorb's aliases, mentions, and references are rewired onto it.

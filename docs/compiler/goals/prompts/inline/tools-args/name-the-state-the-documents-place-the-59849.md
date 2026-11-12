@@ -1,0 +1,1 @@
+ Name the state the documents place the subject in before the trigger; the event that creates the subject names its initial state. When no sentence states one, omit `transition` entirely.

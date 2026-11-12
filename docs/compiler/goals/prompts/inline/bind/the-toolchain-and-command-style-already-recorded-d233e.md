@@ -1,0 +1,1 @@
+the toolchain and command style already recorded, to reuse exactly; an earlier row's assertion style is not a convention, and a test that reads a description of the artifact stays wrong however many rows share it

@@ -1,0 +1,1 @@
+test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}, or tests: [{criterion, ...}] one per criterion

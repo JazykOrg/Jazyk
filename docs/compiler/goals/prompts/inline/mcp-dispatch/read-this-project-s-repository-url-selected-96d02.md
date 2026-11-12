@@ -1,0 +1,1 @@
+Read this project's repository URL, selected/default branches, sync metadata, and available integration actions. No setId required. Does not push, deploy, or grant permission.

@@ -129,9 +129,16 @@ pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
         format!("the documents here are {}", shown.join(", "))
     };
     format!(
-        "unknown target `{}`{}; use a node id (ent:..., req:..., view:..., diag:...), a section reference (<document>#/<section>), scope:<scope> for a scope's top level, or alignment:<document> for pending anchor proposals; {}; search finds node ids by words",
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/context/unknown-target-use-a-node-id-ent-fc4d5.md"
+        )),
         id,
-        if placeholder { " (that is the placeholder from the instructions, not a target in this project)" } else { "" },
+        if placeholder {
+            " (that is the placeholder from the instructions, not a target in this project)"
+        } else {
+            ""
+        },
         listing
     )
 }

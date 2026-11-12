@@ -137,7 +137,10 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 if same_doc {
                     "yes (a duplicate verdict would delete the worse-sourced side)"
                 } else {
-                    "no (a duplicate verdict would keep both and file duplicate-requirement)"
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/goals-rejudge_pair/no-a-duplicate-verdict-would-keep-both-2fd37.md"
+                    ))
                 }
             ));
             let diags = open_diags_naming(store, &[rid, &nbr]);
@@ -422,7 +425,10 @@ impl GoalKind for RejudgePair {
         out
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/rejudge-pair.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/rejudge-pair.md"
+        ))
     }
 }
 

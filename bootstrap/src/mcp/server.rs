@@ -6,9 +6,11 @@ pub(super) fn instructions_for(modes: &[String], write: bool, initialized: bool)
 
 // The serving's own instructions and its longer `next` guidance.
 // Mirrors docs/compiler/sessions.md#payload-files.
-pub(crate) const SERVING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../../docs/compiler/goals/prompts/serving-instructions.md"
-));
+pub(crate) const SERVING: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/serving/serving-instructions.md.mustache"
+    )));
 
 // Capability context only. Shared policy comes from agent_workflows::render. A chat
 // in a tab has no build path of its own: the page's Build button runs builds, so a

@@ -1,0 +1,1 @@
+the last run could not execute the command; fix the runner, then `jazyk test {}`

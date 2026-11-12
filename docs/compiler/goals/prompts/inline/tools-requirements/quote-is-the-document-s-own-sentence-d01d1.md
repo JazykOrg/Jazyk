@@ -1,0 +1,1 @@
+`quote` is the document's own sentence, never the statement. To change only the entities or edges, omit `section` and `quote`

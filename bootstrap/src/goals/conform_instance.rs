@@ -255,6 +255,9 @@ impl GoalKind for ConformInstance {
         None
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/conform-instance.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/conform-instance.md"
+        ))
     }
 }

@@ -178,7 +178,7 @@ pub(super) fn run_case_turn(
     // client mirrors it so a graded turn faces the same harness a real one does.
     if matches!(stop, Stop::EndTurn) && session.borrow().done.is_none() {
         history.push(serde_json::json!({"role": "user", "content":
-            "The task is not finished: nothing has committed. Continue with the tool calls the instructions name, then finish with done."}));
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/benchmark-session/the-task-is-not-finished-nothing-has-cdcf1.md"))}));
         stop = harness::run_loop(LoopArgs {
             llm,
             history: &mut history,

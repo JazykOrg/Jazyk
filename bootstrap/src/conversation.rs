@@ -467,8 +467,14 @@ const LEGACY_CONTEXTS: [&str; 2] = [
     include_str!("../fixtures/legacy-chat-context-v1.txt"),
     include_str!("../fixtures/legacy-chat-context-v2.txt"),
 ];
-const CONTEXT_RESET: &str = include_str!("../../docs/compiler/goals/prompts/chat-context-reset.md");
-const CHAT_TURN: &str = include_str!("../../docs/compiler/goals/prompts/chat-turn.md");
+const CONTEXT_RESET: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/conversation/chat-context-reset.md"
+));
+const CHAT_TURN: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/conversation/chat-turn.md"
+));
 
 fn verified_human_sequence(text: &str, humans: &[String]) -> bool {
     for end in 0..humans.len() {
@@ -850,7 +856,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
                 crate::portable::emit_event("chat.answer",json!({"sessionId":id,"messageId":value["messageId"],"status":if ok {"recorded"}else{"failed"},"result":reply}));
                 value["displayText"] = value["text"].clone();
                 if !ok { value["state"]=json!("failed"); value["reason"]=json!("The diagnostic answer was rejected. Inspect the recorded tool result before retrying."); }
-                value["text"] = json!(include_str!("../../docs/compiler/goals/prompts/chat-answer-input.md").replace("{RESULT}",&reply.to_string()));
+                value["text"] = json!(crate::payload::fill(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/conversation/chat-answer-input.md.mustache")), &[("RESULT", &reply.to_string())]));
             }
             value
         }).collect::<Vec<_>>()

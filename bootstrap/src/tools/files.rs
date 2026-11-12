@@ -13,7 +13,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-path",
                 format!(
-                    "`{}` must be a relative path under the deliverable directory, without `..`",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-files/must-be-a-relative-path-under-the-cd80b.md"
+                    )),
                     rel
                 ),
             ));
@@ -113,7 +116,7 @@ impl ToolSession {
                 let text = crate::vfs::read_to_string(&path).map_err(|e| {
                     ToolError::new(
                         "not-found",
-                        format!("cannot read `{}`: {}; list_files shows what exists", rel, e),
+                        format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-files/cannot-read-list-files-shows-what-exists-37a1f.md")), rel, e),
                     )
                 })?;
                 let start = args["line"]
@@ -165,7 +168,10 @@ impl ToolSession {
                     reply["requires_generation"] = json!(needs_claim);
                     if needs_claim {
                         reply["begin_generation"] = json!({"entity":entity});
-                        reply["repair"] = json!("Call begin_generation for this owner before write_text_file. Repair only the requested files and affected tests, then record_generation. Recording ends the claim.");
+                        reply["repair"] = json!(include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-files/call-begin-generation-for-this-owner-before-a6647.md"
+                        )));
                     }
                 }
 
@@ -189,7 +195,7 @@ impl ToolSession {
                 let (rel, note) = self.unroot_rel(raw.trim().trim_start_matches("./"));
                 let content = args["content"]
                     .as_str()
-                    .ok_or_else(|| ToolError::new("bad-args", "content must be a string".into()))?
+                    .ok_or_else(|| ToolError::new("bad-args", include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-files/content-must-be-a-string-c4b52.md")).into()))?
                     .to_owned();
                 if !self.gen.allows_source(&rel) {
                     return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));
@@ -210,14 +216,25 @@ impl ToolSession {
                     crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &rel)
                 {
                     if self.scope.gen_target().is_empty() {
-                        return Err(ToolError::new("file-owned", format!(
-                            "`{rel}` is recorded for entity `ent:{owner}`. Call begin_generation for that entity before repairing its files; successful record_generation ends the previous claim."
-                        )));
+                        return Err(ToolError::new(
+                            "file-owned",
+                            format!(
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-files/rel-is-recorded-for-entity-ent-owner-41ef5.md"
+                                )),
+                                rel = rel,
+                                owner = owner
+                            ),
+                        ));
                     }
                     return Err(ToolError::new(
                         "file-owned",
                         format!(
-                            "`{}` belongs to entity `{}`, outside your component group; never write to another group's file. Reference it (import, include, link, read) and pick a path of your own; when it already carries one of your requirements, name it on that requirement's test row (`files: [path]`) in record_generation",
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-files/belongs-to-entity-outside-your-component-group-8fc74.md"
+                            )),
                             rel, owner
                         ),
                     ));
@@ -228,7 +245,7 @@ impl ToolSession {
                     .get("old_text")
                     .map(|value| {
                         value.as_str().map(str::to_owned).ok_or_else(|| {
-                            ToolError::new("bad-args", "old_text must be a string".into())
+                            ToolError::new("bad-args", include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-files/old-text-must-be-a-string-bb5cb.md")).into())
                         })
                     })
                     .transpose()?;
@@ -238,15 +255,32 @@ impl ToolSession {
                     .transpose()?;
                 let append = args["append"].as_bool() == Some(true);
                 if old_text.is_some() && (append || expected.is_none()) {
-                    return Err(ToolError::new("invalid-edit", "old_text requires expectedHash from the last read or write and cannot combine with append: true; no bytes changed".into()));
+                    return Err(ToolError::new(
+                        "invalid-edit",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-files/old-text-requires-expectedhash-from-the-last-03189.md"
+                        ))
+                        .into(),
+                    ));
                 }
                 let current = if old_text.is_some()
                     || expected.is_some()
                     || (append && path.vis_file())
                 {
-                    Some(crate::vfs::read_to_string(&path).map_err(|e| ToolError::new(
-                        "not-found", format!("cannot read `{rel}` before editing: {e}; no bytes changed; list_files shows what exists")
-                    ))?)
+                    Some(crate::vfs::read_to_string(&path).map_err(|e| {
+                            ToolError::new(
+                                "not-found",
+                                format!(
+                                    include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-files/cannot-read-rel-before-editing-e-no-f958a.md"
+                                )),
+                                    rel = rel,
+                                    e = e
+                                ),
+                            )
+                        })?)
                 } else {
                     None
                 };
@@ -255,18 +289,33 @@ impl ToolSession {
                         current.as_deref().unwrap_or_default().as_bytes(),
                     );
                     if expected != actual {
-                        return Err(ToolError::new("file-conflict", format!(
-                            "`{rel}` changed since the supplied expectedHash; current hash: {actual}. No bytes changed. Read the affected region and reconsider the edit before retrying"
-                        )));
+                        return Err(ToolError::new(
+                            "file-conflict",
+                            format!(
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-files/rel-changed-since-the-supplied-expectedhash-current-f3116.md"
+                                )),
+                                rel = rel,
+                                actual = actual
+                            ),
+                        ));
                     }
                 }
                 let next = if let Some(ref old) = old_text {
                     let text = current.as_deref().unwrap_or_default();
                     let first = text.find(old.as_str());
                     if old.is_empty() || first.is_none() || first != text.rfind(old.as_str()) {
-                        return Err(ToolError::new("edit-match", format!(
-                            "old_text must be nonempty and match exactly once in `{rel}`; no bytes changed. Read the affected region and include enough unchanged surrounding text to identify the intended site"
-                        )));
+                        return Err(ToolError::new(
+                            "edit-match",
+                            format!(
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-files/old-text-must-be-nonempty-and-match-2ba0a.md"
+                                )),
+                                rel = rel
+                            ),
+                        ));
                     }
                     current
                         .as_deref()
@@ -278,7 +327,7 @@ impl ToolSession {
                     content.clone()
                 };
                 crate::store::write_atomic(&path, next.as_bytes()).map_err(|e| {
-                    ToolError::new("io-error", format!("cannot write `{rel}`: {e}"))
+                    ToolError::new("io-error", format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-files/cannot-write-rel-e-fcde7.md")), rel = rel, e = e))
                 })?;
                 let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append && current.is_some(), "fileBytes": next.len(), "hash": crate::task_runtime::digest(next.as_bytes())});
                 if old_text.is_some() {

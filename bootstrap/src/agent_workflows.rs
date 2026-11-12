@@ -3,13 +3,17 @@
 use serde_json::{json, Value};
 use std::path::Path;
 
-pub const TEMPLATE: &str = include_str!("../../docs/compiler/goals/prompts/agent-main.mustache");
+pub const TEMPLATE: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/conversation/agent-main.md.mustache"
+));
 pub const TOOLS: [&str; 2] = ["list_jazyk_skills", "read_jazyk_skill"];
 
 pub struct Skill {
     pub name: &'static str,
     pub source: &'static str,
     pub body: &'static str,
+    pub prepared: &'static str,
 }
 
 pub const SKILLS: &[Skill] = &[
@@ -17,56 +21,94 @@ pub const SKILLS: &[Skill] = &[
         name: "inspect-project",
         source: "docs/compiler/skills/agent/inspect-project.md",
         body: include_str!("../../docs/compiler/skills/agent/inspect-project.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/inspect-project.md"
+        )),
     },
     Skill {
         name: "edit-documentation",
         source: "docs/compiler/skills/agent/edit-documentation.md",
         body: include_str!("../../docs/compiler/skills/agent/edit-documentation.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/edit-documentation.md"
+        )),
     },
     Skill {
         name: "change-code",
         source: "docs/compiler/skills/agent/change-code.md",
         body: include_str!("../../docs/compiler/skills/agent/change-code.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/change-code.md"
+        )),
     },
     Skill {
         name: "compile",
         source: "docs/compiler/skills/agent/compile.md",
         body: include_str!("../../docs/compiler/skills/agent/compile.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/compile.md"
+        )),
     },
     Skill {
         name: "generate",
         source: "docs/compiler/skills/agent/generate.md",
         body: include_str!("../../docs/compiler/skills/agent/generate.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/generate.md"
+        )),
     },
     Skill {
         name: "bind",
         source: "docs/compiler/skills/agent/bind.md",
         body: include_str!("../../docs/compiler/skills/agent/bind.md"),
+        prepared: include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/agent/bind.md")),
     },
     Skill {
         name: "verify",
         source: "docs/compiler/skills/agent/verify.md",
         body: include_str!("../../docs/compiler/skills/agent/verify.md"),
+        prepared: include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/agent/verify.md")),
     },
     Skill {
         name: "reverse-compile",
         source: "docs/compiler/skills/agent/reverse-compile.md",
         body: include_str!("../../docs/compiler/skills/agent/reverse-compile.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/reverse-compile.md"
+        )),
     },
     Skill {
         name: "execute-task",
         source: "docs/compiler/skills/agent/execute-task.md",
         body: include_str!("../../docs/compiler/skills/agent/execute-task.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/execute-task.md"
+        )),
     },
     Skill {
         name: "recover-workflow",
         source: "docs/compiler/skills/agent/recover-workflow.md",
         body: include_str!("../../docs/compiler/skills/agent/recover-workflow.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/recover-workflow.md"
+        )),
     },
     Skill {
         name: "publish",
         source: "docs/compiler/skills/agent/publish.md",
         body: include_str!("../../docs/compiler/skills/agent/publish.md"),
+        prepared: include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/skills/agent/publish.md"
+        )),
     },
 ];
 
@@ -122,16 +164,12 @@ fn sets_text(workspace: &crate::document_sets::Workspace) -> String {
 // Both AGENTS.md and MCP initialize call this renderer with the same root.
 pub fn render(root: &Path) -> Result<String, String> {
     let workspace = crate::document_sets::Workspace::load(root).map_err(|e| e.1)?;
-    let template =
-        mustache::compile_str(TEMPLATE).map_err(|e| format!("invalid agent main template: {e}"))?;
-    template
-        .render_to_string(&json!({"sets":sets_text(&workspace)}))
-        .map_err(|e| format!("cannot render agent main template: {e}"))
+    crate::payload::render_mustache(TEMPLATE, &json!({"sets":sets_text(&workspace)}))
 }
 
 fn tool_payload() -> Value {
     serde_json::from_str(include_str!(
-        "../../docs/compiler/goals/prompts/agent-skill-tools.json"
+        "../../docs/compiler/goals/prompts/conversation/agent-skill-tools.json"
     ))
     .expect("valid embedded workflow skill tool definitions")
 }
@@ -168,7 +206,7 @@ pub fn read(name: &str) -> Result<Value, String> {
         )
     })?;
     let mut reply = skill.metadata()?;
-    reply["body"] = json!(skill.body);
+    reply["body"] = json!(skill.prepared);
     Ok(reply)
 }
 
@@ -195,7 +233,7 @@ mod tests {
         assert_eq!(names.len(), SKILLS.len());
         for skill in SKILLS {
             let reply = read(skill.name).unwrap();
-            assert_eq!(reply["body"], skill.body);
+            assert_eq!(reply["body"], skill.prepared);
             assert!(crate::agent_context::front_matter(skill.body)
                 .unwrap()
                 .1

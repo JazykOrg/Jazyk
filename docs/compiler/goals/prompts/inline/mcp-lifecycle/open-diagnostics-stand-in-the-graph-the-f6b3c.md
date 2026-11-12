@@ -1,0 +1,1 @@
+open diagnostics stand in the graph; the diagnostics read tool lists them

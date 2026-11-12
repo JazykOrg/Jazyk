@@ -1,0 +1,1 @@
+a programmatic test needs {}.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict

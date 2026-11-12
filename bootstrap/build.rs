@@ -1,3 +1,6 @@
+#[path = "prompt_parser.rs"]
+mod prompt_parser;
+
 // The build's version string: the release number for a release, else the last release,
 // `+`, the commits since it, and the commit. Mirrors docs/frontends/distribution.md#versions.
 use std::path::{Path, PathBuf};
@@ -25,7 +28,39 @@ fn emit(version: &str, release: &str, after: &str, commit: &str) {
     println!("cargo:rustc-env=JAZYK_COMMIT={commit}");
 }
 
+fn prepare_payloads(root: &Path, directory: &Path, out: &Path) {
+    println!("cargo:rerun-if-changed={}", directory.display());
+    for entry in std::fs::read_dir(directory).expect("payload directory") {
+        let path = entry.expect("payload entry").path();
+        if path.is_dir() {
+            prepare_payloads(root, &path, out);
+            continue;
+        }
+        let name = path.to_string_lossy();
+        if !(name.ends_with(".md") || name.ends_with(".md.mustache")) {
+            continue;
+        }
+        println!("cargo:rerun-if-changed={}", path.display());
+        let prepared =
+            prompt_parser::load(root, &path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let relative = path.strip_prefix(root).expect("payload root");
+        let dest = out.join(relative);
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(dest, prepared).unwrap();
+    }
+}
+
 fn main() {
+    println!("cargo:rerun-if-changed=prompt_parser.rs");
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap());
+    let root = if manifest.join("docs/compiler").is_dir() {
+        manifest.join("docs/compiler")
+    } else {
+        manifest.join("../docs/compiler")
+    };
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("payloads");
+    prepare_payloads(&root, &root.join("goals/prompts"), &out);
+    prepare_payloads(&root, &root.join("skills"), &out);
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-env-changed=JAZYK_BUILD_VERSION");
     println!("cargo:rerun-if-env-changed=JAZYK_BUILD_COMMIT");

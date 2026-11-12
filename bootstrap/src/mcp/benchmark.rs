@@ -69,7 +69,7 @@ impl McpServer {
             Some(w) => c.name == w,
             None => !scored.contains(&c.name),
         }) else {
-            return json!({"error": {"rule": "no-pending-case", "message": "no pending case; benchmark_cases shows the run, benchmark_report closes it"}});
+            return json!({"error": {"rule": "no-pending-case", "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-benchmark/no-pending-case-benchmark-cases-shows-the-f0916.md"))}});
         };
         let tmp = std::env::temp_dir().join(format!(
             "jazyk-mcp-bench-{}-{}",
@@ -370,7 +370,7 @@ impl McpServer {
             "model": model,
             "codec": "agent",
             "report": report,
-            "verdictsLegend": "compilation verdicts order not-capable < extraction < review; review is the highest (extraction plus review judgment). generation and verification are capable or not-capable. unmeasured means the tier was never attempted.",
+            "verdictsLegend": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-benchmark/compilation-verdicts-order-not-capable-extraction-review-e83a7.md")),
             "recorded": "appended to ~/.jazyk/benchmarks/history.yaml",
         })
     }

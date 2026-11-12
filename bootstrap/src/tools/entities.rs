@@ -529,7 +529,7 @@ impl ToolSession {
                 return ToolError::new(
                     "unknown-id",
                     format!(
-                        "`{}` is {}, not an entity; call load with target `{}`",
+                        include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-entities/is-not-an-entity-call-load-with-7dd6d.md")),
                         id, kind, id
                     ),
                 );
@@ -541,7 +541,10 @@ impl ToolSession {
             "search for it, or create it with upsert_entity first".to_string()
         } else {
             format!(
-                "nearest existing: {}; use one of those, or create it with upsert_entity first",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-entities/nearest-existing-use-one-of-those-or-edd1a.md"
+                )),
                 hits.iter()
                     .take(3)
                     .map(|(id, _, _)| id.as_str())
@@ -564,7 +567,10 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "junk-name",
                     format!(
-                        "`{}` {}; entities are domain concepts. If it truly is one, repeat the call with a `note` explaining why",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-entities/entities-are-domain-concepts-if-it-truly-e77f8.md"
+                        )),
                         name_arg, why
                     ),
                 ));
@@ -589,7 +595,10 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "near-duplicate",
                     format!(
-                        "`{}` looks like a name variant of existing `{}` ({}); if it is the same concept, reuse that id and add your wording with update_entity add_aliases. A field, part, state, or child concept of it IS a different concept: repeat the call with a `note` naming that relation",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-entities/looks-like-a-name-variant-of-existing-d1b3c.md"
+                        )),
                         name_arg, eid, ename
                     ),
                 ));
@@ -609,8 +618,16 @@ impl ToolSession {
         let has_derived = Self::present(&args["provenance"]);
         if has_mention == has_derived {
             return Err(ToolError::new(
-                if has_mention { "bad-provenance" } else { "provenance-required" },
-                "an entity enters with exactly one provenance: mention {section, quote} (the sentence that talks about it), or provenance {derived: {from, reasoning}} for structure the documents do not state".into(),
+                if has_mention {
+                    "bad-provenance"
+                } else {
+                    "provenance-required"
+                },
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-entities/an-entity-enters-with-exactly-one-provenance-5ce59.md"
+                ))
+                .into(),
             ));
         }
         let mention_ref = if has_mention {
@@ -719,7 +736,10 @@ impl ToolSession {
                     return Err(ToolError::new(
                         "mention-unnamed",
                         format!(
-                            "the quote never names `{}`; an entity enters with a sentence that names it (a word of its name or an alias). An entity the documents never name enters with provenance {{derived: {{from, reasoning}}}}, or not at all: \"the system\" is a placeholder, never a new entity",
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-entities/the-quote-never-names-an-entity-enters-1d4ed.md"
+                            )),
                             name_arg
                         ),
                     ));
@@ -748,8 +768,16 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "parentless-twin",
                     format!(
-                        "`{}` already exists without a parent as `{}`; to place it under `{}` call update_entity {{id: {}, parent: {}}}. A second `{}` under that parent is a different concept only with a `note` saying what tells them apart",
-                        name_arg, tid, parent.as_deref().unwrap_or(""), tid, parent.as_deref().unwrap_or(""), name_arg
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-entities/already-exists-without-a-parent-as-to-0471d.md"
+                        )),
+                        name_arg,
+                        tid,
+                        parent.as_deref().unwrap_or(""),
+                        tid,
+                        parent.as_deref().unwrap_or(""),
+                        name_arg
                     ),
                 ));
             }
@@ -918,7 +946,7 @@ impl ToolSession {
         if keep == absorb {
             return Err(ToolError::new(
                 "bad-merge",
-                "keep and absorb are the same entity".into(),
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-entities/keep-and-absorb-are-the-same-entity-70dd0.md")).into(),
             ));
         }
         // A merge never makes the survivor its own ancestor: the absorbed
@@ -967,7 +995,11 @@ impl ToolSession {
         if definition.trim().is_empty() {
             return Err(ToolError::new(
                 "definition-required",
-                "definition is one sentence stating the grouping's responsibility; it is the sentence the documents should gain".into(),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-entities/definition-is-one-sentence-stating-the-grouping-978c8.md"
+                ))
+                .into(),
             ));
         }
         let reasoning = Self::opt_str(args, "reasoning").unwrap_or_default();
@@ -995,7 +1027,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "too-few-members",
                 format!(
-                    "a grouping holds at least two members ({} given); below two there is nothing to judge. To move one child, use update_entity with parent",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-entities/a-grouping-holds-at-least-two-members-4cb9f.md"
+                    )),
                     members.len()
                 ),
             ));
@@ -1009,7 +1044,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "cross-level",
                 format!(
-                    "a grouping never crosses levels: {} sits under {} while {} sits under {}; group members that share one parent, or move one first with update_entity parent",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-entities/a-grouping-never-crosses-levels-sits-under-be62f.md"
+                    )),
                     members[0],
                     level(&parent),
                     other,
@@ -1027,7 +1065,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "scope-mismatch",
                 format!(
-                    "a grouping never crosses a scope: {} is in {}, {} is not",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-entities/a-grouping-never-crosses-a-scope-is-2cf46.md")),
                     members[0], scope, other
                 ),
             ));
@@ -1059,12 +1097,18 @@ impl ToolSession {
                 .any(|c| c != &eid && self.parent_of(c).as_deref() == Some(eid.as_str()));
             let message = if sibling && !holds_children {
                 format!(
-                    "`{}` looks like a name variant of `{}` ({}), a peer of the members at this level; a peer that carries the area's word is not the area and never becomes the members' parent: name the grouping from the heading or document that lists the members (or qualify the name), and let {} join the grouping of its own heading",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-entities/looks-like-a-name-variant-of-a-5a38d.md"
+                    )),
                     name_arg, eid, ename, eid
                 )
             } else if sibling {
                 format!(
-                    "`{}` looks like a name variant of existing `{}` ({}), a sibling at this level that already holds children; a lookalike of an existing area reuses it: reparent the members under {} with update_entity parent, or pick the name the documents use for this area",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-entities/looks-like-a-name-variant-of-existing-2b753.md"
+                    )),
                     name_arg, eid, ename, eid
                 )
             } else {
@@ -1080,7 +1124,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "mutation-budget",
                 format!(
-                    "the changeset's mutation budget ({}) cannot fit a grouping of {} members; call done",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-entities/the-changeset-s-mutation-budget-cannot-fit-3c496.md"
+                    )),
                     self.mutation_limit,
                     members.len()
                 ),
@@ -1163,7 +1210,7 @@ impl ToolSession {
                 "withdrawn": rid,
                 "dropped": before - self.staged.len(),
                 "reason": reason,
-                "note": "the entity was staged this session and never landed; the create and every move onto it are out of the changeset",
+                "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-entities/the-entity-was-staged-this-session-and-3b026.md")),
             }));
         }
         if self.staged_dissolved(&rid) {

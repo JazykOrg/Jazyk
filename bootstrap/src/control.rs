@@ -859,7 +859,7 @@ mod tests {
     // write the shared `.jazyk/` (docs/frontends/cli.md).
     #[test]
     fn a_build_on_the_set_less_file_view_is_refused() {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let project = Project {
             set_docs: Some(vec![vec!["a.md".into()], vec!["b.md".into()]]),
             ..Project::default()
@@ -874,7 +874,7 @@ mod tests {
 
     #[test]
     fn replacement_build_has_a_new_token_and_cannot_be_renewed_by_its_predecessor() {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let project = Project::default();
         let out = Path::new("/project/.jazyk/ds_main");
         let first = begin_internal_build(&project, out, "generate").unwrap();
@@ -902,7 +902,7 @@ mod tests {
 
     #[test]
     fn saved_claim_cannot_release_same_worker_same_second_replacement_or_legacy_claim() {
-        let _fs = crate::vfs::Scope::enter(&Default::default());
+        let _fs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let _recovery = crate::session_recovery::Scope::enter(None);
         let out = std::path::Path::new("/project/.jazyk/ds_main");
         let goals = vec!["g:reconcile-section:docs/main.md#/main".into()];

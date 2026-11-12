@@ -624,7 +624,10 @@ impl McpServer {
                 if let Some(o) = open.as_mut() {
                     let kinds = o.session.scope.kinds();
                     if kinds.iter().all(|kind| kind == "verify")
-                        && matches!(name.as_str(), "write_text_file" | "run_command")
+                        && matches!(
+                            name.as_str(),
+                            "write_text_file" | "link_asset" | "remove_asset_link" | "run_command"
+                        )
                     {
                         return Ok(text_result(
                             json!({"error":{"rule":"wrong-toolset","message":"verification may read implementing files but cannot write them"}}),
@@ -941,7 +944,10 @@ impl McpServer {
                 if store.docs.is_empty()
                     && store.graph.entities.is_empty()
                     && !self.modes.iter().any(|m| m == "compile")
-                    && name != "report_feedback"
+                    && !matches!(
+                        name.as_str(),
+                        "inspect_input" | "classify_input" | "report_feedback"
+                    )
                     && name != crate::tools::SPEND_TOOL
                 {
                     return Ok(text_result(
@@ -962,7 +968,10 @@ impl McpServer {
                 {
                     scope.target = target.to_string();
                 } else if let Some(target) = self.ledger_target.lock().unwrap().clone() {
-                    if name == "write_text_file" {
+                    if matches!(
+                        name.as_str(),
+                        "write_text_file" | "link_asset" | "remove_asset_link"
+                    ) {
                         if let Err(holder) =
                             crate::control::claim(&self.out, &target, &self.worker_id())
                         {

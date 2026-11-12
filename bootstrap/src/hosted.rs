@@ -28,7 +28,7 @@ pub fn host_record_store() -> Option<Arc<dyn records::RecordStore>> {
 }
 use projection::project_projection;
 
-pub type Snapshot = BTreeMap<String, Vec<u8>>;
+pub use crate::file_tree::Snapshot;
 pub type ModelTransport = Arc<dyn Fn(&str) -> Result<String, String> + Send + Sync>;
 pub type ModelStreamTransport =
     Arc<dyn Fn(&str, &mut dyn FnMut(&str, &str)) -> Result<String, String> + Send + Sync>;
@@ -71,6 +71,8 @@ pub struct Projection {
     pub source: BTreeMap<String, String>,
     pub files: BTreeMap<String, String>,
     pub criteria: BTreeMap<String, Value>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub symlinks: std::collections::BTreeSet<String>,
     pub graph_generation: u64,
 }
 
@@ -122,7 +124,8 @@ pub struct Workspace {
     files: Snapshot,
 }
 impl Workspace {
-    pub fn new(files: Snapshot) -> Result<Self, String> {
+    pub fn new(files: impl Into<Snapshot>) -> Result<Self, String> {
+        let files = files.into();
         for name in files.keys() {
             if name.is_empty()
                 || name.contains(['\\', '\0', ':'])
@@ -139,6 +142,16 @@ impl Workspace {
                     return Err(format!("file conflicts with directory: {}", p.display()));
                 }
                 parent = p.parent();
+            }
+        }
+        for (path, target) in files.symlinks() {
+            let target = std::str::from_utf8(target).map_err(|_| "symlink target must be UTF-8")?;
+            if target.is_empty()
+                || target.contains(['\\', '\0', ':'])
+                || std::path::Path::new(target).is_absolute()
+                || crate::md::resolve_rel(path, target).is_none()
+            {
+                return Err(format!("invalid symlink target for {path}"));
             }
         }
         Ok(Self { files })

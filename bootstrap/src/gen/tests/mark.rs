@@ -28,7 +28,7 @@ fn strip_markers_and_relocate() {
 
 #[test]
 fn qualified_source_markers_anchor_only_their_document_set() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = Path::new("/project/.jazyk/ds_main");
     let (store, gs) = fixture(out);
     let path = gs.deliverable.join("src/cart.rs");

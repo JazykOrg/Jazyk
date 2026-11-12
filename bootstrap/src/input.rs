@@ -12,7 +12,85 @@ use std::collections::{BTreeMap, BTreeSet};
 pub type Input = Result<(String, BTreeMap<String, Section>), String>;
 
 // All reads go through VFS, including opaque bytes in browser and hosted projects.
+pub fn decisions(proj: &Project) -> BTreeMap<String, crate::model::InputDecision> {
+    let dir = proj.out.join("graph/decisions/inputs");
+    crate::vfs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|entry| {
+            entry.path().extension().is_some_and(|e| e == "yaml")
+                && !entry.file_name().to_string_lossy().starts_with('.')
+        })
+        .filter_map(|entry| {
+            let value: serde_json::Value =
+                serde_norway::from_slice(&crate::vfs::read(entry.path()).ok()?).ok()?;
+            let id = value["id"].as_str()?.to_string();
+            let decision = serde_json::from_value(value).ok()?;
+            Some((id, decision))
+        })
+        .collect()
+}
+
+/// A project-level read bypasses parsing only when all claiming sets use assets.
+pub fn asset_decision(project: &Project, path: &str) -> Option<crate::model::InputDecision> {
+    if project.set_id.is_some() {
+        return decisions(project)
+            .remove(path)
+            .filter(|d| d.mode == "asset");
+    }
+    let workspace = crate::document_sets::Workspace::load(&project.root).ok()?;
+    let mut asset = None;
+    for set in &workspace.sets {
+        let context = workspace.resolve(Some(&set.id)).ok()?;
+        if !context.doc_files().contains(&context.root.join(path)) {
+            continue;
+        }
+        let decision = decisions(&context).remove(path)?;
+        if decision.mode != "asset" {
+            return None;
+        }
+        asset = Some(decision);
+    }
+    asset
+}
+
+pub fn project_for_store(store: &crate::store::Store) -> Option<Project> {
+    let root = crate::project::find_root(&store.out)?;
+    let workspace = crate::document_sets::Workspace::load(&root).ok()?;
+    workspace
+        .sets
+        .iter()
+        .filter_map(|set| workspace.resolve(Some(&set.id)).ok())
+        .find(|project| project.out == store.out)
+}
+
+pub(crate) fn reference_links(doc: &str, text: &str) -> Vec<(String, std::ops::Range<usize>)> {
+    if crate::rst::supported(std::path::Path::new(doc)) {
+        crate::rst::references(text, true)
+    } else if crate::asciidoc::supported(std::path::Path::new(doc)) {
+        crate::asciidoc::references(text, true)
+    } else {
+        Parser::new(text)
+            .into_offset_iter()
+            .filter_map(|(event, range)| match event {
+                Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
+                    Some((dest_url.into_string(), range))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
+    scan_with_decisions(proj, &decisions(proj))
+}
+
+pub fn scan_with_decisions(
+    proj: &Project,
+    modes: &BTreeMap<String, crate::model::InputDecision>,
+) -> BTreeMap<String, Input> {
     let mut inputs = BTreeMap::new();
     let mut blobs = BTreeMap::new();
     for file in proj.doc_files() {
@@ -25,7 +103,9 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
             .map_err(|e| format!("cannot read the file: {e}"))
             .and_then(|bytes| {
                 let sha = crate::task_runtime::digest(&bytes);
-                if md::supported_format(&file) {
+                if md::supported_format(&file)
+                    && !modes.get(&path).is_some_and(|d| d.mode == "asset")
+                {
                     md::project_bytes(&file, &bytes).and_then(|text| {
                         // UTF-8 prose already hashes all original bytes. Native package
                         // projections must retain the original package byte identity.
@@ -44,10 +124,11 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
                         Ok((hash, md::parse_document_checked(&file, &text)?))
                     })
                 } else {
-                    blobs.insert(
-                        path.clone(),
-                        json!({"path": path, "size": bytes.len(), "sha256": sha}),
-                    );
+                    let mut envelope = json!({"path": path, "size": bytes.len(), "sha256": sha});
+                    if let Some(decision) = modes.get(&path) {
+                        envelope["classification"] = json!(decision);
+                    }
+                    blobs.insert(path.clone(), envelope);
                     Ok((sha, BTreeMap::new()))
                 }
             });
@@ -58,24 +139,10 @@ pub fn scan(proj: &Project) -> BTreeMap<String, Input> {
         let Ok((_, sections)) = input else { continue };
         // Parse the full projection to retain reference-style link definitions.
         let text = projection_text(sections);
-        let references: Vec<_> = if crate::rst::supported(std::path::Path::new(doc)) {
-            crate::rst::references(&text, true)
-        } else if crate::asciidoc::supported(std::path::Path::new(doc)) {
-            crate::asciidoc::references(&text, true)
-        } else {
-            Parser::new(&text)
-                .into_offset_iter()
-                .filter_map(|(event, range)| match event {
-                    Event::Start(Tag::Link { dest_url, .. } | Tag::Image { dest_url, .. }) => {
-                        Some((dest_url.into_string(), range))
-                    }
-                    _ => None,
-                })
-                .collect()
-        };
+        let references = reference_links(doc, &text);
         for (dest_url, range) in references {
             let crate::gen::assets::Target::Local(path) =
-                crate::gen::assets::target(doc, &dest_url)
+                crate::gen::assets::target_input(doc, &dest_url)
             else {
                 continue;
             };

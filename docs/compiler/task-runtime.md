@@ -57,7 +57,7 @@ File globs are project-relative. `products` retain generated outputs. `cache` ma
 disposable files restored before execution and saved only after command success.
 `reports` identifies JUnit results. These fields default to empty. Logs and changes
 to existing eligible project files are retained independently. New unmatched files
-are transient. Protected compiler state, secrets, symlinks, traversal paths, device
+are transient. Protected compiler state, secrets, unsafe symlinks, traversal paths, device
 files, and conflicting classifications are refused. Cache never overwrites input.
 Use `cwd = "."` for the project root. An identical pattern cannot appear twice,
 including across `products`, `cache`, and `reports`. Put test report patterns in
@@ -331,3 +331,11 @@ Declared product globs override the default omission of `target`, `node_modules`
 and `.cache` input directories. Matching retained products are available to later
 tasks. Other files in these directories remain omitted from project input and use
 the disposable cache when configured. Protected paths and symlinks stay excluded.
+
+## Asset symlinks in snapshots
+
+Direct file symlinks from selected Source to selected assets are materialized as
+exact target bytes in task inputs. Resolve and validate both paths inside the
+project. Other symlinks remain excluded. A selected Source link that is broken or
+violates the asset-link contract fails snapshot creation. Tasks cannot write
+products through a symlink in the project.

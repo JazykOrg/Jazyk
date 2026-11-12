@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn source_scaffolding_is_listed_and_read_without_exposing_other_hidden_paths() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let root = Path::new("/project");
         let out = root.join(".jazyk/ds_main");
         crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();

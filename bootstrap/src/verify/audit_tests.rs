@@ -20,7 +20,7 @@ fn file_walk_skips_symlinked_directories() {
 
 #[test]
 fn audit_clears_all_criterion_verdicts_when_implementing_files_change() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = std::path::Path::new("/project/.jazyk");
     let (store, gs) = multi_llm_fixture(out);
     let mut ledger = Ledger::load(out);

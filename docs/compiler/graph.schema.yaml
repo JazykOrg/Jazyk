@@ -46,6 +46,7 @@ x-files:
   review: reviewDecision
   conformance: conformanceDecision
   structure: structureDecision
+  input: inputDecision
   curation: curationDecision
   entity: entity
   requirement: requirement
@@ -1552,6 +1553,16 @@ definitions:
   controlFile:
     description: The local/control.yaml file, never committed. See control-plane.md
     type: object
+  inputDecision:
+    type: object
+    required: [id, mode, sha256, reason]
+    properties:
+      id: {type: string, minLength: 1}
+      mode: {type: string, enum: [asset, document]}
+      sha256: {type: string, pattern: '^[a-f0-9]{64}$'}
+      reason: {type: string, minLength: 1}
+    additionalProperties: false
+
   curationDecision:
     description: >-
       One graph/decisions/curation/<id>.yaml file: the nodes a curated view's query

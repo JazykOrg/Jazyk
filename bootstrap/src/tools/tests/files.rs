@@ -284,7 +284,7 @@ fn file_reads_bound_single_utf8_lines_and_resume_at_following_lines() {
 
 #[test]
 fn literal_file_edit_preserves_unread_content_and_returns_whole_file_hashes() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let root = std::path::PathBuf::from("/project/deliverable");
     crate::vfs::create_dir_all(&root).unwrap();
     let original = "<title>Jazyk ž</title>\r\nregex = r'\\w+\\.py'\r\n<footer>keep me</footer>\r\n";
@@ -327,7 +327,7 @@ fn literal_file_edit_preserves_unread_content_and_returns_whole_file_hashes() {
 
 #[test]
 fn literal_file_edits_refuse_stale_missing_or_ambiguous_context_without_writing() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let root = std::path::PathBuf::from("/project/deliverable");
     crate::vfs::create_dir_all(&root).unwrap();
     let path = root.join("page.txt");
@@ -405,7 +405,7 @@ fn atomic_file_tool_edits_preserve_native_executable_permissions() {
 
 #[test]
 fn svg_reads_copy_exact_utf8_line_endings_and_final_newlines() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let root = std::path::Path::new("/project");
     crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
     crate::vfs::create_dir_all(root.join("assets")).unwrap();
@@ -471,7 +471,7 @@ fn svg_reads_copy_exact_utf8_line_endings_and_final_newlines() {
 
 #[test]
 fn complete_file_pages_preserve_delimiters_at_line_and_byte_caps() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let root = std::path::Path::new("/project");
     crate::vfs::create_dir_all(root).unwrap();
     let mut tools = session();

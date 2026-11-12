@@ -350,7 +350,7 @@ impl McpServer {
                 .extension()
                 .and_then(|e| e.to_str())
                 .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf"));
-            let mut value = if binary {
+            let mut value = if binary && crate::input::asset_decision(&project, path).is_none() {
                 crate::webapi::binary_documents::read(&project, path)
                     .map_err(|(_, message)| (-32602, message))?
             } else {

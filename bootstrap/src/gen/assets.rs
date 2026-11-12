@@ -201,7 +201,7 @@ pub(crate) enum Target {
     Blocked(String),
 }
 
-pub(crate) fn target(doc: &str, href: &str) -> Target {
+pub(crate) fn target_input(doc: &str, href: &str) -> Target {
     let raw = href.split(['?', '#']).next().unwrap_or("");
     if raw.is_empty() || raw.starts_with("//") {
         return Target::Ignore;
@@ -239,9 +239,6 @@ pub(crate) fn target(doc: &str, href: &str) -> Target {
     }
     if !readable_path(&path) {
         return Target::Blocked(path);
-    }
-    if crate::md::supported_format(Path::new(&path)) {
-        return Target::Ignore;
     }
     Target::Local(path)
 }
@@ -410,7 +407,17 @@ pub fn referenced_assets_in(
             .or_insert_with(|| Document::read(&project.root.join(&source.doc)));
         let Some(document) = document else { continue };
         for href in document.quoted_links(source) {
-            let (path, blocked) = match target(&source.doc, href) {
+            let (path, blocked) = match target_input(&source.doc, href) {
+                Target::Local(path)
+                    if crate::md::supported_format(Path::new(&path))
+                        && !store
+                            .decisions
+                            .inputs
+                            .get(&path)
+                            .is_some_and(|d| d.mode == "asset") =>
+                {
+                    continue
+                }
                 Target::Ignore => continue,
                 Target::Local(path) => (path, false),
                 Target::Blocked(path) => (path, true),

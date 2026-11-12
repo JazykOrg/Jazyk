@@ -232,6 +232,11 @@ mod native {
             .unwrap()
             .to_string_lossy()
             .to_ascii_lowercase();
+        if let Some(decision) = crate::input::asset_decision(project, path) {
+            return Ok(
+                json!({"path":path,"format":format,"base64":STANDARD.encode(&bytes),"revision":revision,"writable":false,"projection":null,"diagnostics":[],"asset":true,"classification":decision}),
+            );
+        }
         let projection = documents::from_bytes(&absolute, &bytes);
         let mut findings = Vec::new();
         if let Ok(p) = &projection {

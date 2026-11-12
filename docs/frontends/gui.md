@@ -951,3 +951,12 @@ makes an older connector reject the operation instead of ignoring the selection
 header and using its configured provider. Capabilities advertise
 `agentSelectionProtocol: 1`. Cancellation and deterministic reads retain their
 ordinary routes so expired selections cannot prevent Stop.
+
+## Symlink file entries
+
+`PUT /api/project/file?path=...` accepts `{symlinkTarget: relative-target}` to create
+an actual native or virtual file symlink. It is exclusive and cannot combine with
+`text` or `base64`. The target must be a direct eligible file within the project.
+`GET /api/project/files` includes `entryType: symlink` and `symlinkTarget` for links,
+including dangling links. File reads resolve target bytes. Deleting a file link
+removes the link, including a dangling link, and never deletes its target.

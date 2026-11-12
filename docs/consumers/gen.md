@@ -615,6 +615,22 @@ The trail is test or site → requirement id → `quote` → section.
 
 ## Referenced assets
 
+An input classified as an asset is an input regardless of extension. A linked PDF
+asset contributes its exact bytes to the referencing entity's `factHash`.
+Classification is described in [parsing](../compiler/parsing.md#asset-classification).
+
+Generation may use `link_asset` to expose an original asset at a Source path.
+Record that destination in the existing entity file manifest. Reading or hashing
+it resolves the target bytes. Editing the link never edits the asset. Use
+`inspect_asset_link` and `remove_asset_link` to inspect or remove a link before
+replacing it. Record generation only against current referenced asset hashes.
+
+Task snapshots materialize allowed asset file links as their current exact bytes.
+The resulting task input is self-contained; local originals remain symlinks.
+A broken or unsafe link fails snapshot creation rather than silently disappearing.
+Standalone consumers use the materialized bytes and do not need the original
+docs directory. Website publishers package the resolved bytes at deliverable paths.
+
 Selected opaque inputs also compile as whole-file blob sections. Their original
 bytes remain inputs even when a generated copy exists at a different path. Blob
 coverage links the input to requirements quoted from referring documents. Reuse

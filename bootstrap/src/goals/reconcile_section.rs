@@ -7,6 +7,12 @@ pub fn unmarked_sections(
     doc: &str,
     sections: &[String],
 ) -> Vec<String> {
+    if staged
+        .iter()
+        .any(|op| matches!(op, Op::ClassifyInput { doc: d, .. } if d == doc))
+    {
+        return vec![];
+    }
     sections
         .iter()
         .filter(|sec| {
@@ -884,6 +890,7 @@ impl GoalKind for ReconcileSection {
             "upsert_criterion",
             "update_criterion",
             "delete_criterion",
+            "classify_input",
             "set_coverage",
         ]
     }

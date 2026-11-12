@@ -162,6 +162,8 @@ Skills: none active; extraction, judgment, flow-views, structural-views, abstrac
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `place-anchors` toolset ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,

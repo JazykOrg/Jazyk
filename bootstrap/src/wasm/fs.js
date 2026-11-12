@@ -23,3 +23,8 @@ export function fsRemove(path, dir) {
   if (!enabled) return
   self.postMessage({ kind: 'fs', op: 'remove', path, dir })
 }
+
+export function fsSymlink(path, target) {
+  if (!enabled) return
+  self.postMessage({ kind: 'fs', op: 'symlink', path, target })
+}

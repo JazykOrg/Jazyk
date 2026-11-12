@@ -1040,7 +1040,7 @@ mod tests {
             ..Default::default()
         };
         let (result, _) = workflow_request(
-            files,
+            files.into(),
             json!([{"action":"compile"},{"action":"generate"}]),
             &execution,
         );
@@ -1423,7 +1423,7 @@ mod tests {
         ]
         .into_iter()
         .map(|(p, text)| (p.into(), text.as_bytes().to_vec()))
-        .collect();
+        .collect::<crate::hosted::Snapshot>();
         let mut workspace = crate::hosted::Workspace::new(files).unwrap();
         let reply = workspace
             .request(
@@ -1448,9 +1448,10 @@ mod tests {
     #[test]
     fn cancellation_runs_no_action_and_no_model() {
         let config = "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = ['docs/**']\nsource = []\n";
-        let mut workspace = crate::hosted::Workspace::new(
-            [(".jazyk/jazyk.toml".into(), config.as_bytes().to_vec())].into(),
-        )
+        let mut workspace = crate::hosted::Workspace::new([(
+            ".jazyk/jazyk.toml".into(),
+            config.as_bytes().to_vec(),
+        )])
         .unwrap();
         let execution = crate::hosted::Execution {
             cancel: std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -1526,9 +1527,10 @@ mod tests {
     fn deployment_suspension_retains_the_active_workflow_action_without_failure() {
         let config =
             "version = 1\n[[sets]]\nid = 'ds_main'\nname = 'Main'\ndocs = []\nsource = []\n";
-        let mut workspace = crate::hosted::Workspace::new(
-            [(".jazyk/jazyk.toml".into(), config.as_bytes().to_vec())].into(),
-        )
+        let mut workspace = crate::hosted::Workspace::new([(
+            ".jazyk/jazyk.toml".into(),
+            config.as_bytes().to_vec(),
+        )])
         .unwrap();
         let saved = std::sync::Arc::new(std::sync::Mutex::new(None));
         let capture = saved.clone();

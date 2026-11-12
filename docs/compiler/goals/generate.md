@@ -252,6 +252,8 @@ same debt and lands on the entity's ledger entry. See
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The session's serving runs in `generate` mode ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): the loaded-set tools `load`, `expand`,
@@ -349,3 +351,5 @@ left the graph. `run_tests` then verifies the programmatic rows: the build first
 once, then each row's command; verdicts land as a side effect. The session marks the
 goal done with a one-line justification and ends with `done`. A session that ends
 without recording has failed the goal.
+
+`link_asset`, `inspect_asset_link`, and `remove_asset_link` manage native or virtual asset symlinks. See [asset links](../tools.md#asset-links).

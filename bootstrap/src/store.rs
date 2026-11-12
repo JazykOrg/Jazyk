@@ -233,6 +233,10 @@ pub enum Op {
         id: String,
         answer: crate::model::DiagnosticAnswer,
     },
+    ClassifyInput {
+        doc: String,
+        decision: InputDecision,
+    },
     SetCoverage {
         doc: String,
         section: String,

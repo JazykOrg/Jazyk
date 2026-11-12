@@ -201,6 +201,18 @@ impl ToolSession {
                     return Err(ToolError::new("source-selection",format!("{} is outside this document set's source selection or belongs to documents. Allowed source patterns: {:?}. Inspect list_document_sets; choose an included path or use update_document_set to include the intended source or criteria file. Do not substitute an unrelated file after a rejected write",rel,self.gen.code)));
                 }
                 let path = self.deliverable_path(&rel)?;
+                let lexical = self.deliverable_root().join(&rel);
+                if lexical
+                    .ancestors()
+                    .take_while(|p| *p != self.deliverable_root())
+                    .any(crate::vfs::is_symlink)
+                {
+                    return Err(ToolError::new(
+                        "asset-link-write",
+                        "remove the link before writing; text writes cannot modify its target"
+                            .into(),
+                    ));
+                }
                 // The protected-path fence holds with or without a workspace.
                 // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
                 if self.protected_file(&rel, &path) {
@@ -406,5 +418,100 @@ impl ToolSession {
             }
             _ => unreachable!(),
         }
+    }
+}
+
+impl ToolSession {
+    pub(super) fn asset_link_tool(&mut self, name: &str, args: &Value) -> Result<Value, ToolError> {
+        let project = crate::input::project_for_store(&self.snapshot).ok_or_else(|| {
+            ToolError::new("no-project", "cannot resolve the document set".into())
+        })?;
+        let path = Self::str_arg(args, "path")?;
+        let fail = |message| ToolError::new("asset-link", message);
+        if !crate::task_runtime::safe_path(&path)
+            || !crate::document_sets::safe_relative(&project.root, &path)
+        {
+            return Err(fail("path must stay inside the eligible project".into()));
+        }
+        let destination = project.root.join(&path);
+        if name == "inspect_asset_link" {
+            let (relative, target) =
+                crate::asset_links::target(&project.root, &path).map_err(fail)?;
+            let bytes = crate::vfs::read(&destination).map_err(|e| fail(e.to_string()))?;
+            return Ok(
+                json!({"path":path,"target":relative,"resolvedTarget":target,"sha256":crate::task_runtime::digest(&bytes),"status":"available"}),
+            );
+        }
+        let relative = destination
+            .strip_prefix(&self.gen.deliverable)
+            .map_err(|_| fail("destination is outside the deliverable".into()))?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !self.gen.allows_source(&relative) {
+            return Err(ToolError::new(
+                "source-selection",
+                "link destination must be selected Source".into(),
+            ));
+        }
+        let _lock = crate::gen::Ledger::lock(&self.snapshot.out);
+        let ledger = crate::gen::Ledger::load(&self.snapshot.out);
+        if let Some(error) = &ledger.unreadable {
+            return Err(fail(error.clone()));
+        }
+        if let Some(owner) =
+            crate::gen::file_owner(&self.snapshot, &ledger, &self.scope.gen_target(), &relative)
+        {
+            return Err(ToolError::new(
+                "file-owned",
+                format!("begin_generation for ent:{owner} before modifying its link"),
+            ));
+        }
+        if name == "remove_asset_link" {
+            let expected = Self::str_arg(args, "expectedTarget")?;
+            let current = crate::vfs::read_link(&destination).map_err(|e| fail(e.to_string()))?;
+            if current.to_str() != Some(expected.as_str()) {
+                return Err(fail("link target changed since inspection".into()));
+            }
+            crate::vfs::remove_file(&destination).map_err(|e| fail(e.to_string()))?;
+            return Ok(json!({"removed":path,"targetUnchanged":true}));
+        }
+        let target = Self::str_arg(args, "target")?;
+        let target_path = project.root.join(&target);
+        if !crate::asset_links::selected_asset(&project, &target)
+            || crate::vfs::is_symlink(&target_path)
+            || !target_path.vis_file()
+        {
+            return Err(fail(
+                "target must be a direct, available selected asset in this set".into(),
+            ));
+        }
+        if destination.vexists() || crate::vfs::is_symlink(&destination) {
+            return Err(fail(
+                "destination exists; inspect and remove the link or choose a new path".into(),
+            ));
+        }
+        if destination
+            .parent()
+            .into_iter()
+            .flat_map(|p| p.ancestors())
+            .take_while(|p| *p != project.root)
+            .any(crate::vfs::is_symlink)
+        {
+            return Err(fail("link destination cannot have a symlink parent".into()));
+        }
+        let bytes = crate::vfs::read(&target_path).map_err(|e| fail(e.to_string()))?;
+        let sha = crate::task_runtime::digest(&bytes);
+        if sha != Self::str_arg(args, "sha256")? {
+            return Err(fail("target bytes changed since inspection".into()));
+        }
+        let link = crate::asset_links::relative_target(&path, &target);
+        crate::vfs::create_dir_all(
+            destination
+                .parent()
+                .ok_or_else(|| fail("destination has no parent".into()))?,
+        )
+        .map_err(|e| fail(e.to_string()))?;
+        crate::vfs::symlink_file(&link, &destination).map_err(|e| fail(e.to_string()))?;
+        Ok(json!({"path":path,"target":link,"resolvedTarget":target,"sha256":sha}))
     }
 }

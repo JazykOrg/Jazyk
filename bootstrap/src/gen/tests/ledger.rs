@@ -37,7 +37,7 @@ fn an_unparseable_ledger_reads_empty_and_refuses_to_save() {
 
 #[test]
 fn written_artifact_is_implementation_and_detects_code_changes() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = Path::new("/project/.jazyk/ds_main");
     let (store, gs) = fixture(out);
     let mut ledger = Ledger::load(out);

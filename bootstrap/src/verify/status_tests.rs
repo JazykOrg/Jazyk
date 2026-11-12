@@ -112,7 +112,7 @@ fn scoped_mapping(extra_docs: &[&str]) {
 
 #[test]
 fn document_reclassification_reopens_binding_and_generation_without_touching_files() {
-    let _vfs = crate::vfs::Scope::enter(&Default::default());
+    let _vfs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let (store, gs) = scoped_fixture();
     assert!(pending(&store, &gs, None, None).is_empty());
     assert!(crate::bind::pending(&store, &gs).is_empty());
@@ -236,7 +236,7 @@ fn document_reclassification_reopens_binding_and_generation_without_touching_fil
 
 #[test]
 fn test_reclassification_reopens_development_without_treating_tests_as_implementation() {
-    let _vfs = crate::vfs::Scope::enter(&Default::default());
+    let _vfs = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let (store, gs) = scoped_fixture();
     scoped_mapping(&["tests/cart.rs"]);
     let ledger = Ledger::load(&store.out);

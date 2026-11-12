@@ -910,7 +910,7 @@ mod tests {
     }
     #[test]
     fn selected_artifact_does_not_execute_or_verify_sibling_criterion() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let (project, store, gs) = fixture();
         let mut ledger = Ledger::load(&store.out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();
@@ -945,7 +945,7 @@ mod tests {
     }
     #[test]
     fn unbound_selection_fails_before_build_or_model() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let (project, store, gs) = fixture();
         let mut ledger = Ledger::load(&store.out);
         ledger.build = Some(
@@ -968,7 +968,7 @@ mod tests {
     }
     #[test]
     fn shared_task_outside_selection_is_refused_before_dispatch() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let (project, store, gs) = fixture();
         let mut ledger = Ledger::load(&store.out);
         let row = ledger.requirements.get_mut("req:shop-1").unwrap();
@@ -987,7 +987,7 @@ mod tests {
     }
     #[test]
     fn path_prefix_does_not_select_another_artifact() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let (project, store, gs) = fixture();
         let ledger = Ledger::load(&store.out);
         let first = &ledger.requirements["req:shop-1"].tests["crit:first"].test;
@@ -1044,7 +1044,7 @@ mod tests {
     }
     #[test]
     fn workspace_validates_shared_task_before_any_runner_or_outside_evidence_change() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let projects = workspace_fixture();
         for project in &projects {
             let mut ledger = Ledger::load(&project.out);
@@ -1081,7 +1081,7 @@ mod tests {
     }
     #[test]
     fn shared_build_task_outside_selection_fails_before_any_runner() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let projects = workspace_fixture();
         let mut first = Ledger::load(&projects[0].out);
         first.build = Some(
@@ -1108,7 +1108,7 @@ mod tests {
     }
     #[test]
     fn multiple_sets_execute_sequentially_and_expose_exact_artifact_paths() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let projects = workspace_fixture();
         let order = std::cell::RefCell::new(Vec::new());
         let paths = vec![
@@ -1143,7 +1143,7 @@ mod tests {
     }
     #[test]
     fn suite_dispatch_is_shared_by_distinct_case_names_and_legacy_commands() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let (_, store, gs) = fixture();
         let ledger = Ledger::load(&store.out);
         let calls = Cell::new(0);
@@ -1299,7 +1299,7 @@ mod tests {
             "missing-epoch",
             "unchanged",
         ] {
-            let _scope = crate::vfs::Scope::enter(&Default::default());
+            let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
             let (project, mut store, gs) = fixture();
             let mut ledger = Ledger::load(&store.out);
             let row = ledger.requirements.get_mut("req:shop-1").unwrap();
@@ -1443,7 +1443,7 @@ mod tests {
     }
     #[test]
     fn later_set_build_mutation_cannot_reuse_prior_shared_suite_observation() {
-        let _scope = crate::vfs::Scope::enter(&Default::default());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
         let projects = workspace_fixture();
         let task: crate::task_runtime::Task = serde_json::from_value(
             json!({"id":"suite","name":"Suite","description":"Selected cases","command":"fixture"}),

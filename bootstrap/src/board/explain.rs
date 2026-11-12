@@ -219,6 +219,9 @@ pub fn staged_opens(store: &Store, staged: &[crate::store::Op]) -> Vec<String> {
     };
     for op in staged {
         match op {
+            Op::ClassifyInput { doc, .. } => {
+                push("reconcile-section", doc, "input processing mode")
+            }
             Op::DeleteRequirement { id, .. } => {
                 for v in views_listing(id) {
                     push("retrace", &v, "member gone");

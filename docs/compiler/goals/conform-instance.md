@@ -203,6 +203,8 @@ skills: conformance (active); extraction, judgment, flow-views, structural-views
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `conform-instance` toolset ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,

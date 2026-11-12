@@ -140,6 +140,8 @@ land the same row.
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 An `llm` session's serving runs in `verify` mode ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`,

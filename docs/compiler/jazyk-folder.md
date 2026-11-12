@@ -519,3 +519,11 @@ Two rules keep places from fighting:
 - Run the same store version everywhere. A binary that finds a store newer than its own
   refuses to write and asks for an upgrade; it never archives it
   ([store version](./graph.md#store-version)).
+
+## Input processing decisions
+
+`graph/decisions/inputs/<file id>.yaml` records a selected file's processing mode,
+classification reason, and original byte SHA-256. The `id` is the project-relative
+input path. These decisions are committed compiler state. A changed byte hash
+invalidates reconciliation, not the processing mode. No user configuration is
+required. See [asset classification](parsing.md#asset-classification).

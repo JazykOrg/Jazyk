@@ -690,3 +690,25 @@ impl ToolSession {
         Ok(Self::diagnostics_page(list, args))
     }
 }
+
+impl ToolSession {
+    pub(super) fn inspect_input_tool(&self, args: &Value) -> Result<Value, ToolError> {
+        let path = Self::str_arg(args, "path")?;
+        let project = crate::input::project_for_store(&self.snapshot).ok_or_else(|| {
+            ToolError::new("no-project", "cannot resolve this document set".into())
+        })?;
+        if !crate::document_sets::safe_relative(&project.root, &path)
+            || !project.doc_files().contains(&project.root.join(&path))
+        {
+            return Err(ToolError::new(
+                "input-selection",
+                "path must be a selected input".into(),
+            ));
+        }
+        let bytes = crate::vfs::read(project.root.join(&path))
+            .map_err(|e| ToolError::new("input-unavailable", e.to_string()))?;
+        Ok(
+            json!({"path":path,"sha256":crate::task_runtime::digest(&bytes),"size":bytes.len(),"classification":self.snapshot.decisions.inputs.get(&path)}),
+        )
+    }
+}

@@ -474,3 +474,57 @@ impl Store {
 
     // ---- document sync (the dirty set) ----
 }
+
+impl Store {
+    pub(crate) fn classified_input(
+        &self,
+        doc: &str,
+        decision: &InputDecision,
+        check_quotes: bool,
+    ) -> Result<(String, BTreeMap<String, Section>), String> {
+        if !matches!(decision.mode.as_str(), "asset" | "document")
+            || decision.reason.trim().is_empty()
+        {
+            return Err("mode must be asset or document and reason must be specific".into());
+        }
+        let project =
+            crate::input::project_for_store(self).ok_or("cannot resolve the document set")?;
+        if !project
+            .doc_files()
+            .iter()
+            .any(|p| p == &project.root.join(doc))
+            || !crate::document_sets::safe_relative(&project.root, doc)
+        {
+            return Err("path must be an eligible selected input".into());
+        }
+        let bytes = crate::vfs::read(project.root.join(doc)).map_err(|e| e.to_string())?;
+        if crate::task_runtime::digest(&bytes) != decision.sha256 {
+            return Err("input changed since sha256 was read; inspect the current bytes".into());
+        }
+        if check_quotes && decision.mode == "asset" {
+            let quoted = |p: &Provenance| matches!(p, Provenance::Quote(s) if s.doc == doc);
+            let stranded = self.graph.requirements.values().any(|r| {
+                r.provenance()
+                    .is_some_and(|p| matches!(p, ProvenanceRef::Quote(s) if s.doc == doc))
+            }) || self.graph.entities.values().any(|e| {
+                e.mentions.iter().any(|s| s.doc == doc)
+                    || e.provenance.as_ref().is_some_and(quoted)
+                    || e.attributes.iter().any(|a| quoted(&a.provenance))
+            }) || self.graph.criteria.values().any(|c| {
+                c.source.as_ref().is_some_and(|s| s.doc == doc)
+                    || c.provenance.as_ref().is_some_and(quoted)
+            });
+            if stranded {
+                return Err(
+                    "relocate or retract facts quoting this input before marking it as an asset"
+                        .into(),
+                );
+            }
+        }
+        let mut modes = self.decisions.inputs.clone();
+        modes.insert(doc.into(), decision.clone());
+        crate::input::scan_with_decisions(&project, &modes)
+            .remove(doc)
+            .ok_or_else(|| "input is no longer selected".to_string())?
+    }
+}

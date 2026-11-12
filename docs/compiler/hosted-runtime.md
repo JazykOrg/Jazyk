@@ -239,3 +239,18 @@ only the committed graph and the set's local files. A build suspended for a depl
 resumes from the capsule where it stopped. The host deletes the capsule when the build
 ends. A build whose capsule is lost starts over, and its first derivation finds the same
 work ([a build's progress](./graph.md#a-builds-progress)).
+
+## Symlink snapshots
+
+A hosted snapshot retains each entry's bytes and type. A symlink stores its relative
+target as its contents, as Git mode `120000` does. `Snapshot::insert_symlink` creates
+that entry. A normal `insert` replaces it with a regular file. Snapshot serialization
+uses entries `{kind: file, bytes}` or `{kind: symlink, target}`. No project file
+stores a second list of links. Workspace validation rejects absolute targets and
+paths escaping the project. Dangling links remain entries and fail reads explicitly.
+The VFS preserves link entries across requests and recovery checkpoints.
+
+Text delivery projections carry `symlinks`, the candidate paths whose text is a
+relative link target. Git consumers use mode `120000` for those entries. Ordinary
+text maps keep their existing shape. This is entry metadata in the projection,
+not a project manifest file.

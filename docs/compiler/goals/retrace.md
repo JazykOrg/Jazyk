@@ -211,6 +211,8 @@ skills: flow-views (active); extraction, judgment, structural-views, abstraction
 
 ## Tools
 
+`inspect_input` reads a selected file's byte identity and processing decision without parsing it.
+
 The `retrace` toolset ([toolsets](../tools.md#toolsets)):
 
 - The [read tools](../tools.md#read-tools): `load`, `expand`, `unload`, `graph_status`,

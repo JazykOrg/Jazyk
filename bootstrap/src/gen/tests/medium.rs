@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn task_build_requires_promised_products() {
-    let _scope = crate::vfs::Scope::enter(&Default::default());
+    let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
     let out = Path::new("/project/.jazyk");
     let (_, gs) = fixture(out);
     let build = Build {

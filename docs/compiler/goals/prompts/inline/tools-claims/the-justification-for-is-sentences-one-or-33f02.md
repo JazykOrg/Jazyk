@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: the justification for {} is {} sentences.
+workflow: >-
+  Jazyk assigns an agent a bounded piece of work and checks the evidence it gives when
+  finishing that work. These messages explain valid completion claims, status values, or
+  the facts already supplied in the session.
 used_by:
   - "bootstrap/src/tools/claims.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 the justification for {} is {} sentences; one or two saying why the verdict holds, never an essay

@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: Task {} cwd {:?} must be a project-relative directory.
+workflow: >-
+  A project can save commands such as its test suite as named tasks. Jazyk runs those
+  commands in an isolated environment and retains their logs, outputs, and test reports.
+  These messages validate task settings or explain how to inspect a retained run.
 used_by:
   - "bootstrap/src/task_runtime.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 Task {} cwd {:?} must be a project-relative directory; use "." for the project root, not an absolute deliverable path.

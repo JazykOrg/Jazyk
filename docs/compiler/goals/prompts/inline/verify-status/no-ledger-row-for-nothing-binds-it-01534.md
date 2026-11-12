@@ -1,9 +1,10 @@
 ---
-purpose: >-
-  Instruction fragment: no ledger row for `{}`: nothing binds it, so there is no verdict
-  to record.
+workflow: >-
+  A saved test result counts only while it matches the current requirement, test
+  definition, and implementing files. These messages explain why a requirement is not
+  currently verified and which binding, generation, or verification action can establish
+  fresh evidence.
 used_by:
   - "bootstrap/src/verify/status.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 no ledger row for `{}`: nothing binds it, so there is no verdict to record; the row is bind work

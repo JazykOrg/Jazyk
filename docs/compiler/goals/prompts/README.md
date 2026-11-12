@@ -24,7 +24,8 @@ A fragment marker is structural and consumed before Markdown comments are remove
 It is never sent to the model. Do not use a bare single-word comment as rationale
 in a legacy fragment bundle: its marker syntax is `<!-- name -->`.
 
-Each payload records its purpose, consumers, and template inputs in frontmatter.
+Each payload explains its workflow and use site in frontmatter. Add a separate
+purpose or rationale when it explains something beyond the message itself.
 Fragment bundles carry the same context in source comments because their marker
 format is parsed before Markdown metadata. Keep file-specific context in the file,
 not in a separate catalog.
@@ -53,8 +54,22 @@ not in a separate catalog.
   Cite that source in the comment. Do not invent incidents or historical motives.
 - Keep comments in source, never in rendered instructions. Comments inside code
   examples are literal example content.
-- Record purpose, consumers, and inputs beside the prompt. Keep known rationale
-  next to the rule it explains, with a source when available.
+- Explain the surrounding workflow in plain English: who is doing what, which
+  operation uses this text, and what happens next. Write for someone who has not
+  read the implementation.
+- Use `purpose` for the outcome or failure the text is meant to prevent. Do not
+  copy or paraphrase the prompt body into that field. Omit it if you have no
+  separate explanation to add.
+- Explain the condition that selects corrective guidance. Distinguish a rejected
+  call from an informational note returned after a successful operation.
+- Define local terms and each template argument when their meaning is not obvious.
+  For Rust format strings, describe positional arguments in call-site order; named
+  arguments use their names. A list of code identifiers alone is not an explanation.
+- Keep source paths as supporting references, not as a substitute for context.
+  Keep known rationale next to the rule it explains. Trace it to code, a gate,
+  documentation, or a test. Do not invent historical incidents.
+- Remove comments that only repeat a heading, fragment name, or generic rendering
+  mechanics. Useful context should explain this prompt, not just the template system.
 - Use numeric prefixes only within an ordered workflow. Binding precedes generation;
   compaction requests precede continuation. Goal contracts and verifier alternatives
   have no universal sequence and keep descriptive names.

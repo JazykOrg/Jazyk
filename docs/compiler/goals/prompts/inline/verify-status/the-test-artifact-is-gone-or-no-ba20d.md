@@ -1,8 +1,10 @@
 ---
-purpose: >-
-  Instruction fragment: the test artifact is gone or no longer contains the test name.
+workflow: >-
+  A saved test result counts only while it matches the current requirement, test
+  definition, and implementing files. These messages explain why a requirement is not
+  currently verified and which binding, generation, or verification action can establish
+  fresh evidence.
 used_by:
   - "bootstrap/src/verify/status.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 the test artifact is gone or no longer contains the test name; re-bind it: `{}`

@@ -1,9 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: no (a duplicate verdict would keep both and file
-  duplicate-requirement).
+workflow: >-
+  Jazyk revisits an earlier judgment about two requirements after their facts change.
+  This text explains an available judgment or its consequence; the requirements remain
+  separate unless the tools perform the corresponding change.
 used_by:
   - "bootstrap/src/goals/rejudge_pair.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 no (a duplicate verdict would keep both and file duplicate-requirement)

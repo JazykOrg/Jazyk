@@ -1,8 +1,9 @@
 ---
-purpose: >-
-  Instruction fragment: attribute `{}` needs a provenance ({{section, quote}}).
+workflow: >-
+  Before changing the project graph, Jazyk validates the fields the agent sent to a
+  write tool. These messages explain how to represent the documented fact using the
+  existing schema, rather than inventing unsupported structure.
 used_by:
   - "bootstrap/src/tools/args.rs"
-context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
 ---
 attribute `{}` needs a provenance ({{section, quote}}); the call carries no quote it could take

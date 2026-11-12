@@ -3,7 +3,6 @@ Purpose: Assembles the criterion, criteria text, implementing files, and verdict
 Used by: bootstrap/src/verify/judge.rs.
 This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
 -->
-<!-- Context: input fragment. Values supplied by the consumer: criterion, criteria, context, files, ask. -->
 <!-- input -->
 {{{criterion}}}{{{criteria}}}
 
@@ -14,23 +13,18 @@ Implementing files:{{{files}}}
 
 {{{ask}}}
 
-<!-- Context: criterion fragment. Values supplied by the consumer: statement. -->
 <!-- criterion -->
 Criterion: {{{statement}}}
 
-<!-- Context: file fragment. Values supplied by the consumer: path, text. -->
 <!-- file -->
 === {{{path}}} ===
 {{{text}}}
 
-<!-- Context: ask criterion fragment. This fragment is static; the consumer selects it by name. -->
 <!-- ask-criterion -->
 Judge this criterion only. Reply with PASS or FAIL, then your observed evidence.
 
-<!-- Context: ask test fragment. Values supplied by the consumer: test. -->
 <!-- ask-test -->
 Judge only {{{test}}}. Reply PASS or FAIL with observed evidence.
 
-<!-- Context: ask row fragment. This fragment is static; the consumer selects it by name. -->
 <!-- ask-row -->
 Reply with a verdict line `PASS` or `FAIL`, then your reasoning.

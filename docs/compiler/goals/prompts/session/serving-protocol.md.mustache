@@ -1,3 +1,10 @@
+---
+purpose: "Protocol for resolving an already exposed batch through the MCP serving."
+used_by:
+  - "bootstrap/src/payload.rs"
+  - "bootstrap/src/session/prompt.rs"
+inputs: ["target"]
+---
 PROTOCOL: the `jazyk` tools carry this batch, {{{target}}}, claimed by the begin_goals call that
 returned these instructions; do not call `begin_goals` again for it.
 

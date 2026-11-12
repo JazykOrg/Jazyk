@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the dedupe-candidates goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/dedupe_candidates.rs"
+---
 This goal judges one pair of entities the name index scored as lookalikes across documents: the same concept described twice, or two concepts that share a word.
+
+## Resolve the goal
 
 Load both in full and read their definitions, aliases, scopes, parents, stereotypes, attributes, and requirements as wholes; the judgment skill says how same and separate are told apart.
 
@@ -15,5 +22,7 @@ When one entity's wording belongs on the other as an alias without a merge, reco
 A wrong merge destroys information and everything bound to it; a missed duplicate only leaves a finding for the next build.
 
 When in doubt, keep both and file.
+
+## Completion gate
 
 The gate: the pair is merged, or kept with the reason in the justification (and the diagnostic when the doubt is real); mark_goal_done carries evidence merged or separate, and the harness checks the staged calls against it.

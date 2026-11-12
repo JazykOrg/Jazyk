@@ -1,28 +1,41 @@
+<!--
+Purpose: Worker fragments for medium selection, product and test creation, manifest recording, and corrective retries.
+Used by: bootstrap/src/gen/medium.rs.
+This is a fragment bundle: marker names are selected by code, not a sequence of instructions.
+-->
+<!-- Context: medium line built fragment. Values supplied by the consumer: form, toolchain, artifact. -->
 <!-- medium-line-built -->
 {{{form}}} produced by a build ({{{toolchain}}}). The artifact is `{{{artifact}}}`; the files you write are the SOURCE that produces it.
 
+<!-- Context: medium line written fragment. Values supplied by the consumer: form, toolchain. -->
 <!-- medium-line-written -->
 {{{form}}} written directly ({{{toolchain}}}). The files you write ARE the deliverable.
 
+<!-- Context: medium undecided fragment. This fragment is static; the consumer selects it by name. -->
 <!-- medium-undecided -->
 not decided; derive it from the requirements
 
+<!-- Context: decide tree empty fragment. This fragment is static; the consumer selects it by name. -->
 <!-- decide-tree-empty -->
 The deliverable directory is empty: decide from the statements alone.
 
+<!-- Context: decide tree existing fragment. Values supplied by the consumer: files. -->
 <!-- decide-tree-existing -->
 The deliverable directory already holds these files:
 {{{files}}}
 An existing tree pins the medium: decide the form and toolchain these files already use (their language, build manifest, and test layout), never a different one.
 
+<!-- Context: decide commands fragment. Values supplied by the consumer: commands. -->
 <!-- decide-commands -->
 The ledger already records these test run commands:
 {{{commands}}}
 Recorded commands pin the toolchain: decide the toolchain these commands run under, never a different one.
 
+<!-- Context: decide system fragment. This fragment is static; the consumer selects it by name. -->
 <!-- decide-system -->
 You decide what a deliverable is made of. Answer with one JSON object and nothing else.
 
+<!-- Context: decide user fragment. Values supplied by the consumer: statements, entities, tree. -->
 <!-- decide-user -->
 These statements are the whole specification of one deliverable.
 
@@ -43,11 +56,13 @@ artifact.
 
 Reply with exactly: {"form": "...", "produced": "written"|"built", "toolchain": "...", "artifact": "..."}
 
+<!-- Context: decide retry fragment. Values supplied by the consumer: request, reason. -->
 <!-- decide-retry -->
 {{{request}}}
 
 Your previous answer was rejected: {{{reason}}}. Reply with the JSON object only.
 
+<!-- Context: directive built fragment. Values supplied by the consumer: form, toolchain, artifact. -->
 <!-- directive-built -->
 The deliverable is {{{form}}}.
 
@@ -62,17 +77,21 @@ listing what it would contain: prose about a deck is not a deck, and it satisfie
 
 Do NOT write the artifact file itself by hand.
 
+<!-- Context: directive written fragment. Values supplied by the consumer: form, toolchain. -->
 <!-- directive-written -->
 The deliverable is {{{form}}}, written directly: the file you write IS the artifact{{{toolchain}}}.
 
+<!-- Context: directive written toolchain fragment. Values supplied by the consumer: toolchain. -->
 <!-- directive-written-toolchain -->
  ({{{toolchain}}})
 
+<!-- Context: directive undecided fragment. This fragment is static; the consumer selects it by name. -->
 <!-- directive-undecided -->
 Decide the medium from the requirements above: when they name a format you cannot type out (a slide
 deck, a PDF, an image, a compiled binary), write the SOURCE that produces it and record its build in
 the manifest step; otherwise the file you write is the artifact.
 
+<!-- Context: header fragment. Values supplied by the consumer: medium, build_error, id, name, context, changed, group, generated, commands, build. -->
 <!-- header -->
 The deliverable: {{{medium}}}
 {{{build_error}}}
@@ -91,6 +110,7 @@ they hold tell you what is in them: {{{generated}}}
 Recorded run commands (the established toolchain; reuse it): {{{commands}}}
 Recorded build for this deliverable: {{{build}}}
 
+<!-- Context: build broken fragment. Values supplied by the consumer: error, whose. -->
 <!-- build-broken -->
 THE BUILD IS CURRENTLY BROKEN, so the artifact does not exist. It last failed with:
 {{{error}}}
@@ -99,25 +119,32 @@ exactly as it is spelled, and call the functions it really has.
 
 Do not repeat a call or an import the failure above already rejected.
 
+<!-- Context: build broken elsewhere fragment. This fragment is static; the consumer selects it by name. -->
 <!-- build-broken-elsewhere -->
 The failure is not in a file you own here, but do not add another like it.
 
+<!-- Context: build broken yours fragment. Values supplied by the consumer: files. -->
 <!-- build-broken-yours -->
 THE FAILURE IS IN YOUR OWN FILE ({{{files}}}). Fixing it is this task's first job.
 
+<!-- Context: header group fragment. Values supplied by the consumer: group. -->
 <!-- header-group -->
  (your group, whose files you may extend: {{{group}}})
 
+<!-- Context: header commands none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- header-commands-none -->
 (none yet; this task establishes them)
 
+<!-- Context: header build none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- header-build-none -->
 (none yet)
 
+<!-- Context: requirement fragment. Values supplied by the consumer: id, test, statement, quote. -->
 <!-- requirement -->
 - {{{id}}} [{{{test}}}]: {{{statement}}}
   quote: {{{quote}}}
 
+<!-- Context: product first fragment. Values supplied by the consumer: header, directive, parts, requirements. -->
 <!-- product-first -->
 {{{header}}}
 {{{directive}}}
@@ -138,6 +165,7 @@ line) directly above each implementing site; the harness strips it and records t
 Requirements (group 1 of {{{parts}}}):
 {{{requirements}}}
 
+<!-- Context: product more fragment. Values supplied by the consumer: header, group, parts, requirements, path, code. -->
 <!-- product-more -->
 {{{header}}}
 Requirements (group {{{group}}} of {{{parts}}}):
@@ -147,6 +175,7 @@ The file `{{{path}}}` so far:
 {{{code}}}
 Return ONLY additional content to append, no FILE line.
 
+<!-- Context: product format retry fragment. Values supplied by the consumer: request, error. -->
 <!-- product-format-retry -->
 {{{request}}}
 Your reply was not in the required shape ({{{error}}}). This step takes no JSON. Reply exactly like this, the FILE line first and the file after it:
@@ -154,6 +183,7 @@ Your reply was not in the required shape ({{{error}}}). This step takes no JSON.
 FILE: path/of/your/choice.ext
 <the content>
 
+<!-- Context: owner retry fragment. Values supplied by the consumer: request, path, owner. -->
 <!-- owner-retry -->
 {{{request}}}
 The path `{{{path}}}` already belongs to entity `{{{owner}}}`; never write to another entity's file.
@@ -161,6 +191,7 @@ The path `{{{path}}}` already belongs to entity `{{{owner}}}`; never write to an
 Reply again, same content, under a file path of your own: first line exactly `FILE: <path>`, content
 after it.
 
+<!-- Context: tests fragment. Values supplied by the consumer: header, product, artifact_rule, requirements, code. -->
 <!-- tests -->
 {{{header}}}
 Write the tests for the requirements against `{{{product}}}` (content below).
@@ -195,6 +226,7 @@ Requirements:
 The product file:
 {{{code}}}
 
+<!-- Context: tests built fragment. Values supplied by the consumer: artifact. -->
 <!-- tests-built -->
 The artifact is `{{{artifact}}}`, produced by the build.
 
@@ -202,9 +234,11 @@ Every test opens that file and asserts on what is inside it.
 
 A test that reads the source that produces it, or any document beside it, verifies nothing.
 
+<!-- Context: tests default fragment. This fragment is static; the consumer selects it by name. -->
 <!-- tests-default -->
 When the artifact is produced by a build, the test opens what the build produced, never the source that produces it.
 
+<!-- Context: tests format retry fragment. Values supplied by the consumer: request, error. -->
 <!-- tests-format-retry -->
 {{{request}}}
 Your reply was not in the required shape ({{{error}}}). This step is not the manifest step and takes no JSON. Reply exactly like this, the FILE line first and the test file after it:
@@ -218,6 +252,7 @@ class TestExample(unittest.TestCase):
 
 Or reply with exactly NONE when no requirement here can be tested programmatically.
 
+<!-- Context: manifest fragment. Values supplied by the consumer: id, files, deliverable, commands, build, entry, names, build_rule, requirements, tests, tests_code. -->
 <!-- manifest -->
 Files written so far for entity {{{id}}}: {{{files}}} under the deliverable directory `{{{deliverable}}}`.
 Recorded run commands already in use (reuse this toolchain, never introduce a second test runner): {{{commands}}}
@@ -248,22 +283,28 @@ test), you MUST return that file in supportFiles.
 The tests file `{{{tests}}}`:
 {{{tests_code}}}
 
+<!-- Context: manifest commands none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-commands-none -->
 (none yet; this task establishes the toolchain)
 
+<!-- Context: manifest build none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-build-none -->
 (none; record one only if the medium must be built)
 
+<!-- Context: manifest entry none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-entry-none -->
 (none yet)
 
+<!-- Context: manifest entry fragment. Values supplied by the consumer: path, content. -->
 <!-- manifest-entry -->
 `{{{path}}}`:
 {{{content}}}
 
+<!-- Context: manifest names none fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-names-none -->
 (none)
 
+<!-- Context: manifest build required fragment. Values supplied by the consumer: form, artifact. -->
 <!-- manifest-build-required -->
 `build` is REQUIRED here and no build is recorded yet: this deliverable is {{{form}}}, so return `build`
 with the exact command that produces `{{{artifact}}}`, `cwd` relative to the deliverable, and `produces`
@@ -280,9 +321,11 @@ The entry composes parts; it never re-implements one.
 
 A manifest without the build is rejected.
 
+<!-- Context: manifest build omit fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-build-omit -->
 Omit `build` entirely: the files you wrote are themselves the deliverable.
 
+<!-- Context: manifest build reuse built fragment. Values supplied by the consumer: artifact. -->
 <!-- manifest-build-reuse-built -->
 A build is already recorded; omit `build` and reuse it.
 
@@ -292,23 +335,29 @@ your product file the same way it imports the others, still producing `{{{artifa
 
 Keep every part it already composes, and never re-implement a part inside the entry.
 
+<!-- Context: manifest build reuse fragment. This fragment is static; the consumer selects it by name. -->
 <!-- manifest-build-reuse -->
 A build is already recorded for this deliverable; omit `build` and reuse it.
 
+<!-- Context: manifest requirement fragment. Values supplied by the consumer: id, test. -->
 <!-- manifest-requirement -->
 - {{{id}}} [{{{test}}}]
 
+<!-- Context: manifest format retry fragment. Values supplied by the consumer: request, error. -->
 <!-- manifest-format-retry -->
 {{{request}}}
 Your reply was not valid JSON ({{{error}}}). Reply again with the same object, valid JSON this time, nothing else: no prose, no trailing commas, every string quoted.
 
+<!-- Context: mismatch undeclared fragment. Values supplied by the consumer: id, test, tests. -->
 <!-- mismatch-undeclared -->
 - {{{id}}} [{{{test}}}] is present in the tests file; declare it programmatic with a run command that
 invokes the tests file and selects this test (reference `{{{tests}}}` or the testName in the command)
 
+<!-- Context: mismatch absent fragment. Values supplied by the consumer: id, test. -->
 <!-- mismatch-absent -->
 - {{{id}}} is declared programmatic but `{{{test}}}` does not appear in the tests file; declare it llm or fix the name
 
+<!-- Context: mismatch entry fragment. Values supplied by the consumer: entry, artifact, missing. -->
 <!-- mismatch-entry -->
 - the build entry `{{{entry}}}` does not name these parts, so `{{{artifact}}}` will not carry them:
 {{{missing}}}.
@@ -316,9 +365,11 @@ invokes the tests file and selects this test (reference `{{{tests}}}` or the tes
 Return `{{{entry}}}` in supportFiles, importing each one and calling into it, and keep everything it
 already composes; never re-implement a part inside the entry
 
+<!-- Context: mismatch build fragment. Values supplied by the consumer: form, artifact. -->
 <!-- mismatch-build -->
 - `build` is missing: this deliverable is {{{form}}}, so the manifest must carry the command that produces `{{{artifact}}}` (`run`, `cwd`, `produces`)
 
+<!-- Context: manifest retry fragment. Values supplied by the consumer: request, answer, problems. -->
 <!-- manifest-retry -->
 {{{request}}}
 Your answer was:
@@ -331,6 +382,7 @@ Return the corrected, complete JSON manifest object, same schema, no prose.
 Change only what the problems name; keep every other field exactly as you gave it, supportFiles and
 build included.
 
+<!-- Context: llm criteria fragment. Values supplied by the consumer: id, hash, statement, quote, files. -->
 <!-- llm-criteria -->
 ---
 requirement: {{{id}}}

@@ -1,5 +1,14 @@
+---
+purpose: "Instructions for implementing assigned entities and recording their source, support files, tests, and build manifest."
+used_by:
+  - "bootstrap/src/gen/task.rs"
+inputs: ["GROUP"]
+---
 Generate the entity's part of the deliverable AND the tests for its requirements.
-- The opening batch may assign several entities.
+
+## Assigned entities and steering
+
+The opening batch may assign several entities.
 
 Keep track of each assigned entity and record its generation before finishing the batch.
 begin_generation inspects one package; it does not complete the other assigned entities.
@@ -17,7 +26,10 @@ Do not deny earlier test runs merely because they are absent from this worker's 
 
 When the user asks about activity outside this worker, inspect task_context and its recent runs as
 needed before answering.
-- Reuse the medium the package records.
+
+## Reuse the recorded medium
+
+Reuse the medium the package records.
 
 If it is undecided, choose from the documents and call record_medium before writing.
 
@@ -26,7 +38,10 @@ Never re-decide a recorded medium.
 You choose only the layout, the file names, and the build or support files that make your recorded
 commands executable; every file you write must appear in the manifest you record when the goal is
 done.
-- The deliverable is the artifact itself, never a description of it.
+
+## Produce the artifact
+
+The deliverable is the artifact itself, never a description of it.
 
 A requirement naming a format, a medium, or a piece of content is an obligation to PRODUCE that
 thing.
@@ -48,7 +63,10 @@ The harness runs the build before any test.
 
 One build per deliverable: if the package already carries a `build`, reuse it and extend its source
 instead of recording a second one.
-- Content requirements are satisfied by content.
+
+## Implement the stated content
+
+Content requirements are satisfied by content.
 
 A requirement saying the artifact shows a title, states a definition, or uses a color is met only
 when the artifact carries that exact title, that definition, that color value.
@@ -58,7 +76,10 @@ requirement states.
 
 If a requirement does not say what the content is, implement exactly what it does say and nothing
 more.
-- Inspect referencedAssets in the package.
+
+## Use referenced input assets
+
+Inspect referencedAssets in the package.
 
 These are the exact local inputs named by quoted facts, with project-relative paths, source
 references, status and SHA-256 digests.
@@ -82,14 +103,20 @@ A missing, unreadable or blocked input must be reported and resolved before reco
 never substitute an invented asset.
 
 Source and Documents write boundaries still apply.
-- When a quote asks you to create a linked output, such as Home/index.html, declare its intended
+
+## Declare linked output paths
+
+When a quote asks you to create a linked output, such as Home/index.html, declare its intended
 project path in Source through the existing scoped matcher tools before recording.
 
 Then reload begin_generation for the current package and factHash.
 
 Supplied input assets must stay inputs; never reclassify one as Source to bypass a missing,
 unreadable or unsafe input.
-- Inspect task_context, dependency manifests, runner configuration and existing test commands before
+
+## Reuse project suite tasks
+
+Inspect task_context, dependency manifests, runner configuration and existing test commands before
 defining execution.
 
 Reuse ordinary project tasks such as test, test-unit or test-browser.
@@ -101,11 +128,17 @@ Requirement and criterion ids identify test cases, not runtime environments.
 
 Separate suites are appropriate for different toolchains, isolation needs or independently useful
 project operations.
-- One toolchain per deliverable: the run commands already recorded (the package lists them)
+
+## Keep one toolchain
+
+One toolchain per deliverable: the run commands already recorded (the package lists them)
 establish the language, the test runner, and the command style; reuse them exactly.
 
 Never introduce a second test runner.
-- Exclusive deliverable files belong to one entity or its component group: a file a sharedWith
+
+## Respect file ownership
+
+Exclusive deliverable files belong to one entity or its component group: a file a sharedWith
 member recorded you may extend and record too.
 
 Never overwrite another group's exclusive module; import or link it instead.
@@ -119,7 +152,10 @@ when written files are the artifact.
 The package lists recorded supportFiles.
 
 List support under manifest.supportFiles, and also under files when it implements your requirements.
-- A legitimate shared entrypoint may have been recorded first by another group.
+
+## Promote shared entrypoints explicitly
+
+A legitimate shared entrypoint may have been recorded first by another group.
 
 Explicitly promote it before editing: call begin_generation for its recorded owner, preserve its
 content and the owner's current files and tests, and record_generation with the entrypoint added to
@@ -133,8 +169,15 @@ This is not permission to take over an exclusive module or discard another entit
 No filename is automatically shared.
 
 Source and Documents boundaries still apply.
-- Paths are relative to the deliverable directory, never prefixed with its own name: when the deliverable is `handbook`, a page is `hiring.md`, not `handbook/hiring.md`.
-- Record the files that realize your requirements under manifest.files.
+
+## Deliverable-relative paths
+
+Paths are relative to the deliverable directory, never prefixed with its own name: when the deliverable is `handbook`, a page is `hiring.md`, not `handbook/hiring.md`.
+
+<!-- Context: gen/task.rs refuses a generation record that supplies only tests while required implementing files remain absent. -->
+## Record implementing files
+
+Record the files that realize your requirements under manifest.files.
 
 Test and criteria files are not implementation: a record whose files hold nothing else is refused
 while a requirement of yours has no row naming a file that realizes it.
@@ -143,7 +186,10 @@ A requirement a file of another entity already carries (a page or a module you m
 recorded by naming that file on the requirement's test row (`files: [path]`).
 
 Only an entity whose every requirement is carried by another entity's files records files: [].
-- Use `task:<id>` for programmatic runs.
+
+## Task execution and support files
+
+Use `task:<id>` for programmatic runs.
 
 Set the task cwd relative to the project; for a deliverable under `deliverable/`, use cwd
 `deliverable` and report globs such as `deliverable/reports/*.xml`.
@@ -154,7 +200,10 @@ Legacy shell commands execute from the deliverable directory.
 
 If it needs a build or configuration file that no goal has written yet (package.json, Cargo.toml),
 write it and list it under manifest.supportFiles.
-- A dependency manifest you write or extend (package.json, Cargo.toml, pyproject.toml,
+
+## Pin dependencies and keep one entry point
+
+A dependency manifest you write or extend (package.json, Cargo.toml, pyproject.toml,
 requirements.txt) pins each dependency to a version you resolved: a caret or exact range on a
 version that exists (`^4.19.2`, `=1.0.3`; ask the registry when unsure, `npm view express version`),
 never `latest`, `*`, or an empty range, since a manifest that says `latest` installs a different
@@ -168,7 +217,10 @@ a support file, so extend the one that exists instead of writing a second one be
 
 A second file that repeats the first's role (two servers, each requiring the framework and opening
 the database) is a defect, not a layout choice: keep one and delete the other before you record.
-- Every requirement is an obligation; implement each and place a single-line marker comment directly
+
+## Mark requirement implementations
+
+Every requirement is an obligation; implement each and place a single-line marker comment directly
 above the implementing site: `req:<id> hash:<hash8>` in the medium's comment syntax, nothing else on
 that line.
 
@@ -177,7 +229,10 @@ more, never `req:req:orders-4` and never the quote or any other text after the h
 
 The harness strips marker lines from your files and records each location in the ledger, so the
 delivered file stays clean.
-- A current binding comes from boundTests, not suggestedTestName.
+
+## Reuse current bindings
+
+A current binding comes from boundTests, not suggestedTestName.
 
 Reuse its exact requirement and criterion ids, artifact, kind and selector, including any
 classname::name prefix.
@@ -189,14 +244,20 @@ After compaction or a manifest refusal, reload begin_generation if any package f
 uncertain before another recording call.
 
 Keep completed writes and evidence; do not repeat them just to reload a package.
-- A prescribed layout is an obligation alongside its content.
+
+## Honor prescribed layouts
+
+A prescribed layout is an obligation alongside its content.
 
 Test complete ordered groups, such as the exact three paragraph texts, rather than a count plus
 independent sentence matches.
 
 If the graph omits that obligation, report it for guarded reconciliation; do not treat a passing
 content test as layout coverage.
-- Develop the actual implementation and its tests together.
+
+## Develop source and tests together
+
+Develop the actual implementation and its tests together.
 
 Choose their order.
 
@@ -229,7 +290,10 @@ A requirement without criteria takes one requirement-level entry without criteri
 A requirement several entities share has one row, reused unchanged.
 
 Pick the kind per test:
-- Choose browser test locators from the actual current artifact.
+
+## Use stable browser locators
+
+Choose browser test locators from the actual current artifact.
 
 Inspect its DOM structure, roles, accessible names and existing tests before assuming a selector.
 
@@ -248,7 +312,10 @@ extension.
 
 After a failed write, inspect the current file rather than treating proposed code as committed
 source.
-- Reuse a saved suite task across related requirements and criteria, with a distinct JUnit selector
+
+## Bind suite results to individual cases
+
+Reuse a saved suite task across related requirements and criteria, with a distinct JUnit selector
 per test.
 
 Existing tests may change run and cwd to that shared task, keeping artifact, selector, kind, and
@@ -270,7 +337,10 @@ execution milestones instead.
 
 Recording a test declaration supplies no verdict; run_tests supplies programmatic evidence against
 the current implementation.
-- Choose programmatic tests for executable behavior: command output, exit status, API responses, and
+
+## Choose executable evidence
+
+Choose programmatic tests for executable behavior: command output, exit status, API responses, and
 generated artifact contents that can be inspected automatically.
 
 The presence of criteriaPath only supplies a path if judgment is needed; it does not recommend an
@@ -280,7 +350,10 @@ A missing test runner is setup work: reuse or define a saved task and a runner t
 cases.
 
 Never substitute a written PASS for an execution result.
-- An llm criteria artifact is Markdown with YAML front matter naming requirement and hash (also
+
+## Write Markdown judgment criteria
+
+An llm criteria artifact is Markdown with YAML front matter naming requirement and hash (also
 criterion for a criterion test), followed by inspection steps and explicit PASS and FAIL outcomes.
 
 Use the package's criteriaFrontMatter.
@@ -290,7 +363,10 @@ using baseHash from list_document_sets while preserving the set id, docs, roots 
 patterns.
 
 An executable test source cannot substitute for this file.
-- programmatic: any test a command can run (unit, integration, cucumber are examples, not a
+
+## Programmatic test declarations
+
+programmatic: any test a command can run (unit, integration, cucumber are examples, not a
 taxonomy).
 
 Each manifest.tests row must carry requirement, criterion when it tests a criterion, kind, label,
@@ -327,18 +403,30 @@ The test must be falsifiable: its assertion has to fail when the requirement is 
 
 If the only assertion you can write would pass either way, the requirement is not programmatically
 testable from this artifact; declare it llm instead of writing a test that always passes.
-- llm: the requirement needs human-like judgment that an executable assertion cannot establish.
+
+## LLM test declarations
+
+llm: the requirement needs human-like judgment that an executable assertion cannot establish.
 
 Non-software artifacts can still have programmatic checks for their structure, contents, or format.
 
 Write a criteria file (the package names its path): front matter with the requirement id and
 statement hash, then the statement, the quote, the implementing file paths, the steps to confirm,
 and the verdict contract (PASS or FAIL plus reasoning).
-- Name a test you write with the name the package gives it: a criterion's suggestedTestName (crit,
+
+## Use suggested test names
+
+Name a test you write with the name the package gives it: a criterion's suggestedTestName (crit,
 slug, hash prefix), or the requirement's testName (requirement id plus hash prefix) only when it has
 no criteria; put the single-line marker comment above it.
-- Reference other entities' files through the manifest the package carries.
-- Dense entities generate in parts of {{{GROUP}}} requirements: part 1 is the core plus the first group;
+
+## Reference recorded files
+
+Reference other entities' files through the manifest the package carries.
+
+## Generate dense entities in requirement batches
+
+Dense entities generate in parts of {{{GROUP}}} requirements: part 1 is the core plus the first group;
 each later part extends what exists while preserving earlier work.
 
 These are requirement batches, not file chunks to write.
@@ -348,7 +436,10 @@ concatenates the product replies before one complete file write.
 
 With file tools, never replace an existing complete file with a prefix intending to append the rest
 later.
-- With file tools, prefer guarded replacements for an existing file: use write_text_file with
+
+## Guard writes to existing files
+
+With file tools, prefer guarded replacements for an existing file: use write_text_file with
 old_text, replacement content, and expectedHash from the last read or write. old_text must match
 exactly once; use enough unchanged surrounding text to identify the intended site.
 
@@ -368,4 +459,7 @@ Write new files in one complete call when they fit.
 Append only for append-oriented artifacts or new output that cannot fit one call.
 
 A rejected argument payload changes no bytes.
-- Return only file content, never fences or prose, when asked for a file.
+
+## Return file content only
+
+Return only file content, never fences or prose, when asked for a file.

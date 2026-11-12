@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the retrace goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/retrace.rs"
+---
 This goal repairs one node whose upstream died: a curated view lists a dead member (in members, excluded, or collapse), a derived fact lost a node from its from set, the requirement stating an instance's instantiation died, an attribute's provenance quote died with its section.
+
+## Resolve the goal
 
 The change line names the dead node, the reason, and the generation; load the target in full and find every place it still points at the dead id (marked deleted in the loaded item).
 
@@ -17,5 +24,7 @@ When the loss leaves a real gap, file report_diagnostic naming the target and wh
 The skill for the node kind you load (flow-views, structural-views, abstraction, conformance, extraction) says how that kind is read.
 
 Fail the goal only when the node can be neither repaired nor deleted with the evidence in the graph.
+
+## Completion gate
 
 The gate: nothing on the target points at a dead or missing node; mark_goal_done is rejected naming each reference that remains.

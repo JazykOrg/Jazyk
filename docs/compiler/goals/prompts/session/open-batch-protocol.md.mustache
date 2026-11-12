@@ -1,3 +1,10 @@
+---
+purpose: "Protocol for an agent that must open the assigned batch before resolving its goals."
+used_by:
+  - "bootstrap/src/payload.rs"
+  - "bootstrap/src/session/prompt.rs"
+inputs: ["target"]
+---
 PROTOCOL: the `jazyk` tools carry this batch, {{{target}}}, which is already open: its goals and tools
 are yours, and there is nothing to claim.
 

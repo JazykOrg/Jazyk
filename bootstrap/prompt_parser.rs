@@ -69,7 +69,7 @@ pub fn load(root: &Path, path: &Path) -> Result<String, String> {
                     | "session-blocks.md"
                     | "agent-context.md"
                     | "serving-instructions.md"
-                    | "generation-steps.md"
+                    | "21-generation-steps.md"
                     | "judge-input.md"
                     | "decompile-worker.md"
                     | "answer-handling.md"

@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the bind goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/bind.rs"
+---
 This goal ties one requirement to the deliverable: the files that carry it (possibly none), the one test that judges it, and the first verdict.
+
+## Resolve the goal
 
 Binding observes and judges; it never changes implementation files, and generate is what changes them.
 
@@ -33,6 +40,8 @@ Test and criteria files are the only files this goal writes; a write to a path t
 Fail the goal when the deliverable cannot be searched or no test can be written in its toolchain.
 
 The harness checks the ledger, not your word: a session that never recorded has not resolved the goal.
+
+## Completion gate
 
 The gate: a current ledger row recorded by record_binding for the requirement, whose statement hash equals the live statement and whose test artifact exists and contains the declared name (for an llm row, the criteria file exists); then finish with done using the serving protocol.
 

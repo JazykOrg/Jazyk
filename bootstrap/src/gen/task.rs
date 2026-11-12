@@ -131,7 +131,7 @@ pub fn contract() -> String {
     crate::payload::fill(
         include_str!(concat!(
             env!("OUT_DIR"),
-            "/payloads/goals/prompts/generation/generate-contract.md.mustache"
+            "/payloads/goals/prompts/generation/20-generate-contract.md.mustache"
         )),
         &[("GROUP", &GROUP.to_string())],
     )

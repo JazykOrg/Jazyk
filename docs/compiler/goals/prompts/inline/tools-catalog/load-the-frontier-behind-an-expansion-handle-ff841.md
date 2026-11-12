@@ -1,1 +1,9 @@
+---
+purpose: >-
+  Instruction fragment: Load the frontier behind an expansion handle
+  (h:<target>:<axis>[:<start>]) from the loaded set's status block or an earlier reply.
+used_by:
+  - "bootstrap/src/tools/catalog.rs"
+context: "Prepared before the consumer inserts runtime values. Keep format slots aligned with that consumer."
+---
 Load the frontier behind an expansion handle (h:<target>:<axis>[:<start>]) from the loaded set's status block or an earlier reply.

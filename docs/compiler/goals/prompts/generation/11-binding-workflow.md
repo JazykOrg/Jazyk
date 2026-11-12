@@ -1,3 +1,8 @@
+---
+purpose: "Binding procedure: inspect implementation, reuse or write acceptance tests, execute them, and record criterion-level evidence."
+used_by:
+  - "docs/compiler/goals/prompts/generation/10-bind-contract.md.mustache"
+---
 Bind one requirement to the deliverable.
 
 # Binding workflow

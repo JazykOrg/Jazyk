@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the reconcile-section goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/reconcile_section.rs"
+---
 This goal reconciles one section or whole-file input.
+
+## Resolve the goal
 
 For a section of kind `blob`, compile the whole input file.
 
@@ -57,6 +64,8 @@ The coverage note and the goal justification account for each normative sentence
 Every line marked + in the body is new since the last reconcile, and the requirements already sourced here were extracted before it existed, so they never carry it: extract what each added line states (a lead-in that says how the content after it is written or laid out is a requirement on that layout), or, when an added line truly states nothing, repeat it in the coverage note and say why.
 
 When the section already yielded everything it states, stage nothing, set the mark, and mark the goal done.
+
+## Completion gate
 
 The gate: a coverage mark is staged or recorded for the section, every stale anchor on it is addressed, every staged quote locates in the section it names, a covered claim has a requirement sourced from the section behind it, and every added line is overlapped by a quote staged in this session or repeated in the coverage note.
 

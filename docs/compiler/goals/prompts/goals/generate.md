@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the generate goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/generate.rs"
+---
 This goal develops one entity's actual deliverable and its tests together.
+
+## Resolve the goal
 
 Call begin_generation and follow the returned generation contract.
 

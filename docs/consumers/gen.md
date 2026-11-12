@@ -364,7 +364,7 @@ manifest.
   range. A generation of a Node deliverable once pinned every dependency to `latest`
   with every test green; the tests judged the statements, and a manifest that installs
   a different program on every install is a defect no statement names, so the
-  [contract](../compiler/goals/prompts/generation/generate-contract.md.mustache) states it and the
+  [contract](../compiler/goals/prompts/generation/20-generate-contract.md.mustache) states it and the
   [gen-node](../benchmark/cases/gen-node.md) case grades it.
 - The package or module is named for the deliverable or the entity that owns it, never
   for one part of it. The same generation named the package that held the backend
@@ -394,7 +394,7 @@ manifest.
   bound test runs from the deliverable directory, so one that opens
   `handbook/hiring.md` inside the `handbook` deliverable pins the doubled layout, and a
   later generation that writes under the root copies its pages back down to pass it.
-  The [bind contract](../compiler/goals/prompts/generation/bind-contract.md.mustache) states the rule;
+  The [bind contract](../compiler/goals/prompts/generation/10-bind-contract.md.mustache) states the rule;
   the repair for a test already bound that way is a re-bind.
 - A corrective retry never costs the parts of an answer the complaint did not name.
   The previous answer goes back with it, the request is to change only what the

@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the declare-edges goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/declare_edges.rs"
+---
 This goal decides the edges of one requirement that names several entities and declares none: a multi-entity statement is what makes the graph a graph, and an edge is a claim the sentence makes, never something membership implies.
+
+## Resolve the goal
 
 Load the requirement and read its statement and its verbatim quote; the extraction skill says how edges are typed.
 
@@ -13,5 +20,7 @@ Declare only what the sentence states: a type the documents do not support is in
 When the statement is not structural (the sentence merely mentions the second entity as context, as a condition or trigger on its state, as an example, or as a unit, and states no whole-part, provision, use, kind-of, instance-of, or link between them), declare nothing and say why: the justification names the sentence and why it relates no pair, and that justification is what stops the goal from deriving again.
 
 Whether an entity belongs in entities at all is review-entity's question, not this goal's: leave entities alone here.
+
+## Completion gate
 
 The gate: edges declared on the requirement, or a justification saying the statement is not structural; mark_goal_done carries evidence declared or not-structural, and the harness checks the one you name.

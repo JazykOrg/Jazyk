@@ -1,4 +1,11 @@
+---
+purpose: "Reconciliation contract for the rejudge-pair goal. The board supplies its target, change, hints, and completion gate."
+used_by:
+  - "bootstrap/src/goals/rejudge_pair.rs"
+---
 This goal judges one pair: a requirement that was created or revised against one neighbor the harness selected because it overlaps it (a shared entity and shared content words, or an open contradiction or duplicate-requirement diagnostic tying the two).
+
+## Resolve the goal
 
 Ground the verdict in the quotes as much as in the statements: the quote is the document's own text, and when the changed requirement's statement fails to say what its quote says, first repair the statement with update_requirement, then judge.
 
@@ -19,6 +26,8 @@ A contradiction or duplicate found against a statement not paired here is filed 
 Use read_section or get_entity only when a quote alone cannot settle the verdict.
 
 A wrong delete destroys information; a missed duplicate only leaves a finding for the next build; when in doubt, keep both and file.
+
+## Completion gate
 
 The gate: mark_goal_done carries evidence {verdict: duplicate | contradiction | consistent} and, for duplicate and contradiction, carried_by naming what carried the verdict (the deleted side's id, or the id of the duplicate-requirement or contradiction diagnostic, e.g. {verdict: duplicate, carried_by: req:payment-9} or {verdict: contradiction, carried_by: diag:contradiction-3}); the staged work matches it (a delete or a duplicate-requirement diagnostic for duplicate, a contradiction diagnostic for contradiction, no open pair diagnostic or a staged resolve for consistent); a consistent pair is done with no mutation.
 

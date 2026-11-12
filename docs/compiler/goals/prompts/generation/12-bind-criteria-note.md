@@ -1,3 +1,8 @@
+---
+purpose: "Explains how a binding package maps each criterion to its own named test declaration."
+used_by:
+  - "bootstrap/src/bind.rs"
+---
 Each criterion needs a separate test declaration named by suggestedTestName.
 
 A requirement without criteria uses one statement-level test.

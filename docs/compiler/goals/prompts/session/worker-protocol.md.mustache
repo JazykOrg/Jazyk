@@ -1,4 +1,13 @@
+---
+purpose: "Batch completion protocol for a worker that already owns its assigned goals."
+used_by:
+  - "bootstrap/src/payload.rs"
+  - "bootstrap/src/session/prompt.rs"
+inputs: ["target"]
+---
 PROTOCOL: the `jazyk` tools carry this batch, {{{target}}}.
+
+## Instructions
 
 First call `begin_goals` with {"batch": "{{{target}}}"} (its reply only confirms; this serving is scoped
 to the batch).

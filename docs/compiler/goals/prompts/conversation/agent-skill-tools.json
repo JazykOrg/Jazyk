@@ -1,4 +1,5 @@
 {
+  "$comment": "Source context: bootstrap/src/agent_workflows.rs reads note and tools separately. The note explains workflow authorization; the tools define deferred skill discovery and reads. This comment is author metadata and is not part of either returned value.",
   "note": "Read a skill before its workflow. Availability and authorization come from the serving and its gates, not from reading a skill.",
   "tools": [
     {

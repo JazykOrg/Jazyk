@@ -3,7 +3,10 @@ use goose_provider_types::conversation::message::Message;
 use serde_json::{json, Value};
 
 const NOTE: &str = "jazyk.chat-history";
-const RECEIPT: &str = include_str!("../../../docs/compiler/goals/prompts/chat-history-recovery.md");
+const RECEIPT: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/conversation/chat-history-recovery.md.mustache"
+));
 const TURN_BYTES: usize = 6 * 1024;
 
 fn bounded(text: &str, chars: usize) -> String {
@@ -211,9 +214,12 @@ pub(super) fn restore(history: &mut Vec<Value>, updates: &[(u64, Value)], curren
     if turns.is_empty() {
         return false;
     }
-    let text = RECEIPT.replace(
-        "{HISTORY}",
-        &json!({"through":through,"turns":turns}).to_string(),
+    let text = crate::payload::fill(
+        RECEIPT,
+        &[(
+            "HISTORY",
+            &json!({"through":through,"turns":turns}).to_string(),
+        )],
     );
     let mut native = Message::user().with_text(&text);
     native.metadata.user_visible = false;

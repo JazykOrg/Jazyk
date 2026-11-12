@@ -1,0 +1,1 @@
+changeset open; stage findings with the write tools, mark each goal, then finish with done

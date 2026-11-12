@@ -1,0 +1,1 @@
+the named goals do not share one ready batch (one locality, one executor); pick from the batches above

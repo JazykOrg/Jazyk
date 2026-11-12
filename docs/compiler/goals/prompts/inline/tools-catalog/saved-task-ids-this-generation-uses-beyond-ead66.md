@@ -1,0 +1,1 @@
+Saved task ids this generation uses beyond its tests and build, such as an asset copy. An unlisted task a session added is removed once nothing uses it.

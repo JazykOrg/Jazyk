@@ -1,0 +1,1 @@
+option {} carries neither edit nor answer; give it one (`edit` to change the document, `answer` to reply in words); an option with neither is a filled-in blank, and a diagnostic that asks nothing of a human omits `prompt` entirely

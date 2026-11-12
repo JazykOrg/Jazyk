@@ -177,9 +177,10 @@ pub fn audit(store: &Store, gs: &GenSettings) -> Value {
         "prunedOrphans": orphans,
     });
     if !reset.is_empty() {
-        reply["verdictResetNote"] = json!(
-            "these rows' test or files bytes moved since their last run, so the verdict was dropped; `jazyk test` reruns them"
-        );
+        reply["verdictResetNote"] = json!(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-audit/these-rows-test-or-files-bytes-moved-5e56d.md"
+        )));
     }
     if !found.is_empty() {
         reply["foundNote"] = json!(

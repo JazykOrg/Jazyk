@@ -219,6 +219,9 @@ impl GoalKind for PlaceAnchors {
         })
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/place-anchors.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/place-anchors.md"
+        ))
     }
 }

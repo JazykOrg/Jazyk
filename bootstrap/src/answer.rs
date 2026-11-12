@@ -670,9 +670,11 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
 
 // The handling contract for an answer the calling agent applies.
 // Mirrors docs/frontends/acp.md#questions-in-chat.
-pub(crate) const HANDLING: crate::payload::Fragments = crate::payload::Fragments(include_str!(
-    "../../docs/compiler/goals/prompts/answer-handling.md"
-));
+pub(crate) const HANDLING: crate::payload::Fragments =
+    crate::payload::Fragments(include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/conversation/answer-handling.md.mustache"
+    )));
 
 // The standing questions: open, unsuppressed, prompted, unanswered findings,
 // rendered once for chat surfaces (the session-start summary and /questions).

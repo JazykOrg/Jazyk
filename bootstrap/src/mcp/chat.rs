@@ -27,9 +27,11 @@ impl McpServer {
             .and_then(|e| e.to_str())
             .is_some_and(|e| e.eq_ignore_ascii_case("docx") || e.eq_ignore_ascii_case("pdf"))
         {
-            return Err(
-                "DOCX and PDF cannot be changed by a text edit; use the format editor".into(),
-            );
+            return Err(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/mcp-chat/docx-and-pdf-cannot-be-changed-by-8eb2f.md"
+            ))
+            .into());
         }
         if let Some(sink) = &self.bridge.edit_sink {
             match sink_write(sink, &path, old_text, new_text, full) {
@@ -86,7 +88,7 @@ impl McpServer {
     // the commit skips. Mirrors docs/compiler/compilation.md#edit-paths.
     fn commit_dual_write(&self, edit: &ProseEdit, ops: Vec<crate::store::Op>, kind: &str) -> Value {
         if ops.is_empty() {
-            return json!({"error": {"rule": "edit-needs-mutation", "message": "the call staged no graph mutation; a prose edit never lands alone"}});
+            return json!({"error": {"rule": "edit-needs-mutation", "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/the-call-staged-no-graph-mutation-a-3493c.md"))}});
         }
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         let mut s = Store::load(&self.out);
@@ -390,7 +392,7 @@ impl McpServer {
         } else if let Some(t) = args["text"].as_str() {
             crate::answer::Reply::Text(t.to_string())
         } else {
-            return json!({"error": {"rule": "missing-argument", "message": "pass option (an index into the prompt's options) or text (a freeform reply)"}});
+            return json!({"error": {"rule": "missing-argument", "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/pass-option-an-index-into-the-prompt-a828d.md"))}});
         };
         let write =
             |doc: &str, old: &str, new: &str, full: &str| self.write_edit(doc, old, new, full);
@@ -509,7 +511,7 @@ impl McpServer {
             return json!({"error": {"rule": "missing-argument", "message": "doc, section, text, statement, and entities are required"}});
         }
         let Some(sec_raw) = self.section_raw(&doc, &section) else {
-            return json!({"error": {"rule": "unknown-section", "message": format!("no section `{}#{}` in the graph; for a prose document edit use read_document then write_document with its hash. Compile only when the user requests compilation", doc, section)}});
+            return json!({"error": {"rule": "unknown-section", "message": format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/no-section-in-the-graph-for-a-64836.md")), doc, section)}});
         };
         let path = self.project.root.join(&doc);
         let old_full = match crate::vfs::read_to_string(&path) {
@@ -546,7 +548,7 @@ impl McpServer {
                 },
                 None => {
                     return json!({"error": {"rule": "stale-anchor", "message": format!(
-                        "after_quote does not locate in {}#{}; copy a sentence of that section verbatim", doc, section)}})
+                        include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/after-quote-does-not-locate-in-copy-ce5d1.md")), doc, section)}})
                 }
             },
             None => match ProseEdit::locate(&doc, &section, Some(&sec_raw), &old_full, "", &text) {
@@ -685,7 +687,7 @@ impl McpServer {
             // it (docs/compiler/control-plane.md#modes-and-releases).
             if matches!(key.as_str(), "workflow.compile" | "workflow.generate") && value == "auto" {
                 return json!({"error": {"rule": "needs-human", "message": format!(
-                    "`{key} = auto` lets work run with no release, so a human sets it: the GUI's workflow toggle, `/config {key} auto` typed in chat, or `[workflow]` in jazyk.toml. Tell the user; `manual` stays editable here.")}});
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/key-auto-lets-work-run-with-no-dc569.md")), key = key)}});
             }
         }
         let Some(base) = args["baseHash"].as_str() else {
@@ -725,7 +727,7 @@ impl McpServer {
         };
         if crate::model::hash_hex(&old_full) != base || before.hash != base {
             return json!({"error": {"rule": "stale-config", "message":
-                "configuration changed; call list_document_sets for the current hash and review the file before retrying"}});
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-chat/configuration-changed-call-list-document-sets-for-c1210.md"))}});
         }
         let mut full = old_full.clone();
         for (key, value) in settings {

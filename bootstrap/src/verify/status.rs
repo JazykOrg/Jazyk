@@ -169,18 +169,55 @@ pub fn repair_for(status: &str, reason: &str, rid: &str, entity: &str) -> String
     };
     match (status, reason) {
         ("missing", "not-generated") => format!("develop its source and tests together: `{}`", gen),
-        ("missing", "artifact-gone") => format!("the test artifact is gone or no longer contains the test name; re-bind it: `{}`", gen),
-        ("missing", "requirement-gone") => "the requirement left the graph; the next record_generation prunes the row".into(),
-        ("missing", "source-selection-changed") => format!("the binding names files outside current Source; re-bind it: `{}`", gen),
-        ("stale-requirement", _) => format!("the statement was reworded since the row was bound; re-bind it: `{}`", gen),
+        ("missing", "artifact-gone") => format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-status/the-test-artifact-is-gone-or-no-ba20d.md"
+            )),
+            gen
+        ),
+        ("missing", "requirement-gone") => {
+            "the requirement left the graph; the next record_generation prunes the row".into()
+        }
+        ("missing", "source-selection-changed") => format!(
+            "the binding names files outside current Source; re-bind it: `{}`",
+            gen
+        ),
+        ("stale-requirement", _) => format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-status/the-statement-was-reworded-since-the-row-9d97c.md"
+            )),
+            gen
+        ),
         ("stale-test", _) => format!("the test artifact changed; rerun it: `jazyk test {}`", rid),
-        ("stale-code", _) => format!("an implementing file changed; rerun it: `jazyk test {}`", rid),
-        ("unverified", "runner-failed") => format!("the last run could not execute the command; fix the runner, then `jazyk test {}`", rid),
+        ("stale-code", _) => format!(
+            "an implementing file changed; rerun it: `jazyk test {}`",
+            rid
+        ),
+        ("unverified", "runner-failed") => format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-status/the-last-run-could-not-execute-the-ad871.md"
+            )),
+            rid
+        ),
         ("unverified", _) => format!("never run; `jazyk test {}`", rid),
         ("unimplemented", _) => format!("nothing implements it; generate: `{}`", gen),
-        ("partial", _) => format!("implemented in part, a criterion test fails; generate: `{}`", gen),
-        ("failing", _) => "the deliverable contradicts the statement; a finding for the author (fix the docs or the code), never automatic regeneration".into(),
-        ("verified", _) => "nothing; the last run passed against the current statement, test, and files".into(),
+        ("partial", _) => format!(
+            "implemented in part, a criterion test fails; generate: `{}`",
+            gen
+        ),
+        ("failing", _) => include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-status/the-deliverable-contradicts-the-statement-a-finding-e406b.md"
+        ))
+        .into(),
+        ("verified", _) => include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-status/nothing-the-last-run-passed-against-the-ce028.md"
+        ))
+        .into(),
         _ => String::new(),
     }
 }
@@ -195,7 +232,10 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
     let ledger = Ledger::load(&store.out);
     let Some(row) = ledger.requirements.get(&rid) else {
         return Err(format!(
-            "no ledger row for `{}`: nothing binds it, so there is no verdict to record; the row is bind work",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-status/no-ledger-row-for-nothing-binds-it-01534.md"
+            )),
             rid
         ));
     };
@@ -212,7 +252,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
             repair_for(&status, &reason, &rid, &row.entity)
         )),
         "stale-test" | "stale-code" => Err(format!(
-            "`{}` is {} ({}): the bytes moved after the last verdict, so it judged something else; run again (run_tests or record_verdict rebaselines the hashes)",
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/verify-status/is-the-bytes-moved-after-the-last-c3cf7.md")),
             rid, status, reason
         )),
         _ => Err(format!(

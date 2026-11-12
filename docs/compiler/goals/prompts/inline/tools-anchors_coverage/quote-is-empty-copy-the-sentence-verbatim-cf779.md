@@ -1,0 +1,1 @@
+quote is empty; copy the sentence verbatim from the section

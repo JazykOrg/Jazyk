@@ -1,0 +1,1 @@
+choice `{}` has scope `{}`; it must be `product`, `behavior`, or `detail`

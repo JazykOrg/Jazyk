@@ -35,7 +35,10 @@ pub fn parse_paths(body: &Value) -> Result<Option<Vec<String>>, String> {
     let values = value
         .as_array()
         .filter(|v| !v.is_empty())
-        .ok_or("testPaths must be a nonempty list of project-relative test filenames")?;
+        .ok_or(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-artifacts/testpaths-must-be-a-nonempty-list-of-446c8.md"
+        )))?;
     if body.get("targets").is_some_and(|value| {
         !value.is_null() && value.as_array().is_none_or(|values| !values.is_empty())
     }) {
@@ -119,7 +122,13 @@ fn validate_runner_scope(
                 && (!paths.contains(&other.artifact)
                     || selector.is_some_and(|set| other.set_id.as_deref() != Some(set)))
         }) {
-            return Err(format!("Runner {run} also covers tests outside the selection. Select their containing folder or configure separate scoped tasks."));
+            return Err(format!(
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/verify-artifacts/runner-run-also-covers-tests-outside-the-39174.md"
+                )),
+                run = run
+            ));
         }
     }
     Ok(())
@@ -288,9 +297,11 @@ async fn prepare_build(
                 .expect("selected cached build task");
             let (_, result) = &cache.tasks[id];
             if result["status"] != "succeeded" || result["complete"] != true {
-                return Err(
-                    "Build task did not complete successfully. Inspect its retained run.".into(),
-                );
+                return Err(include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/verify-artifacts/build-task-did-not-complete-successfully-inspect-f9304.md"
+                ))
+                .into());
             }
             crate::gen::check_build_products(&store.out, gs, build)?;
         } else if let Some((task, id, result)) =
@@ -413,9 +424,7 @@ async fn run_cached(
                 );
                 let reply = runner
                     .ask_traced(
-                        include_str!(
-                            "../../../docs/compiler/goals/prompts/verify-criterion-contract.md"
-                        ),
+                        include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/verification/verify-criterion-contract.md.mustache")),
                         &input,
                         &format!("verify {} {}", bound.requirement, bound.test.name),
                         "judge",
@@ -443,7 +452,15 @@ async fn run_cached(
                 .get(task)
                 .ok_or("checkpoint-incompatible: missing selected task receipt")?
                 .0;
-            imported_task_observation(store,gs,&bound,run_id).ok_or_else(||format!("Test inputs changed or run {run_id} was not applied. Inspect the retained run, then rerun the selected tests."))?
+            imported_task_observation(store, gs, &bound, run_id).ok_or_else(|| {
+                format!(
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/verify-artifacts/test-inputs-changed-or-run-run-id-04a8d.md"
+                    )),
+                    run_id = run_id
+                )
+            })?
         } else {
             record(store, gs, &bound, &result)?;
             result

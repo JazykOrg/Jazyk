@@ -1,0 +1,1 @@
+Drop the open changeset without committing. The batch's goals return to open.

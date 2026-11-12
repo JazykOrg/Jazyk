@@ -1,0 +1,1 @@
+the record for `{}` lists no implementing file, and these requirements have no row naming a file that realizes them: {}; write the entity's part and record it in files

@@ -1,0 +1,1 @@
+Read one skill listed in the session's SKILLS block: its instructions and the files in its folder. Read a skill before following it.

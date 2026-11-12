@@ -1,0 +1,1 @@
+test row for {} declares test `{}` but `{}` does not contain that name; artifact must name the test source, not the generated JUnit report; match name to the test in that source and the emitted report case

@@ -1,0 +1,1 @@
+`{}` is staged in this session and not committed yet: the loaded set renders the committed snapshot, the staged node is exactly what your write call sent, and it loads after done

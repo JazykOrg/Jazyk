@@ -1,0 +1,1 @@
+configuration changed; call list_document_sets for the current hash and review the file before retrying

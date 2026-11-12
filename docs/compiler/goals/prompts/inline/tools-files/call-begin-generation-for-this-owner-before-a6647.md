@@ -1,0 +1,1 @@
+Call begin_generation for this owner before write_text_file. Repair only the requested files and affected tests, then record_generation. Recording ends the claim.

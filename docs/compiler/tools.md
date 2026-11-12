@@ -1030,7 +1030,7 @@ one is attached. Normal document saves dirty the affected sections for the next
 build. Editing an identified compiled fact uses the existing dual-write tools.
 
 General questions need no project discovery. The conversational policy is
-rendered from `goals/prompts/agent-main.mustache`, also used in `AGENTS.md`.
+rendered from `goals/prompts/conversation/agent-main.md.mustache`, also used in `AGENTS.md`.
 `list_jazyk_skills` and `read_jazyk_skill` expose the built-in
 [workflow skills](../frontends/agent-workflows.md). They are read-only and require
 no graph or set ID. A readable skill does not grant its required capabilities.

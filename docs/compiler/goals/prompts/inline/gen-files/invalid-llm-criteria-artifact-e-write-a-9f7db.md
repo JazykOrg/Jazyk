@@ -1,0 +1,1 @@
+invalid llm criteria artifact `{}`: {e}. Write a valid criteria file before recording; never substitute a programmatic test file

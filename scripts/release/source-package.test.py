@@ -22,7 +22,13 @@ class SourcePackage(unittest.TestCase):
                 for name in re.findall(r'include_(?:str|bytes)!\(\s*"([^"\n]+)"', file.read_text()):
                     self.assertTrue((file.parent / name).is_file(), f'{file}: {name}')
                     count += 1
+                for name in re.findall(r'"/payloads/([^"\n]+)"', file.read_text()):
+                    self.assertTrue((output / 'docs/compiler' / name).is_file(), f'{file}: {name}')
+                    count += 1
             self.assertGreater(count, 50)
+            self.assertTrue((output / "build.rs").is_file())
+            self.assertTrue((output / "prompt_parser.rs").is_file())
+            self.assertTrue((output / "docs/compiler/goals/prompts/README.md").is_file())
             self.assertTrue((output / 'runtime-worker/main.go').is_file())
             self.assertTrue((output / 'LICENSE').is_file())
             self.assertEqual((output / 'vendor/rst-grammar/rst.pest').read_bytes(),

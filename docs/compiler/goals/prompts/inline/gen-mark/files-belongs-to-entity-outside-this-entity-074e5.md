@@ -1,0 +1,1 @@
+files: `{}` belongs to entity `{}`, outside this entity's component group; never record another group's file. Write a file of your own for your requirements, or name `{}` on a test row's `files` when it already carries that requirement

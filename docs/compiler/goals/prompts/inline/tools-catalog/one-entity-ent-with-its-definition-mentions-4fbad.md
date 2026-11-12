@@ -1,0 +1,1 @@
+One entity (ent:...) with its definition, mentions, requirements, and relationships. For requirements (req:...) and other node kinds use load with target instead.

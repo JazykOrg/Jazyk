@@ -1,0 +1,1 @@
+`{}` restates the deliverable directory's own name; paths are relative to the deliverable, so this is `{}`. Write paths without that prefix

@@ -17,7 +17,7 @@ impl McpServer {
     pub(super) fn recent_edits_tool() -> Value {
         json!({
             "name": "recent_edits",
-            "description": "Project files edited since the cursor `since` (since this serving started when absent), by any tool: your own edit tools, an editor, git. Edit files with your own tools; this shows their effect before any build. A document row lists the open compile goals its edit derived (dirtied sections); a source row names the entity owning the file. Pass the reply's cursor as the next since. Read only: never compiles.",
+            "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-watch/project-files-edited-since-the-cursor-since-b8c62.md")),
             "inputSchema": {"type": "object", "properties": {
                 "since": {"type": "integer", "minimum": 0, "description": "cursor of a previous reply"},
                 "setId": {"type": "string", "description": "narrow the rows to one document set"}

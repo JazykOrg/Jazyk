@@ -1,0 +1,1 @@
+transition.subject is empty; name the subject entity, or omit `transition` entirely

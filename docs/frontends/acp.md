@@ -195,7 +195,7 @@ creation refuses an ambiguous name among client-supplied servers before any tool
 can execute. A discovered server that collides, fails to start, or is untrusted is
 skipped with a warning instead.
 
-The generic [agent prompt](../compiler/goals/prompts/embedded-agent.md) remains a
+The generic [agent prompt](../compiler/goals/prompts/runtime/embedded-agent.md) remains a
 Jazyk payload. MCP supplies the domain prompt and tools. IDE-mediated edits still
 pass through the existing proxy and workspace contract.
 

@@ -1,0 +1,1 @@
+credentials in the URL are not allowed; use headers from the secret store

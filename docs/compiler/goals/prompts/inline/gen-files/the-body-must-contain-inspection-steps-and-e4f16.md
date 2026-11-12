@@ -1,0 +1,1 @@
+the body must contain inspection steps and explicit PASS and FAIL outcomes

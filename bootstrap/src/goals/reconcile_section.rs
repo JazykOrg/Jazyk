@@ -1069,6 +1069,9 @@ impl GoalKind for ReconcileSection {
         dishonest_covered(cx.store, cx.staged)
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/reconcile-section.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/reconcile-section.md"
+        ))
     }
 }

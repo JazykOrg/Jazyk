@@ -120,7 +120,11 @@ pub fn mark(
     let base_hash = fact_hash_base(store, id, &rids);
     let current_hash = assets::fingerprint(&base_hash, &referenced_assets);
     if current_hash != base_hash && fact_hash_seen.is_some_and(|seen| seen != current_hash) {
-        return Err("The facts or referenced input bytes moved since begin_generation. Reload the package, use the current exact inputs and record its current factHash.".into());
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-mark/the-facts-or-referenced-input-bytes-moved-606d3.md"
+        ))
+        .into());
     }
     let slug = crate::ids::entity_slug(id).to_string();
     // Every path the manifest names is confined before any side effect: a path that
@@ -191,7 +195,10 @@ pub fn mark(
                     .unwrap_or("?")
                     .to_string();
                 return Err(format!(
-                    "test row `{}` names no requirement; every row carries the id of the requirement it tests ({{requirement, kind, label, artifact, name, run, cwd}})",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/gen-mark/test-row-names-no-requirement-every-row-0a417.md"
+                    )),
                     named
                 ));
             };
@@ -241,19 +248,28 @@ pub fn mark(
             if kind == "programmatic" {
                 if artifact_raw.is_empty() {
                     return Err(format!(
-                        "test row for {} has an empty artifact; name the test source the row's run command executes, not its generated JUnit report",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/gen-mark/test-row-for-has-an-empty-artifact-77fd9.md"
+                        )),
                         rid
                     ));
                 }
                 if run.is_empty() {
                     return Err(format!(
-                        "test row for {} has an empty run command; record task:<id> with its case selector, or a legacy command selecting that test",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/gen-mark/test-row-for-has-an-empty-run-040fc.md"
+                        )),
                         rid
                     ));
                 }
             } else if artifact_raw.is_empty() {
                 return Err(format!(
-                    "test row for {} is llm but names no criteria file; write it (the package names its path under criteria/) and record that path as the artifact",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/gen-mark/test-row-for-is-llm-but-names-1477d.md"
+                    )),
                     rid
                 ));
             }
@@ -276,15 +292,25 @@ pub fn mark(
             let path = artifact_path(&store.out, gs, &test);
             if !path.vis_file() {
                 return Err(format!(
-                    "test row for {} names artifact `{}` but no such file exists under the deliverable{}; write its test source or criteria file before recording, or fix the path. Generated JUnit reports belong in task reports, not artifact",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/gen-mark/test-row-for-names-artifact-but-no-e04ae.md"
+                    )),
                     rid,
                     test.artifact,
-                    if kind == "llm" { " or the out directory's gen/" } else { "" }
+                    if kind == "llm" {
+                        " or the out directory's gen/"
+                    } else {
+                        ""
+                    }
                 ));
             }
             if kind == "programmatic" && !crate::verify::artifact_names(&path, &test.name) {
                 return Err(format!(
-                    "test row for {} declares test `{}` but `{}` does not contain that name; artifact must name the test source, not the generated JUnit report; match name to the test in that source and the emitted report case",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/gen-mark/test-row-for-declares-test-but-does-b9555.md"
+                    )),
                     rid, test.name, test.artifact
                 ));
             }
@@ -308,7 +334,10 @@ pub fn mark(
         .map(|row| row.record_sequence)
         .unwrap_or(0)
         .checked_add(1)
-        .ok_or("The entity generation record sequence is exhausted; no record was changed.")?;
+        .ok_or(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-mark/the-entity-generation-record-sequence-is-exhausted-d1a37.md"
+        )))?;
     for (rid, criterion, test, _) in &rows {
         let Some(cid) = criterion else {
             if let Some(row) = pre.requirements.get(rid) {
@@ -320,7 +349,13 @@ pub fn mark(
                         || gs.allows_source(&row.test.artifact))
                     && !same_test_artifact(&row.test, test)
                 {
-                    return Err(format!("requirement `{rid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
+                    return Err(format!(
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/gen-mark/requirement-rid-already-has-a-current-bound-e5148.md"
+                        )),
+                        rid = rid
+                    ));
                 }
             }
             continue;
@@ -337,7 +372,13 @@ pub fn mark(
             && (prior.test.kind != "programmatic"
                 || crate::verify::artifact_names(&path, &prior.test.name));
         if current && !same_test_artifact(&prior.test, test) {
-            return Err(format!("criterion `{cid}` already has a current bound test; reuse its artifact, name, and kind instead of replacing the judge"));
+            return Err(format!(
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-mark/criterion-cid-already-has-a-current-bound-8057f.md"
+                )),
+                cid = cid
+            ));
         }
     }
     let mut artifacts = test_artifacts(&pre);
@@ -362,7 +403,10 @@ pub fn mark(
         }
         if let Some(owner) = file_owner(store, &pre, id, f) {
             return Err(format!(
-                "files: `{}` belongs to entity `{}`, outside this entity's component group; never record another group's file. Write a file of your own for your requirements, or name `{}` on a test row's `files` when it already carries that requirement",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-mark/files-belongs-to-entity-outside-this-entity-074e5.md"
+                )),
                 f, owner, f
             ));
         }
@@ -411,7 +455,10 @@ pub fn mark(
             .collect();
         if !uncarried.is_empty() {
             return Err(format!(
-                "files names no file that realizes {}'s requirements (test and criteria files are not implementation), and nothing else carries {}; write the part of the deliverable that realizes them and list it in files, or, where a file another entity recorded already carries a requirement, name that file on the requirement's test row (`files: [path]`). Only an entity whose every requirement is carried by another entity's files records files: []",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-mark/files-names-no-file-that-realizes-s-b0a3c.md"
+                )),
                 id,
                 uncarried.join(", ")
             ));
@@ -428,7 +475,10 @@ pub fn mark(
     if pre.build.is_none() && !manifest_build {
         if let Some(m) = pre.medium.as_ref().filter(|m| m.is_built()) {
             return Err(format!(
-                "this deliverable is {} and no build is recorded: return `build` with the command that produces `{}`, its `cwd`, and `produces` listing `{}`",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-mark/this-deliverable-is-and-no-build-is-9b9d9.md"
+                )),
                 m.form, m.artifact, m.artifact
             ));
         }
@@ -709,7 +759,7 @@ pub fn mark(
         "unattachedNote": if unattached.markerless {
             "informational: no requirement site anchors any line of these files (the medium carries no traceability markers), so the ratio says nothing here; the generation is accepted (docs/consumers/gen.md#the-unattached-remainder)"
         } else {
-            "informational: the owned files no requirement row names and the significant lines outside every recorded site; the generation is accepted, and a large ratio suggests the deliverable states behavior the documents do not (docs/consumers/gen.md#the-unattached-remainder)"
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/gen-mark/informational-the-owned-files-no-requirement-row-4d214.md"))
         },
     });
     if !path_notes.is_empty() {
@@ -717,9 +767,10 @@ pub fn mark(
     }
     if !removed.is_empty() {
         reply["removed"] = json!(removed);
-        reply["removedNote"] = json!(
-            "files the previous record listed and this manifest omits were removed from the deliverable (their last content is under deliverable-baseline/ in the out directory)"
-        );
+        reply["removedNote"] = json!(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/gen-mark/files-the-previous-record-listed-and-this-b38de.md"
+        )));
     }
     if !choices.is_empty() {
         reply["choices"] = json!(choices.len());
@@ -871,7 +922,10 @@ pub fn parse_choices(store: &Store, manifest: &Value) -> Result<Vec<Choice>, Str
         let scope = c["scope"].as_str().unwrap_or("").trim().to_lowercase();
         if !matches!(scope.as_str(), "product" | "behavior" | "detail") {
             return Err(format!(
-                "choice `{}` has scope `{}`; it must be `product`, `behavior`, or `detail`",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/gen-mark/choice-has-scope-it-must-be-product-ecff4.md"
+                )),
                 crate::llm::truncate(&text, 60),
                 scope
             ));

@@ -388,6 +388,9 @@ impl GoalKind for Retrace {
         })
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/retrace.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/retrace.md"
+        ))
     }
 }

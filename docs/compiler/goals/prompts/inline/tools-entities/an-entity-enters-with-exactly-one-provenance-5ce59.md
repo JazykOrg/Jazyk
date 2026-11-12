@@ -1,0 +1,1 @@
+an entity enters with exactly one provenance: mention {section, quote} (the sentence that talks about it), or provenance {derived: {from, reasoning}} for structure the documents do not state

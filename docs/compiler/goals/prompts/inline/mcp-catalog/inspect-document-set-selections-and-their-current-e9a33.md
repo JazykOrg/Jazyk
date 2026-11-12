@@ -1,0 +1,1 @@
+Inspect document-set selections and their current configuration hash before repairing this worker's Source mapping.

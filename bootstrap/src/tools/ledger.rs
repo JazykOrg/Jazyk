@@ -6,7 +6,7 @@ impl ToolSession {
         let tasks = crate::gen::pending(&self.snapshot, &gs);
         if tasks.is_empty() {
             return Ok(
-                json!({"tasks": [], "note": "no generation work is currently derived; inspect binding_tasks and verification_tasks before concluding the deliverable is complete"}),
+                json!({"tasks": [], "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-ledger/no-generation-work-is-currently-derived-inspect-0c52f.md"))}),
             );
         }
         Ok(json!({"tasks": tasks, "next": "begin_generation on one entity"}))
@@ -81,7 +81,11 @@ impl ToolSession {
         if !args["manifest"].is_object() {
             return Err(ToolError::new(
                 "bad-argument",
-                "manifest is required: {files: [...], tests: [{requirement, kind, label, artifact, name, run}]}".into(),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-ledger/manifest-is-required-files-tests-requirement-kind-f0806.md"
+                ))
+                .into(),
             ));
         }
         // `choices` rides beside the manifest; fold it in so one validated
@@ -134,7 +138,7 @@ impl ToolSession {
         Ok(json!({
             "tasks": tasks,
             "byEntity": by_entity,
-            "next": "begin_binding on one requirement; an entity's generation task becomes useful once every row of that entity is bound, so bind an entity's rows together",
+            "next": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-ledger/begin-binding-on-one-requirement-an-entity-074f6.md")),
         }))
     }
 
@@ -158,7 +162,11 @@ impl ToolSession {
         if !args["test"].is_object() && !args["tests"].is_array() {
             return Err(ToolError::new(
                 "bad-argument",
-                "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}, or tests: [{criterion, ...}] one per criterion".into(),
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-ledger/test-is-required-kind-programmatic-llm-label-0c799.md"
+                ))
+                .into(),
             ));
         }
         crate::bind::record(
@@ -326,7 +334,7 @@ impl ToolSession {
         if self.feedback_count >= FEEDBACK_LIMIT {
             return Ok(json!({
                 "recorded": false,
-                "note": format!("already recorded {} feedback entries for this session; continue the task", FEEDBACK_LIMIT)
+                "note": format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-ledger/already-recorded-feedback-entries-for-this-session-63e3a.md")), FEEDBACK_LIMIT)
             }));
         }
         self.feedback_count += 1;
@@ -369,7 +377,7 @@ impl ToolSession {
         );
         Ok(json!({
             "recorded": true,
-            "note": "logged for jazyk's developers; continue the task with your best judgment"
+            "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-ledger/logged-for-jazyk-s-developers-continue-the-ee918.md"))
         }))
     }
 }

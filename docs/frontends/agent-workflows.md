@@ -6,7 +6,7 @@ changes stay bound to the project's documented requirements.
 
 ## Main prompt
 
-[`agent-main.mustache`](../compiler/goals/prompts/agent-main.mustache) is the single
+[`agent-main.mustache`](../compiler/goals/prompts/conversation/agent-main.md.mustache) is the single
 main policy template. The Mustache renderer fills in the current document sets.
 The rendered policy is identical in the managed `AGENTS.md` section and MCP
 `initialize.instructions` for the same project configuration. Serving capabilities
@@ -37,7 +37,7 @@ Built-in workflow skills live in [`skills/agent/`](../compiler/skills/agent/).
 They are embedded into the compiler. Each skill's YAML front matter holds its
 name, description, and required capabilities. The main template contains the
 reviewable routing table. Tool descriptions live in
-[`agent-skill-tools.json`](../compiler/goals/prompts/agent-skill-tools.json). `list_jazyk_skills` lists their stable names,
+[`agent-skill-tools.json`](../compiler/goals/prompts/conversation/agent-skill-tools.json). `list_jazyk_skills` lists their stable names,
 descriptions, required capabilities, and source paths. `read_jazyk_skill` returns
 one exact Markdown body. Both tools are read-only, require no document set or
 graph, and remain available during a batch and in restricted servings.

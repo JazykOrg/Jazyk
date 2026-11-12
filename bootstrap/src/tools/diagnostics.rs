@@ -210,13 +210,25 @@ impl ToolSession {
                 if has_edit && answer.is_some() {
                     return Err(ToolError::new(
                         "bad-prompt",
-                        format!("option {} carries both edit and answer; keep one: `edit` when the option changes the document (the edit is its answer), `answer` when it replies in words; drop the other and send the call again", i),
+                        format!(
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-diagnostics/option-carries-both-edit-and-answer-keep-49d3f.md"
+                            )),
+                            i
+                        ),
                     ));
                 }
                 if !has_edit && answer.is_none() {
                     return Err(ToolError::new(
                         "bad-prompt",
-                        format!("option {} carries neither edit nor answer; give it one (`edit` to change the document, `answer` to reply in words); an option with neither is a filled-in blank, and a diagnostic that asks nothing of a human omits `prompt` entirely", i),
+                        format!(
+                            include_str!(concat!(
+                                env!("OUT_DIR"),
+                                "/payloads/goals/prompts/inline/tools-diagnostics/option-carries-neither-edit-nor-answer-give-db0ae.md"
+                            )),
+                            i
+                        ),
                     ));
                 }
                 let edit = if has_edit {
@@ -265,7 +277,7 @@ impl ToolSession {
                     {
                         return Err(ToolError::new(
                             "bad-prompt",
-                            format!("option {}: old_text does not locate in {}#{}; copy it verbatim from the section", i, doc, section),
+                            format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-diagnostics/option-old-text-does-not-locate-in-6b974.md")), i, doc, section),
                         ));
                     }
                     let facts = self.parse_facts(&e["facts"]).map_err(|err| {
@@ -304,7 +316,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-rule",
                 format!(
-                    "rule `{}` is not in the catalog; use one of: {}",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-diagnostics/rule-is-not-in-the-catalog-use-2f2e6.md")),
                     rule,
                     REVIEW_RULES.join(", ")
                 ),
@@ -315,7 +327,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-severity",
                 format!(
-                    "severity `{}` must be one of: {}",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-diagnostics/severity-must-be-one-of-e08db.md")),
                     severity,
                     SEVERITIES.join(", ")
                 ),
@@ -524,7 +536,10 @@ impl ToolSession {
             ToolError::new(
                 "bad-field",
                 format!(
-                    "field `{}` is not editable on {}; one of: {}. Ids, created, updated, mentions, and provenance itself are never edited directly",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-diagnostics/field-is-not-editable-on-one-of-78306.md"
+                    )),
                     field, kind, fields
                 ),
             )
@@ -824,7 +839,10 @@ impl ToolSession {
         Err(ToolError::new(
             "unknown-id",
             format!(
-                "unknown id `{}`; edit_fact takes a requirement (req:), entity (ent:), or view (view:) id. For a criterion (crit:) use update_criterion with id and the fields to change; chat needs no begin_goals",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-diagnostics/unknown-id-edit-fact-takes-a-requirement-6c31c.md"
+                )),
                 raw_id
             ),
         ))

@@ -1,0 +1,1 @@
+a criterion enters with exactly one provenance: section plus quote (the case, example, or bullet copied verbatim from its own section), or provenance {derived: {from, reasoning}} for evidence the documents do not state

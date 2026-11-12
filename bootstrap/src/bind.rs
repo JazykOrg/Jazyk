@@ -20,7 +20,10 @@ pub fn instructions() -> String {
 }
 
 pub(crate) fn contract() -> &'static str {
-    include_str!("../../docs/compiler/goals/prompts/bind-contract.md")
+    include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/generation/bind-contract.md.mustache"
+    ))
 }
 
 // Why an existing row owes a bind, or None when it is current: the statement moved
@@ -176,7 +179,10 @@ fn existing_tests(deliverable: &std::path::Path, needles: &[String]) -> Vec<serd
                 let mut hit =
                     serde_json::json!({"file": rel, "names": hits, "carriesCurrentHash": current});
                 if !current {
-                    hit["note"] = serde_json::json!("names this id or slug but no current statement hash: the test of an earlier statement under this id, or of another one; rename only when its assertion is this statement's");
+                    hit["note"] = serde_json::json!(include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/bind/names-this-id-or-slug-but-no-1159f.md"
+                    )));
                 }
                 out.push(hit);
             }
@@ -216,7 +222,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
             store.criteria_of(&rid).join(", ")
         )),
         Some("criterion-changed") => Err(format!(
-            "a criterion of `{}` moved since its test was written; begin_binding again and record the tests against the current criteria",
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/bind/a-criterion-of-moved-since-its-test-727e0.md")),
             rid
         )),
         Some("source-selection-changed") => Err(format!(
@@ -224,7 +230,7 @@ pub fn gate(store: &Store, gs: &GenSettings, rid: &str) -> Result<(), String> {
             rid
         )),
         Some(_) => Err(format!(
-            "the row for `{}` names test `{}` in `{}`, but that artifact is missing or does not contain the name; write the test (or bind to the existing one under its real name) and record_binding again",
+            include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/bind/the-row-for-names-test-in-but-8eed7.md")),
             rid, row.test.name, row.test.artifact
         )),
     }
@@ -323,7 +329,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "requirement": rid,
         "entity": entity,
         "criteria": criteria,
-        "criteriaNote": include_str!("../../docs/compiler/goals/prompts/bind-criteria-note.md").trim(),
+        "criteriaNote": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/generation/bind-criteria-note.md")).trim(),
         "existingTests": existing_tests,
         "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,
@@ -342,7 +348,7 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "mediumWarning": crate::gen::medium_divergence(&ledger),
         "build": ledger.build.as_ref().map(|b| json!({"run": b.run, "cwd": b.cwd})),
         "testConventions": conventions,
-        "testConventionsNote": "the toolchain and command style already recorded, to reuse exactly; an earlier row's assertion style is not a convention, and a test that reads a description of the artifact stays wrong however many rows share it",
+        "testConventionsNote": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/bind/the-toolchain-and-command-style-already-recorded-d233e.md")),
         // The statement is disputed while these stand; the test judges one side of an
         // open question (docs/consumers/gen.md#rows-recorded-over-an-open-contradiction).
         "openDiagnostics": crate::gen::open_errors_on(store, &rid),
@@ -386,7 +392,10 @@ fn parse_test_ref(
     }
     if kind == "programmatic" && run.is_empty() {
         return Err(format!(
-            "a programmatic test needs {}.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/bind/a-programmatic-test-needs-run-a-saved-963c7.md"
+            )),
             label
         ));
     }
@@ -521,9 +530,11 @@ pub fn record(
             agg.to_string(),
         )
     } else {
-        return Err(
-            "test is required: {kind: programmatic|llm, label, artifact, name, run, cwd?}".into(),
-        );
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/bind/test-is-required-kind-programmatic-llm-label-f4a9f.md"
+        ))
+        .into());
     };
     let verdict = verdict.as_str();
     let test = &test;
@@ -550,9 +561,11 @@ pub fn record(
         return Err("test.artifact and test.name are required".into());
     }
     if kind == "programmatic" && run.is_empty() {
-        return Err(
-            "a programmatic test needs test.run: a saved task:<id> with JUnit evidence or a legacy command whose exit code supplies the verdict".into(),
-        );
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/bind/a-programmatic-test-needs-test-run-a-2f6e3.md"
+        ))
+        .into());
     }
     // Every path the binding names stays under the deliverable
     // (docs/consumers/gen.md#file-ownership-and-conventions).
@@ -694,7 +707,7 @@ pub fn record(
             "verified" => "the deliverable already satisfies the statement",
             "unimplemented" => "nothing implements the statement; the entity is generation work and this test is its acceptance gate",
             "partial" => "implementing files exist and some criterion tests pass while others fail: the entity is generation work for the failing criteria",
-            "failing" => "implementing files exist but the tests fail: the deliverable contradicts the statement; the failing-binding check files it for the author at the next check run, never regenerate silently",
+            "failing" => include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/bind/implementing-files-exist-but-the-tests-fail-3aa34.md")),
             _ => "recorded",
             },
         },
@@ -704,9 +717,10 @@ pub fn record(
     }
     if !dropped.is_empty() {
         reply["droppedFiles"] = json!(dropped);
-        reply["droppedFilesNote"] = json!(
-            "test artifacts and build outputs are never implementing files; list the product files a criterion test inspects, or none"
-        );
+        reply["droppedFilesNote"] = json!(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/bind/test-artifacts-and-build-outputs-are-never-e2ccf.md"
+        )));
     }
     if !contradicted.is_empty() {
         reply["contradicted"] = json!(contradicted);

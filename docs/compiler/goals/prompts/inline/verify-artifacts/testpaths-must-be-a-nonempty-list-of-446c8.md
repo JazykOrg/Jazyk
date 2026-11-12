@@ -1,0 +1,1 @@
+testPaths must be a nonempty list of project-relative test filenames

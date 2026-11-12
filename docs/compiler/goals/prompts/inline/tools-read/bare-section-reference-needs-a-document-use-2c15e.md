@@ -1,0 +1,1 @@
+bare section reference `{}` needs a document; use doc.md#{}

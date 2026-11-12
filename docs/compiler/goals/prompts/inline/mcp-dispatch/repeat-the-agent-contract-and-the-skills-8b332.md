@@ -1,0 +1,1 @@
+repeat the agent contract and the skills even when this serving already delivered them

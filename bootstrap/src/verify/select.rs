@@ -42,15 +42,27 @@ pub(super) fn verification_next(
     generated_candidate_failure: bool,
 ) -> &'static str {
     if failed > 0 && document_findings {
-        "a failing row has an open document diagnostic: surface it to the document author before changing the deliverable or test; do not silently rewrite prose"
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/a-failing-row-has-an-open-document-680d5.md"
+        ))
     } else if failed > 0 && generated_candidate_failure {
-        "a generated candidate failed current checks: compare the documented obligation, implementation and test. If the implementation or test is wrong, repair through the owning entity's permitted generation tools, record_generation and run_tests again; otherwise report the finding when repair tools are unavailable. A document contradiction needs a diagnostic and an author decision, never silent prose changes. This guidance does not schedule automatic regeneration"
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/a-generated-candidate-failed-current-checks-compare-47078.md"
+        ))
     } else if failed > 0 {
         "a failing row names its requirement: compare its documented obligation, current implementation and test, then follow its status and permitted repair tools. Test failure alone does not prove the documents are wrong; a document contradiction needs a diagnostic and an author decision"
     } else if runner_failed > 0 {
-        "a runner-failed row was never judged: the command could not execute; fix the runner, then run_tests again"
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/a-runner-failed-row-was-never-judged-d0872.md"
+        ))
     } else if rows.iter().any(|row| row["verdict"] == "none") {
-        "some cases remain unverified; inspect their report evidence before retrying"
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/some-cases-remain-unverified-inspect-their-report-f3b72.md"
+        ))
     } else if !skipped.is_empty() {
         "skipped rows say why; llm rows need begin_verification and record_verdict"
     } else if rows.is_empty() {
@@ -216,7 +228,7 @@ pub(crate) fn run_selected_after_build(
         }
         if crate::vfs::is_scoped() {
             let criteria = run_criterion_tests(store, rid, gs);
-            skipped.push(json!({"requirement":rid,"reason":"Legacy command requires a native runner; use a saved task for hosted execution.","pendingCi":true,"criteria":criteria}));
+            skipped.push(json!({"requirement":rid,"reason":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/verify-select/legacy-command-requires-a-native-runner-use-e5622.md")),"pendingCi":true,"criteria":criteria}));
             continue;
         }
         match run_programmatic(store, rid, gs) {
@@ -335,7 +347,10 @@ pub(crate) fn run_selected_after_build(
         && (reply["suite"]["failedCases"].as_u64().unwrap_or(0) > 0
             || reply["suite"]["unsuccessfulRuns"].as_u64().unwrap_or(0) > 0)
     {
-        reply["next"] = json!("all selected rows pass, but the executed suite has failed cases or an unsuccessful run; inspect suite.failures and run evidence before claiming whole-suite success. No owner is inferred for an unbound case");
+        reply["next"] = json!(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/all-selected-rows-pass-but-the-executed-dc793.md"
+        )));
     }
     if skipped.iter().any(|r| r["pendingCi"] == true) {
         reply["pendingCi"] = json!(true);
@@ -476,10 +491,11 @@ pub(crate) async fn run_without_build(
     let selected = progress.data.selected.clone();
     progress.save().await?;
     if !targets.is_empty() && selected.is_empty() {
-        return Err(
-            "no ledger rows match the given target(s); run `jazyk gen` first or check the ids"
-                .into(),
-        );
+        return Err(include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/verify-select/no-ledger-rows-match-the-given-target-e8cce.md"
+        ))
+        .into());
     }
     // The build runs once, before any row. A row cannot say anything true about an
     // artifact that was never produced, so a broken build stops the run instead of

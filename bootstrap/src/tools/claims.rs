@@ -1176,7 +1176,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-justification",
                 format!(
-                    "the justification for {} is {} sentences; one or two saying why the gate holds, never an essay",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-claims/the-justification-for-is-sentences-one-or-ede4c.md"
+                    )),
                     goal, sentences
                 ),
             ));
@@ -1403,7 +1406,7 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-verdict",
                 format!(
-                    "verdict `{}` for {} must be one of: {}",
+                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-claims/verdict-for-must-be-one-of-ea7b8.md")),
                     verdict,
                     goal,
                     PAIR_VERDICTS.join(", ")
@@ -1416,7 +1419,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "bad-justification",
                 format!(
-                    "the justification for {} is {} sentences; one or two saying why the verdict holds, never an essay",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-claims/the-justification-for-is-sentences-one-or-33f02.md"
+                    )),
                     goal, sentences
                 ),
             ));
@@ -1709,7 +1715,10 @@ impl ToolSession {
             return Err(ToolError::new(
                 "stale-anchor",
                 format!(
-                    "stale anchors left untouched: {}; for each: if the document still states the fact, re-record it with upsert_requirement quoting the new sentence verbatim (it resolves to the anchor and updates in place); if the statement changed meaning, revise it with update_requirement carrying the id, the new statement, and the new section plus quote; if the fact is gone, delete_requirement",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-claims/stale-anchors-left-untouched-for-each-if-57b23.md"
+                    )),
                     untouched.join(", ")
                 ),
             ));
@@ -1731,7 +1740,10 @@ impl ToolSession {
                         return Err(ToolError::new(
                             "unmarked-section",
                             format!(
-                                "dirty section(s) without a coverage mark: {}; for each, set_coverage covered (a requirement must be sourced from it) or non-normative with a note",
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-claims/dirty-section-s-without-a-coverage-mark-fb7f3.md"
+                                )),
                                 unmarked.join(", ")
                             ),
                         ));

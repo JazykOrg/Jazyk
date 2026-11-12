@@ -1,0 +1,1 @@
+no ledger row for `{}`: nothing binds it, so there is no verdict to record; the row is bind work

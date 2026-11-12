@@ -1,0 +1,1 @@
+Relative to the {base} `{}`; use paths from list_files or referencedAssets.path, without `..`.

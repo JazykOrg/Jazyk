@@ -1,0 +1,1 @@
+test row for {} has an empty run command; record task:<id> with its case selector, or a legacy command selecting that test

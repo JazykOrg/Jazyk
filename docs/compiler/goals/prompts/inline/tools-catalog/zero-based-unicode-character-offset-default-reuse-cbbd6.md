@@ -1,0 +1,1 @@
+Zero-based Unicode character offset; default 0. Reuse next_offset from the preceding read.

@@ -1,0 +1,1 @@
+Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines. Private state and credentials are excluded.

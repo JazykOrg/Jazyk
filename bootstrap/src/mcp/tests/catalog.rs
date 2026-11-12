@@ -164,7 +164,10 @@ fn the_agents_md_section_names_only_served_tools() {
         BridgeFlags::default(),
     );
     let names = tool_names(&server);
-    let payload = include_str!("../../../../docs/compiler/goals/prompts/agent-main.mustache");
+    let payload = include_str!(concat!(
+        env!("OUT_DIR"),
+        "/payloads/goals/prompts/conversation/agent-main.md.mustache"
+    ));
     let named: Vec<&str> = payload
         .split('`')
         .skip(1)
@@ -416,7 +419,7 @@ fn workflow_policy_and_skills_match_agents_mcp_acp_and_restricted_servings() {
                 .unwrap();
             let reply: Value =
                 serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
-            assert_eq!(reply["body"], skill.body);
+            assert_eq!(reply["body"], skill.prepared);
         }
         assert!(!refusal(server.handle(
             "tools/call",

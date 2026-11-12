@@ -470,6 +470,9 @@ impl GoalKind for AbstractEntity {
             .or_else(|| caps_goal_gate(cx.store, cx.staged, &cx.goal.target))
     }
     fn prompt(&self) -> &'static str {
-        include_str!("../../../docs/compiler/goals/prompts/abstract-entity.md")
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/goals/abstract-entity.md"
+        ))
     }
 }

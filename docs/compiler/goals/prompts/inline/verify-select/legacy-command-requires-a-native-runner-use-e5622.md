@@ -1,0 +1,1 @@
+Legacy command requires a native runner; use a saved task for hosted execution.

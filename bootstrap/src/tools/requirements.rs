@@ -23,8 +23,16 @@ impl ToolSession {
         let has_derived = Self::present(&args["provenance"]);
         if has_source == has_derived {
             return Err(ToolError::new(
-                if has_source { "bad-provenance" } else { "provenance-required" },
-                "a criterion enters with exactly one provenance: section plus quote (the case, example, or bullet copied verbatim from its own section), or provenance {derived: {from, reasoning}} for evidence the documents do not state".into(),
+                if has_source {
+                    "bad-provenance"
+                } else {
+                    "provenance-required"
+                },
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-requirements/a-criterion-enters-with-exactly-one-provenance-093c8.md"
+                ))
+                .into(),
             ));
         }
         if let Some(req_statement) = self.requirement_statement(&rid) {
@@ -267,7 +275,14 @@ impl ToolSession {
                     .iter()
                     .any(|op| matches!(op, Op::RatifyProvenance { id: cid, .. } if cid == &id))
             {
-                return Err(ToolError::new("already-quoted", "This criterion already has a source quote; use upsert_criterion to re-source it.".into()));
+                return Err(ToolError::new(
+                    "already-quoted",
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/tools-requirements/this-criterion-already-has-a-source-quote-74795.md"
+                    ))
+                    .into(),
+                ));
             }
             if self.staged.len() + 2 > self.mutation_limit {
                 return Err(ToolError::new("mutation-budget", "Linking a criterion needs room for its update and provenance change; finish this batch first.".into()));
@@ -328,8 +343,16 @@ impl ToolSession {
         let has_derived = Self::present(&args["provenance"]);
         if has_source == has_derived {
             return Err(ToolError::new(
-                if has_source { "bad-provenance" } else { "provenance-required" },
-                "a requirement enters with exactly one provenance: section plus quote (the verbatim source sentence), or provenance {derived: {from, reasoning}} for a statement the documents do not state".into(),
+                if has_source {
+                    "bad-provenance"
+                } else {
+                    "provenance-required"
+                },
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-requirements/a-requirement-enters-with-exactly-one-provenance-2af07.md"
+                ))
+                .into(),
             ));
         }
         if has_derived {
@@ -358,7 +381,7 @@ impl ToolSession {
         if raw_entities.is_empty() {
             return Err(ToolError::new(
                 "no-entities",
-                "a requirement must reference at least one entity id".into(),
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-requirements/a-requirement-must-reference-at-least-one-aaa54.md")).into(),
             ));
         }
         let mut entities: Vec<String> = Vec::new();
@@ -650,7 +673,7 @@ impl ToolSession {
                 src.section,
                 crate::llm::truncate(&src.quote, 120)
             ),
-            None => "`quote` is the document's own sentence, never the statement. To change only the entities or edges, omit `section` and `quote`".to_string(),
+            None => include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-requirements/quote-is-the-document-s-own-sentence-d01d1.md")).to_string(),
         }
         };
         let source = match (Self::opt_str(args, "section"), Self::opt_str(args, "quote")) {
@@ -729,7 +752,7 @@ impl ToolSession {
         if raw_entities.is_empty() {
             return Err(ToolError::new(
                 "no-entities",
-                "a requirement must reference at least one entity id".into(),
+                include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-requirements/a-requirement-must-reference-at-least-one-aaa54.md")).into(),
             ));
         }
         let mut entities: Vec<String> = Vec::new();

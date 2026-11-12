@@ -29,7 +29,7 @@ encode). Every behavior below lands in `docs/` first, then in `bootstrap/`.
   `bootstrap/src/verify.rs` (`status_of`), `bootstrap/src/gen.rs` (`strip_markers`,
   `measure_unattached`).
 - Decompilation: [decompile](../docs/consumers/decompile.md),
-  `docs/compiler/goals/prompts/decompile-contract.md`, `bootstrap/src/decompile.rs`.
+  `docs/compiler/goals/prompts/decompile/decompile-contract.md`, `bootstrap/src/decompile.rs`.
 - Goal derivation: [change records](../docs/compiler/reconciler.md#change-records),
   [tiers](../docs/compiler/reconciler.md#tiers),
   [flip detection](../docs/compiler/reconciler.md#flip-detection),

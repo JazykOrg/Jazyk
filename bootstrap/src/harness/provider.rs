@@ -148,8 +148,11 @@ pub(crate) fn response_message(
             }
             if !ids.insert(request.id.clone()) {
                 return Err(ProviderError::RequestFailed(
-                    "Model returned a duplicate tool-call id in one response; no tools executed"
-                        .into(),
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/harness-provider/model-returned-a-duplicate-tool-call-id-c8e1c.md"
+                    ))
+                    .into(),
                 ));
             }
             let original = request.id.clone();

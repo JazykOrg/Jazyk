@@ -131,3 +131,9 @@ gloo-timers = { version = "0.3", features = ["futures"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tempfile = "3"
+
+[build-dependencies]
+regex = "1.12.4"
+pulldown-cmark = { version = "0.13", default-features = false }
+serde_norway = "0.9"
+mustache = "0.9"

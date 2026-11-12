@@ -248,7 +248,10 @@ pub fn run_programmatic(store: &Store, rid: &str, gs: &GenSettings) -> Result<Pr
     ensure_current_source(store, gs, row)?;
     if row.test.run.trim().is_empty() {
         return Err(format!(
-            "`{}` has no recorded run command, so nothing can execute it; define a saved suite task and record its test declaration with record_binding, or record_generation for entity `{}`",
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/verify-runners/has-no-recorded-run-command-so-nothing-c413a.md"
+            )),
             rid, row.entity
         ));
     }

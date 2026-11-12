@@ -1,0 +1,1 @@
+List eligible files. path narrows to a subdirectory; returned paths use the same root.

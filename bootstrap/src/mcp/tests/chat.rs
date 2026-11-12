@@ -676,7 +676,7 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
 
     // A decree through edit_fact lands graph-only with its proposal.
     let v = server.edit_fact(
-            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}]}),
+            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}], "decision": "Treat this as a constraint."}),
         );
     assert_eq!(v["path"], "decree", "{}", v);
     let s = Store::load(&out);
@@ -701,9 +701,9 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
     crate::vfs::remove_dir_all(&dir).ok();
 }
 
-// Chat can complete the batches it claims, without enabling direct graph surgery.
+// Chat commits direct edits and keeps compiler work staged within a batch.
 #[test]
-fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
+fn chat_graph_tools_commit_outside_and_stage_inside_the_claimed_batch() {
     let dir = bare_dir("chat-compiler-tools");
     crate::vfs::create_dir_all(dir.join("docs")).unwrap();
     crate::vfs::create_dir_all(dir.join(".jazyk")).unwrap();
@@ -733,13 +733,9 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
     };
     let args = json!({"name":"Greeter", "mention":{
             "section":"docs/a.md#/a", "quote":"The Greeter returns hello."}});
-    let rejected = call("upsert_entity", args.clone());
-    assert_eq!(rejected["isError"], true);
-    assert!(rejected["content"][0]["text"]
-        .as_str()
-        .unwrap()
-        .contains("no-open-batch"));
-    assert!(Store::load(&out).graph.entities.is_empty());
+    let committed = call("upsert_entity", args.clone());
+    assert_ne!(committed["isError"], true, "{committed}");
+    assert_eq!(Store::load(&out).graph.entities.len(), 1);
     let batch = server.begin_goals(&json!({"arguments":{}}));
     assert!(batch["error"].is_null(), "{batch}");
     let staged = call("upsert_entity", args);
@@ -754,8 +750,8 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
         .staged
         .is_empty());
     assert!(
-        Store::load(&out).graph.entities.is_empty(),
-        "writes must remain staged"
+        Store::load(&out).graph.entities.len() == 1,
+        "the batch must not commit another write"
     );
     let wrong = call(
         "report_diagnostic",
@@ -770,7 +766,7 @@ fn chat_compiler_tools_stage_only_inside_the_claimed_batch() {
         "{wrong}"
     );
     server.abandon_goals(&json!({"arguments":{"reason":"test cleanup"}}));
-    assert!(Store::load(&out).graph.entities.is_empty());
+    assert_eq!(Store::load(&out).graph.entities.len(), 1);
     assert!(crate::control::leases(&out).is_empty());
     crate::vfs::remove_dir_all(dir).unwrap();
 }
@@ -917,4 +913,153 @@ fn delegated_edits_fall_back_only_when_the_editor_is_unavailable() {
         .unwrap();
     assert_eq!(crate::vfs::read_to_string(&doc).unwrap(), "# C\n");
     crate::vfs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn chat_classify_input_commits_without_release_and_preserves_safety_checks() {
+    let dir = bare_dir("chat-classification");
+    let path = dir.join("docs/reader.md");
+    let prose = "# Reader\n\nReader-facing documentation.\n";
+    crate::vfs::write(&path, prose).unwrap();
+    let server = workspace_chat(
+        &dir,
+        BridgeFlags {
+            ephemeral: true,
+            ..Default::default()
+        },
+    );
+    let call = |name: &str, arguments: Value| {
+        let reply = server
+            .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+            .unwrap();
+        let value: Value =
+            serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+        (reply["isError"] == true, value)
+    };
+    let (error, inspected) = call(
+        "inspect_input",
+        json!({"setId":"ds_main","path":"docs/reader.md"}),
+    );
+    assert!(!error, "{inspected}");
+    let mut args = json!({"setId":"ds_main","path":"docs/reader.md","mode":"asset","sha256":inspected["sha256"],"reason":"Reader-facing supplied content."});
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let generation = crate::store::read_generation(&project.out);
+    let mut stale = args.clone();
+    stale["sha256"] = json!("wrong");
+    let (error, reply) = call("classify_input", stale);
+    assert!(error, "{reply}");
+    assert_eq!(crate::store::read_generation(&project.out), generation);
+    assert!(Store::load(&project.out).decisions.inputs.is_empty());
+
+    let (error, reply) = call("classify_input", args.clone());
+    assert!(!error, "{reply}");
+    assert_eq!(reply["committed"], true);
+    assert!(reply["generation"].as_u64().unwrap() > generation);
+    let store = Store::load(&project.out);
+    assert_eq!(store.decisions.inputs["docs/reader.md"].mode, "asset");
+    assert_eq!(store.docs["docs/reader.md"].sections["/"].kind, "blob");
+    assert!(store.docs["docs/reader.md"].coverage.is_empty());
+    assert_eq!(crate::vfs::read_to_string(&path).unwrap(), prose);
+
+    args["mode"] = json!("document");
+    let (error, reply) = call("classify_input", args.clone());
+    assert!(!error, "{reply}");
+    let mut store = Store::load(&project.out);
+    assert!(store.docs["docs/reader.md"]
+        .sections
+        .contains_key("/reader"));
+    store.graph.requirements.insert(
+        "req:reader".into(),
+        crate::model::Requirement {
+            statement: "Reader-facing documentation.".into(),
+            source: Some(crate::model::SourceRef {
+                doc: "docs/reader.md".into(),
+                section: "/reader".into(),
+                quote: "Reader-facing documentation.".into(),
+            }),
+            ..Default::default()
+        },
+    );
+    store.save_for_test();
+    let generation = crate::store::read_generation(&project.out);
+    args["mode"] = json!("asset");
+    let (error, reply) = call("classify_input", args.clone());
+    assert!(error, "{reply}");
+    let store = Store::load(&project.out);
+    assert_eq!(store.decisions.inputs["docs/reader.md"].mode, "document");
+    assert!(store.graph.requirements.contains_key("req:reader"));
+    assert_eq!(crate::store::read_generation(&project.out), generation);
+    let reader = workspace_chat(
+        &dir,
+        BridgeFlags {
+            ephemeral: true,
+            reader: true,
+            ..Default::default()
+        },
+    );
+    refusal(reader.handle(
+        "tools/call",
+        &json!({"name":"classify_input","arguments":args}),
+    ));
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn chat_classify_input_stays_staged_in_open_batch() {
+    let dir = bare_dir("chat-classification-batch");
+    crate::vfs::write(
+        dir.join("docs/reader.md"),
+        "# Reader\n\nReader-facing documentation.\n",
+    )
+    .unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let mut control = crate::control::Control::load(&project, &project.out);
+    control.compile = "auto".into();
+    control.save(&project.out);
+    let server = McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        vec!["chat".into()],
+        false,
+        BridgeFlags {
+            ephemeral: true,
+            ..Default::default()
+        },
+    );
+    let call = |name: &str, arguments: Value| {
+        let reply = server
+            .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+            .unwrap();
+        assert_ne!(reply["isError"], true, "{reply}");
+        serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    call("begin_goals", json!({}));
+    let inspected = call("inspect_input", json!({"path":"docs/reader.md"}));
+    let generation = crate::store::read_generation(&project.out);
+    let reply = call(
+        "classify_input",
+        json!({"path":"docs/reader.md","mode":"asset","sha256":inspected["sha256"],"reason":"Reader-facing supplied content."}),
+    );
+    assert!(reply["committed"].is_null(), "{reply}");
+    assert!(Store::load(&project.out).decisions.inputs.is_empty());
+    assert_eq!(crate::store::read_generation(&project.out), generation);
+    assert!(server
+        .open
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .session
+        .staged
+        .iter()
+        .any(|op| matches!(op, crate::store::Op::ClassifyInput { .. })));
+    call("abandon_goals", json!({}));
+    assert!(Store::load(&project.out).decisions.inputs.is_empty());
+    crate::vfs::remove_dir_all(dir).unwrap();
 }

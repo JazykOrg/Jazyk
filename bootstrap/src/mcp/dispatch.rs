@@ -276,7 +276,28 @@ impl McpServer {
                     summary: crate::session::condense(&params["arguments"], 160),
                     full: crate::session::full_payload(&params["arguments"]),
                 });
-                let reply = self.tool_call(&name, params, &label).map(|reply| {
+                let before_generation = (self.conversational_graph_writer()
+                    && !LIFECYCLE.contains(&name.as_str()))
+                .then(|| crate::store::read_generation(&self.out));
+                let reply = self.tool_call(&name, params, &label).map(|mut reply| {
+                    if reply["isError"] != true
+                        && before_generation.is_some_and(|before| {
+                            before != crate::store::read_generation(&self.out)
+                        })
+                    {
+                        if let Some(open) = self.open.lock().unwrap().as_mut() {
+                            open.invalidated = true;
+                            if let Some(text) = reply["content"][0]["text"].as_str() {
+                                if let Ok(mut value) = serde_json::from_str::<Value>(text) {
+                                    value["batchStale"] = json!(true);
+                                    reply["content"][0]["text"] =
+                                        json!(serde_json::to_string_pretty(&value)
+                                            .unwrap_or_default());
+                                }
+                            }
+                        }
+                    }
+
                     if name == "update_tasks" {
                         self.accept_task_revision(&reply, previous_config.as_deref());
                     }
@@ -510,15 +531,6 @@ impl McpServer {
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
-                    "update_criterion"
-                        if !self.bridge.reader
-                            && self.modes.iter().any(|m| m == "chat")
-                            && self.open.lock().unwrap().is_none() =>
-                    {
-                        let r = self.update_criterion_chat(&params["arguments"]);
-                        let is_err = !r["error"].is_null();
-                        return Ok(text_result(r, is_err));
-                    }
                     "edit_fact" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.edit_fact(&params["arguments"]);
                         let is_err = !r["error"].is_null();
@@ -536,11 +548,6 @@ impl McpServer {
                     }
                     "answer_diagnostic" if self.modes.iter().any(|m| m == "chat") => {
                         let r = self.answer_diagnostic(&params["arguments"]);
-                        let is_err = !r["error"].is_null();
-                        return Ok(text_result(r, is_err));
-                    }
-                    "update_diagnostic" if self.modes.iter().any(|m| m == "chat") => {
-                        let r = self.update_diagnostic_chat(&params["arguments"]);
                         let is_err = !r["error"].is_null();
                         return Ok(text_result(r, is_err));
                     }
@@ -621,7 +628,23 @@ impl McpServer {
                 // narrowed to the union of the batch's goal kinds' toolsets. Mirrors
                 // docs/frontends/mcp.md#compilation-over-mcp.
                 let mut open = self.open.lock().unwrap();
+                if name == "edit_graph" && self.conversational_graph_writer() {
+                    let mut reply = self.edit_graph_chat(&args);
+                    if reply["committed"] == true && open.is_some() {
+                        reply["batchStale"] = json!(true);
+                    }
+                    let is_err = !reply["error"].is_null();
+                    return Ok(text_result(reply, is_err));
+                }
                 if let Some(o) = open.as_mut() {
+                    if is_write
+                        && (o.invalidated
+                            || crate::store::read_generation(&self.out)
+                                != o.session.snapshot.status.generation)
+                    {
+                        o.invalidated = true;
+                        return Ok(text_result(Self::stale_chat_batch(), true));
+                    }
                     let kinds = o.session.scope.kinds();
                     if kinds.iter().all(|kind| kind == "verify")
                         && matches!(
@@ -652,6 +675,14 @@ impl McpServer {
                         Ok(v) => Ok(text_result(v, false)),
                         Err(e) => Ok(text_result(e.to_value(), true)),
                     };
+                }
+                if self.conversational_graph_writer()
+                    && crate::tools::GRAPH_WRITE_TOOLS.contains(&name.as_str())
+                {
+                    drop(open);
+                    let reply = self.commit_graph_edits(&[(name.clone(), args)]);
+                    let is_err = !reply["error"].is_null();
+                    return Ok(text_result(reply, is_err));
                 }
                 if is_graph_write && self.modes.iter().any(|m| m == "compile" || m == "chat") {
                     if let Some(v) = self.session_complete_closed() {

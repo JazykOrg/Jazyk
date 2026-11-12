@@ -5,7 +5,9 @@ explicitly. Each set owns `.jazyk/<set-id>/`; project file operations share the
 physical files and report every membership. The document-set contract defines
 configuration, aggregate reads, management commands, and grouped compilation.
 
-The project tool `read_document` takes a relative `path`. It reads Markdown or a
+The project tool `read_document` takes a project-root-relative `path`.
+Resolve links inside a document from that document's directory before calling
+it, as described in [file paths](./agent-workflows.md#file-paths). It reads Markdown or a
 [native DOCX/PDF projection](../compiler/binary-documents.md#diagnostics-and-agents)
 with source locations and diagnostics. It does not return binary base64 to agents.
 
@@ -67,7 +69,11 @@ separated; each adds its tools to the union:
   `answer_diagnostic` ([questions in chat](./acp.md#questions-in-chat)), and the
   [project tools](./acp.md#project-tools). Compiler write and goal tools are available
   for a claimed batch. Writes stage under that batch's toolset and gates. Outside a
-  batch they are refused. A conversational edit uses the dual-write tools, moving
+  batch, authored graph mutations commit directly with the same integrity checks.
+  `edit_graph` groups related edits into an independent atomic transaction without
+  claiming goals or releasing compilation. It remains available for a separate
+  user request while a batch is open; a committed change makes that batch stale.
+  Scoped workers keep their goal restrictions. A conversational edit uses the dual-write tools, moving
   prose and graph together. In a browser tab the serving leaves
   out the binding, generation, and verification lifecycles, which need a shell
   ([chat in a tab](./wasm.md#chat)).
@@ -733,6 +739,10 @@ refused and end of input discards staged work. An ordinary session end still use
 the implicit finish. A subsequent build uses new session fences.
 
 ## Project integration context
+
+Initialization names the project filesystem root used by the serving. This root
+can differ from an external agent's working directory. Project file tools take
+project-relative paths even when errors display absolute paths.
 
 Every serving exposes read-only `project_context`, without a document-set ID.
 The initialize instructions include the same context. ACP consumes these MCP

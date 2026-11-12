@@ -568,7 +568,7 @@ pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
 
 // The sources of the requirements naming each entity: the mentions a commit adds by
 // reference. Mirrors docs/compiler/graph.md#derived-data.
-fn reference_sources(graph: &Graph) -> BTreeMap<String, Vec<SourceRef>> {
+pub(super) fn reference_sources(graph: &Graph) -> BTreeMap<String, Vec<SourceRef>> {
     let mut out: BTreeMap<String, Vec<SourceRef>> = BTreeMap::new();
     for r in graph.requirements.values() {
         let Some(src) = &r.source else { continue };

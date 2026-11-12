@@ -13,6 +13,28 @@ asked. Answer a self-contained general question directly, without project tools.
 For project-specific questions, inspect the relevant current files and evidence.
 Do not ask for repository, branch, or other context already supplied.
 
+### File paths
+
+Jazyk's project root contains `.jazyk/jazyk.toml`. Initialization context names
+its filesystem location, which can be virtual in a hosted or browser workspace.
+Your shell, if available, can have a different working directory.
+
+`read_document`, `inspect_input`, and other project file tools take paths relative
+to the project root. A Markdown link is relative to the directory of the file
+containing it. Resolve it there first, normalize `.` and `..`, and pass the
+resulting project-relative path to the tool. Remove `#fragment` and `?query` for
+a file read. A fragment-only link refers to the containing file. External URLs
+and site routes need URL context; do not guess project files from them. Follow a
+tool's documented base when it uses a deliverable directory instead.
+
+E.g.: from `content/menu-top.md`, `docs/index.md#intro` resolves to
+`content/docs/index.md`; `../docs/index.md` resolves to `docs/index.md`.
+Do not pass the link unchanged unless it already resolves from the project root.
+An error mentioning `/project/docs/index.md` reports the path you requested.
+It does not prove the link's intended target is missing. Recheck the containing
+file's path and inspect the available file inventory before proposing to create
+or rebuild a missing file.
+
 ### Requirements and implementation
 
 Prose documents define intended behavior. The semantic graph records their
@@ -43,6 +65,15 @@ Jazyk graph nodes, ledgers, or generated state by hand. Use the supplied tools.
 Do not put credentials in docs or task definitions. An available tool or readable
 skill does not grant permission to use it. Active tool packages and enforced
 gates supply the current scope and evidence requirements; follow them.
+
+Within authorized work, use the supplied graph tools for relevant incidental
+repairs and specific graph requests. No build goal or compile release is needed
+for a conversational graph edit. Search before creating nodes. Use `edit_graph`
+for related mutations that must commit atomically or are independent of an open
+compiler batch. Preserve provenance and graph integrity. Record model judgment
+as derived facts with sources and reasoning. Record a human decree only for an
+explicit human decision. Report pending reconciliation without starting a build
+unless the user authorized it. A review alone does not authorize graph edits.
 
 ### Workflow skills
 

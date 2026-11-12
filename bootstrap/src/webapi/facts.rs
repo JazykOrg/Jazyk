@@ -251,16 +251,10 @@ pub(crate) fn edit_fact_core(
     let mut args = json!({ "id": id, "field": field, "value": value });
     if let Some(n) = accepted.as_ref().filter(|_| !decree) {
         args["note"] = json!(n);
-    } else if decree {
-        // The decree note rides only where the tool reads it as one (an unquoted
-        // fact); on a quoted fact a note would read as an accepted rewrite.
-        if let Some(n) = note.as_ref() {
-            if !is_quoted(&session.snapshot, id, field) {
-                args["note"] = json!(n);
-            }
-        }
-    } else if let Some(n) = note.as_ref() {
-        args["note"] = json!(n);
+    } else {
+        // The inspector endpoint records a direct human field edit. Model tools
+        // must instead supply their own derived provenance or explicit decision.
+        args["decision"] = json!(note.unwrap_or_else(|| format!("Set {id}.{field} to {value}")));
     }
     let reply = session.dispatch("edit_fact", &args).map_err(|e| {
         bad(e.to_value()["error"]["message"]

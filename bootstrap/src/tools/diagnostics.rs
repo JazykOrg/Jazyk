@@ -496,8 +496,27 @@ impl ToolSession {
     // The chat edit path: one authored field on one committed node. A quoted fact with
     // an accepted sentence rewrite (`note`) stages the mutation with its re-anchored
     // quote and reports the prose replacement for the serving to write; anything else
-    // stages a decree with its ratification proposal.
+    // requires derived provenance or an explicit human decision.
     // Mirrors docs/compiler/tools.md#chat-tools and docs/compiler/compilation.md#edit-paths.
+    fn edit_fact_provenance(&self, args: &Value) -> Result<Provenance, ToolError> {
+        let decision = Self::opt_str(args, "decision");
+        let derived = Self::present(&args["provenance"]);
+        if derived == decision.is_some() {
+            return Err(ToolError::new(
+                "provenance-required",
+                include_str!(concat!(
+                    env!("OUT_DIR"),
+                    "/payloads/goals/prompts/inline/tools-diagnostics/graph-edit-provenance.md"
+                ))
+                .into(),
+            ));
+        }
+        match decision {
+            Some(decision) => Ok(self.decree(Some(decision))),
+            None => self.parse_derived(&args["provenance"]),
+        }
+    }
+
     pub(super) fn edit_fact(&mut self, args: &Value) -> Result<Value, ToolError> {
         let raw_id = Self::str_arg(args, "id")?;
         let field = Self::str_arg(args, "field")?;
@@ -511,6 +530,7 @@ impl ToolSession {
             ));
         }
         let note = Self::opt_str(args, "note");
+        let graph_only = Self::present(&args["provenance"]) || Self::present(&args["decision"]);
         let text_value = || -> Result<String, ToolError> {
             value
                 .as_str()
@@ -572,7 +592,7 @@ impl ToolSession {
             }
             let sentence = statement.clone().unwrap_or_else(|| r.statement.clone());
             return match (r.source.as_ref(), note.as_deref()) {
-                (Some(src), Some(rewrite)) => {
+                (Some(src), Some(rewrite)) if !graph_only => {
                     let rewrite = rewrite.trim().to_string();
                     self.stage(Op::UpdateRequirement {
                         id: rid.clone(),
@@ -594,11 +614,16 @@ impl ToolSession {
                     }))
                 }
                 _ => {
-                    let decree = self.decree(note);
+                    let provenance = self.edit_fact_provenance(args)?;
+                    let path = if matches!(provenance, Provenance::Decree { .. }) {
+                        "decree"
+                    } else {
+                        "derived"
+                    };
                     let proposal = self.snapshot.ratification_proposal(
                         &rid,
                         &sentence,
-                        &decree,
+                        &provenance,
                         r.source.as_ref(),
                         &r.entities,
                         None,
@@ -611,7 +636,7 @@ impl ToolSession {
                         transition,
                         facets,
                         source: None,
-                        provenance: Some(decree),
+                        provenance: Some(provenance),
                     })?;
                     let question = proposal.prompt.as_ref().map(|p| p.question.clone());
                     self.stage(Op::ReportDiagnostic {
@@ -619,8 +644,8 @@ impl ToolSession {
                         diagnostic: proposal,
                     })?;
                     Ok(json!({
-                        "id": rid, "field": field, "path": "decree", "proposal": question,
-                        "note": "the edit landed graph-only with decree provenance; a ratification proposal asks the owner to state it in the documents"
+                        "id": rid, "field": field, "path": path, "proposal": question,
+                        "note": "the graph-only edit retains a ratification proposal toward the documents"
                     }))
                 }
             };
@@ -718,7 +743,7 @@ impl ToolSession {
                 self.staged_parents.insert(eid.clone(), p.clone());
             }
             return match (former.as_ref(), note.as_deref()) {
-                (Some(src), Some(rewrite)) => {
+                (Some(src), Some(rewrite)) if !graph_only => {
                     let to = SourceRef {
                         doc: src.doc.clone(),
                         section: src.section.clone(),
@@ -758,22 +783,27 @@ impl ToolSession {
                     }))
                 }
                 _ => {
-                    let decree = self.decree(note);
+                    let provenance = self.edit_fact_provenance(args)?;
+                    let path = if matches!(provenance, Provenance::Decree { .. }) {
+                        "decree"
+                    } else {
+                        "derived"
+                    };
                     let attr_name = attribute.as_ref().map(|a| a.name.clone());
                     let proposal = self.snapshot.ratification_proposal(
                         &eid,
                         &sentence,
-                        &decree,
+                        &provenance,
                         former.as_ref(),
                         std::slice::from_ref(&eid),
                         attr_name.as_deref(),
                     );
                     let (add_attributes, provenance) = match attribute {
                         Some(mut a) => {
-                            a.provenance = decree.clone();
+                            a.provenance = provenance.clone();
                             (vec![a], None)
                         }
-                        None => (Vec::new(), Some(decree)),
+                        None => (Vec::new(), Some(provenance)),
                     };
                     self.stage(Op::UpdateEntity {
                         id: eid.clone(),
@@ -796,8 +826,8 @@ impl ToolSession {
                         diagnostic: proposal,
                     })?;
                     Ok(json!({
-                        "id": eid, "field": field, "path": "decree", "proposal": question,
-                        "note": "the edit landed graph-only with decree provenance; a ratification proposal asks the owner to state it in the documents"
+                        "id": eid, "field": field, "path": path, "proposal": question,
+                        "note": "the graph-only edit retains a ratification proposal toward the documents"
                     }))
                 }
             };
@@ -831,7 +861,7 @@ impl ToolSession {
                 reasoning: note,
             })?;
             return Ok(json!({
-                "id": vid, "field": "members", "path": "decree",
+                "id": vid, "field": "members", "path": "curated",
                 "note": "the view is curated from here on; views carry no ratification proposal"
             }));
         }

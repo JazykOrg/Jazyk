@@ -68,7 +68,7 @@ impl McpServer {
         target: &str,
     ) -> ToolSession {
         let mut snapshot = Store::load(&self.out);
-        snapshot.sync_docs(parsed);
+        snapshot.sync_docs_in_memory(parsed);
         if let Some(e) = edit {
             snapshot.absorb_doc_edit(&e.doc, &e.full);
         }
@@ -144,33 +144,103 @@ impl McpServer {
             .map(|s| s.raw.clone())
     }
 
-    // Conversational criterion repair uses the compiler validator and commits once.
-    pub(super) fn update_criterion_chat(&self, args: &Value) -> Value {
-        let target = args["id"].as_str().unwrap_or_default();
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        let mut session = self.chat_session(&parsed, None, target);
-        if let Err(error) = session.dispatch("update_criterion", args) {
-            return error.to_value();
-        }
+    // Independent chat edits use compiler validators without claiming build goals.
+    // All entries share one snapshot and changeset, including staging budgets.
+    pub(super) fn commit_graph_edits(&self, edits: &[(String, Value)]) -> Value {
         let mut store = Store::load(&self.out);
-        store.sync_docs(&parsed);
-        let report = store.apply(
+        let (parsed, _) = crate::reconcile::parse_all(&self.project);
+        let mut snapshot = store.clone();
+        snapshot.sync_docs_in_memory(&parsed);
+        let mut session = ToolSession::new(
+            snapshot,
+            WorkScope::serving("mcp-write"),
+            self.mutation_limit,
+            self.context_budget,
+        );
+        session.gen = self.current_gen_settings();
+        session.lint = self.project.linting.clone();
+        session.caller = self.caller("chat", "graph-edit");
+        let mut results = Vec::new();
+        for (index, (name, args)) in edits.iter().enumerate() {
+            if !crate::tools::GRAPH_WRITE_TOOLS.contains(&name.as_str()) && name != "edit_fact" {
+                return json!({"error":{"rule":"bad-graph-edit","message":format!("edit {index}: `{name}` is not an authored graph mutation")}});
+            }
+            if !args.is_object() || args.get("setId").is_some() {
+                return json!({"error":{"rule":"bad-graph-edit","message":format!("edit {index}: arguments must be an object in the transaction's document set")}});
+            }
+            match session.dispatch(name, args) {
+                Ok(reply) if reply["prose"].is_object() => {
+                    return json!({"error":{"rule":"bad-graph-edit","message":"a graph transaction cannot contain a prose dual write"}});
+                }
+                Ok(reply) => {
+                    if session.staged.len() > self.mutation_limit {
+                        return json!({"error":{"rule":"mutation-budget","message":"the graph transaction exceeds its mutation budget"}});
+                    }
+                    results.push(reply);
+                }
+
+                Err(error) => {
+                    let mut reply = error.to_value();
+                    reply["error"]["edit"] = json!(index);
+                    return reply;
+                }
+            }
+        }
+        let before = store.graph.clone();
+        let kind = if results.iter().any(|reply| reply["path"] == "decree") {
+            "decree"
+        } else {
+            "chat-graph-edit"
+        };
+        let report = store.apply_with_docs(
             std::mem::take(&mut session.staged),
             &crate::store::Commit {
                 all_or_nothing: true,
-                ..crate::store::Commit::store("chat-criterion")
+                ..crate::store::Commit::store(kind)
             },
+            &parsed,
         );
         if !report.skipped.is_empty() {
             return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
         }
-        json!({"id":target,"committed":true,"generation":report.generation})
+        let mut reply = if results.len() == 1 {
+            results[0].clone()
+        } else {
+            json!({})
+        };
+        reply["results"] = json!(results);
+        reply["committed"] = json!(true);
+        reply["applied"] = json!(report.applied);
+        reply["generation"] = json!(report.generation);
+        self.attach_effects(&mut reply, &before, &store.graph, &[]);
+        reply
+    }
+
+    pub(super) fn edit_graph_chat(&self, args: &Value) -> Value {
+        let Some(edits) = args["edits"].as_array().filter(|edits| !edits.is_empty()) else {
+            return json!({"error":{"rule":"bad-graph-edit","message":"edits must be a non-empty list of {tool, arguments}"}});
+        };
+        if edits.len() > self.mutation_limit {
+            return json!({"error":{"rule":"mutation-budget","message":"too many edits in one graph transaction"}});
+        }
+        let entries = edits
+            .iter()
+            .map(|edit| {
+                (
+                    edit["tool"].as_str().unwrap_or_default().to_string(),
+                    edit["arguments"].clone(),
+                )
+            })
+            .collect::<Vec<_>>();
+        self.commit_graph_edits(&entries)
     }
 
     // One authored field on one node: a dual write when the fact is quoted and a
-    // sentence rewrite was accepted, a decree with its ratification proposal
-    // otherwise. Mirrors docs/compiler/tools.md#chat-tools.
+    // sentence rewrite was accepted, otherwise explicit provenance with a proposal. Mirrors docs/compiler/tools.md#chat-tools.
     pub(super) fn edit_fact(&self, args: &Value) -> Value {
+        if !args["provenance"].is_null() || !args["decision"].is_null() {
+            return self.commit_graph_edits(&[("edit_fact".into(), args.clone())]);
+        }
         let target = args["id"].as_str().unwrap_or_default().to_string();
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         let mut session = self.chat_session(&parsed, None, &target);
@@ -209,18 +279,7 @@ impl McpServer {
             }
             return v;
         }
-        let mut s = Store::load(&self.out);
-        s.sync_docs(&parsed);
-        let before = s.graph.clone();
-        let report = s.apply(ops, &crate::store::Commit::store("decree"));
-        if !report.skipped.is_empty() {
-            return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
-        }
-        let mut v = reply;
-        v["committed"] = json!(true);
-        v["generation"] = json!(report.generation);
-        self.attach_effects(&mut v, &before, &s.graph, &[]);
-        v
+        self.commit_graph_edits(&[("edit_fact".into(), args.clone())])
     }
 
     // The reply's `effects`: the file hunks written and the graph as it differs from
@@ -407,40 +466,6 @@ impl McpServer {
             }
             Err(e) => json!({"error": {"rule": "answer-failed", "message": e}}),
         }
-    }
-
-    // Maintain the question on a finding, through a ToolSession so the same gates
-    // validate the prompt, committed as its own changeset.
-    pub(super) fn update_diagnostic_chat(&self, args: &Value) -> Value {
-        let target = args["id"].as_str().unwrap_or_default().to_string();
-        let mut snapshot = Store::load(&self.out);
-        let (parsed, _) = crate::reconcile::parse_all(&self.project);
-        snapshot.sync_docs(&parsed);
-        let mut scope = WorkScope::serving("mcp-write");
-        scope.target = target.clone();
-        let mut session =
-            ToolSession::new(snapshot, scope, self.mutation_limit, self.context_budget);
-        session.gen = self.current_gen_settings();
-        session.lint = self.project.linting.clone();
-        session.caller = self.caller("chat", &target);
-        if let Err(e) = session.dispatch("update_diagnostic", args) {
-            return e.to_value();
-        }
-        let ops = std::mem::take(&mut session.staged);
-        let mut s = Store::load(&self.out);
-        s.sync_docs(&parsed);
-        let item = crate::model::WorkItem {
-            task: "chat".into(),
-            target,
-            dirty_sections: vec![],
-            stale_anchors: vec![],
-            proposals: Vec::new(),
-        };
-        let report = s.apply(ops, &item.commit(1, None));
-        if !report.skipped.is_empty() {
-            return json!({"error": {"rule": "commit-skipped", "message": report.skipped.join("; ")}});
-        }
-        json!({"updated": true})
     }
 
     pub(super) fn revise_requirement(&self, args: &Value) -> Value {

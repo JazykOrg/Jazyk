@@ -346,6 +346,7 @@ impl McpServer {
             known_open,
             session,
             rounds: 0,
+            invalidated: false,
         });
         reply
     }
@@ -361,6 +362,13 @@ impl McpServer {
         let Some(mut o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}});
         };
+        if o.invalidated
+            || crate::store::read_generation(&self.out) != o.session.snapshot.status.generation
+        {
+            o.invalidated = true;
+            *open = Some(o);
+            return Self::stale_chat_batch();
+        }
         // The same batch gates an in-process session faces: every goal resolved or
         // failed, coverage contract, stale anchors, undecided proposals.
         if let Err(e) = o.session.dispatch("done", &params["arguments"]) {
@@ -371,6 +379,10 @@ impl McpServer {
         }
         let batch_id = o.id.clone();
         let mut reply = self.commit_open(&mut o);
+        if !reply["error"].is_null() {
+            *open = Some(o);
+            return reply;
+        }
         *self.finished.lock().unwrap() = Some(batch_id);
         drop(open);
         // The consumer that empties the board of mandatory work runs the deterministic
@@ -509,28 +521,33 @@ impl McpServer {
     // persist the failed goals, un-park, and record the goals the commit opened.
     // Shared by `done` and the ephemeral end-of-input finish.
     fn commit_open(&self, o: &mut OpenBatch) -> Value {
-        crate::control::release_lease(&self.out, &o.id);
-        if let Some(h) = self.worker.lock().unwrap().as_mut() {
-            h.refresh(Some(""));
+        let mut s = Store::load(&self.out);
+        if o.invalidated || s.status.generation != o.session.snapshot.status.generation {
+            o.invalidated = true;
+            return Self::stale_chat_batch();
         }
-        let staged = std::mem::take(&mut o.session.staged);
+        let staged = o.session.staged.clone();
         let commit = o.session.commit(o.rounds, None);
         let resolved_ids: Vec<String> = commit.resolved.iter().map(|r| r.goal.clone()).collect();
-        let mut s = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.current_project());
-        s.sync_docs(&parsed);
         let mut reply = json!({"committed": true, "batch": o.id, "applied": 0});
         let mut generation = None;
         // A zero-mutation batch with resolutions still commits: the journal is where
         // a resolution's justification lives (docs/compiler/graph.md#journal).
         if !staged.is_empty() || !commit.resolved.is_empty() {
-            let report = s.apply(staged, &commit);
+            let report = s.apply_with_docs(staged, &commit, &parsed);
+            if !report.skipped.is_empty() {
+                o.invalidated = true;
+                return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
+            }
             generation = Some(report.generation);
             reply["applied"] = json!(report.applied);
             reply["generation"] = json!(report.generation);
-            if !report.skipped.is_empty() {
-                reply["skipped"] = json!(report.skipped);
-            }
+        }
+        o.session.staged.clear();
+        crate::control::release_lease(&self.out, &o.id);
+        if let Some(h) = self.worker.lock().unwrap().as_mut() {
+            h.refresh(Some(""));
         }
         // The counter rides every done reply, mutations or not
         // (docs/frontends/mcp.md#compilation-over-mcp).
@@ -616,16 +633,30 @@ impl McpServer {
         reply
     }
 
+    pub(super) fn stale_chat_batch() -> Value {
+        json!({"error":{"rule":"batch-stale","message":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/chat-batch-stale.md"))}})
+    }
+
     // End of input with an open batch: the agent's session ended without the
     // finishing call. Valid staged work still lands, under the same gates the budget
     // path uses. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     pub(super) fn eof_finish(&self) {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else { return };
+        if o.invalidated
+            || crate::store::read_generation(&self.out) != o.session.snapshot.status.generation
+        {
+            crate::control::release_lease(&self.out, &o.id);
+            return;
+        }
         if o.session
             .finish_implicit("(implicit: the agent session ended)")
         {
             let reply = self.commit_open(&mut o);
+            if !reply["error"].is_null() {
+                crate::control::release_lease(&self.out, &o.id);
+                return;
+            }
             self.trace.event(crate::session::TraceEvent::SessionDone {
                 label: o.id.clone(),
                 goals: o.goals.iter().map(|g| g.id.clone()).collect(),

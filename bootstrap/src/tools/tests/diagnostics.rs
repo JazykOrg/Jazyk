@@ -131,7 +131,7 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
             if s == new && src.quote == new
     ));
     let v = t
-        .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "facets", "value": [{"facet": "behavior", "reasoning": "a step"}]}))
+        .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "facets", "value": [{"facet": "behavior", "reasoning": "a step"}], "decision": "Treat this as a behavior."}))
         .unwrap();
     assert_eq!(v["path"], "decree");
     let n = t.staged.len();
@@ -179,7 +179,7 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
     let v = t
         .dispatch(
             "edit_fact",
-            &json!({"id": "ent:customer", "field": "parent", "value": "ent:cart"}),
+            &json!({"id": "ent:customer", "field": "parent", "value": "ent:cart", "decision": "Put Customer under Cart."}),
         )
         .unwrap();
     assert_eq!(v["path"], "decree");
@@ -201,7 +201,7 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
     let v = t
         .dispatch("edit_fact", &json!({"id": "view:class/public", "field": "members", "value": ["ent:customer", "ent:cart"]}))
         .unwrap();
-    assert_eq!(v["path"], "decree");
+    assert_eq!(v["path"], "curated");
     assert!(matches!(
         t.staged.last(),
         Some(Op::UpdateView { members: Some(m), .. }) if m.len() == 2
@@ -293,7 +293,7 @@ fn a_prompt_edits_facts_pass_the_requirement_gates() {
     let elsewhere = prompt(
         "/shop",
         json!([{"id": "req:shop-1", "field": "facets",
-        "value": [{"facet": "behavior", "reasoning": "a step"}]}]),
+        "value": [{"facet": "behavior", "reasoning": "a step"}], "decision": "Treat this as a behavior."}]),
     );
     let err = t.parse_prompt(&elsewhere["prompt"]);
     let err = match err {

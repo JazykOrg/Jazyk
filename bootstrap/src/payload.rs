@@ -5,7 +5,7 @@
 use regex::Regex;
 use std::sync::OnceLock;
 
-// A `{{{name}}}` placeholder: lowercase letters, digits, and underscores. Literal braces
+// A `{{{name}}}` placeholder: letters, digits, and underscores. Literal braces
 // in a payload (`{"batch": ...}`, `{goal, justification}`) never match.
 fn placeholder() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
@@ -25,8 +25,8 @@ pub fn placeholders(template: &str) -> Vec<String> {
 }
 
 // Fill every `{{{name}}}` in one pass, so a value that itself holds `{text}` (a quote, a
-// user's reply) is never filled again. A placeholder without a value stays as it is;
-// a debug build refuses a template and a value list that disagree.
+// user's reply) is never filled again. A debug build refuses a template and a value
+// list that disagree. Mustache handles sections and comments through the same renderer.
 pub fn fill(template: &str, vars: &[(&str, &str)]) -> String {
     debug_assert!(
         {

@@ -586,9 +586,10 @@ fn chat_provider_pause_keeps_its_reason_after_reopening() {
     assert_eq!(terminal["error"], "Provider deadline reached.");
 }
 
-// A version 4 snapshot kept every conversation in `.jazyk/conversations.json`. The first
-// request reads it once, writes it through the record store, and removes the file, so
-// the history survives the move. Mirrors docs/compiler/hosted-runtime.md#host-records.
+// A version 4 snapshot kept every conversation in `.jazyk/conversations.json`. A read
+// shows it and writes nothing; the first request that saves writes it through the
+// record store and removes the file, so the history survives the move.
+// Mirrors docs/compiler/hosted-runtime.md#host-records.
 #[test]
 fn a_version_4_conversation_file_moves_into_the_record_store_once() {
     let mut w = workspace("Legacy book");
@@ -611,6 +612,21 @@ fn a_version_4_conversation_file_moves_into_the_record_store_once() {
         &Execution::default(),
     );
     assert!(listed.to_string().contains("Old talk"), "{listed}");
+    let read_only = w.snapshot();
+    assert!(read_only.contains_key(".jazyk/conversations.json"));
+    assert!(
+        !read_only
+            .keys()
+            .any(|p| p.starts_with(".jazyk/local/records/")),
+        "a read writes no records"
+    );
+    value(
+        &mut w,
+        "POST",
+        "/api/chat/sessions",
+        json!({}),
+        &Execution::default(),
+    );
     let files = w.snapshot();
     assert!(!files.contains_key(".jazyk/conversations.json"));
     let stored = stored_book(&files);
@@ -629,96 +645,8 @@ fn a_version_4_conversation_file_moves_into_the_record_store_once() {
 // lands in the workspace snapshot. Mirrors docs/compiler/hosted-runtime.md#host-records.
 #[test]
 fn a_host_record_store_keeps_conversations_out_of_the_snapshot() {
+    use super::MemoryRecords as Memory;
     use crate::hosted::records::{RecordStore, Stream};
-    use std::sync::Mutex;
-    #[derive(Default)]
-    struct Memory(Mutex<BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>>);
-    impl RecordStore for Memory {
-        fn keys(&self, s: Stream) -> Result<Vec<(String, Value)>, String> {
-            Ok(self
-                .0
-                .lock()
-                .unwrap()
-                .iter()
-                .filter(|((st, _), _)| st == s.name())
-                .map(|((_, k), (m, _))| (k.clone(), m.clone()))
-                .collect())
-        }
-        fn meta(&self, s: Stream, k: &str) -> Result<Option<Value>, String> {
-            Ok(self
-                .0
-                .lock()
-                .unwrap()
-                .get(&(s.name().into(), k.into()))
-                .map(|(m, _)| m.clone()))
-        }
-        fn put_meta(&self, s: Stream, k: &str, m: &Value) -> Result<(), String> {
-            self.0
-                .lock()
-                .unwrap()
-                .entry((s.name().into(), k.into()))
-                .or_default()
-                .0 = m.clone();
-            Ok(())
-        }
-        fn append(
-            &self,
-            s: Stream,
-            k: &str,
-            _g: u32,
-            from: u64,
-            items: &[Value],
-        ) -> Result<(), String> {
-            let mut m = self.0.lock().unwrap();
-            let e = m.entry((s.name().into(), k.into())).or_default();
-            for (i, v) in items.iter().enumerate() {
-                let n = from + i as u64;
-                if !e.1.iter().any(|(x, _)| *x == n) {
-                    e.1.push((n, v.clone()));
-                }
-            }
-            Ok(())
-        }
-        fn replace(&self, s: Stream, k: &str, _g: u32, items: &[Value]) -> Result<(), String> {
-            self.0
-                .lock()
-                .unwrap()
-                .entry((s.name().into(), k.into()))
-                .or_default()
-                .1 = items
-                .iter()
-                .cloned()
-                .enumerate()
-                .map(|(n, v)| (n as u64, v))
-                .collect();
-            Ok(())
-        }
-        fn read(
-            &self,
-            s: Stream,
-            k: &str,
-            after: Option<u64>,
-            limit: usize,
-        ) -> Result<Vec<(u64, Value)>, String> {
-            Ok(self
-                .0
-                .lock()
-                .unwrap()
-                .get(&(s.name().into(), k.into()))
-                .map(|(_, v)| {
-                    v.iter()
-                        .filter(|(n, _)| after.is_none_or(|a| *n > a))
-                        .take(limit)
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default())
-        }
-        fn delete(&self, s: Stream, k: &str) -> Result<(), String> {
-            self.0.lock().unwrap().remove(&(s.name().into(), k.into()));
-            Ok(())
-        }
-    }
     let memory = Arc::new(Memory::default());
     let e = Execution {
         records: Some(memory.clone()),
@@ -734,4 +662,18 @@ fn a_host_record_store_keeps_conversations_out_of_the_snapshot() {
     assert!(keys.iter().any(|(k, _)| k == "chat-1"), "{keys:?}");
     let listed = value(&mut w, "GET", "/api/chat/sessions", Value::Null, &e);
     assert!(listed.to_string().contains("chat-1"), "{listed}");
+    // Conversations load lazily: a request reads the index, and one conversation's
+    // records only when it touches that conversation.
+    value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+    memory.1.lock().unwrap().clear();
+    value(&mut w, "GET", "/api/chat/sessions", Value::Null, &e);
+    assert!(
+        memory.1.lock().unwrap().is_empty(),
+        "listing reads no records: {:?}",
+        memory.1.lock().unwrap()
+    );
+    value(&mut w, "GET", "/api/chat/sessions/chat-2", Value::Null, &e);
+    let reads = memory.1.lock().unwrap().clone();
+    assert!(reads.iter().any(|r| r.ends_with("/chat-2")), "{reads:?}");
+    assert!(!reads.iter().any(|r| r.ends_with("/chat-1")), "{reads:?}");
 }

@@ -193,8 +193,9 @@ model calls and coalesces small deltas before persistence.
 ## Host records
 
 Some engine data is a log, not project state: chat conversations (the timeline the
-editor shows and the history the model reads), `report_feedback` entries, and session
-transcripts. Nothing reads it to compile, it grows with use, and it is private to whoever
+editor shows and the history the model reads) and `report_feedback` entries. A hosted
+run writes no transcript of its own: its trace events reach the host through the event
+sink, and the host keeps them. Nothing reads it to compile, it grows with use, and it is private to whoever
 produced it. A host keeps it in a record store of its own, never in the workspace
 snapshot and never in git.
 
@@ -203,7 +204,8 @@ stores records in named streams, each record a JSON value.
 
 - Streams: `chat-updates` (a conversation's numbered timeline), `chat-history` (the
   messages the model reads, in generations), `feedback` (one set's feedback log), and
-  `trace` (one run's transcript). A stream is keyed by conversation id, set id, or run.
+  `trace` (reserved for a host that stores run transcripts as records; the engine
+  writes none). A stream is keyed by conversation id, set id, or run.
 - Operations: list a stream's keys with their metadata, read one key's metadata, write
   it, append records from a given number (idempotent: a number already stored is
   skipped), replace a key's records under the next generation (dropping older
@@ -212,7 +214,14 @@ stores records in named streams, each record a JSON value.
   conversation's records when it touches it. A save appends what is new since the load,
   or replaces the history under the next generation when compaction or a stop
   restored it. A checkpoint commits the conversation's records before it saves the
-  capsule, so a capsule never carries a copy of the history.
+  capsule, so a capsule never carries a copy of the history. A store that fails a read
+  fails the request: a conversation that looked empty would be saved over its records.
+- Stopping a recovered job runs under the host's execution
+  (`Workspace::stop_recovery_with`), so the stopped job's conversations are restored
+  in the host's record store.
+- A version 4 workspace holds its book in `.jazyk/conversations.json`. A request reads
+  it in memory; only a request that saves writes it through the store and removes the
+  file, so a read never writes.
 - Without a record store (a test, a host that provides none), the workspace keeps the
   streams as files under `.jazyk/local/records/` in its snapshot. A local run writes
   them to the [log directory](./jazyk-folder.md#logs), a browser run to the page's

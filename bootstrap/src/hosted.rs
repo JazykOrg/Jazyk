@@ -220,10 +220,25 @@ impl Workspace {
     /// Only committed VFS bytes exist here; staged MCP operations stay in the
     /// capsule and are discarded by the host after its fenced publication.
     pub fn stop_recovery(&mut self, capsule: &Value, events: &[Value]) -> Result<(), String> {
+        self.stop_recovery_with(capsule, events, &Execution::default())
+    }
+
+    /// Stop recovery under the host's execution, so a stopped job's conversations are
+    /// restored in the host's record store, not in the snapshot's file fallback.
+    /// Mirrors docs/compiler/hosted-runtime.md#host-records.
+    pub fn stop_recovery_with(
+        &mut self,
+        capsule: &Value,
+        events: &[Value],
+        execution: &Execution,
+    ) -> Result<(), String> {
         crate::session_recovery::validate(capsule)?;
         let fs = crate::vfs::Scope::enter(&self.files);
         let _state = crate::scoped_state::Scope::enter();
-        let _execution = ExecutionScope::enter(Execution::default());
+        let _execution = ExecutionScope::enter(Execution {
+            records: execution.records.clone(),
+            ..Execution::default()
+        });
         let _recovery = crate::session_recovery::Scope::enter(None);
         let conversations = crate::conversation::Scope::enter()?;
         crate::session_recovery::stop_owned(capsule)?;

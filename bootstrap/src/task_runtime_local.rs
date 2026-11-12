@@ -62,7 +62,7 @@ fn run_dir(root: &Path, id: &str) -> Result<std::path::PathBuf, String> {
     if !valid_id(id) {
         return Err("Invalid run ID.".into());
     }
-    Ok(root.join(".jazyk/runtime/runs").join(id))
+    Ok(super::runtime_dir(root).join("runs").join(id))
 }
 fn cancelled(dir: &Path) -> bool {
     dir.join("cancel").exists()
@@ -76,7 +76,7 @@ pub fn cancel_owned(root: &Path, fence: &Path) -> Result<(), String> {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     fs::write(fence, b"cancelled").map_err(|e| e.to_string())?;
-    let runs = root.join(".jazyk/runtime/runs");
+    let runs = super::runtime_dir(root).join("runs");
     if !runs.exists() {
         return Ok(());
     }
@@ -113,7 +113,7 @@ pub fn request(root: &Path, args: &Value) -> Result<Value, String> {
     }
     if operation == "task_context" {
         let mut runs = Vec::new();
-        if let Ok(entries) = fs::read_dir(root.join(".jazyk/runtime/runs")) {
+        if let Ok(entries) = fs::read_dir(super::runtime_dir(root).join("runs")) {
             for entry in entries.flatten() {
                 if let Ok(run) = read(&entry.path().join("state.json")) {
                     runs.push(run)
@@ -740,7 +740,8 @@ mod tests {
             "jazyk-runtime-invalid-{}",
             crate::sys::now_millis()
         ));
-        let dir = root.join(".jazyk/runtime/runs/existing");
+        let dir = run_dir(&root, "existing").unwrap();
+        assert!(dir.starts_with(root.join(".jazyk/local/runtime/runs")));
         fs::create_dir_all(&dir).unwrap();
         fs::write(root.join(".jazyk/jazyk.toml"), "[[tasks]]\ninvalid = [").unwrap();
         write(
@@ -754,6 +755,50 @@ mod tests {
         assert_eq!(stopped["state"], "cancelling");
         assert!(dir.join("cancel").exists());
         assert!(super::super::call(&root, "inspect_run", &json!({"run_id":"existing"})).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+    // Task runs an earlier version kept in `.jazyk/runtime/` stay there while one is
+    // active, so its supervisor keeps finding its files, and move under `local/` once
+    // none is; the earlier job stop flags go with them.
+    // Mirrors docs/compiler/jazyk-folder.md#files-from-earlier-versions.
+    #[test]
+    fn legacy_runs_move_under_local_once_none_is_active() {
+        let root = std::env::temp_dir().join(format!(
+            "jazyk-runtime-legacy-{}-{}",
+            crate::sys::process_id(),
+            crate::sys::now_millis()
+        ));
+        let legacy = root.join(".jazyk/runtime/runs");
+        let flags = root.join(".jazyk/job-cancellation");
+        fs::create_dir_all(&flags).unwrap();
+        fs::write(flags.join("3"), b"cancelled").unwrap();
+        for (id, terminated) in [("done", true), ("live", false)] {
+            fs::create_dir_all(legacy.join(id)).unwrap();
+            write(
+                &legacy.join(id).join("state.json"),
+                &json!({"id":id,"state":"executing","terminated":terminated,"provider":"docker"}),
+            )
+            .unwrap();
+        }
+        assert_eq!(run_dir(&root, "live").unwrap(), legacy.join("live"));
+        let listed = request(&root, &json!({"operation":"inspect_run","run_id":"live"}));
+        assert!(listed.is_ok(), "{listed:?}");
+        assert!(
+            flags.join("3").exists(),
+            "an active run may still read its flag"
+        );
+        write(
+            &legacy.join("live").join("state.json"),
+            &json!({"id":"live","state":"succeeded","terminated":true,"provider":"docker"}),
+        )
+        .unwrap();
+        let moved = root.join(".jazyk/local/runtime/runs");
+        assert_eq!(run_dir(&root, "live").unwrap(), moved.join("live"));
+        assert!(!root.join(".jazyk/runtime").exists());
+        assert!(!flags.exists());
+        for id in ["done", "live"] {
+            assert_eq!(read(&moved.join(id).join("state.json")).unwrap()["id"], id);
+        }
         fs::remove_dir_all(root).unwrap();
     }
     #[test]

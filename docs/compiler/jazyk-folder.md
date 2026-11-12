@@ -30,8 +30,10 @@ machine, or in the host's database when hosted, and is gone when the build ends.
 - **Committed**: `.jazyk/` and the set directory `.jazyk/<set-id>/`, except the two
   folders below.
 - **`local/`**: what one machine's runs leave behind: the commit counter, the last
-  verdict, costs, controls, the journal, locks, an interrupted build's run file. Never
-  committed.
+  verdict, costs, controls, the journal, locks, an interrupted build's run file, task
+  runs, stop flags, local sockets. Never committed. Machine state never sits at the
+  top of `.jazyk/` or of a set directory: the project's goes in `.jazyk/local/`, a
+  set's in `.jazyk/<set-id>/local/`.
 - **`derived/`**: output rebuilt from the committed files: derived graph kinds, diagrams,
   docsgen. Deleting it loses nothing. Never committed.
 - **The log directory**: transcripts, chats, feedback, replay snapshots. Outside the
@@ -160,16 +162,27 @@ first Jazyk command, a merge on GitHub's website), git merges the file as plain 
 Generated. This layout in brief: what is committed, what is local, what is safe to
 delete. Committed.
 
+### `<random>.tmp`
+
+A new `jazyk.toml` while it is written; it is renamed over `jazyk.toml` at once and
+never outlives the write. Ignored by git.
+
 ### `local/`
 
 Project machine state. Never committed.
 
 | File | What it is | Format |
 |---|---|---|
-| `project.lock` | Coordinates project operations across processes. | empty, advisory lock |
+| `project.lock`, `config.lock`, `documents.lock` | Coordinate project operations, configuration writes, and binary document imports across processes. | empty, advisory lock |
 | `ide.json`, `ide-installer/` | The editor adapters' executable path and plugin installs ([editor setup](../frontends/lsp.md#editor-setup)). | JSON, files |
 | `removed-sets/<id>.toml` | A removed set's definition, kept for restore ([document sets](./document-sets.md)). | TOML |
 | `archive/<set-id>-v<N>/` | A store of another version, archived whole by a build ([store version](./graph.md#store-version)). | a set directory |
+| `runtime/runs/<id>/` | One local task run: its frozen request, state, validated result, finalization lock, and cancel flag. `runtime/runs/.admission` admits one active run per project ([task runtime](./task-runtime.md#local-supervision-and-ownership)). | JSON, empty locks |
+| `runtime/remote_runs/<id>.json`, `pending-<key>.json` | A run submitted to a remote runtime endpoint, and a submission not yet answered; `.cancel`, `.lock`, and `.ownership` beside them ([remote execution](./task-runtime.md#remote-execution-from-a-local-engine)). | JSON, empty flags and locks |
+| `job-cancellation/<job>` | The stop flag of a GUI job, read by the task runs it owns ([jobs](../frontends/gui.md#jobs)). | text |
+| `jobs-stopped` | Automatic builds stopped for a GUI that serves the whole project, until an explicit Build ([jobs](../frontends/gui.md#jobs)). | text |
+| `acp-edit-sink-<pid>.sock` | The ACP proxy's edit socket while it runs, when it serves the whole project ([doc edit delegation](../frontends/acp.md#doc-edit-delegation)). | Unix-domain socket |
+| `runtime-cancel-<pid>-<ms>-<n>` | One ACP session's stop flag for the task runs it owns, when the proxy serves the whole project. | text |
 
 ## Committed set files: `.jazyk/<set-id>/`
 
@@ -390,7 +403,15 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | `decompile/drafts.yaml` | Draft documents awaiting the owner ([decompile](../consumers/decompile.md)). | YAML |
 | `deliverable-baseline/` | Deliverable files as they were before a generation run touched them ([gen](../consumers/gen.md)). | files |
 | `merged.yaml` | Source sections a git merge left for the next build to reconcile, written by the [merge driver](#merging-through-git); the next load drops their hashes in `sources/` and deletes the file. | YAML |
+| `control.yaml.bad` | A `control.yaml` that did not parse, moved aside before the next write. | YAML |
+| `jobs-stopped` | Automatic builds of this set stopped by a GUI Stop, until an explicit Build ([jobs](../frontends/gui.md#jobs)). | text |
+| `cancel-<nonce>` | One worker session's stop flag while it runs ([sessions](./sessions.md)). | text |
+| `acp-edit-sink-<pid>.sock`, `runtime-cancel-<pid>-<ms>-<n>` | The ACP proxy's edit socket and a session's task stop flag, when the proxy serves one set. | Unix-domain socket, text |
 | `.lock`, `.leases.lock`, `.ledger.lock`, `.committing` | The commit lock, the lease lock, the ledger's writer lock, and the marker present while a commit writes. | empty |
+
+A socket path longer than the operating system allows (about 100 bytes) moves to the
+user's runtime directory (`XDG_RUNTIME_DIR`) or temporary directory instead, under the
+same name.
 
 ```yaml
 # Jazyk build state: this machine's commit counter, last verdict, and costs. Written by jazyk, never committed.
@@ -453,6 +474,28 @@ contributions:
 - {a: ent:analytics-service, b: ent:order-store, type: association, requirements: [req:storage-access-7f3m]}
 ```
 
+## Files from earlier versions
+
+Earlier versions kept some machine state at the top of `.jazyk/` or of a set directory.
+Each moved to a `local/` folder; the engine reads the old place once and then removes
+it:
+
+- `runtime/` → `local/runtime/`. While a run an earlier version started is still
+  active, the engine keeps using the old folder, so the run's supervisor finds its
+  files. Once none is active, the folder moves.
+- `job-cancellation/` → `local/job-cancellation/`. Its flags belong to the jobs of a GUI
+  process that has ended; it is removed with the old `runtime/`.
+- `<set-id>/jobs-stopped` and `jobs-stopped` → the same name in `local/`. A Stop that
+  is still in effect stays in effect.
+- `acp-edit-sink-<pid>.sock` → `local/`. A proxy creates its socket at start; an old
+  socket whose process has ended is removed.
+
+Other leftovers are no longer written or read and are safe to delete: `trace/`,
+`sessions/`, and `agents-md.stamp` at the top of `.jazyk/`. A hosted workspace may
+hold `local/records/` and `conversations.json` from earlier versions; the engine
+leaves the first for the host to import and moves the second into the host's record
+store when it has one ([host records](./hosted-runtime.md#host-records)). Git ignores all of them.
+
 ## Logs
 
 Logs record what ran. Nothing reads them to compile, they grow with use, and they are
@@ -474,7 +517,7 @@ private to whoever ran it, so they live outside the project and never enter git.
 | `<set-id>/feedback.jsonl` | `report_feedback` entries ([feedback](./tools.md#feedback-tool)). | JSON Lines |
 | `<set-id>/snapshots/<batch>/` | Graph copies per batch for replays, written only by `jazyk compile --record` ([snapshots](./sessions.md#snapshots)). | a set's files |
 | `<set-id>/benchmark/` | Benchmark results and per-case transcripts ([benchmark](../benchmark/benchmark.md)). | YAML, JSON |
-| `runs/<id>/`, `trace/` | Task runs and project-level transcripts ([task runtime](./task-runtime.md)). | files |
+| `.jazyk/trace/<run>.jsonl` | Transcripts of work on the whole project rather than one set. | JSON Lines |
 
 ```json
 {"at":"2026-11-10T09:12:00Z","kind":"confusing","subject":"upsert_criterion","message":"The given/when/then fields read as required for a derived criterion."}

@@ -595,6 +595,9 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             )
             .connect_to(Stdio::new()),
     );
+    if let Some(sink) = state.sink_path.lock().unwrap().take() {
+        let _ = crate::vfs::remove_file(sink);
+    }
     match result {
         Ok(()) => 0,
         Err(e) => {
@@ -875,10 +878,12 @@ fn spawn_config(
 // disk otherwise. Mirrors docs/frontends/acp.md#doc-edit-delegation.
 fn start_sink(state: &Arc<ProxyState>) {
     use std::io::{BufRead, BufReader, Write};
-    let path = state
-        .out
-        .join(format!("acp-edit-sink-{}.sock", crate::sys::process_id()));
+    remove_stale_sinks(&state.out);
+    let path = crate::layout::edit_sink_socket(&state.out, crate::sys::process_id());
     let _ = crate::vfs::remove_file(&path);
+    if let Some(parent) = path.parent() {
+        let _ = crate::vfs::create_dir_all(parent);
+    }
     let Ok(listener) = crate::local_socket::UnixListener::bind(&path) else {
         return;
     };
@@ -911,6 +916,42 @@ fn start_sink(state: &Arc<ProxyState>) {
             });
         }
     });
+}
+
+// Edit sockets an earlier version left at the top of `out` whose proxy has ended. A
+// live proxy's socket stays until that proxy exits.
+// Mirrors docs/compiler/jazyk-folder.md#files-from-earlier-versions.
+fn remove_stale_sinks(out: &std::path::Path) {
+    let Ok(entries) = crate::vfs::read_dir(out) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        if let Some(pid) = crate::layout::legacy_edit_sink_pid(&name) {
+            if !process_alive(pid) {
+                let _ = crate::vfs::remove_file(entry.path());
+            }
+        }
+    }
+}
+
+// Whether a process with this id exists. Without a way to ask, assume it does.
+fn process_alive(pid: u32) -> bool {
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return true;
+        };
+        // Signal 0 checks existence; EPERM means it exists under another user.
+        // SAFETY: kill with signal 0 sends nothing.
+        let r = unsafe { libc::kill(pid, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+        true
+    }
 }
 
 enum DelegateError {
@@ -1774,4 +1815,28 @@ fn replay_conversation(records: &[serde_json::Value]) -> Vec<SessionUpdate> {
         updates.drain(..cut);
     }
     updates
+}
+
+#[cfg(test)]
+mod tests {
+    // An edit socket an earlier version left at the top of the folder goes once its
+    // proxy has ended; a live proxy's stays.
+    #[cfg(unix)]
+    #[test]
+    fn stale_edit_sockets_of_ended_proxies_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir
+            .path()
+            .join(format!("acp-edit-sink-{}.sock", std::process::id()));
+        let _listener = std::os::unix::net::UnixListener::bind(&live).unwrap();
+        // The highest pid is never handed out, so no process holds it.
+        let ended = dir.path().join(format!("acp-edit-sink-{}.sock", i32::MAX));
+        std::fs::write(&ended, "").unwrap();
+        let other = dir.path().join("store.yaml");
+        std::fs::write(&other, "").unwrap();
+        super::remove_stale_sinks(dir.path());
+        assert!(live.exists());
+        assert!(!ended.exists());
+        assert!(other.exists());
+    }
 }

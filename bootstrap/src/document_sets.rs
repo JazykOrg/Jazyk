@@ -1636,7 +1636,7 @@ mod tests {
         assert!(!looks_like_set_id("diagrams") && !looks_like_set_id("derived"));
     }
 
-    const CHECKOUT_PATHS: [(&str, bool); 34] = [
+    const CHECKOUT_PATHS: [(&str, bool); 55] = [
         (".jazyk/jazyk.toml", true),
         (".jazyk/.gitignore", true),
         (".jazyk/.gitattributes", true),
@@ -1694,6 +1694,28 @@ mod tests {
         (".jazyk/local/ide.json", false),
         (".jazyk/local/archive/my-set-ks8mf-v4/store.yaml", false),
         (".jazyk/local/records/s/feedback.jsonl", false),
+        (".jazyk/local/config.lock", false),
+        (".jazyk/local/runtime/runs/r1/state.json", false),
+        (".jazyk/local/runtime/remote_runs/r1.json", false),
+        (".jazyk/local/job-cancellation/3", false),
+        (".jazyk/local/jobs-stopped", false),
+        (".jazyk/local/acp-edit-sink-42.sock", false),
+        (".jazyk/local/runtime-cancel-42-1-0", false),
+        (".jazyk/my-set-ks8mf/local/jobs-stopped", false),
+        (".jazyk/my-set-ks8mf/local/cancel-0a1b", false),
+        (".jazyk/my-set-ks8mf/local/control.yaml.bad", false),
+        (".jazyk/my-set-ks8mf/local/acp-edit-sink-42.sock", false),
+        (".jazyk/0a1b2c.tmp", false),
+        // What earlier versions left outside `local/` stays out of git too.
+        (".jazyk/runtime/runs/r1/state.json", false),
+        (".jazyk/runtime/remote_runs/r1.json", false),
+        (".jazyk/job-cancellation/3", false),
+        (".jazyk/my-set-ks8mf/jobs-stopped", false),
+        (".jazyk/acp-edit-sink-42.sock", false),
+        (".jazyk/trace/run.jsonl", false),
+        (".jazyk/sessions/sess-1-0.jsonl", false),
+        (".jazyk/agents-md.stamp", false),
+        (".jazyk/conversations.json", false),
         (".jazyk/my-set-ks8mf/status.yaml", false),
     ];
 

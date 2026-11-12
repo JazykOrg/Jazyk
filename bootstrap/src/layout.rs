@@ -113,6 +113,31 @@ pub fn deliverable_baseline_dir(out: &Path) -> PathBuf {
     local_dir(out).join("deliverable-baseline")
 }
 
+/// GUI Stop's fence on automatic builds: `local/jobs-stopped`.
+pub fn jobs_stopped_file(out: &Path) -> PathBuf {
+    local_dir(out).join("jobs-stopped")
+}
+
+/// The ACP proxy's edit socket: `local/acp-edit-sink-<pid>.sock`. A path past the
+/// platform's socket path limit moves to the user's runtime or temporary directory
+/// under the same name.
+pub fn edit_sink_socket(out: &Path, pid: u32) -> PathBuf {
+    let name = format!("acp-edit-sink-{}.sock", pid);
+    let path = local_dir(out).join(&name);
+    if path.as_os_str().len() <= SOCKET_PATH_MAX {
+        return path;
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(dir) = dirs::runtime_dir() {
+        return dir.join(format!("jazyk-{}", name));
+    }
+    std::env::temp_dir().join(format!("jazyk-{}", name))
+}
+
+// The longest socket path every supported platform binds: macOS allows 103 bytes
+// (`sun_path` is 104 with its terminator), Linux 107.
+const SOCKET_PATH_MAX: usize = 100;
+
 // ---- derived set files ----
 
 /// `derived/`: rebuilt from the committed files, safe to delete.
@@ -161,6 +186,67 @@ pub fn project_lock_file(jazyk: &Path) -> PathBuf {
 
 pub fn removed_sets_dir(jazyk: &Path) -> PathBuf {
     project_local_dir(jazyk).join("removed-sets")
+}
+
+/// Task runs on this machine: `.jazyk/local/runtime/`.
+pub fn runtime_dir(jazyk: &Path) -> PathBuf {
+    project_local_dir(jazyk).join("runtime")
+}
+
+/// GUI jobs' stop flags: `.jazyk/local/job-cancellation/`.
+pub fn job_cancellation_dir(jazyk: &Path) -> PathBuf {
+    project_local_dir(jazyk).join("job-cancellation")
+}
+
+// ---- machine state earlier versions kept outside `local/` ----
+
+/// `.jazyk/runtime/`, now [`runtime_dir`].
+pub fn legacy_runtime_dir(jazyk: &Path) -> PathBuf {
+    jazyk.join("runtime")
+}
+
+/// `.jazyk/job-cancellation/`, now [`job_cancellation_dir`].
+pub fn legacy_job_cancellation_dir(jazyk: &Path) -> PathBuf {
+    jazyk.join("job-cancellation")
+}
+
+/// `<out>/jobs-stopped`, now [`jobs_stopped_file`].
+pub fn legacy_jobs_stopped_file(out: &Path) -> PathBuf {
+    out.join("jobs-stopped")
+}
+
+/// Whether `name` is an edit socket an earlier version left at the top of `<out>`, and
+/// the process id it names.
+pub fn legacy_edit_sink_pid(name: &str) -> Option<u32> {
+    name.strip_prefix("acp-edit-sink-")?
+        .strip_suffix(".sock")?
+        .parse()
+        .ok()
+}
+
+/// Move what an earlier version kept at `old` to `new`, once: a file or folder `new`
+/// lacks moves whole, a folder present at both merges entry by entry with `new`
+/// winning, and `old` is gone afterwards. Best effort: what cannot move stays.
+pub fn adopt_legacy(old: &Path, new: &Path) {
+    use crate::vfs::VPathExt;
+    if !old.vexists() {
+        return;
+    }
+    if let Some(parent) = new.parent() {
+        crate::vfs::create_dir_all(parent).ok();
+    }
+    if !new.vexists() {
+        crate::vfs::rename(old, new).ok();
+    } else if old.vis_dir() && new.vis_dir() {
+        if let Ok(entries) = crate::vfs::read_dir(old) {
+            for entry in entries.flatten() {
+                adopt_legacy(&entry.path(), &new.join(entry.file_name()));
+            }
+        }
+        crate::vfs::remove_dir(old).ok();
+    } else if !old.vis_dir() {
+        crate::vfs::remove_file(old).ok();
+    }
 }
 
 /// Where a build archives a store of another version: `.jazyk/local/archive/<set>-v<N>`,
@@ -298,6 +384,88 @@ mod tests {
             archive_dir(Path::new("/tmp/store"), 3),
             Path::new("/tmp/store.v3")
         );
+    }
+
+    // Machine state lives in a `local/` folder, never at the top of `.jazyk/` or of a set
+    // directory. Mirrors docs/compiler/jazyk-folder.md#local.
+    #[test]
+    fn machine_state_lives_under_local() {
+        let jazyk = Path::new("/p/.jazyk");
+        let out = Path::new("/p/.jazyk/my-set-ks8mf");
+        assert_eq!(runtime_dir(jazyk), Path::new("/p/.jazyk/local/runtime"));
+        assert_eq!(
+            job_cancellation_dir(jazyk),
+            Path::new("/p/.jazyk/local/job-cancellation")
+        );
+        assert_eq!(
+            jobs_stopped_file(out),
+            Path::new("/p/.jazyk/my-set-ks8mf/local/jobs-stopped")
+        );
+        assert_eq!(
+            jobs_stopped_file(jazyk),
+            Path::new("/p/.jazyk/local/jobs-stopped")
+        );
+        assert_eq!(
+            edit_sink_socket(jazyk, 42),
+            Path::new("/p/.jazyk/local/acp-edit-sink-42.sock")
+        );
+        assert_eq!(
+            edit_sink_socket(out, 42),
+            Path::new("/p/.jazyk/my-set-ks8mf/local/acp-edit-sink-42.sock")
+        );
+        assert_eq!(legacy_edit_sink_pid("acp-edit-sink-42.sock"), Some(42));
+        assert_eq!(legacy_edit_sink_pid("acp-edit-sink-x.sock"), None);
+        assert_eq!(legacy_edit_sink_pid("store.yaml"), None);
+    }
+
+    // A socket path past the platform limit binds outside the project instead of failing.
+    #[test]
+    fn a_long_edit_socket_path_moves_out_of_the_project() {
+        let deep = PathBuf::from("/").join("d".repeat(120)).join(".jazyk");
+        let path = edit_sink_socket(&deep, 42);
+        assert!(!path.starts_with(&deep), "{}", path.display());
+        assert!(
+            path.ends_with("jazyk-acp-edit-sink-42.sock"),
+            "{}",
+            path.display()
+        );
+    }
+
+    // What an earlier version kept outside `local/` moves once and leaves nothing behind;
+    // what is already at the new place wins.
+    #[test]
+    fn legacy_state_moves_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("local").join("new");
+        std::fs::create_dir_all(old.join("runs/a")).unwrap();
+        std::fs::write(old.join("runs/a/state.json"), "old a").unwrap();
+        std::fs::write(old.join("only-old"), "kept").unwrap();
+        std::fs::create_dir_all(new.join("runs/b")).unwrap();
+        std::fs::write(new.join("runs/b/state.json"), "new b").unwrap();
+        std::fs::write(new.join("only-old"), "newer").unwrap();
+        adopt_legacy(&old, &new);
+        assert!(!old.exists());
+        assert_eq!(
+            std::fs::read_to_string(new.join("runs/a/state.json")).unwrap(),
+            "old a"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new.join("runs/b/state.json")).unwrap(),
+            "new b"
+        );
+        assert_eq!(
+            std::fs::read_to_string(new.join("only-old")).unwrap(),
+            "newer"
+        );
+        let flag = dir.path().join("jobs-stopped");
+        let moved = dir.path().join("local").join("jobs-stopped");
+        std::fs::write(&flag, "stopped").unwrap();
+        adopt_legacy(&flag, &moved);
+        assert!(!flag.exists());
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "stopped");
+        adopt_legacy(&flag, &moved);
+        assert!(moved.exists(), "a second call changes nothing");
     }
 
     #[test]

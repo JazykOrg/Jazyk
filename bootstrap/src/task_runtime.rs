@@ -19,6 +19,68 @@ mod remote;
 #[path = "task_runtime_scoped_tests.rs"]
 mod scoped_tests;
 
+/// This project's task run folder, `.jazyk/local/runtime/`. An earlier version kept it
+/// at `.jazyk/runtime/`: while a run it started is still active the engine keeps using
+/// that folder, so the run's supervisor and observer find their files; once none is,
+/// the folder moves here, and the earlier `.jazyk/job-cancellation/`, whose flags only
+/// such runs read, goes with it. Mirrors docs/compiler/jazyk-folder.md#files-from-earlier-versions.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn runtime_dir(root: &Path) -> std::path::PathBuf {
+    let jazyk = root.join(".jazyk");
+    let old = crate::layout::legacy_runtime_dir(&jazyk);
+    if crate::vfs::is_dir(&old) {
+        if legacy_runs_active(&old) {
+            return old;
+        }
+        crate::layout::adopt_legacy(&old, &crate::layout::runtime_dir(&jazyk));
+        if crate::vfs::is_dir(&old) {
+            return old;
+        }
+    }
+    let flags = crate::layout::legacy_job_cancellation_dir(&jazyk);
+    if crate::vfs::is_dir(&flags) {
+        crate::vfs::remove_dir_all(&flags).ok();
+    }
+    crate::layout::runtime_dir(&jazyk)
+}
+
+// Whether a run in an earlier version's runtime folder may still be written by the
+// process that started it: a local run not yet terminated, a remote submission not yet
+// answered, or a remote run whose observer may still be watching.
+#[cfg(not(target_arch = "wasm32"))]
+fn legacy_runs_active(dir: &Path) -> bool {
+    let read = |path: &Path| {
+        crate::vfs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    };
+    let entries = |sub: &str| {
+        crate::vfs::read_dir(dir.join(sub))
+            .map(|rd| rd.flatten().map(|e| e.path()).collect::<Vec<_>>())
+            .unwrap_or_default()
+    };
+    let local = entries("runs")
+        .into_iter()
+        .any(|run| read(&run.join("state.json")).is_some_and(|state| state["terminated"] != true));
+    let remote = entries("remote_runs").into_iter().any(|path| {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        if !name.ends_with(".json") {
+            return false;
+        }
+        if name.starts_with("pending-") {
+            return true;
+        }
+        read(&path).is_some_and(|record| {
+            record["imported"] != true
+                && record["created_at"].as_u64().unwrap_or(0) + 8400 > crate::sys::now_unix()
+        })
+    });
+    local || remote
+}
+
 thread_local! { static CANCEL_FILE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) }; }
 pub struct CancellationScope(Option<std::path::PathBuf>);
 impl CancellationScope {

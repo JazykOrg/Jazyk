@@ -97,7 +97,8 @@ without provenance. The runtime (see `docs/compiler/compiler.md`):
   it from the docs, the graph, its decisions and sources, and the ledger. A build's
   progress is in memory (`local/run.yaml` while a local build runs, the host's database
   when hosted). A failed goal is a `goal-failed` diagnostic. `local/` holds this
-  machine's state (`build.yaml`, `control.yaml`, `journal/`, workers, leases, locks);
+  machine's state (`build.yaml`, `control.yaml`, `journal/`, workers, leases, locks;
+  the project's `.jazyk/local/` adds task runs, stop flags, and sockets);
   `derived/` what is rebuilt (derived graph kinds, diagrams, docsgen). Logs live in a
   log directory outside the project, or in the host's record store. The generation is a
   local counter and no committed file names one. The engine generates

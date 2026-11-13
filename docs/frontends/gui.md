@@ -409,7 +409,9 @@ Deliverable:
 - `GET /api/deliverable/file?path=`: one file's text plus its resolved
   [sites](../consumers/gen.md#traceability): each ledger site whose `file` is this
   path, located against the current text (`exact`, `moved`, or `lost`), and each test
-  whose artifact is this path, located by its embedded test name. Every entry names
+  whose artifact is this path, including every criterion test, located by its
+  embedded test name. A headline test also named by a criterion appears once.
+  Every entry names
   its requirement and current verification status. A file that is not text reports its
   size instead. Reads are confined to the deliverable directory: a path that leaves
   it is `400`, a missing file is `404`.

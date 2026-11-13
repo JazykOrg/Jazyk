@@ -210,6 +210,46 @@ mod tests {
         (s, gs)
     }
 
+    #[test]
+    fn deliverable_lists_all_criterion_tests_without_duplicate_headlines() {
+        let out = std::env::temp_dir().join(format!(
+            "jazyk-webapi-criterion-sites-{}",
+            crate::sys::process_id()
+        ));
+        let (_, gs) = fixture(&out);
+        let mut ledger = crate::gen::Ledger::load(&out);
+        let row = ledger.requirements.get_mut("req:shop-1").unwrap();
+        for (id, name) in [
+            ("crit:first", row.test.name.clone()),
+            ("crit:second", "second_case".into()),
+        ] {
+            row.tests.insert(
+                id.into(),
+                crate::gen::CritTest {
+                    test: crate::gen::TestRef {
+                        name,
+                        ..row.test.clone()
+                    },
+                    criterion_hash: String::new(),
+                    test_hash: String::new(),
+                    verdict: "none".into(),
+                    last_run: None,
+                    exit_code: None,
+                    evidence: None,
+                },
+            );
+        }
+        let text = format!("fn {}() {{}}\nfn second_case() {{}}\n", row.test.name);
+        crate::vfs::write(gs.deliverable.join("tests/cart.rs"), text).unwrap();
+        ledger.save(&out).unwrap();
+        let file = deliverable_file(&out, &gs, "tests/cart.rs").unwrap();
+        let sites = file["sites"].as_array().unwrap();
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[0]["line"], 1);
+        assert_eq!(sites[1]["line"], 2);
+        crate::vfs::remove_dir_all(out).unwrap();
+    }
+
     // The product reads the tab serves are the ones the server serves: the listing
     // with each file's owners, a file with its resolved site and test, and the
     // matrix derived from the ledger and the files, all through crate::vfs. An edit

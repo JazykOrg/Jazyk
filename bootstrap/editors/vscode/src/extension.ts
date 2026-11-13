@@ -85,9 +85,9 @@ async function startClient(): Promise<void> {
   };
 
   const clientOptions: LanguageClientOptions = {
-    // Markdown files keep VS Code's built-in markdown language (grammar, link
-    // following, preview); the extension only attaches the LSP client to them.
-    documentSelector: [{ scheme: 'file', language: 'markdown' }],
+    // Traceability also attaches to generated source and test files. Language
+    // grammars and other language servers continue to own their language features.
+    documentSelector: [{ scheme: 'file' }],
     synchronize: {
       // The editor owns file watching (native FSEvents/inotify): source documents for
       // anchoring, and the store's generation file so a committed build repaints

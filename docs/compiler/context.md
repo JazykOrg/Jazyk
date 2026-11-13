@@ -81,7 +81,7 @@ auto-load the full extraction skill. Other skills remain available by name.
 The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is
-  any node id (entity, requirement, view, diagnostic), a section reference,
+  any node id (entity, requirement, criterion, view, diagnostic), a section reference,
   `alignment:<document>` for pending section changes and anchor proposals, or
   `scope:<scope>`, the top level of a scope, which loads its parentless entities as
   stubs ([the scope root](./concepts/levels.md#the-scope-root)), each with the
@@ -90,6 +90,8 @@ The loading tools are [read tools](./tools.md#read-tools), served everywhere:
   what every member relates to without a `get_entity` per member. `depth`
   defaults to `1`: the target in full, its edges, each neighbor as a stub. `depth: 2`
   loads the neighbors in full too and their neighbors as stubs, still under the budget.
+  A criterion loads its condition, outcome, concrete values, provenance, and
+  requirement reference. Its requirement and named entities are neighbors.
   The reply renders what was loaded and the status block.
 - `expand({handle})`: load the frontier behind a handle. Every truncation emits a
   handle, so the model picks the direction that deserves the next slice of budget. The

@@ -87,7 +87,7 @@ the next batch is claimed; if this commit was your last, abandon_goals releases 
 nothing owed
 
 <!-- ledger-gated -->
-every row is gated on the generate release: `jazyk release generate` (or the GUI) approves them, then {{{begin}}} claims one
+every row is gated on the generate release. If the user explicitly requested this build and release_work is available, call release_work with stage generate, then refresh the tasks and {{{begin}}} claims one. Otherwise `jazyk release generate` or the GUI records the required approval. Honor separate cost and human decision gates.
 
 <!-- ledger-ready -->
 {{{begin}}} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal

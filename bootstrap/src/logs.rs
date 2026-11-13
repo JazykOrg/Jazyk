@@ -99,6 +99,7 @@ mod tests {
         crate::store::snapshot_graph(&out, "probe");
         assert!(!std::path::Path::new(&host).exists(), "{}", host.display());
         assert!(!crate::vfs::exists(&crate::layout::feedback_file(&out)));
+        assert!(crate::feedback::read(&out, 10).is_empty());
     }
 
     #[test]

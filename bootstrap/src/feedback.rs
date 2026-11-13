@@ -139,7 +139,9 @@ pub fn read(out: &Path, limit: usize) -> Vec<Value> {
         entries.truncate(limit);
         return entries;
     }
-    if crate::vfs::is_scoped() {
+    // No host log directory, no host log to read: the browser reaches here through
+    // GET /api/feedback (docs/compiler/jazyk-folder.md#logs).
+    if !crate::vfs::host_logs() {
         return Vec::new();
     }
     let Ok(text) = crate::vfs::read_to_string(path(out)) else {

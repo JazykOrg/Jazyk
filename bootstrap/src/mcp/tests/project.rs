@@ -90,7 +90,7 @@ fn project_tools_follow_the_project_state() {
     let note = "You cannot start a build: the Build button at the top of the page builds \
                     the documents into the graph. When asked to build, say so.";
     assert!(
-        instructions_in(&["chat".to_string()], false, true, true).contains("compile_document_sets")
+        instructions_in(&["chat".to_string()], false, true, true).contains("The compile skill compiles")
     );
     assert!(reader_instructions().contains(note));
     assert!(!instructions_in(&["chat".to_string()], false, true, false).contains(note));

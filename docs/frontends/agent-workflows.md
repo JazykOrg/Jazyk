@@ -86,7 +86,8 @@ request, and a catalog of about 90 tools costs a model both context and accuracy
 - `--all-tools` lists every served tool from the start, for an MCP client that does
   not refresh its tool list on `notifications/tools/list_changed`
   ([`jazyk mcp`](./cli.md#jazyk-mcp-graph), [flags](./mcp.md#mcp-into-acp-sessions)).
-- The core catalog is always listed: `project_context`, `list_jazyk_skills`,
+- The core catalog is always listed: `project_context`, `init_project` (served
+  only where no project exists), `list_jazyk_skills`,
   `read_jazyk_skill`, the [read tools](../compiler/tools.md#read-tools), the
   [file tools](../compiler/goals/generate.md#file-and-command-tools)
   (`read_text_file`, `write_text_file`, `list_files`, `search_files`),

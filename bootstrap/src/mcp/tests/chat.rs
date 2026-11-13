@@ -810,7 +810,16 @@ fn chat_graph_tools_commit_outside_and_stage_inside_the_claimed_batch() {
         ..Default::default()
     }
     .save(&out);
-    let server = McpServer::new(project, out.clone(), vec!["chat".into()], false);
+    let server = McpServer::with_bridge(
+        project,
+        out.clone(),
+        vec!["chat".into()],
+        false,
+        BridgeFlags {
+            all_tools: true,
+            ..Default::default()
+        },
+    );
     let names = tool_names(&server);
     for name in toolset("mcp-compile") {
         assert!(names.iter().any(|n| n == name), "missing {name}");

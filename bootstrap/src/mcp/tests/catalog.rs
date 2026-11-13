@@ -122,6 +122,7 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
         true,
         BridgeFlags {
             ephemeral: true,
+            all_tools: true,
             ..Default::default()
         },
     );
@@ -175,10 +176,12 @@ fn the_agents_md_section_names_only_served_tools() {
         .filter(|t| t.contains('_') && t.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
         .collect();
     assert!(named.len() >= 4, "{named:?}");
+    // The policy names only core tools: a skill-gated catalog lists them before
+    // any skill is read (docs/frontends/agent-workflows.md#skill-gated-tools).
     for name in named {
         assert!(
-            names.iter().any(|n| n == name),
-            "`{name}` is not served: {names:?}"
+            names.iter().any(|n| n == name) && crate::agent_workflows::CORE_TOOLS.contains(&name),
+            "`{name}` is not a served core tool: {names:?}"
         );
     }
     let init = server.handle("initialize", &json!({})).unwrap();
@@ -869,14 +872,14 @@ fn gated_texts_name_only_visible_tools() {
     for tool in listed["tools"].as_array().unwrap() {
         let mut text = tool["description"].as_str().unwrap_or_default().to_string();
         text.push_str(&tool["inputSchema"].to_string());
-        check(
-            &format!("{} description", tool["name"]),
-            &text,
-            &core,
-        );
+        check(&format!("{} description", tool["name"]), &text, &core);
     }
     let catalog = crate::agent_workflows::catalog().unwrap();
-    check("skill catalog note", catalog["note"].as_str().unwrap(), &core);
+    check(
+        "skill catalog note",
+        catalog["note"].as_str().unwrap(),
+        &core,
+    );
     for skill in catalog["skills"].as_array().unwrap() {
         check(
             &format!("{} skill description", skill["name"]),

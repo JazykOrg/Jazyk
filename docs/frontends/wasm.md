@@ -426,7 +426,9 @@ to their canonical application specifications.
 ## Document-set chat actions
 
 A project chat lists all document sets. A writer can preview and save their
-selections and call `compile_document_sets`. Reader sessions keep read-only tools.
+selections and call `compile_document_sets`, which the `compile` skill lists
+([skill-gated tools](./agent-workflows.md#skill-gated-tools)). Reader sessions keep
+read-only tools.
 The compile action accepts explicit set IDs or all dirty sets.
 
 ## Stopping builds

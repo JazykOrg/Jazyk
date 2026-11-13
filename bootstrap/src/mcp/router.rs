@@ -64,6 +64,10 @@ impl McpServer {
             }
             other => other,
         };
+        // The skill tools name every skill's tools by design: no hint there.
+        if crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
+            return reply;
+        }
         reply.map(|value| self.hint_locked_tools(value))
     }
 
@@ -107,8 +111,10 @@ impl McpServer {
             }
             _ => format!(
                 "{text}\n\n{}",
-                serde_json::to_string_pretty(&json!({"lockedTools": locked, "lockedToolsNote": note}))
-                    .unwrap_or_default()
+                serde_json::to_string_pretty(
+                    &json!({"lockedTools": locked, "lockedToolsNote": note})
+                )
+                .unwrap_or_default()
             ),
         };
         value["content"][0]["text"] = json!(text);

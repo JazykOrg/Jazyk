@@ -222,6 +222,7 @@ mod tests {
                 ("writer-build-note", &[]),
                 ("graph-write", &[]),
                 ("workflow", &[]),
+                ("skill-gated", &[]),
                 ("reader", &[]),
                 ("tab-build-note", &[]),
                 ("begin-goals-next", &[]),

@@ -166,11 +166,18 @@ fn sites(store: &Store, ledger: &Ledger, path: &str, text: &str) -> Vec<Value> {
                 "exists": exists,
             }));
         }
-        if row.test.kind == "programmatic" && row.test.artifact == path && !row.test.name.is_empty()
-        {
+        let mut seen_tests = std::collections::BTreeSet::new();
+        for test in std::iter::once(&row.test).chain(row.tests.values().map(|t| &t.test)) {
+            if test.kind != "programmatic"
+                || test.artifact != path
+                || test.name.is_empty()
+                || !seen_tests.insert(&test.name)
+            {
+                continue;
+            }
             let line = text
                 .lines()
-                .position(|l| l.contains(&row.test.name))
+                .position(|l| l.contains(&test.name))
                 .map(|i| i + 1);
             out.push(json!({
                 "line": line,

@@ -16,6 +16,7 @@ mod document;
 mod navigation;
 #[cfg(test)]
 mod tests;
+mod traceability;
 
 pub use commands::Compiler;
 

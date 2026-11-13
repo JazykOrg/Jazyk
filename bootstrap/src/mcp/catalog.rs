@@ -27,7 +27,12 @@ impl McpServer {
                 .iter()
                 .any(|kind| matches!(kind.as_str(), "bind" | "generate" | "verify"))
             {
-                names.extend(["read_text_file", "list_files", "inspect_asset_link"]);
+                names.extend([
+                    "read_text_file",
+                    "list_files",
+                    "search_files",
+                    "inspect_asset_link",
+                ]);
                 if kinds
                     .iter()
                     .any(|kind| matches!(kind.as_str(), "bind" | "generate"))
@@ -55,8 +60,34 @@ impl McpServer {
         active
     }
 
+    // Whether this serving lists a skill-gated catalog.
+    // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+    pub(crate) fn skill_gated(&self) -> bool {
+        self.conversational_graph_writer() && (self.bridge.serve_files || self.bridge.progressive)
+    }
+
+    // Record a read workflow skill; its tools join a skill-gated catalog.
+    pub(crate) fn activate_skill(&self, name: &str) {
+        if crate::agent_workflows::skill_tools(name).is_some() {
+            self.skills.lock().unwrap().insert(name.to_owned());
+        }
+    }
+
     pub(super) fn scope_catalog(&self, tools: &mut Vec<Value>) {
-        if let Some(names) = self.active_tools() {
+        let active = self.active_tools();
+        if active.is_none() && self.skill_gated() {
+            let skills = self.skills.lock().unwrap().clone();
+            let listed: BTreeSet<String> = skills
+                .iter()
+                .filter_map(|s| crate::agent_workflows::skill_tools(s))
+                .flatten()
+                .collect();
+            tools.retain(|tool| {
+                let name = tool["name"].as_str().unwrap_or_default();
+                crate::agent_workflows::CORE_TOOLS.contains(&name) || listed.contains(name)
+            });
+        }
+        if let Some(names) = active {
             tools.retain(|tool| {
                 tool["name"] == "project_context"
                     || crate::agent_workflows::TOOLS
@@ -80,7 +111,7 @@ impl McpServer {
         if tools.iter().any(|tool| {
             matches!(
                 tool["name"].as_str(),
-                Some("read_text_file" | "write_text_file" | "list_files")
+                Some("read_text_file" | "write_text_file" | "list_files" | "search_files")
             )
         }) {
             let root = self.current_gen_settings().deliverable;
@@ -102,6 +133,10 @@ impl McpServer {
                     Some("list_files") => include_str!(concat!(
                         env!("OUT_DIR"),
                         "/payloads/goals/prompts/inline/mcp-catalog/list-eligible-files-path-narrows-to-a-461c3.md"
+                    )),
+                    Some("search_files") => include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/search-eligible-file-contents-like-grep-7e0b3.md"
                     )),
                     _ => continue,
                 };

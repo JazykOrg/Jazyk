@@ -8,6 +8,19 @@ pub struct CallMemory {
     repeats: std::collections::BTreeMap<String, u32>,
     last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     feedback_count: usize,
+    file_hashes: std::collections::BTreeMap<String, String>,
+}
+
+impl CallMemory {
+    // A new unit starts a fresh guard, but the file versions the serving last saw
+    // stay valid: a literal edit after a new ledger claim still applies to them.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    pub fn for_new_unit(&self) -> CallMemory {
+        CallMemory {
+            file_hashes: self.file_hashes.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -73,6 +86,11 @@ pub struct ToolSession {
     // (docs/compiler/goals/generate.md#what-the-model-sees).
     #[serde(default)]
     pub opening_contracts: bool,
+    // The whole-file hash each file tool path last returned to this session: the
+    // version a literal edit without expectedHash applies to.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[serde(default)]
+    pub(super) file_hashes: std::collections::BTreeMap<String, String>,
 }
 
 // A begin_binding or begin_generation reply to a session whose opening prompt
@@ -139,6 +157,7 @@ impl ToolSession {
             implicit_done: false,
             lint: Default::default(),
             opening_contracts: false,
+            file_hashes: Default::default(),
         }
     }
 
@@ -147,6 +166,7 @@ impl ToolSession {
         self.repeats = memory.repeats;
         self.last_answers = memory.last_answers;
         self.feedback_count = memory.feedback_count;
+        self.file_hashes = memory.file_hashes;
     }
 
     pub fn memory(&self) -> CallMemory {
@@ -154,6 +174,7 @@ impl ToolSession {
             repeats: self.repeats.clone(),
             last_answers: self.last_answers.clone(),
             feedback_count: self.feedback_count,
+            file_hashes: self.file_hashes.clone(),
         }
     }
 

@@ -345,7 +345,9 @@ fn literal_file_edits_refuse_stale_missing_or_ambiguous_context_without_writing(
             json!({"old_text":"original","expectedHash":stale}),
             "file-conflict",
         ),
-        (json!({"old_text":"aaa"}), "invalid-edit"),
+        // Without expectedHash the edit applies to the version this session last
+        // read, which is stale here.
+        (json!({"old_text":"aaa"}), "file-conflict"),
         (json!({"old_text":"aaa","expectedHash":""}), "bad-args"),
         (
             json!({"old_text":"aaa","expectedHash":hash,"append":true}),
@@ -658,4 +660,328 @@ fn file_tools_share_within_a_group_and_unroot_a_restated_deliverable() {
     assert_eq!(v["written"], "handbook/inner.md", "{}", v);
     assert!(v["note"].is_null(), "{}", v);
     crate::vfs::remove_dir_all(&dir).ok();
+}
+
+fn memory_project(files: &[(&str, &[u8])]) -> (crate::vfs::Scope, ToolSession, std::path::PathBuf) {
+    let scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
+    let root = std::path::PathBuf::from("/project/deliverable");
+    crate::vfs::create_dir_all(&root).unwrap();
+    for (path, bytes) in files {
+        let path = root.join(path);
+        crate::vfs::create_dir_all(path.parent().unwrap()).unwrap();
+        crate::vfs::write(path, bytes).unwrap();
+    }
+    let mut tools = session();
+    tools.gen.deliverable = root.clone();
+    (scope, tools, root)
+}
+
+// search_files is the in-process grep: regex or literal, case folding, path and
+// glob narrowing, context lines, per-file counts, paging, and the read fence. It
+// runs over the in-memory filesystem a hosted workspace uses.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+#[test]
+fn search_files_greps_eligible_text_over_the_virtual_filesystem() {
+    let (_scope, mut tools, _) = memory_project(&[
+        ("src/main.rs", b"fn main() {\n    greet(\"World\");\n}\n\nfn greet(name: &str) {\n    println!(\"Hello {name}\");\n}\n"),
+        ("src/lib/util.ts", b"export function greet() {}\n// GREET twice: greet\n"),
+        ("README.md", b"Call greet(name) to say hello.\n"),
+        (".env", b"GREET_TOKEN=secret\n"),
+        ("logo.png", b"\x89PNG\0greet"),
+    ]);
+    let v = tools
+        .dispatch("search_files", &json!({"pattern": "fn \\w+\\("}))
+        .unwrap();
+    assert_eq!(
+        v["matches"],
+        json!([
+            {"path": "src/main.rs", "line": 1, "column": 1, "text": "fn main() {"},
+            {"path": "src/main.rs", "line": 5, "column": 1, "text": "fn greet(name: &str) {"}
+        ]),
+        "{v}"
+    );
+    assert!(v.get("truncated").is_none(), "{v}");
+    // The secret and the binary never answer; the binary counts as skipped.
+    let v = tools
+        .dispatch(
+            "search_files",
+            &json!({"pattern": "greet", "ignoreCase": true, "filesOnly": true}),
+        )
+        .unwrap();
+    assert_eq!(
+        v["matches"],
+        json!([
+            {"path": "README.md", "count": 1},
+            {"path": "src/lib/util.ts", "count": 2},
+            {"path": "src/main.rs", "count": 2}
+        ]),
+        "{v}"
+    );
+    assert_eq!(v["skipped"], 1, "{v}");
+    let v = tools
+        .dispatch(
+            "search_files",
+            &json!({"pattern": "greet(", "literal": true, "glob": "*.md"}),
+        )
+        .unwrap();
+    assert_eq!(v["matches"][0]["path"], "README.md", "{v}");
+    assert_eq!(v["matches"].as_array().unwrap().len(), 1, "{v}");
+    let v = tools
+        .dispatch(
+            "search_files",
+            &json!({"pattern": "World", "path": "src/main.rs", "context": 1}),
+        )
+        .unwrap();
+    assert_eq!(
+        v["matches"],
+        json!([{"path": "src/main.rs", "line": 2, "column": 12, "text": "    greet(\"World\");",
+                "before": ["fn main() {"], "after": ["}"]}]),
+        "{v}"
+    );
+    let v = tools
+        .dispatch(
+            "search_files",
+            &json!({"pattern": "greet", "glob": "src/**/*.ts"}),
+        )
+        .unwrap();
+    assert_eq!(v["matches"].as_array().unwrap().len(), 2, "{v}");
+    assert_eq!(v["files"], 1, "{v}");
+    assert_eq!(
+        tools
+            .dispatch("search_files", &json!({"pattern": "greet("}))
+            .unwrap_err()
+            .rule,
+        "bad-pattern"
+    );
+    assert_eq!(
+        tools
+            .dispatch("search_files", &json!({"pattern": "x", "path": "../etc"}))
+            .unwrap_err()
+            .rule,
+        "bad-path"
+    );
+}
+
+// A search past the match cap resumes from its cursor and no match is lost.
+#[test]
+fn search_files_resumes_past_the_match_cap() {
+    let body: String = (0..SEARCH_FILES_MATCHES + 30)
+        .map(|i| format!("hit {i}\n"))
+        .collect();
+    let (_scope, mut tools, _) =
+        memory_project(&[("big.txt", body.as_bytes()), ("z.txt", b"hit z\n")]);
+    let first = tools
+        .dispatch("search_files", &json!({"pattern": "^hit"}))
+        .unwrap();
+    assert_eq!(first["scanComplete"], false, "{first}");
+    assert_eq!(
+        first["next"],
+        json!({"path": "big.txt", "line": SEARCH_FILES_MATCHES + 1})
+    );
+    let second = tools
+        .dispatch(
+            "search_files",
+            &json!({"pattern": "^hit", "cursor": first["next"]}),
+        )
+        .unwrap();
+    assert_eq!(second["scanComplete"], true, "{second}");
+    assert!(second.get("next").is_none(), "{second}");
+    let matches = second["matches"].as_array().unwrap();
+    assert_eq!(matches.len(), 31);
+    assert_eq!(matches[0]["line"], SEARCH_FILES_MATCHES + 1, "{second}");
+    assert_eq!(matches[30]["path"], "z.txt", "{second}");
+}
+
+// A scan past the per-call byte budget stops with a cursor even when it found
+// nothing yet; following the cursor reaches the match without rescanning.
+#[test]
+fn search_files_empty_page_past_the_scan_budget_carries_a_cursor() {
+    let filler = "x\n".repeat(SEARCH_FILES_FILE_BYTES / 2 - 1);
+    let mut files: Vec<(String, Vec<u8>)> = (0..12)
+        .map(|i| (format!("f{i:02}.txt"), filler.clone().into_bytes()))
+        .collect();
+    files.push(("z.txt".into(), b"needle\n".to_vec()));
+    let refs: Vec<(&str, &[u8])> = files
+        .iter()
+        .map(|(p, b)| (p.as_str(), b.as_slice()))
+        .collect();
+    let (_scope, mut tools, _) = memory_project(&refs);
+    let mut cursor = Value::Null;
+    let mut pages = 0;
+    let found = loop {
+        pages += 1;
+        let mut args = json!({"pattern": "needle"});
+        if !cursor.is_null() {
+            args["cursor"] = cursor.clone();
+        }
+        let v = tools.dispatch("search_files", &args).unwrap();
+        if v["scanComplete"] == true {
+            break v;
+        }
+        assert!(v["matches"].as_array().unwrap().is_empty(), "{v}");
+        assert!(v["files"].as_u64().unwrap() > 0, "{v}");
+        cursor = v["next"].clone();
+        assert!(pages < 10, "the cursor must advance");
+    };
+    assert!(pages > 1, "the budget must cut the scan");
+    assert_eq!(found["matches"][0]["path"], "z.txt", "{found}");
+}
+
+// list_files takes a glob: `*` stays in one directory, `**` crosses them, and a
+// bare name pattern matches at any depth.
+#[test]
+fn list_files_filters_by_glob() {
+    let (_scope, mut tools, _) = memory_project(&[
+        ("src/a.rs", b"a"),
+        ("src/deep/b.rs", b"b"),
+        ("src/c.ts", b"c"),
+        ("d.rs", b"d"),
+    ]);
+    let list = |tools: &mut ToolSession, pattern: &str| {
+        tools
+            .dispatch("list_files", &json!({"pattern": pattern}))
+            .unwrap()["files"]
+            .clone()
+    };
+    assert_eq!(
+        list(&mut tools, "*.rs"),
+        json!(["d.rs", "src/a.rs", "src/deep/b.rs"])
+    );
+    assert_eq!(list(&mut tools, "src/*.rs"), json!(["src/a.rs"]));
+    assert_eq!(
+        list(&mut tools, "src/**/*.rs"),
+        json!(["src/a.rs", "src/deep/b.rs"])
+    );
+    assert_eq!(
+        tools
+            .dispatch("list_files", &json!({"path": "src", "pattern": "*.ts"}))
+            .unwrap()["files"],
+        json!(["src/c.ts"])
+    );
+}
+
+// A literal edit without expectedHash applies to the version the session last read
+// or wrote; an unread path is refused toward a read, a changed file is a conflict,
+// replaceAll changes every occurrence, and a miss explains itself.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+#[test]
+fn literal_edits_use_the_remembered_version_and_explain_misses() {
+    let (_scope, mut tools, root) =
+        memory_project(&[("app.py", b"def f():\n    return  1\n\nx = f()\ny = f()\n")]);
+    let path = root.join("app.py");
+    let edit = |tools: &mut ToolSession, args: Value| {
+        let mut args = args;
+        args["path"] = json!("app.py");
+        tools.dispatch("write_text_file", &args)
+    };
+    let err = edit(
+        &mut tools,
+        json!({"old_text": "x = f()", "content": "x = 2"}),
+    )
+    .unwrap_err();
+    assert_eq!(err.rule, "edit-needs-read", "{}", err.message);
+    assert!(err.message.contains("read_text_file"), "{}", err.message);
+    tools
+        .dispatch("read_text_file", &json!({"path": "app.py"}))
+        .unwrap();
+    let reply = edit(
+        &mut tools,
+        json!({"old_text": "x = f()", "content": "x = 2"}),
+    )
+    .unwrap();
+    assert_eq!(reply["replaced"], 1);
+    // The write's own hash is remembered: a second edit needs no new read.
+    let err = edit(&mut tools, json!({"old_text": "f()", "content": "g()"})).unwrap_err();
+    assert_eq!(err.rule, "edit-match");
+    assert!(err.message.contains("2 matches"), "{}", err.message);
+    let reply = edit(
+        &mut tools,
+        json!({"old_text": "f()", "content": "g()", "replaceAll": true}),
+    )
+    .unwrap();
+    assert_eq!(reply["replaced"], 2);
+    assert_eq!(
+        crate::vfs::read_to_string(&path).unwrap(),
+        "def g():\n    return  1\n\nx = 2\ny = g()\n"
+    );
+    let err = edit(
+        &mut tools,
+        json!({"old_text": "return 1", "content": "return 3"}),
+    )
+    .unwrap_err();
+    assert_eq!(err.rule, "edit-match");
+    assert!(err.message.contains("line 2"), "{}", err.message);
+    crate::vfs::write(&path, "changed elsewhere\n").unwrap();
+    let err = edit(&mut tools, json!({"old_text": "changed", "content": "x"})).unwrap_err();
+    assert_eq!(err.rule, "file-conflict");
+    assert_eq!(
+        crate::vfs::read_to_string(&path).unwrap(),
+        "changed elsewhere\n"
+    );
+}
+
+// The per-call sessions of a serving carry the remembered file versions across
+// ledger claims; the repeated-call guard starts fresh per unit.
+#[test]
+fn remembered_file_versions_survive_a_new_unit() {
+    let (_scope, mut tools, _) = memory_project(&[("a.txt", b"one two\n")]);
+    tools
+        .dispatch("read_text_file", &json!({"path": "a.txt"}))
+        .unwrap();
+    let memory = tools.memory().for_new_unit();
+    let mut next = session();
+    next.gen.deliverable = tools.gen.deliverable.clone();
+    next.adopt_memory(memory);
+    next.dispatch(
+        "write_text_file",
+        &json!({"path": "a.txt", "old_text": "two", "content": "2"}),
+    )
+    .unwrap();
+}
+
+// The runtime's read-only classification: lookups run after a failed call in the
+// same reply, writes do not. Mirrors docs/compiler/agent-runtime.md#models-and-tools.
+#[test]
+fn read_only_tools_exclude_every_write() {
+    for name in [
+        "load",
+        "search",
+        "read_section",
+        "read_text_file",
+        "list_files",
+        "search_files",
+        "read_document",
+        "inspect_run",
+    ] {
+        assert!(crate::tools::read_only(name), "{name}");
+    }
+    for name in GRAPH_WRITE_TOOLS.into_iter().chain([
+        "write_text_file",
+        "write_document",
+        "record_generation",
+        "record_binding",
+        "record_verdict",
+        "run_tests",
+        "run_task",
+        "mark_goal_done",
+        "done",
+        "begin_goals",
+        "edit_graph",
+    ]) {
+        assert!(!crate::tools::read_only(name), "{name}");
+    }
+}
+
+// A match late on a long line is quoted in the excerpt, not cut away.
+#[test]
+fn search_files_quotes_a_late_match_on_a_long_line() {
+    let line = format!("{}NEEDLE{}\n", "x".repeat(5000), "y".repeat(500));
+    let (_scope, mut tools, _) = memory_project(&[("min.js", line.as_bytes())]);
+    let v = tools
+        .dispatch("search_files", &json!({"pattern": "NEEDLE"}))
+        .unwrap();
+    let text = v["matches"][0]["text"].as_str().unwrap();
+    assert!(text.contains("NEEDLE"), "{text}");
+    assert!(text.starts_with('…'), "{text}");
+    assert_eq!(v["matches"][0]["column"], 5001);
 }

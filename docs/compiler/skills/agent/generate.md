@@ -2,6 +2,31 @@
 name: generate
 description: "Implement documented requirements and record deliverables and tests."
 requiredCapabilities: "generation and source writes"
+tools:
+  - generation_tasks
+  - begin_generation
+  - record_medium
+  - record_generation
+  - run_tests
+  - release_work
+  - link_asset
+  - inspect_asset_link
+  - remove_asset_link
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
+  - report_spend
 ---
 # Generate a deliverable
 

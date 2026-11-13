@@ -2,6 +2,26 @@
 name: bind
 description: "Connect existing implementation and test evidence to requirements."
 requiredCapabilities: "binding"
+tools:
+  - binding_tasks
+  - begin_binding
+  - record_binding
+  - run_tests
+  - release_work
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
 ---
 # Bind existing implementation
 

@@ -297,7 +297,9 @@ impl ToolSession {
             "link_asset" | "inspect_asset_link" | "remove_asset_link" => {
                 self.asset_link_tool(name, args)
             }
-            "read_text_file" | "write_text_file" | "list_files" => self.file_tool(name, args),
+            "read_text_file" | "write_text_file" | "list_files" | "search_files" => {
+                self.file_tool(name, args)
+            }
             "report_spend" => self.report_spend_tool(args),
             "report_feedback" => self.report_feedback_tool(args),
             "done" => self.done_tool(args),

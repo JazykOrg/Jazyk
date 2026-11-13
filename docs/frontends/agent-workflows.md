@@ -72,6 +72,40 @@ serving's actual tool catalog and tool gates decide availability. User, project,
 and account skills continue to use `read_skill`. They cannot override built-in
 workflow skill names or replace the shared policy.
 
+## Skill-gated tools
+
+Jazyk's own agents start with a small tool catalog and receive a workflow's tools
+when they read its skill. Every tool definition travels with every model request,
+and a catalog of about 90 tools costs a weak model both context and accuracy. An
+agent that brings its own tools, such as an external coding agent over MCP, keeps
+the full catalog.
+
+- Scope: a writable chat serving without an open batch, for an agent without its
+  own editor or shell. That is the embedded agent (its profile sets `serve_files`)
+  and the hosted and browser conversation. A reader serving, a worker serving and
+  an open batch keep their own catalogs.
+- The core catalog is always listed: `project_context`, `list_jazyk_skills`,
+  `read_jazyk_skill`, the [read tools](../compiler/tools.md#read-tools), the
+  [file tools](../compiler/goals/generate.md#file-and-command-tools)
+  (`read_text_file`, `write_text_file`, `list_files`, `search_files`),
+  `read_document`, `write_document`, `list_document_sets`, `recent_edits`, and
+  `report_feedback`.
+- Each skill's front matter lists the tools its procedure uses under `tools`.
+  `read_jazyk_skill` adds them to the serving's catalog for the rest of the
+  conversation, and its reply names them under `tools`. `list_jazyk_skills`
+  shows each skill's tools, so the agent knows which skill to read for a tool.
+  The serving announces the change with `notifications/tools/list_changed`; the
+  embedded agent refreshes its catalog before every model request.
+- Gating changes what is listed, not what is authorized. A served tool that is
+  not listed still answers a direct call under its usual gates.
+- The read skills are part of the serving's checkpoint, so a restored execution
+  keeps its catalog. A hosted conversation also reapplies the skills its history
+  read when it reopens its serving.
+- Every tool of the chat serving is in the core catalog or in at least one skill.
+
+E.g.: a chat turn asked to run the tests reads `execute-task`, and its next model
+request lists the task tools.
+
 ## Requests and responses
 
 | User request | Skill | Response |

@@ -2,6 +2,21 @@
 name: verify
 description: "Run tests or judge observable criteria and record current evidence."
 requiredCapabilities: "verification or authorized test execution"
+tools:
+  - verification_tasks
+  - begin_verification
+  - run_tests
+  - record_verdict
+  - release_work
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
 ---
 # Verify behavior
 

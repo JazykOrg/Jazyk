@@ -2,6 +2,16 @@
 name: execute-task
 description: "Inspect and execute the requested task under its approval and cost rules."
 requiredCapabilities: "task execution"
+tools:
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
 ---
 # Execute a task
 

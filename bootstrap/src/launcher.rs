@@ -1012,6 +1012,7 @@ pub fn run() {
                         edit_sink: opts.edit_sink.clone(),
                         packaged: opts.packaged,
                         reader: false,
+                        progressive: false,
                     };
                     mcp::McpServer::with_bridge(proj, out, modes, opts.write, bridge).run();
                     0

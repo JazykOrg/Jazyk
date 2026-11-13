@@ -558,10 +558,14 @@ fn chat_provider_pause_keeps_its_reason_after_reopening() {
                 "write_text_file",
                 "read_text_file",
                 "list_files",
-                "release_work",
+                "search_files",
+                "read_jazyk_skill",
             ] {
                 assert!(names.contains(&tool), "{tool}: {names:?}");
             }
+            // Workflow tools such as release_work join when their skill is read
+            // (docs/frontends/agent-workflows.md#skill-gated-tools).
+            assert!(!names.contains(&"release_work"), "{names:?}");
             assert!(!names.contains(&"run_command"));
             *reason.lock().unwrap() = Some("Provider deadline reached.".into());
             flag.store(true, Ordering::Relaxed);

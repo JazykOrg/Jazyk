@@ -153,7 +153,9 @@ impl ToolSession {
                 }
                 let more_lines = start + taken < total;
                 truncated |= more_lines;
-                let mut reply = json!({"content": content, "totalLines": total, "hash": crate::task_runtime::digest(text.as_bytes())});
+                let hash = crate::task_runtime::digest(text.as_bytes());
+                self.file_hashes.insert(rel.clone(), hash.clone());
+                let mut reply = json!({"content": content, "totalLines": total, "hash": hash});
                 let ledger = crate::gen::Ledger::load(&self.snapshot.out);
                 if let Some(owner) = crate::gen::file_owner(&self.snapshot, &ledger, "", &rel) {
                     let entity = format!("ent:{owner}");
@@ -261,12 +263,13 @@ impl ToolSession {
                         })
                     })
                     .transpose()?;
-                let expected = args
+                let mut expected = args
                     .get("expectedHash")
                     .map(|_| Self::str_arg(args, "expectedHash"))
                     .transpose()?;
                 let append = args["append"].as_bool() == Some(true);
-                if old_text.is_some() && (append || expected.is_none()) {
+                let replace_all = args["replaceAll"].as_bool() == Some(true);
+                if old_text.is_some() && append {
                     return Err(ToolError::new(
                         "invalid-edit",
                         include_str!(concat!(
@@ -275,6 +278,23 @@ impl ToolSession {
                         ))
                         .into(),
                     ));
+                }
+                // A literal edit applies to the version this serving last returned
+                // for the path; with none, it is refused rather than applied blind.
+                // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+                if old_text.is_some() && expected.is_none() {
+                    expected = Some(self.file_hashes.get(&rel).cloned().ok_or_else(|| {
+                        ToolError::new(
+                            "edit-needs-read",
+                            format!(
+                                include_str!(concat!(
+                                    env!("OUT_DIR"),
+                                    "/payloads/goals/prompts/inline/tools-files/edit-needs-a-read-first-5c1e2.md"
+                                )),
+                                rel = rel
+                            ),
+                        )
+                    })?);
                 }
                 let current = if old_text.is_some()
                     || expected.is_some()
@@ -314,25 +334,13 @@ impl ToolSession {
                         ));
                     }
                 }
+                let mut replaced = 0usize;
                 let next = if let Some(ref old) = old_text {
                     let text = current.as_deref().unwrap_or_default();
-                    let first = text.find(old.as_str());
-                    if old.is_empty() || first.is_none() || first != text.rfind(old.as_str()) {
-                        return Err(ToolError::new(
-                            "edit-match",
-                            format!(
-                                include_str!(concat!(
-                                    env!("OUT_DIR"),
-                                    "/payloads/goals/prompts/inline/tools-files/old-text-must-be-nonempty-and-match-2ba0a.md"
-                                )),
-                                rel = rel
-                            ),
-                        ));
-                    }
-                    current
-                        .as_deref()
-                        .unwrap_or_default()
-                        .replacen(old.as_str(), &content, 1)
+                    let (next, count) = literal_edit(text, old, &content, replace_all)
+                        .map_err(|found| edit_match_error(&rel, &found))?;
+                    replaced = count;
+                    next
                 } else if append {
                     format!("{}{}", current.as_deref().unwrap_or_default(), content)
                 } else {
@@ -341,9 +349,11 @@ impl ToolSession {
                 crate::store::write_atomic(&path, next.as_bytes()).map_err(|e| {
                     ToolError::new("io-error", format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-files/cannot-write-rel-e-fcde7.md")), rel = rel, e = e))
                 })?;
-                let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append && current.is_some(), "fileBytes": next.len(), "hash": crate::task_runtime::digest(next.as_bytes())});
+                let hash = crate::task_runtime::digest(next.as_bytes());
+                self.file_hashes.insert(rel.clone(), hash.clone());
+                let mut reply = json!({"written": rel, "bytes": content.len(), "appended": append && current.is_some(), "fileBytes": next.len(), "hash": hash});
                 if old_text.is_some() {
-                    reply["replaced"] = json!(1);
+                    reply["replaced"] = json!(replaced);
                 }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
@@ -352,73 +362,392 @@ impl ToolSession {
             }
             "list_files" => {
                 let (rel, note) = self.unroot_rel(&Self::opt_str(args, "path").unwrap_or_default());
-                let base = self.deliverable_root();
+                let filter = Self::opt_str(args, "pattern")
+                    .map(|p| path_glob(&p))
+                    .transpose()?;
                 let root = if rel.is_empty() {
-                    base.clone()
+                    self.deliverable_root()
                 } else {
                     self.deliverable_path(&rel)?
                 };
-                // Breadth first in name order, each directory once after its links
-                // resolve, stopping at the listing cap.
+                // Pages follow the deterministic walk, after the glob filter.
                 // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+                let offset = args["offset"].as_u64().unwrap_or(0) as usize;
+                let limit = (args["limit"].as_u64().unwrap_or(LIST_FILES_LIMIT as u64) as usize)
+                    .clamp(1, LIST_FILES_LIMIT);
                 let mut out: Vec<String> = Vec::new();
+                let mut eligible = 0usize;
                 let mut truncated = false;
-                let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
-                if let Ok(c) = root.vcanonicalize() {
-                    seen.insert(c);
-                }
-                let mut queue = std::collections::VecDeque::from([root.clone()]);
-                'walk: while let Some(dir) = queue.pop_front() {
-                    let Ok(entries) = crate::vfs::read_dir(&dir) else {
-                        continue;
-                    };
-                    let mut paths: Vec<std::path::PathBuf> =
-                        entries.flatten().map(|e| e.path()).collect();
-                    paths.sort();
-                    for p in paths {
-                        let Ok(relative) = p.strip_prefix(&base) else {
-                            continue;
-                        };
-                        let relative = relative.to_string_lossy().replace('\\', "/");
-                        if !crate::document_sets::safe_relative(&base, &relative) {
-                            continue;
-                        }
-                        // A link pointing out of the deliverable is not listed:
-                        // what cannot be read is not offered.
-                        let canonical = p.vcanonicalize();
-                        if canonical.as_ref().is_ok_and(|c| !c.starts_with(&base)) {
-                            continue;
-                        }
-                        if p.vis_dir() {
-                            // A directory reached again through a link is a loop.
-                            if let Ok(c) = canonical {
-                                if !seen.insert(c) {
-                                    continue;
-                                }
-                            }
-                            queue.push_back(p);
-                        } else {
-                            if out.len() >= LIST_FILES_LIMIT {
-                                truncated = true;
-                                break 'walk;
-                            }
-                            out.push(relative);
-                        }
+                self.walk_files(&root, &mut |_, relative| {
+                    if filter.as_ref().is_some_and(|f| !f.is_match(relative)) {
+                        return true;
                     }
-                }
+                    eligible += 1;
+                    if eligible <= offset {
+                        return true;
+                    }
+                    if out.len() >= limit {
+                        truncated = true;
+                        return false;
+                    }
+                    out.push(relative.to_string());
+                    true
+                });
+                let shown = out.len();
                 out.sort();
                 let mut reply = json!({"files": out});
                 if truncated {
                     reply["truncated"] = json!(true);
+                    reply["nextOffset"] = json!(offset + shown);
                 }
                 if let Some(n) = note {
                     reply["note"] = json!(n);
                 }
                 Ok(reply)
             }
+            "search_files" => self.search_files(args),
             _ => unreachable!(),
         }
     }
+}
+
+impl ToolSession {
+    // Every eligible file under `root`, breadth first in name order, each directory
+    // once after its links resolve; `visit` gets the path and its deliverable-relative
+    // name and answers whether to continue. A link pointing out of the deliverable is
+    // not walked: what cannot be read is not offered.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    fn walk_files(
+        &self,
+        root: &std::path::Path,
+        visit: &mut dyn FnMut(&std::path::Path, &str) -> bool,
+    ) {
+        let base = self.deliverable_root();
+        if root.vis_file() {
+            if let Ok(relative) = root.strip_prefix(&base) {
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if crate::document_sets::safe_relative(&base, &relative) {
+                    visit(root, &relative);
+                }
+            }
+            return;
+        }
+        let mut seen: BTreeSet<std::path::PathBuf> = BTreeSet::new();
+        if let Ok(c) = root.vcanonicalize() {
+            seen.insert(c);
+        }
+        let mut queue = std::collections::VecDeque::from([root.to_path_buf()]);
+        while let Some(dir) = queue.pop_front() {
+            let Ok(entries) = crate::vfs::read_dir(&dir) else {
+                continue;
+            };
+            let mut paths: Vec<std::path::PathBuf> = entries.flatten().map(|e| e.path()).collect();
+            paths.sort();
+            for p in paths {
+                let Ok(relative) = p.strip_prefix(&base) else {
+                    continue;
+                };
+                let relative = relative.to_string_lossy().replace('\\', "/");
+                if !crate::document_sets::safe_relative(&base, &relative) {
+                    continue;
+                }
+                let canonical = p.vcanonicalize();
+                if canonical.as_ref().is_ok_and(|c| !c.starts_with(&base)) {
+                    continue;
+                }
+                if p.vis_dir() {
+                    // A directory reached again through a link is a loop.
+                    if let Ok(c) = canonical {
+                        if !seen.insert(c) {
+                            continue;
+                        }
+                    }
+                    queue.push_back(p);
+                } else if !visit(&p, &relative) {
+                    return;
+                }
+            }
+        }
+    }
+
+    // A content search over the eligible files, in process over the workspace's
+    // filesystem. Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    fn search_files(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let pattern = Self::str_arg(args, "pattern")?;
+        let source = if args["literal"].as_bool() == Some(true) {
+            regex::escape(&pattern)
+        } else {
+            pattern.clone()
+        };
+        let regex = regex::RegexBuilder::new(&source)
+            .case_insensitive(args["ignoreCase"].as_bool() == Some(true))
+            .build()
+            .map_err(|e| {
+                ToolError::new(
+                    "bad-pattern",
+                    format!("pattern is not a valid regular expression: {e}. Pass literal: true to search plain text"),
+                )
+            })?;
+        let filter = Self::opt_str(args, "glob")
+            .map(|g| path_glob(&g))
+            .transpose()?;
+        let (rel, note) = self.unroot_rel(&Self::opt_str(args, "path").unwrap_or_default());
+        let root = if rel.is_empty() {
+            self.deliverable_root()
+        } else {
+            let path = self.deliverable_path(&rel)?;
+            if !path.vexists() {
+                return Err(ToolError::new(
+                    "not-found",
+                    format!("`{rel}` does not exist; list_files shows what exists"),
+                ));
+            }
+            path
+        };
+        let context = (args["context"].as_u64().unwrap_or(0) as usize).min(SEARCH_FILES_CONTEXT);
+        let files_only = args["filesOnly"].as_bool() == Some(true);
+        // The resumable cursor: a file in sorted path order and its first line to
+        // search. Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+        let cursor_path = args["cursor"]["path"].as_str().map(str::to_owned);
+        let cursor_line = args["cursor"]["line"].as_u64().unwrap_or(1).max(1) as usize;
+        let mut files = Vec::new();
+        self.walk_files(&root, &mut |path, relative| {
+            if filter.as_ref().is_none_or(|f| f.is_match(relative))
+                && cursor_path.as_deref().is_none_or(|c| relative >= c)
+            {
+                files.push((path.to_path_buf(), relative.to_string()));
+            }
+            true
+        });
+        files.sort_by(|a, b| a.1.cmp(&b.1));
+        let mut searched = 0usize;
+        let mut skipped = 0usize;
+        let mut bytes = 0usize;
+        let mut out: Vec<Value> = Vec::new();
+        let mut read_total = 0usize;
+        let mut next: Option<(String, usize)> = None;
+        'files: for (path, relative) in files {
+            if self.protected_file(&relative, &path) {
+                continue;
+            }
+            let first = if cursor_path.as_deref() == Some(relative.as_str()) {
+                cursor_line
+            } else {
+                1
+            };
+            // Size before bytes, and a scan budget per call: a stopped scan
+            // returns its cursor, so it never reads as "no match".
+            let size = crate::vfs::entry_metadata(&path).map(|m| m.len() as usize);
+            if size.as_ref().is_ok_and(|n| *n > SEARCH_FILES_FILE_BYTES) {
+                skipped += 1;
+                continue;
+            }
+            if searched > 0 && read_total + size.unwrap_or(0) > SEARCH_FILES_SCAN_BYTES {
+                next = Some((relative, first));
+                break;
+            }
+            let text = match crate::vfs::read(&path) {
+                Ok(raw) if raw.len() <= SEARCH_FILES_FILE_BYTES && !raw.contains(&0) => {
+                    match String::from_utf8(raw) {
+                        Ok(text) => text,
+                        Err(_) => {
+                            skipped += 1;
+                            continue;
+                        }
+                    }
+                }
+                Ok(_) => {
+                    skipped += 1;
+                    continue;
+                }
+                Err(_) => continue,
+            };
+            searched += 1;
+            read_total += text.len();
+            let lines: Vec<&str> = text.lines().collect();
+            let hits: Vec<usize> = lines
+                .iter()
+                .enumerate()
+                .skip(first - 1)
+                .filter(|(_, line)| regex.is_match(line))
+                .map(|(i, _)| i)
+                .collect();
+            if hits.is_empty() {
+                continue;
+            }
+            let entries: Vec<(usize, Value)> = if files_only {
+                vec![(first - 1, json!({"path": relative, "count": hits.len()}))]
+            } else {
+                hits.iter()
+                    .map(|&i| {
+                        let column = regex
+                            .find(lines[i])
+                            .map_or(1, |m| lines[i][..m.start()].chars().count() + 1);
+                        let mut entry = json!({"path": relative, "line": i + 1, "column": column, "text": excerpt(lines[i], &regex)});
+                        if context > 0 {
+                            let before: Vec<String> = lines[i.saturating_sub(context)..i]
+                                .iter()
+                                .map(|l| cut_line(l))
+                                .collect();
+                            let after: Vec<String> = lines[(i + 1).min(lines.len())..(i + 1 + context).min(lines.len())]
+                                .iter()
+                                .map(|l| cut_line(l))
+                                .collect();
+                            if !before.is_empty() {
+                                entry["before"] = json!(before);
+                            }
+                            if !after.is_empty() {
+                                entry["after"] = json!(after);
+                            }
+                        }
+                        (i, entry)
+                    })
+                    .collect()
+            };
+            for (i, entry) in entries {
+                let size = entry.to_string().len();
+                if out.len() >= SEARCH_FILES_MATCHES || bytes + size > SEARCH_FILES_BYTES {
+                    next = Some((relative, i + 1));
+                    break 'files;
+                }
+                bytes += size;
+                out.push(entry);
+            }
+        }
+        let mut reply = json!({"matches": out, "files": searched, "scanComplete": next.is_none()});
+        if skipped > 0 {
+            reply["skipped"] = json!(skipped);
+        }
+        if let Some((path, line)) = next {
+            reply["truncated"] = json!(true);
+            reply["next"] = json!({"path": path, "line": line});
+            reply["notice"] = json!(
+                "Not every file was searched. Pass next unchanged as cursor, with the same pattern, path and glob, to continue."
+            );
+        }
+        if let Some(n) = note {
+            reply["note"] = json!(n);
+        }
+        Ok(reply)
+    }
+}
+
+// One quoted line of a search reply, cut on a character boundary.
+// A matching line, or for a long line an excerpt that starts shortly before the
+// first match so the match itself is always quoted.
+fn excerpt(line: &str, regex: &regex::Regex) -> String {
+    if line.chars().count() <= SEARCH_FILES_LINE_CHARS {
+        return line.to_string();
+    }
+    let at = regex.find(line).map_or(0, |m| m.start());
+    let lead = line[..at]
+        .chars()
+        .count()
+        .saturating_sub(SEARCH_FILES_LINE_CHARS / 3);
+    let start = line.char_indices().nth(lead).map_or(0, |(i, _)| i);
+    let body = cut_line(&line[start..]);
+    if start > 0 {
+        format!("…{body}")
+    } else {
+        body
+    }
+}
+
+fn cut_line(line: &str) -> String {
+    match line.char_indices().nth(SEARCH_FILES_LINE_CHARS) {
+        Some((end, _)) => format!("{}…", &line[..end]),
+        None => line.to_string(),
+    }
+}
+
+// A glob over deliverable-relative paths: `*` stays within one directory, `**`
+// crosses them, and a pattern without `/` matches file names at any depth.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+pub(crate) fn path_glob(pattern: &str) -> Result<globset::GlobMatcher, ToolError> {
+    let pattern = pattern.trim().trim_start_matches("./");
+    let pattern = if pattern.contains('/') {
+        pattern.to_string()
+    } else {
+        format!("**/{pattern}")
+    };
+    globset::GlobBuilder::new(&pattern)
+        .literal_separator(true)
+        .build()
+        .map(|g| g.compile_matcher())
+        .map_err(|e| ToolError::new("bad-pattern", format!("invalid glob `{pattern}`: {e}")))
+}
+
+// Replace `old` in `text` with `new`: exactly one occurrence, or every occurrence
+// with `all`. Answers the next text and the replacement count, or a description of
+// why `old` selected no single site.
+// Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+pub(crate) fn literal_edit(
+    text: &str,
+    old: &str,
+    new: &str,
+    all: bool,
+) -> Result<(String, usize), String> {
+    if old.is_empty() {
+        return Err("old_text is empty".into());
+    }
+    let count = text.matches(old).count();
+    match count {
+        0 => Err(match near_match_line(text, old) {
+            Some(line) => format!(
+                "no exact match, but ignoring whitespace it matches starting at line {line}; copy the exact whitespace and line endings from a fresh read"
+            ),
+            None => "no match".into(),
+        }),
+        1 => Ok((text.replacen(old, new, 1), 1)),
+        n if all => Ok((text.replace(old, new), n)),
+        n => Err(format!("{n} matches")),
+    }
+}
+
+pub(crate) fn edit_match_error(rel: &str, found: &str) -> ToolError {
+    ToolError::new(
+        "edit-match",
+        format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/tools-files/old-text-must-be-nonempty-and-match-2ba0a.md"
+            )),
+            rel = rel,
+            found = found
+        ),
+    )
+}
+
+// The 1-based line where `old` matches `text` once runs of whitespace are
+// collapsed on both sides, when it does.
+fn near_match_line(text: &str, old: &str) -> Option<usize> {
+    fn collapse(s: &str) -> (String, Vec<usize>) {
+        let mut out = String::new();
+        let mut offsets = Vec::new();
+        let mut space = false;
+        for (i, c) in s.char_indices() {
+            if c.is_whitespace() {
+                if !space {
+                    out.push(' ');
+                    offsets.push(i);
+                }
+                space = true;
+            } else {
+                out.push(c);
+                offsets.extend(std::iter::repeat_n(i, c.len_utf8()));
+                space = false;
+            }
+        }
+        (out, offsets)
+    }
+    let (needle, _) = collapse(old.trim());
+    if needle.trim().is_empty() {
+        return None;
+    }
+    let (hay, offsets) = collapse(text);
+    let at = hay.find(&needle)?;
+    let origin = *offsets.get(at)?;
+    Some(text[..origin].matches('\n').count() + 1)
 }
 
 impl ToolSession {

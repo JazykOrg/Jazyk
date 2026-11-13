@@ -670,12 +670,12 @@ the `generate` serving, see [toolsets](./sessions.md#toolsets)). These tools rea
 [ledger](../consumers/gen.md#the-ledger) (`gen/`); they never mutate the
 graph. An agent may edit deliverable files with its own tools. When the profile sets
 [`serve_files`](./project-settings.md#acp), the serving adds `read_text_file`,
-`write_text_file`, and `list_files`, sandboxed to the deliverable
+`write_text_file`, `list_files`, and `search_files`, sandboxed to the deliverable
 ([file and command tools](./goals/generate.md#file-and-command-tools)). The sandbox
 holds after symlinks resolve: a path is relative, carries no `..`, and its deepest
 existing ancestor canonicalizes under the canonical deliverable directory, so a link
 inside the deliverable that points outside is refused (`bad-path`) like `..` would be,
-and `list_files` does not list it. A path that starts with the deliverable directory's
+and neither `list_files` nor `search_files` walks it. A path that starts with the deliverable directory's
 own name while the deliverable holds no directory of that name is normalized under
 the root, and the reply's `note` says so
 ([file ownership](../consumers/gen.md#file-ownership-and-conventions)).
@@ -884,7 +884,10 @@ and a model then fills the ones it means to omit.
 - `write_text_file` preserves supplied `content`, `old_text` and `expectedHash`
   before validation. File bytes and edit guards are literal data. Empty `content`
   can delete a matched region. Empty `old_text` or `expectedHash` is refused, never
-  treated as permission for an unconditional overwrite.
+  treated as permission for an unconditional overwrite. An omitted `expectedHash`
+  on a replacement takes the hash the serving last returned for that path
+  ([file tools](./goals/generate.md#file-and-command-tools)), never none.
+- `write_document` preserves supplied `text` and `old_text` the same way.
 - A `transition` that names no state (`from` and `to` both empty) is a filled-in blank
   and counts as absent.
 - A fact that arrives with its quote and a derivation both (an entity's `mention`, a
@@ -966,7 +969,8 @@ Compile goals:
 - [`generate`](./goals/generate.md): the `generate` serving below, plus the file
   tools when the profile sets `serve_files`.
 - [`verify`](./goals/verify.md): the `verify` serving below, plus the read-only file
-  tools (`read_text_file`, `list_files`) when the profile sets `serve_files`.
+  tools (`read_text_file`, `list_files`, `search_files`) when the profile sets
+  `serve_files`.
 - [`ratify`](./goals/ratify.md), [`answer`](./goals/answer.md): no session, no
   toolset. The human path runs through the [chat tools](#chat-tools), the LSP, and the
   GUI.
@@ -1018,6 +1022,9 @@ serving carries the read tools, `report_feedback`, `report_spend`, `await_change
   Authored graph write tools commit directly outside a batch. `edit_graph` groups
   related mutations into one independent atomic changeset. Prose edits use the dual
   write path. Deliverable writes use the binding and generation ownership gates.
+  For Jazyk's own agents the chat serving lists a core catalog and adds a
+  workflow's tools when its skill is read
+  ([skill-gated tools](../frontends/agent-workflows.md#skill-gated-tools)).
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).
 
@@ -1028,9 +1035,17 @@ tools to generation, binding, verification, writable MCP, and ACP sessions.
 
 ## Conversational document writes
 
-`write_document({path, text, baseHash?})` replaces one prose document. A read
-returns the current `hash`, which the write sends as `baseHash`. Omitting the
-hash creates a new document exclusively. A stale hash refuses the write. The
+`write_document({path, text, baseHash?, old_text?, replaceAll?})` replaces one
+prose document. A read returns the current `hash`, which the write sends as
+`baseHash`. Omitting the hash creates a new document exclusively. A stale hash
+refuses the write. With `old_text`, the write is a literal edit, the same as
+`write_text_file`'s ([file tools](./goals/generate.md#file-and-command-tools)):
+`old_text` must match exactly once, or at least once with `replaceAll: true`, and
+`text` replaces it. A refusal counts the matches and names a whitespace-only near
+match. An edit without `baseHash` takes the hash the serving's own last
+`read_document` or `write_document` of that path returned, and is refused toward
+`read_document` when there is none. An edit sends only the changed region, so a
+long document is never resent whole for a small change. The
 tool works before compilation and never releases compile work. It validates
 document-set membership and safe paths, refuses binary documents, and uses the
 same document writer as the editor. ACP document edits use the editor sink when

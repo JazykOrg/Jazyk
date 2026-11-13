@@ -33,8 +33,9 @@ Use for project questions, explanations, reviews, status, and change impact.
 - Reviews and status requests do not authorize edits, compilation, or execution.
 - Use section IDs returned by reads or search. Do not assume a Markdown file has
   a section at `/`; that is the whole-file section for opaque inputs and assets.
-- Reuse unchanged read results. An error in a tool batch can skip later calls;
-  inspect each result and retry only skipped work still needed. Prefer the compact
+- Reuse unchanged read results. An error in a tool batch skips that reply's later
+  writes, while its reads still run; inspect each result and retry only skipped
+  work still needed. Prefer the compact
   goal board before requesting every goal with full hints.
 - Stop investigating when the evidence answers the question. Report findings
   and material uncertainty, without turning a question into implementation work.

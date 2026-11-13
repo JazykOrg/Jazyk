@@ -230,6 +230,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
                 "--cancel-file",
                 "--packaged",
                 "--serve-files",
+                "--all-tools",
                 "--edit-sink",
             ],
         ),
@@ -571,6 +572,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              --cancel-file PATH   stop fence for this session, disables implicit finish\n  \
              --packaged           the prompt was already delivered; begin_goals acks instead of repeating it\n  \
              --serve-files        add the sandboxed file and command tools\n  \
+             --all-tools          list every tool at once, for clients that ignore tools/list_changed\n  \
              --edit-sink PATH     delegate document and settings writes to the spawning process\n\n\
              {}",
             COMMON_OUT
@@ -745,6 +747,7 @@ pub fn run() {
             "--ephemeral" => opts.ephemeral = true,
             "--packaged" => opts.packaged = true,
             "--serve-files" => opts.serve_files = true,
+            "--all-tools" => opts.all_tools = true,
             "--no-open" => opts.no_open = true,
             "--watch" => opts.watch = true,
             "--no-token" => opts.no_token = true,
@@ -1012,7 +1015,7 @@ pub fn run() {
                         edit_sink: opts.edit_sink.clone(),
                         packaged: opts.packaged,
                         reader: false,
-                        progressive: false,
+                        all_tools: opts.all_tools,
                     };
                     mcp::McpServer::with_bridge(proj, out, modes, opts.write, bridge).run();
                     0

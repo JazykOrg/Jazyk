@@ -74,16 +74,18 @@ workflow skill names or replace the shared policy.
 
 ## Skill-gated tools
 
-Jazyk's own agents start with a small tool catalog and receive a workflow's tools
-when they read its skill. Every tool definition travels with every model request,
-and a catalog of about 90 tools costs a weak model both context and accuracy. An
-agent that brings its own tools, such as an external coding agent over MCP, keeps
-the full catalog.
+A writable chat serving starts with a small tool catalog and adds a workflow's tools
+when the agent reads its skill. Every tool definition travels with every model
+request, and a catalog of about 90 tools costs a model both context and accuracy.
 
-- Scope: a writable chat serving without an open batch, for an agent without its
-  own editor or shell. That is the embedded agent (its profile sets `serve_files`)
-  and the hosted and browser conversation. A reader serving, a worker serving and
-  an open batch keep their own catalogs.
+- Scope: every writable chat serving without an open batch. That is the embedded
+  agent, the hosted and browser conversation, and an external agent connected
+  with `jazyk mcp chat` or `jazyk mcp all` (what [agent setup](./mcp.md#agent-setup)
+  installs). A reader serving, a worker serving and an open batch keep their own
+  catalogs.
+- `--all-tools` lists every served tool from the start, for an MCP client that does
+  not refresh its tool list on `notifications/tools/list_changed`
+  ([`jazyk mcp`](./cli.md#jazyk-mcp-graph), [flags](./mcp.md#mcp-into-acp-sessions)).
 - The core catalog is always listed: `project_context`, `list_jazyk_skills`,
   `read_jazyk_skill`, the [read tools](../compiler/tools.md#read-tools), the
   [file tools](../compiler/goals/generate.md#file-and-command-tools)
@@ -92,19 +94,32 @@ the full catalog.
   `report_feedback`.
 - Each skill's front matter lists the tools its procedure uses under `tools`.
   `read_jazyk_skill` adds them to the serving's catalog for the rest of the
-  conversation, and its reply names them under `tools`. `list_jazyk_skills`
-  shows each skill's tools, so the agent knows which skill to read for a tool.
-  The serving announces the change with `notifications/tools/list_changed`; the
-  embedded agent refreshes its catalog before every model request.
+  conversation. Its reply names the newly listed tools under `unlocked`, with a
+  note for a client that does not refresh. `list_jazyk_skills` shows each skill's
+  tools. The serving announces the change with `notifications/tools/list_changed`;
+  the embedded agent refreshes its catalog before every model request.
+- Related tools travel together: the task tools as one group, `run_tests` with the
+  verification tools, the graph write tools with `edit_graph` and `edit_fact`.
+- A text names only tools its reader can see. The main policy, the serving
+  instructions, the skill catalog and the core tool descriptions name core tools.
+  They reach a locked workflow through its skill. A skill body, and the description
+  of every tool listed after reading only that skill, name core tools and that
+  skill's tools.
+- A tool result or error that names a locked tool carries `lockedTools`, each such
+  tool with the skills that list it, and `lockedToolsNote`, the instruction to
+  read one. A one-word tool name such as `goals` counts only as code: in backticks
+  or before `(`.
 - Gating changes what is listed, not what is authorized. A served tool that is
-  not listed still answers a direct call under its usual gates.
+  not listed still answers a direct call under its usual gates. The embedded agent
+  refuses a call to an unlisted tool before dispatch and names the skill tools as
+  the way to list it.
 - The read skills are part of the serving's checkpoint, so a restored execution
   keeps its catalog. A hosted conversation also reapplies the skills its history
   read when it reopens its serving.
-- Every tool of the chat serving is in the core catalog or in at least one skill.
+- Every tool of `jazyk mcp all` is in the core catalog or in at least one skill.
 
 E.g.: a chat turn asked to run the tests reads `execute-task`, and its next model
-request lists the task tools.
+request lists the task and verification tools.
 
 ## Requests and responses
 

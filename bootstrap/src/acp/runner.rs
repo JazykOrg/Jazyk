@@ -64,6 +64,9 @@ impl ServingPlan {
         if self.flags.serve_files {
             args.push("--serve-files".to_string());
         }
+        if self.flags.all_tools {
+            args.push("--all-tools".to_string());
+        }
         if let Some(sink) = &self.flags.edit_sink {
             args.push("--edit-sink".to_string());
             args.push(sink.clone());
@@ -430,7 +433,7 @@ impl AcpRunner {
                 cancel_file: None,
                 serve_files: matches!(mode, "generate" | "verify") && agent.serve_files,
                 edit_sink: None,
-                progressive: false,
+                all_tools: false,
                 reader: false,
             },
         }

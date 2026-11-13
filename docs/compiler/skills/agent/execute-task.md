@@ -8,10 +8,18 @@ tools:
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
+  - generation_tasks
+  - begin_generation
+  - record_medium
+  - record_generation
+  - verification_tasks
+  - begin_verification
+  - run_tests
+  - record_verdict
 ---
 # Execute a task
 

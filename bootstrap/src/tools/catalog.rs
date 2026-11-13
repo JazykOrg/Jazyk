@@ -211,7 +211,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_criterion",
-            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; pass section and quote together to link a pending derived criterion to existing supporting prose without editing the document, clearing its ratification proposal; a field given replaces the stored one. The id and the owning requirement stay. In chat without an open compiler batch, commits immediately; no begin_goals is needed. Within a batch, remains staged until done.",
+            description: "Update an existing criterion's statement, kind, measure, given, when, then, or entities; pass section and quote together to link a pending derived criterion to existing supporting prose without editing the document, clearing its ratification proposal; a field given replaces the stored one. The id and the owning requirement stay. In chat without an open compiler batch, commits immediately without opening a compile batch. Within a batch, remains staged until done.",
             parameters: obj(
                 json!({
                     "id": {"type": "string"},
@@ -281,7 +281,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "inspect_input",
-            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size, persisted processing decision, and quoteReferences identifying facts to repair before asset classification. Entity mentions list their supplying requirement IDs. Use before classify_input, including for PDF inputs whose parsing fails.",
+            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size, persisted processing decision, and quoteReferences identifying facts to repair before asset classification. Entity mentions list their supplying requirement IDs. Use before classifying an input as an asset or a document, including for PDF inputs whose parsing fails.",
             parameters: obj(json!({"path":{"type":"string"}}), &["path"]),
         },
         ToolDef {

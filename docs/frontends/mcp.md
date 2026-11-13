@@ -164,6 +164,9 @@ this spawning path and are not for standalone servings:
   ([generation tools](../compiler/goals/generate.md#tools)) for agents whose
   profile sets [`serve_files`](../compiler/project-settings.md#acp). Verify workers
   receive only file reads and listing. Agents with their own editor never get them.
+- `--all-tools`: list every served tool from the start instead of a
+  [skill-gated catalog](./agent-workflows.md#skill-gated-tools), for a client that
+  does not refresh its tool list on `notifications/tools/list_changed`.
 - `--edit-sink <path>`: delegate document and settings writes to the spawning
   process ([doc edit delegation](./acp.md#doc-edit-delegation)). Absent, or with
   nothing listening, writes land on disk directly.

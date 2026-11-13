@@ -77,11 +77,14 @@ impl McpServer {
                 ],
             )
         });
-        let capabilities = if self.bridge.reader {
+        let mut capabilities = if self.bridge.reader {
             reader_instructions()
         } else {
             instructions_for(&self.modes, self.write, initialized)
         };
+        if self.skill_gated() {
+            capabilities.push_str(SERVING.get("skill-gated"));
+        }
         let text = SERVING.fill(
             "initialize",
             &[("policy", &policy), ("capabilities", &capabilities)],

@@ -7,8 +7,15 @@ tools:
   - begin_generation
   - record_medium
   - record_generation
+  - verification_tasks
+  - begin_verification
   - run_tests
+  - record_verdict
   - release_work
+  - classify_input
+  - delete_requirement
+  - edit_graph
+  - edit_fact
   - link_asset
   - inspect_asset_link
   - remove_asset_link
@@ -17,16 +24,17 @@ tools:
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
   - preview_document_set
   - save_document_set
   - create_document_set
   - update_document_set
   - remove_document_set
   - report_spend
+  - update_criterion
 ---
 # Generate a deliverable
 

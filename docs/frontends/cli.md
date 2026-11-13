@@ -939,7 +939,9 @@ Start the [MCP server](./mcp.md) on stdio. Read tools by default; `--write` adds
 other [toolsets](./mcp.md#toolsets): `compile` claims goal batches
 ([compilation over MCP](./mcp.md#compilation-over-mcp)), `generate`, `verify`,
 `decompile`, `benchmark`, `chat`; `all` is `compile,generate,verify,decompile,chat`,
-the entry `jazyk init` writes.
+the entry `jazyk init` writes. A chat serving lists a core catalog and adds a
+workflow's tools when its skill is read; `--all-tools` lists every tool at once
+([skill-gated tools](./agent-workflows.md#skill-gated-tools)).
 
 ### jazyk acp
 

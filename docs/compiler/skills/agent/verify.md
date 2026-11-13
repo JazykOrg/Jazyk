@@ -13,10 +13,10 @@ tools:
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
 ---
 # Verify behavior
 

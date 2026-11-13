@@ -4,10 +4,10 @@ description: "Edit prose, requirements, criteria, or intended behavior without i
 requiredCapabilities: "document writes"
 tools:
   - edit_graph
+  - edit_fact
   - revise_requirement
   - add_requirement
   - retract_requirement
-  - edit_fact
   - retract_decree
   - bump_limit
   - answer_diagnostic
@@ -56,7 +56,7 @@ Use for prose, requirements, criteria, and intended behavior changes.
   `add_requirement`, or `retract_requirement`. Use `edit_fact` with `id`, `field`,
   and `value` for an identified entity, requirement, or view fact.
 - Use `update_criterion` for a criterion. It can commit in chat without
-  `begin_goals`. `edit_fact` does not accept criterion IDs.
+  opening a compile batch. `edit_fact` does not accept criterion IDs.
   To change an existing criterion's quote anchor, use `upsert_criterion` with its
   current requirement and statement, then `update_criterion` for wording changes
   in the same `edit_graph` transaction. `update_criterion` cannot re-source an

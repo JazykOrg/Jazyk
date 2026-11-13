@@ -7,4 +7,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/tools/catalog.rs"
 ---
-Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately; wait=true waits in the host and returns the terminal status, or the current status if interrupted (then use wait_run). No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; run_tests imports its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.
+Run one saved project task in a fresh isolated environment. Returns a durable run ID immediately; wait=true waits in the host and returns the terminal status, or the current status if interrupted (then use wait_run). No per-run args, inputs or environment overrides exist. Reuse a suite task for related checks; the verification tools import its independent JUnit case evidence. The command and fixed timeout cannot change mid-run.

@@ -3,6 +3,9 @@ name: reverse-compile
 description: "Draft documentation from observed implementation and surface intent conflicts."
 requiredCapabilities: "decompilation or authorized code inspection and drafting"
 tools:
+  - decompile_tasks
+  - begin_decompile
+  - submit_draft
   - preview_document_set
   - save_document_set
   - create_document_set

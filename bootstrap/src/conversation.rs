@@ -427,7 +427,6 @@ fn open_serving(
         crate::mcp::BridgeFlags {
             ephemeral: true,
             reader,
-            progressive: !reader,
             ..Default::default()
         },
     );

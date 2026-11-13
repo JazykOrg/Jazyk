@@ -615,6 +615,13 @@ The trail is test or site → requirement id → `quote` → section.
 
 ## Referenced assets
 
+A selected text asset can reference further input assets. Include those dependencies
+transitively in the package and byte fingerprint, preserving the originating fact's
+quote reference. Read link metadata from the asset inventory. Do not extract product
+requirements from the supplied asset text. Resolve each dependency through the same
+path safety and Source boundary checks as a direct input. Stop at cycles.
+
+
 An input classified as an asset is an input regardless of extension. A linked PDF
 asset contributes its exact bytes to the referencing entity's `factHash`.
 Classification is described in [parsing](../compiler/parsing.md#asset-classification).

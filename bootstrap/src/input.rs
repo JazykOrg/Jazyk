@@ -128,6 +128,24 @@ pub fn scan_with_decisions(
                     if let Some(decision) = modes.get(&path) {
                         envelope["classification"] = json!(decision);
                     }
+                    if modes.get(&path).is_some_and(|d| d.mode == "asset")
+                        && md::supported_format(&file)
+                        && !matches!(
+                            file.extension()
+                                .and_then(|e| e.to_str())
+                                .unwrap_or("")
+                                .to_ascii_lowercase()
+                                .as_str(),
+                            "pdf" | "docx"
+                        )
+                    {
+                        if let Ok(text) = std::str::from_utf8(&bytes) {
+                            envelope["assetLinks"] = json!(reference_links(&path, text)
+                                .into_iter()
+                                .map(|(href, _)| href)
+                                .collect::<BTreeSet<_>>());
+                        }
+                    }
                     blobs.insert(path.clone(), envelope);
                     Ok((sha, BTreeMap::new()))
                 }
@@ -166,6 +184,41 @@ pub fn scan_with_decisions(
                     json!({"doc":doc,"section":section,"context":body.raw}),
                 );
             }
+        }
+    }
+    let mut pending: std::collections::VecDeque<_> = incoming
+        .iter()
+        .flat_map(|(path, refs)| {
+            refs.iter()
+                .map(move |(key, value)| (path.clone(), key.clone(), value.clone()))
+        })
+        .collect();
+    while let Some((parent, key, reference)) = pending.pop_front() {
+        let Some(envelope) = blobs.get(&parent) else {
+            continue;
+        };
+        let Some(links) = envelope["assetLinks"].as_array() else {
+            continue;
+        };
+        for href in links.iter().filter_map(Value::as_str) {
+            let crate::gen::assets::Target::Local(child) =
+                crate::gen::assets::target_input(&parent, href)
+            else {
+                continue;
+            };
+            if child == parent || !blobs.contains_key(&child) {
+                continue;
+            }
+            let refs = incoming.entry(child.clone()).or_default();
+            if refs.contains_key(&key) {
+                continue;
+            }
+            let mut inherited = reference.clone();
+            let mut via = inherited["via"].as_array().cloned().unwrap_or_default();
+            via.push(json!({"path":parent,"sha256":envelope["sha256"]}));
+            inherited["via"] = json!(via);
+            refs.insert(key.clone(), inherited.clone());
+            pending.push_back((child, key.clone(), inherited));
         }
     }
     for (path, mut envelope) in blobs {
@@ -383,6 +436,85 @@ mod tests {
             },
         );
     }
+    #[test]
+    fn supplied_articles_retain_transitive_image_selection_without_extracting_prose() {
+        let mut files = fixture();
+        let quote = "The site displays the [Web IDE article](docs/web.md).";
+        files.insert(
+            "main.md".into(),
+            format!("# Site\n\n{quote}\n").into_bytes(),
+        );
+        files.insert(
+            "docs/web.md".into(),
+            b"# Web IDE\n\n![GUI](gui.jpg) [More](more.md) [Unsafe](../../outside.png)\n".to_vec(),
+        );
+        files.insert("docs/more.md".into(), b"# More\n\n[Web](web.md)\n".to_vec());
+        files.insert("docs/gui.jpg".into(), vec![255, 216, 255, 0]);
+        let _scope = crate::vfs::Scope::enter(&files);
+        let project = project();
+        let modes = ["docs/web.md", "docs/more.md"]
+            .into_iter()
+            .map(|path| {
+                (
+                    path.into(),
+                    crate::model::InputDecision {
+                        mode: "asset".into(),
+                        sha256: crate::task_runtime::digest(&files[path]),
+                        reason: "Supplied documentation content.".into(),
+                    },
+                )
+            })
+            .collect();
+        let parsed = scan_with_decisions(&project, &modes)
+            .into_iter()
+            .map(|(p, input)| (p, input.unwrap()))
+            .collect();
+        let mut store = Store {
+            out: project.out.clone(),
+            ..Default::default()
+        };
+        store.decisions.inputs = modes;
+        store.sync_docs(&parsed);
+        store.graph.requirements.insert(
+            "req:article".into(),
+            Requirement {
+                statement: "The site displays the supplied article.".into(),
+                source: Some(SourceRef {
+                    doc: "main.md".into(),
+                    section: "/site".into(),
+                    quote: quote.into(),
+                }),
+                ..Default::default()
+            },
+        );
+        let image = &store.docs["docs/gui.jpg"].sections["/"];
+        assert!(referring_documents(image).contains("main.md"));
+        let envelope: Value = serde_json::from_str(&image.raw).unwrap();
+        assert_eq!(envelope["references"][0]["via"][0]["path"], "docs/web.md");
+        assert_eq!(store.docs["docs/web.md"].sections.len(), 1);
+        assert!(!store.quote_locates("docs/web.md", "/", "Web IDE"));
+        assert_eq!(
+            requirement_links(&store, "docs/gui.jpg"),
+            BTreeSet::from(["req:article".into()])
+        );
+        let assets = crate::gen::assets::referenced_assets(&store, "", &["req:article".into()]);
+        assert_eq!(assets.iter().filter(|a| a.path == "docs/web.md").count(), 1);
+        assert!(assets.iter().any(|a| a.status == "blocked"));
+        let before = crate::gen::assets::fingerprint("base", &assets);
+        crate::vfs::write(project.root.join("docs/gui.jpg"), [255, 216, 255, 1]).unwrap();
+        let after = crate::gen::assets::referenced_assets(&store, "", &["req:article".into()]);
+        assert_ne!(before, crate::gen::assets::fingerprint("base", &after));
+        let ops = [Op::SetCoverage {
+            doc: "docs/gui.jpg".into(),
+            section: "/".into(),
+            state: "covered".into(),
+            note: Some("req:article".into()),
+        }];
+        assert!(crate::goals::ReconcileSection
+            .gates(&store, &ops)
+            .is_empty());
+    }
+
     #[test]
     fn whole_files_compile_without_text_decoding_or_quotable_envelopes() {
         let _scope = crate::vfs::Scope::enter(&fixture());

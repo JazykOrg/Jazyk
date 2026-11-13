@@ -315,7 +315,42 @@ fn reclassification_and_quote_retraction_share_one_atomic_changeset() {
             ..Default::default()
         },
     );
+    let source = store.graph.requirements["req:keep"].source.clone().unwrap();
+    store
+        .graph
+        .requirements
+        .get_mut("req:keep")
+        .unwrap()
+        .entities = vec!["ent:site".into()];
+    store.graph.entities.insert(
+        "ent:site".into(),
+        Entity {
+            name: "Site".into(),
+            mentions: vec![source],
+            ..Default::default()
+        },
+    );
+    store.graph.requirements.insert(
+        "req:layout".into(),
+        Requirement {
+            statement: "The site shows the supplied content.".into(),
+            entities: vec!["ent:site".into()],
+            ..Default::default()
+        },
+    );
+    let original = std::fs::read(project.root.join("docs/site.md")).unwrap();
     let mut tools = ToolSession::new(store.clone(), WorkScope::serving("mcp-write"), 64, 24000);
+    let inspection = tools
+        .dispatch("inspect_input", &json!({"path":"docs/site.md"}))
+        .unwrap();
+    assert_eq!(
+        inspection["quoteReferences"]["requirements"],
+        json!(["req:keep"])
+    );
+    assert_eq!(
+        inspection["quoteReferences"]["entityMentions"][0]["requirements"],
+        json!(["req:keep"])
+    );
     let sha =
         crate::task_runtime::digest(&std::fs::read(project.root.join("docs/site.md")).unwrap());
     tools.dispatch("classify_input",&json!({"path":"docs/site.md","mode":"asset","sha256":sha,"reason":"This file is supplied content rather than a specification."})).unwrap();
@@ -330,4 +365,74 @@ fn reclassification_and_quote_retraction_share_one_atomic_changeset() {
     assert!(!store.graph.requirements.contains_key("req:keep"));
     assert_eq!(store.docs["docs/site.md"].sections.len(), 1);
     assert_eq!(store.docs["docs/site.md"].sections["/"].kind, "blob");
+    assert!(store.graph.requirements.contains_key("req:layout"));
+    assert!(store.graph.entities["ent:site"].mentions.is_empty());
+    assert_eq!(
+        std::fs::read(project.root.join("docs/site.md")).unwrap(),
+        original
+    );
+    let mut tools = ToolSession::new(store, WorkScope::serving("mcp-write"), 64, 24000);
+    tools.gen = crate::gen::GenSettings::resolve(&project);
+    tools
+        .dispatch(
+            "link_asset",
+            &json!({"path":"deliverable/docs/site.md","target":"docs/site.md","sha256":sha}),
+        )
+        .unwrap();
+    assert!(crate::vfs::is_symlink(
+        &project.root.join("deliverable/docs/site.md")
+    ));
+    assert_eq!(
+        std::fs::read(project.root.join("deliverable/docs/site.md")).unwrap(),
+        original
+    );
+}
+
+#[test]
+fn input_inspection_identifies_independent_quotes_without_retracting_them() {
+    let (_dir, _project, mut store) = fixture();
+    let source = SourceRef {
+        doc: "docs/site.md".into(),
+        section: "/site".into(),
+        quote: "The site offers the [brochure](brochure.pdf) for download.".into(),
+    };
+    store.graph.entities.insert(
+        "ent:site".into(),
+        Entity {
+            name: "Site".into(),
+            mentions: vec![source.clone()],
+            provenance: Some(Provenance::Quote(source.clone())),
+            attributes: vec![Attribute {
+                name: "brochure".into(),
+                r#type: None,
+                value: None,
+                provenance: Provenance::Quote(source.clone()),
+            }],
+            ..Default::default()
+        },
+    );
+    store.graph.criteria.insert(
+        "crit:download".into(),
+        Criterion {
+            requirement: "req:download".into(),
+            source: Some(source),
+            ..Default::default()
+        },
+    );
+    let mut tools = ToolSession::new(store, WorkScope::serving("mcp-write"), 64, 24000);
+    let result = tools
+        .dispatch("inspect_input", &json!({"path":"docs/site.md"}))
+        .unwrap();
+    let refs = &result["quoteReferences"];
+    assert_eq!(refs["requirements"], json!([]));
+    assert_eq!(refs["entityMentions"][0]["requirements"], json!([]));
+    assert_eq!(
+        refs["entityFacts"],
+        json!([
+            {"entity":"ent:site","field":"provenance"},
+            {"entity":"ent:site","field":"attribute","name":"brochure"}
+        ])
+    );
+    assert_eq!(refs["criteria"], json!(["crit:download"]));
+    assert!(tools.staged.is_empty());
 }

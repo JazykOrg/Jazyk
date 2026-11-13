@@ -708,7 +708,7 @@ impl ToolSession {
         let bytes = crate::vfs::read(project.root.join(&path))
             .map_err(|e| ToolError::new("input-unavailable", e.to_string()))?;
         Ok(
-            json!({"path":path,"sha256":crate::task_runtime::digest(&bytes),"size":bytes.len(),"classification":self.snapshot.decisions.inputs.get(&path)}),
+            json!({"path":path,"sha256":crate::task_runtime::digest(&bytes),"size":bytes.len(),"classification":self.snapshot.decisions.inputs.get(&path),"quoteReferences":self.snapshot.input_quote_references(&path)}),
         )
     }
 }

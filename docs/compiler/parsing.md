@@ -82,6 +82,11 @@ classification changeset. Requirement-derived entity mentions follow the live
 requirements. A retracted or relocated requirement leaves no cached quote that
 blocks classification. The commit applies classification after the fact
 mutations and rejects a change that would strand quoted provenance. Classification never deletes facts implicitly.
+`inspect_input` lists quoted requirements, entity mentions, entity fact fields,
+and criteria that prevent asset classification. Each entity mention lists the
+requirements that supply it. Retracting those requirements in the same
+`edit_graph` transaction removes their cached mentions without changing prose.
+Independent mentions and other quoted facts still need explicit repair.
 Switching back to `document` requires a successful projection through its handler;
 a file without a handler keeps its normal opaque treatment.
 

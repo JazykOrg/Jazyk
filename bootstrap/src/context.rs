@@ -112,7 +112,7 @@ pub(crate) fn fmt_k(n: usize) -> String {
 pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
     let placeholder = matches!(
         id.trim_end_matches("#/ref"),
-        "doc.md" | "ent:..." | "req:..." | "view:..." | "diag:..." | "scope:<scope>"
+        "doc.md" | "ent:..." | "req:..." | "crit:..." | "view:..." | "diag:..." | "scope:<scope>"
     );
     let mut docs: Vec<&String> = store.docs.keys().collect();
     docs.sort();
@@ -297,6 +297,7 @@ impl LoadedSet {
         let stub_of_node = axis.is_empty()
             && (store.graph.entities.contains_key(&target)
                 || store.graph.requirements.contains_key(&target)
+                || store.graph.criteria.contains_key(&target)
                 || store.graph.views.contains_key(&target));
         // An axis handle is open only while its item still carries it: an expansion
         // replaces its handle with the continuation, so a consumed handle is closed
@@ -411,6 +412,10 @@ impl LoadedSet {
         let mut out: Vec<String> = Vec::new();
         if let Some(scope) = crate::board::scope_target(id) {
             return crate::board::scope_root(store, scope);
+        }
+        if let Some(c) = store.graph.criteria.get(id) {
+            out.push(c.requirement.clone());
+            out.extend(c.entities.iter().cloned());
         }
         if let Some(e) = store.graph.entities.get(id) {
             if let Some(p) = &e.parent {
@@ -646,6 +651,14 @@ impl LoadedSet {
                 r.entities.join(", ")
             ));
         }
+        if let Some(c) = store.graph.criteria.get(id) {
+            return Some(format!(
+                "- {}: {} (criterion for {})",
+                id,
+                crate::llm::truncate(&c.statement, 160),
+                c.requirement
+            ));
+        }
         if let Some(v) = store.graph.views.get(id) {
             return Some(format!(
                 "- {} ({}, {}, {} members)",
@@ -744,6 +757,21 @@ impl LoadedSet {
                     crate::llm::truncate(&r.statement, 100),
                     src
                 ),
+            )
+        } else if let Some(c) = store.graph.criteria.get(id) {
+            b.push(&format!("## Criterion {}", id));
+            b.push(&serde_json::to_string_pretty(c).unwrap_or_default());
+            if let Some(line) = self.stub_line(store, &c.requirement) {
+                b.push(&line);
+            }
+            for entity in &c.entities {
+                if let Some(line) = self.stub_line(store, entity) {
+                    b.push(&line);
+                }
+            }
+            (
+                "full".to_string(),
+                format!("criterion for {}", c.requirement),
             )
         } else if let Some(v) = store.graph.views.get(id) {
             let shown = self.render_view(store, id, v, &mut b);
@@ -1654,6 +1682,42 @@ mod tests {
 
     // The handle grammar parses from the right: axis names are a closed set, targets
     // carry colons of their own. Mirrors docs/compiler/context.md#expansion-handles.
+    #[test]
+    fn criterion_load_and_stub_handle_include_evidence_and_requirement() {
+        let mut store = fixture();
+        store.graph.criteria.insert(
+            "crit:footer-3".into(),
+            crate::model::Criterion {
+                requirement: "req:footer".into(),
+                statement: "The footer links to Smotana.".into(),
+                given: Some("A visitor opens the landing page.".into()),
+                then: Some("Smotana navigates to https://smotana.com.".into()),
+                ..Default::default()
+            },
+        );
+        store.graph.requirements.insert(
+            "req:footer".into(),
+            crate::model::Requirement {
+                statement: "The footer shows the project credit.".into(),
+                ..Default::default()
+            },
+        );
+        let mut set = LoadedSet::new(24_000);
+        assert!(set
+            .stub_line(&store, "crit:footer-3")
+            .unwrap()
+            .contains("Smotana"));
+        let text = set.load(&store, "crit:footer-3", 2).unwrap();
+        assert!(text.contains("https://smotana.com"));
+        assert!(text.contains("A visitor opens the landing page."));
+        assert!(set.contains("req:footer"));
+        set.unload("crit:footer-3");
+        assert!(set
+            .expand(&store, "h:crit:footer-3")
+            .unwrap()
+            .contains("Smotana"));
+    }
+
     #[test]
     fn handle_grammar_parses_from_the_right() {
         assert_eq!(

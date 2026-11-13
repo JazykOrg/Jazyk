@@ -281,12 +281,12 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "inspect_input",
-            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size and persisted processing decision. Use before classify_input, including for PDF inputs whose parsing fails.",
+            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size, persisted processing decision, and quoteReferences identifying facts to repair before asset classification. Entity mentions list their supplying requirement IDs. Use before classify_input, including for PDF inputs whose parsing fails.",
             parameters: obj(json!({"path":{"type":"string"}}), &["path"]),
         },
         ToolDef {
             name: "classify_input",
-            description: "Classify a selected input as asset (one whole-file blob, no parsing) or document (normal format handler). In chat, commits immediately without an open batch or compile release; within an open batch, stages under its scope and gates. No user configuration is needed. Supply the exact original-byte SHA-256 and a specific reason. Existing quotes must be relocated or retracted first. Byte and referring-prose changes reopen asset reconciliation; the mode persists.",
+            description: "Classify a selected input as asset (one whole-file blob, no parsing) or document (normal format handler). In chat, commits immediately without an open batch or compile release; within an open batch, stages under its scope and gates. No user configuration is needed. Supply the exact original-byte SHA-256 and a specific reason. Existing quotes must be relocated or retracted first; inspect_input lists them in quoteReferences. Use edit_graph to combine delete_requirement with classification without editing prose. Requirement-derived mentions are pruned automatically. Byte and referring-prose changes reopen asset reconciliation; the mode persists.",
             parameters: obj(json!({"path":{"type":"string"},"mode":{"type":"string","enum":["asset","document"]},"sha256":{"type":"string"},"reason":{"type":"string"}}), &["path","mode","sha256","reason"]),
         },
         ToolDef {

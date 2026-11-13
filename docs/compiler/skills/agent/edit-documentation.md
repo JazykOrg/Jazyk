@@ -21,6 +21,13 @@ Use for prose, requirements, criteria, and intended behavior changes.
   mutations that must commit together or for an edit independent of an open batch.
   Supply derived provenance for model judgment. Use `decision` only to record an
   explicit human choice. Keep follow-up reconciliation pending unless authorized.
+- For asset reclassification, inspect the input's `quoteReferences`. When
+  extracted requirements describe the supplied content rather than this product,
+  delete those requirements with `delete_requirement` and classify the input in
+  one `edit_graph` transaction. This preserves prose and prunes their cached
+  entity mentions. `retract_requirement` removes prose and is unsuitable here.
+  Repair independent quotes explicitly. Do not infer a missing capability merely
+  from an entity's mention list. Keep referring layout requirements as requirements.
 - Do not compile merely to obtain graph IDs. A direct prose edit is valid input;
   the next authorized compile reconciles it.
 - Describe a requested behavior in docs before implementing it. If the behavior

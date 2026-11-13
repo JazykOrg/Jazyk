@@ -1,9 +1,28 @@
 use super::*;
 
 impl ToolSession {
-    pub(super) fn generation_tasks_tool(&mut self, _args: &Value) -> Result<Value, ToolError> {
+    fn task_entity_filter(&self, args: &Value) -> Result<Option<String>, ToolError> {
+        Self::opt_str(args, "entity")
+            .map(|id| {
+                self.canon_entity_id(&id)
+                    .ok_or_else(|| self.unknown_entity_error(&id))
+            })
+            .transpose()
+    }
+
+    pub(super) fn generation_tasks_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
         let gs = self.gen_settings();
-        let tasks = crate::gen::pending(&self.snapshot, &gs);
+        let entity = self.task_entity_filter(args)?;
+        let tasks = crate::gen::pending(&self.snapshot, &gs)
+            .into_iter()
+            .filter(|row| {
+                entity.as_deref().is_none_or(|id| {
+                    row["entity"]
+                        .as_str()
+                        .is_some_and(|owner| self.snapshot.resolve_id(owner) == id)
+                })
+            })
+            .collect::<Vec<_>>();
         if tasks.is_empty() {
             return Ok(
                 json!({"tasks": [], "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-ledger/no-generation-work-is-currently-derived-inspect-0c52f.md"))}),
@@ -112,9 +131,19 @@ impl ToolSession {
         Ok(reply)
     }
 
-    pub(super) fn binding_tasks_tool(&mut self, _args: &Value) -> Result<Value, ToolError> {
+    pub(super) fn binding_tasks_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
         let gs = self.gen_settings();
-        let mut tasks = crate::bind::pending(&self.snapshot, &gs);
+        let entity = self.task_entity_filter(args)?;
+        let mut tasks = crate::bind::pending(&self.snapshot, &gs)
+            .into_iter()
+            .filter(|row| {
+                entity.as_deref().is_none_or(|id| {
+                    row["entity"]
+                        .as_str()
+                        .is_some_and(|owner| self.snapshot.resolve_id(owner) == id)
+                })
+            })
+            .collect::<Vec<_>>();
         if tasks.is_empty() {
             return Ok(
                 json!({"tasks": [], "note": "every requirement is bound; generation_tasks lists what binding left unimplemented"}),
@@ -185,7 +214,7 @@ impl ToolSession {
     pub(super) fn verification_tasks_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
         let gs = self.gen_settings();
         let filter = Self::opt_str(args, "filter");
-        let entity = Self::opt_str(args, "entity");
+        let entity = self.task_entity_filter(args)?;
         let tasks =
             crate::verify::pending(&self.snapshot, &gs, filter.as_deref(), entity.as_deref());
         if tasks.is_empty() {

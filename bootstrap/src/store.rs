@@ -70,6 +70,11 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provenance: Option<Provenance>,
     },
+    RetractEntityMention {
+        id: String,
+        source: SourceRef,
+        reason: String,
+    },
     DeleteEntity {
         id: String,
         reason: String,

@@ -278,6 +278,7 @@ impl ToolSession {
             "upsert_view" | "update_view" | "delete_view" => self.view_tool(name, args),
             "edit_fact" => self.edit_fact(args),
             "inspect_input" => self.inspect_input_tool(args),
+            "retract_entity_mention" => self.retract_entity_mention_tool(args),
             "classify_input" => self.classify_input_tool(args),
             "set_coverage" => self.set_coverage_tool(args),
             "generation_tasks" => self.generation_tasks_tool(args),

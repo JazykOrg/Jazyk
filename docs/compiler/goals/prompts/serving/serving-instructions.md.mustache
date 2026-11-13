@@ -89,6 +89,12 @@ nothing owed
 <!-- ledger-gated -->
 every row is gated on the generate release. If the user explicitly requested this build and release_work is available, call release_work with stage generate, then refresh the tasks and {{{begin}}} claims one. Otherwise `jazyk release generate` or the GUI records the required approval. Honor separate cost and human decision gates.
 
+<!-- ledger-blocked -->
+No matching row is ready. Inspect each row's blockedBy and the compact goals board, resolve the required compile work within the authorized scope, then refresh this task query. A release only opens its stage gate; it does not resolve those prerequisites.
+
+<!-- ledger-verification-status -->
+These are ledger status rows, not ready-goal claims. Inspect status, reason, and repair. Omit filter to inspect pending verification goals and readiness. A failing finding may have no open verify goal until its source or test changes.
+
 <!-- ledger-ready -->
 {{{begin}}} claims one ready row (blockedBy says what a row that is not ready waits for); recording it resolves its goal
 

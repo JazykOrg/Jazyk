@@ -61,6 +61,14 @@ Check the decision before invoking a format handler. An asset has one `blob`
 section at `/`, even when its extension has a handler. Do not extract PDF text,
 subsections, or quotes from an asset. Referring prose states its obligations.
 The existing whole-file coverage and incoming-reference rules apply.
+For UTF-8 text assets with a supported prose format, inventory their local links
+without projecting sections or extracting requirements. Record these links in
+`assetLinks` in the whole-file envelope. A quoted requirement selecting an asset
+also selects its linked input dependencies transitively. Each dependency inherits
+the original referring prose and records the intermediate asset paths and byte
+hashes. Cycles terminate without duplicate references. Unsafe paths remain blocked.
+Changing a linked asset invalidates the selecting generation through its byte hash.
+The asset text and its envelope never become quotable provenance.
 
 Byte changes retain the processing mode and reopen whole-file reconciliation.
 Referring prose changes also reopen it. A model can reconsider the classification

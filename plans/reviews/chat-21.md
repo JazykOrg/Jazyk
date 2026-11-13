@@ -154,3 +154,114 @@ agent-facing identifier grammar to the user.
   need a concrete explanation.
 - Logic tests and rendered-card tests cover the screenshot's failure and skipped
   document read. The original tool receipts remain available for debugging.
+
+## Database continuation
+
+Read-only PostgreSQL inspection finds the same conversation in `record_streams`
+(`chat-updates`, key `chat-21`, stream 5), through update 301. The latest activity
+is 2026-11-13 16:38:33 UTC. No database records or project files were changed.
+The persisted chat outputs retain the same roughly 8 KiB truncation as the export.
+The job completion events provide additional authoritative build outcomes.
+
+### Failed workflow 1685
+
+The job ran from 16:10:45 to 16:17:58 UTC. Its final event is sequence 389,
+`job.finished`, state `failed`. Its compile step stopped before generation:
+
+- One mandatory goal failed: reconciliation of the JPEG at
+  `content/docs/setup/jazyk-web-gui.jpg#/`.
+- The failed justification says the image envelope has no incoming references,
+  and its referring Web IDE article is an asset, so no quoted selection of the
+  JPEG is available. This is a dependency-inventory gap: asset classification
+  hides the article's image links from the scanner.
+- The report records 12 sessions, 19 applied mutations, 1,067,980 tokens,
+  97 percent coverage, 26 open goals, one failed goal, and 95 blocked goals.
+  These are graph mutations and compile progress, not deliverable generation.
+- Stopping the workflow's generation step after incomplete compile preserves
+  the stated lifecycle. The lost nested input reference causes the failure.
+
+Text asset envelopes now inventory their links without projecting article
+sections or extracting article requirements. Incoming prose references propagate
+through asset dependencies. Generation uses the same links transitively under
+its existing safety and Source checks. Cycles terminate. A requirement selecting
+an article can therefore select its supplied JPEG without quoting the article.
+Regression coverage includes a JPEG, cyclic article links, a blocked escaping
+path, coverage against the originating requirement, and byte fingerprint changes.
+
+### Continued agent job 1686
+
+The job ran from 16:26:38 to 16:38:34 UTC and ended `completed`. That describes
+execution of the chat turn, not completion of the user's entire requested build.
+Unlike the first turn, it does create deliverable changes. Updates 243, 252, and
+254-258 save HTML, create the Smotana symlink, and save browser test changes.
+Update 263 accepts a five-file manifest with six tests. Updates 268 and 271
+report six verified Footer checks, 25 passing suite cases, no failures, a
+terminated successful task, and exit code zero. These are persisted tool results,
+not merely the agent's claims. They do not establish the docs deliverable exists.
+
+| Updates | Observed action and assessment |
+| --- | --- |
+| 101 | User explicitly asks for retry and a completed deliverable, including feedback for genuine tool gaps. |
+| 102 | Agent accurately admits the prior attempt did not generate the deliverable. |
+| 103-108 | Reads compile, generate, and verify skills. Appropriate. |
+| 109-114 | Loads integration, set mapping, and files. Useful refresh for the new turn. |
+| 115 | Announces the correct scope: Footer and remaining documentation. |
+| 116-119 | Full goal board and generation tasks. Useful blockers, but still unnecessarily broad. |
+| 120-123 | Reads updated Footer and instructions. Correct before editing. |
+| 124-125 | Releases compilation under explicit user authority. Appropriate. |
+| 126-128 | Releases generation before graph repairs. Later repairs invalidate it, causing extra gate round trips. |
+| 129-134 | Loads Footer, HTML, and logo. Useful evidence. |
+| 135-137 | Reads recovery skill and announces generation package. No implementation yet. |
+| 138-139 | Claims Footer generation. Appropriate ownership package. |
+| 140-145 | Reads styling, Footer suite, and task context. Reuses the existing browser toolchain. |
+| 146-150 | Repeats generation skill and unchanged HTML read. Additional inspection without a changed source. |
+| 151-158 | Reads actual Footer tests and browser suite. Necessary before changing assertions. |
+| 159 | Correctly identifies the stale criterion and supplied assets. |
+| 160-161 | Existing criterion load fails due to the loader defect fixed in this review. |
+| 162-171 | Five later reads are skipped, not separate underlying failures. UI must explain this distinction. |
+| 172-183 | Successfully retries requirement, diagnostic, document, logo, asset, and file reads. Good recovery. |
+| 184 | Resolves colour from existing styling prose and corroborating logo. Good evidence, no arbitrary new choice. |
+| 185-186 | Attempts to re-source a quoted criterion through `update_criterion`; receives a specific refusal. |
+| 187-188 | Correct atomic recovery: re-source with `upsert_criterion`, update its statement, resolve the now-answered colour warning. |
+| 189-190 | Generation begin fails because graph mutation advanced the generation beyond the earlier release. |
+| 191-193 | Correctly reuses the user's existing authorization and releases current generation. |
+| 194-195 | Generation now waits for criteria derivation. This is a prerequisite, not another permission request. |
+| 196-202 | Reads compile skill, tasks, and board. Identifies Footer's actual prerequisite. |
+| 203-205 | Begins the specific criteria batch. Appropriate limited scope. |
+| 206-213 | Reads styling and relevant diagnostic and requirement. Some redundant reads, but evidence is relevant. |
+| 214-215 | Creates a colour criterion anchored to the existing styling value. |
+| 216-217 | Commits criteria. The remaining failed JPEG goal still makes compilation incomplete. Independent Footer generation can proceed. |
+| 218-224 | Refreshes tasks, rereads skill, and releases the current generation again. Correct release authority, avoidable repeated skill load. |
+| 225-226 | Claims the current Footer package successfully. |
+| 227-241 | Announces implementation, rereads skill, HTML, tests, and inventory again. Work remains correct but inefficient. |
+| 242-243 | Saves Footer HTML with center branding and updated attribution. First actual deliverable write in this conversation. |
+| 244-249 | Inspects supplied asset and logo files. Reuses existing artwork. |
+| 250-252 | Creates the supplied Smotana symlink in the deliverable. Concrete authorized progress. |
+| 253-254 | Repairs stale attribution text assertion and retains navigation assertions while adding icon checks. Consistent with the changed prose. |
+| 255-258 | Adds center checks and extends JUnit reporting. Uses existing test runner rather than inventing another runtime. |
+| 259-263 | Reads verification skill and records five files and six tests. Manifest accepted. |
+| 264-268 | Reads execution skill and runs the Footer requirements through the existing browser suite. Six selected checks pass; suite reports 25 passes. |
+| 269-271 | Confirms task termination and exit code zero. Good distinction between passed checks and a finished run. |
+| 272-274 | Reads recovery skill again and resumes the outstanding docs scope. Correctly preserves completed Footer work. |
+| 275-276 | No diagnostic is returned for the introduction subject. This does not prove the input needs no reconciliation. |
+| 277-280 | Guesses pending alignment targets; first is absent and second is skipped. Use the actual board rather than assuming alignment proposals exist. |
+| 281-284 | Refreshes the two remaining article inputs. Appropriate after intervening build activity. |
+| 285-286 | Repeats the guessed Markdown `/` section error seen in the original turn. Fixed inspection guidance covers it. |
+| 287-293 | Reads article text and searches graph references. Appropriate recovery, though repeated work remains costly. |
+| 294-299 | Reads three entities. Still does not attempt graph-only requirement deletion and asset classification. |
+| 300 | Accurately reports Footer verification, but repeats the unproven missing entity-mention capability claim and stops with docs unfinished. |
+| 301 | Chat turn ends normally. Job completion does not mean the complete requested build succeeded. |
+
+### Additional improvements
+
+- Explain three distinct outcomes: a compile prerequisite failed, a tool call was
+  rejected and needs agent recovery, or a concrete user decision is required.
+- Prefer actual board prerequisites over invented alignment targets. Use returned
+  section IDs instead of assuming every Markdown document has `/`.
+- Repair graph facts before releasing generation and claiming current packages.
+- Re-source quoted criteria with the supported atomic two-operation path.
+- After scoped verification succeeds, preserve it and continue independent work.
+- Do not describe a completed chat job as a completed product build. In this
+  continuation the Footer is implemented and verified, while documentation remains
+  incomplete. The earlier blanket impression that nothing is ever generated is
+  no longer accurate for job 1686.

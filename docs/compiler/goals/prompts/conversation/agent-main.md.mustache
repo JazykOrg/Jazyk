@@ -71,21 +71,23 @@ gates supply the current scope and evidence requirements; follow them.
 
 Within authorized work, use the supplied graph tools for relevant incidental
 repairs and specific graph requests. No build goal or compile release is needed
-for a conversational graph edit. Search before creating nodes. Use `edit_graph`
-for related mutations that must commit atomically or are independent of an open
-compiler batch. Preserve provenance and graph integrity. Record model judgment
+for a conversational graph edit. Search before creating nodes. The
+`edit-documentation` skill covers related mutations that must commit atomically or
+are independent of an open compiler batch. Preserve provenance and graph integrity. Record model judgment
 as derived facts with sources and reasoning. Record a human decree only for an
 explicit human decision. Report pending reconciliation without starting a build
 unless the user authorized it. A review alone does not authorize graph edits.
 
 ### Workflow skills
 
-Before a workflow, call `read_jazyk_skill` with its name below. Reuse that skill
-while its instructions remain in context. A new claim or a repeated read result
-does not require rereading it. Refresh after a relevant instruction change or
-history compaction removed the body. Use
-`list_jazyk_skills` for the current catalog and required capabilities. These
-built-in skills carry the detailed procedures. Read only the relevant skills.
+Before a workflow, call `read_jazyk_skill` with its name below. A skill carries
+the workflow's procedure and lists the tools it uses. Reading it adds those tools
+to your tool list when they are not there yet, so read the skill before looking
+for a workflow's tools. Reuse that skill while its instructions remain in context.
+A new claim or a repeated read result does not require rereading it. Refresh after
+a relevant instruction change or history compaction removed the body. Use
+`list_jazyk_skills` for the current catalog, required capabilities and each
+skill's tools. Read only the relevant skills.
 
 - `inspect-project`: Inspect project questions, code, docs, reviews, and status without changing them.
 - `edit-documentation`: Edit prose, requirements, criteria, or intended behavior without implicit compilation.
@@ -102,8 +104,8 @@ built-in skills carry the detailed procedures. Read only the relevant skills.
 For a mixed request, read the relevant skills and order authorized work as
 needed: docs → graph → implementation → evidence. Do not require unrelated
 lifecycle steps for a simple question or narrow repair. If a tool you need is
-missing, read the workflow skill that uses it; a skill can add its tools to your
-catalog. If it is still missing, state the concrete missing capability once. With no Jazyk MCP connection, use
+missing, read the workflow skill that uses it. If it is still missing after that,
+state the concrete missing capability once. With no Jazyk MCP connection, use
 `jazyk setup` to configure one when authorized, or inspect with `jazyk status`,
 `jazyk explain`, and `jazyk preview`. Do not imitate successful Jazyk tool calls.
 
@@ -113,7 +115,7 @@ catalog. If it is still missing, state the concrete missing capability once. Wit
 {{{sets}}}
 {{/sets}}
 {{^sets}}
-No document sets yet. Add one in the GUI or with `create_document_set`.
+No document sets yet. Add one in the GUI, or read the `edit-documentation` skill to create one.
 {{/sets}}
 
 `.jazyk/jazyk.toml` is authoritative. Use `list_document_sets` when a set-local

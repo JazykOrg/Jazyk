@@ -49,7 +49,7 @@ impl McpServer {
         if method != "tools/call" || !params["name"].is_string() {
             return reply;
         }
-        match reply {
+        let reply = match reply {
             Err((code, message))
                 if code != -32601
                     && !message.starts_with(UNKNOWN_TOOL)
@@ -63,7 +63,62 @@ impl McpServer {
                 ))
             }
             other => other,
+        };
+        // The skill tools name every skill's tools by design: no hint there.
+        if crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
+            return reply;
         }
+        reply.map(|value| self.hint_locked_tools(value))
+    }
+
+    // A result that names tools a skill-gated catalog does not list yet carries
+    // `lockedTools`: each such tool with the skills that list it.
+    // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+    fn hint_locked_tools(&self, mut value: Value) -> Value {
+        if !self.skill_gated() {
+            return value;
+        }
+        let Some(listed) = self.listed_tools() else {
+            return value;
+        };
+        let Some(text) = value["content"][0]["text"].as_str() else {
+            return value;
+        };
+        let mut locked: BTreeMap<String, Vec<&'static str>> = BTreeMap::new();
+        for skill in crate::agent_workflows::SKILLS {
+            for tool in crate::agent_workflows::skill_tools(skill.name).unwrap_or_default() {
+                if !listed.contains(&tool) && mentions(text, &tool) {
+                    locked.entry(tool).or_default().push(skill.name);
+                }
+            }
+        }
+        if !locked.is_empty() {
+            let served = self.served_tools();
+            locked.retain(|tool, _| served.contains(tool));
+        }
+        if locked.is_empty() {
+            return value;
+        }
+        let note = include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/mcp-router/locked-tools-read-their-skill-3b9e1.md"
+        ));
+        let text = match serde_json::from_str::<Value>(text) {
+            Ok(Value::Object(mut object)) => {
+                object.insert("lockedTools".into(), json!(locked));
+                object.insert("lockedToolsNote".into(), json!(note));
+                serde_json::to_string_pretty(&object).unwrap_or_default()
+            }
+            _ => format!(
+                "{text}\n\n{}",
+                serde_json::to_string_pretty(
+                    &json!({"lockedTools": locked, "lockedToolsNote": note})
+                )
+                .unwrap_or_default()
+            ),
+        };
+        value["content"][0]["text"] = json!(text);
+        value
     }
 
     fn route(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
@@ -84,9 +139,23 @@ impl McpServer {
                 let name = params["arguments"]["name"]
                     .as_str()
                     .ok_or((-32602, "name is required".into()))?;
-                let value = crate::agent_workflows::read(name).map_err(|e| (-32602, e))?;
+                let mut value = crate::agent_workflows::read(name).map_err(|e| (-32602, e))?;
                 if self.skill_gated() {
+                    let before = self.listed_tools().unwrap_or_default();
                     self.activate_skill(name);
+                    let served = self.served_tools();
+                    let unlocked: Vec<String> = crate::agent_workflows::skill_tools(name)
+                        .unwrap_or_default()
+                        .into_iter()
+                        .filter(|t| !before.contains(t) && served.contains(t))
+                        .collect();
+                    if !unlocked.is_empty() {
+                        value["unlocked"] = json!(unlocked);
+                        value["unlockedNote"] = json!(include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/mcp-router/skill-tools-unlocked-8c27f.md"
+                        )));
+                    }
                 }
                 value
             };
@@ -610,4 +679,20 @@ fn page_document(value: &mut Value, args: &Value) {
         value["truncated"] = json!(true);
         value["nextLine"] = json!(start + taken + 1);
     }
+}
+
+// Whether `text` names `tool`: as a whole word, and for a one-word name such as
+// `goals` or `done` only as code (in backticks or before a call's parenthesis), so
+// ordinary English does not count.
+pub(crate) fn mentions(text: &str, tool: &str) -> bool {
+    text.match_indices(tool).any(|(at, _)| {
+        let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        let before = text[..at].chars().next_back();
+        let after = text[at + tool.len()..].chars().next();
+        !before.is_some_and(word)
+            && !after.is_some_and(word)
+            && (tool.contains('_')
+                || (before == Some('`') && after == Some('`'))
+                || after == Some('('))
+    })
 }

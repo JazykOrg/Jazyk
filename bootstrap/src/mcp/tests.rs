@@ -39,7 +39,11 @@ fn chat_server(dir: &std::path::Path) -> McpServer {
         out,
         vec!["chat".to_string()],
         false,
-        BridgeFlags::default(),
+        // These tests exercise the whole chat catalog, not skill gating.
+        BridgeFlags {
+            all_tools: true,
+            ..Default::default()
+        },
     )
 }
 

@@ -81,6 +81,7 @@ pub struct Options {
     pub build_token: Option<String>,
     pub cancel_file: Option<String>,
     pub serve_files: bool,
+    pub all_tools: bool,
     pub edit_sink: Option<String>,
     pub packaged: bool,
     // `jazyk benchmark --project <dir> --goal <id>`: one goal's session from a copy

@@ -30,7 +30,7 @@ Inspection and workflow skill tools need no graph.
 This serving runs in a browser tab without a shell. Binding, generation, and verification are not served here.
 
 <!-- writer-build-note -->
-Use compile_document_sets to compile named set IDs, or omit setIds to compile all dirty sets.
+The compile skill compiles named document sets, or every dirty set.
 
 <!-- graph-write -->
 Write tools are enabled for manual graph surgery; each call commits as its own changeset.
@@ -39,14 +39,23 @@ Write tools are enabled for manual graph surgery; each call commits as its own c
 Read list_jazyk_skills and read_jazyk_skill for the requested workflow.
 
 Writable chat can mutate the authored graph without a build goal or release.
-Single graph calls commit outside a batch and stage within one. Use edit_graph
-for an atomic group or a user request independent of an open batch. Compiler
-workers remain scoped to their goals. Graph edits leave follow-up goals pending
+Single graph calls commit outside a batch and stage within one. The
+edit-documentation skill covers atomic groups of graph edits and edits independent
+of an open batch. Compiler workers remain scoped to their goals. Graph edits leave follow-up goals pending
 and never start a build by themselves.
 
 Active begin_* packages and tool gates supply specific scope, instructions, and evidence.
 
 Use report_feedback for wrong or confusing Jazyk instructions or tools.
+
+<!-- skill-gated -->
+<!-- Selected for a skill-gated catalog (docs/frontends/agent-workflows.md#skill-gated-tools). -->
+Your tool list starts with the core tools: reading the graph, project files and
+documents, editing files and documents, and the workflow skills. Each workflow skill
+lists the tools its procedure uses, and reading it with read_jazyk_skill adds them to
+your tool list. To compile, generate, bind, verify, run a task, or edit the graph,
+read the matching skill first. A result that names a tool you do not have yet says
+which skill adds it.
 
 <!-- reader -->
 This serving can only read the project. No tool here changes documents or the graph. Binding, generation, verification, shell execution, and publication are unavailable.

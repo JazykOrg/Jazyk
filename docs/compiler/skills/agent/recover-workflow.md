@@ -4,20 +4,24 @@ description: "Diagnose failed tools, conflicts, interrupted work, or missing pre
 requiredCapabilities: "relevant inspection and repair tools"
 tools:
   - goals
+  - begin_goals
+  - done
   - abandon_goals
+  - mark_goal_done
   - mark_goal_failed
+  - load_skill
+  - report_spend
   - release_work
   - await_changes
-  - answer_diagnostic
   - task_context
   - update_tasks
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
   - preview_document_set
   - save_document_set
   - create_document_set

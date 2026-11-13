@@ -39,6 +39,7 @@ tools:
   - update_view
   - delete_view
   - edit_graph
+  - edit_fact
 ---
 # Compile documentation
 

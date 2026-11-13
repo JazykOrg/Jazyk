@@ -196,12 +196,13 @@ fn unknown_section(store: &Store, doc: &str, section: &str) -> String {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    let target = format!("{doc}#{section}");
     format!(
         include_str!(concat!(
             env!("OUT_DIR"),
             "/payloads/goals/prompts/inline/context/missing-section.md"
         )),
-        format!("{doc}#{section}"),
+        target,
         available.join(", ")
     )
 }

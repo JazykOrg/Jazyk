@@ -141,11 +141,10 @@ pub struct BridgeFlags {
     // instruction block, so the prompt fits a small window
     // (docs/frontends/wasm.md#chat).
     pub reader: bool,
-    // List a core catalog and add a workflow's tools when its skill is read, for
-    // an agent without tools of its own (the hosted and browser conversation).
-    // A serve_files chat serving does the same. Mirrors
+    // List every served tool from the start instead of a skill-gated catalog,
+    // for a client that does not refresh on tools/list_changed. Mirrors
     // docs/frontends/agent-workflows.md#skill-gated-tools.
-    pub progressive: bool,
+    pub all_tools: bool,
 }
 
 // The browser backend refuses the benchmark, so it never reads a case's fields.

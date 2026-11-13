@@ -1,5 +1,10 @@
 use super::*;
 
+thread_local! {
+    // Set while served_tools lists the serving's whole catalog.
+    static UNGATED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 impl McpServer {
     pub(super) fn conversational_graph_writer(&self) -> bool {
         !self.bridge.reader
@@ -60,10 +65,42 @@ impl McpServer {
         active
     }
 
+    // Every tool this serving serves, listed with gating bypassed on this thread.
+    // Hints and unlock replies name only these: a browser tab serves no ledger or
+    // task tools although skills list them.
+    pub(crate) fn served_tools(&self) -> BTreeSet<String> {
+        UNGATED.with(|flag| flag.set(true));
+        let listed = self.handle("tools/list", &json!({}));
+        UNGATED.with(|flag| flag.set(false));
+        listed
+            .ok()
+            .and_then(|v| v["tools"].as_array().cloned())
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t["name"].as_str().map(str::to_owned))
+            .collect()
+    }
+
     // Whether this serving lists a skill-gated catalog.
     // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
     pub(crate) fn skill_gated(&self) -> bool {
-        self.conversational_graph_writer() && (self.bridge.serve_files || self.bridge.progressive)
+        self.conversational_graph_writer() && !self.bridge.all_tools
+    }
+
+    // The tools a skill-gated catalog lists now without an open batch: the core and
+    // the read skills' tools. None when an open batch scopes the catalog instead.
+    pub(crate) fn listed_tools(&self) -> Option<BTreeSet<String>> {
+        if self.active_tools().is_some() {
+            return None;
+        }
+        let mut listed: BTreeSet<String> = crate::agent_workflows::CORE_TOOLS
+            .iter()
+            .map(|t| t.to_string())
+            .collect();
+        for skill in self.skills.lock().unwrap().iter() {
+            listed.extend(crate::agent_workflows::skill_tools(skill).unwrap_or_default());
+        }
+        Some(listed)
     }
 
     // Record a read workflow skill; its tools join a skill-gated catalog.
@@ -75,7 +112,7 @@ impl McpServer {
 
     pub(super) fn scope_catalog(&self, tools: &mut Vec<Value>) {
         let active = self.active_tools();
-        if active.is_none() && self.skill_gated() {
+        if active.is_none() && self.skill_gated() && !UNGATED.with(|flag| flag.get()) {
             let skills = self.skills.lock().unwrap().clone();
             let listed: BTreeSet<String> = skills
                 .iter()
@@ -100,11 +137,15 @@ impl McpServer {
                 if crate::tools::GRAPH_WRITE_TOOLS
                     .contains(&tool["name"].as_str().unwrap_or_default())
                 {
+                    // The catalog is scoped once locally and once by the router:
+                    // append the chat note once.
                     let description = tool["description"].as_str().unwrap_or_default();
-                    tool["description"] = json!(format!(
-                        "{description} {}",
-                        crate::tools::CHAT_GRAPH_DESCRIPTION
-                    ));
+                    if !description.contains(crate::tools::CHAT_GRAPH_DESCRIPTION) {
+                        tool["description"] = json!(format!(
+                            "{description} {}",
+                            crate::tools::CHAT_GRAPH_DESCRIPTION
+                        ));
+                    }
                 }
             }
         }

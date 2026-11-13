@@ -1030,8 +1030,8 @@ serving carries the read tools, `report_feedback`, `report_spend`, `await_change
   Authored graph write tools commit directly outside a batch. `edit_graph` groups
   related mutations into one independent atomic changeset. Prose edits use the dual
   write path. Deliverable writes use the binding and generation ownership gates.
-  For Jazyk's own agents the chat serving lists a core catalog and adds a
-  workflow's tools when its skill is read
+  The chat serving lists a core catalog and adds a workflow's tools when its skill
+  is read; `--all-tools` lists everything
   ([skill-gated tools](../frontends/agent-workflows.md#skill-gated-tools)).
 
 Tool input and output shapes are specified in [`tools.schema.yaml`](./tools.schema.yaml).

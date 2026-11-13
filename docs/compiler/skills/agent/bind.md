@@ -6,17 +6,20 @@ tools:
   - binding_tasks
   - begin_binding
   - record_binding
+  - verification_tasks
+  - begin_verification
   - run_tests
+  - record_verdict
   - release_work
   - task_context
   - update_tasks
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
   - preview_document_set
   - save_document_set
   - create_document_set

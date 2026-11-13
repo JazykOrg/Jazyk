@@ -10,7 +10,10 @@ tools:
   - binding_tasks
   - begin_binding
   - record_binding
+  - verification_tasks
+  - begin_verification
   - run_tests
+  - record_verdict
   - link_asset
   - inspect_asset_link
   - remove_asset_link
@@ -19,10 +22,10 @@ tools:
   - run_task
   - inspect_run
   - wait_run
+  - cancel_run
   - read_run_log
   - search_run_log
   - read_run_changes
-  - cancel_run
   - preview_document_set
   - save_document_set
   - create_document_set

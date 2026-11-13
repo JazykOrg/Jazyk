@@ -122,6 +122,7 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
         true,
         BridgeFlags {
             ephemeral: true,
+            all_tools: true,
             ..Default::default()
         },
     );
@@ -175,10 +176,12 @@ fn the_agents_md_section_names_only_served_tools() {
         .filter(|t| t.contains('_') && t.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
         .collect();
     assert!(named.len() >= 4, "{named:?}");
+    // The policy names only core tools: a skill-gated catalog lists them before
+    // any skill is read (docs/frontends/agent-workflows.md#skill-gated-tools).
     for name in named {
         assert!(
-            names.iter().any(|n| n == name),
-            "`{name}` is not served: {names:?}"
+            names.iter().any(|n| n == name) && crate::agent_workflows::CORE_TOOLS.contains(&name),
+            "`{name}` is not a served core tool: {names:?}"
         );
     }
     let init = server.handle("initialize", &json!({})).unwrap();
@@ -715,15 +718,36 @@ fn chat_serving(dir: &std::path::Path, flags: BridgeFlags) -> McpServer {
 fn skill_gated_chat_catalog_grows_by_read_skills() {
     let dir = bare_dir("skill-gated-catalog");
     crate::vfs::write(dir.join("docs/a.md"), "# A\n\nText.\n").unwrap();
-    let full = tool_names(&chat_serving(&dir, BridgeFlags::default()));
+    let full = tool_names(&chat_serving(
+        &dir,
+        BridgeFlags {
+            all_tools: true,
+            ..Default::default()
+        },
+    ));
     let gated = chat_serving(
         &dir,
         BridgeFlags {
             ephemeral: true,
-            progressive: true,
             ..Default::default()
         },
     );
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .files_project();
+    // What `jazyk setup` installs: `mcp all`.
+    let every = tool_names(&McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        ["compile", "generate", "verify", "decompile", "chat"]
+            .map(String::from)
+            .to_vec(),
+        false,
+        BridgeFlags {
+            all_tools: true,
+            ..Default::default()
+        },
+    ));
     let core = tool_names(&gated);
     assert!(
         core.len() < full.len() / 2,
@@ -748,14 +772,14 @@ fn skill_gated_chat_catalog_grows_by_read_skills() {
         let tools = crate::agent_workflows::skill_tools(skill.name).unwrap();
         for tool in &tools {
             assert!(
-                full.contains(tool),
+                every.contains(tool),
                 "{} lists unknown tool {tool}",
                 skill.name
             );
         }
         reachable.extend(tools);
     }
-    for name in &full {
+    for name in &every {
         assert!(reachable.contains(name), "{name} is in no skill");
     }
     // Reading a skill lists its tools from the next listing on.
@@ -784,11 +808,112 @@ fn skill_gated_chat_catalog_grows_by_read_skills() {
         &dir,
         BridgeFlags {
             ephemeral: true,
-            progressive: true,
             ..Default::default()
         },
     );
     restored.restore(saved).unwrap();
     assert!(tool_names(&restored).iter().any(|n| n == "run_task"));
     crate::vfs::remove_dir_all(dir).ok();
+}
+
+// What an agent reads before it reads a skill names only tools it can see: the
+// policy, the serving instructions, the core tool descriptions and the skill
+// catalog name core tools, and a skill body names core tools and its own.
+// A locked workflow is reached through its skill.
+// Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+#[test]
+fn gated_texts_name_only_visible_tools() {
+    let dir = bare_dir("gated-texts");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nText.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .files_project();
+    let serving = |all_tools| {
+        McpServer::with_bridge(
+            project.clone(),
+            project.out.clone(),
+            ["compile", "generate", "verify", "decompile", "chat"]
+                .map(String::from)
+                .to_vec(),
+            false,
+            BridgeFlags {
+                all_tools,
+                ..Default::default()
+            },
+        )
+    };
+    let full = tool_names(&serving(true));
+    let gated = serving(false);
+    let named = |text: &str| -> BTreeSet<String> {
+        full.iter()
+            .filter(|tool| super::super::router::mentions(text, tool))
+            .cloned()
+            .collect()
+    };
+    let core: BTreeSet<String> = crate::agent_workflows::CORE_TOOLS
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    let mut problems = Vec::new();
+    let mut check = |what: &str, text: &str, allowed: &BTreeSet<String>| {
+        for tool in named(text).difference(allowed) {
+            problems.push(format!("{what} names locked `{tool}`"));
+        }
+    };
+    let init = gated
+        .handle("initialize", &json!({"clientInfo":{"name":"test"}}))
+        .unwrap();
+    check(
+        "initialize instructions",
+        init["instructions"].as_str().unwrap(),
+        &core,
+    );
+    let listed = gated.handle("tools/list", &json!({})).unwrap();
+    for tool in listed["tools"].as_array().unwrap() {
+        let mut text = tool["description"].as_str().unwrap_or_default().to_string();
+        text.push_str(&tool["inputSchema"].to_string());
+        check(&format!("{} description", tool["name"]), &text, &core);
+    }
+    let catalog = crate::agent_workflows::catalog().unwrap();
+    check(
+        "skill catalog note",
+        catalog["note"].as_str().unwrap(),
+        &core,
+    );
+    for skill in catalog["skills"].as_array().unwrap() {
+        check(
+            &format!("{} skill description", skill["name"]),
+            skill["description"].as_str().unwrap(),
+            &core,
+        );
+    }
+    for skill in crate::agent_workflows::SKILLS {
+        let mut allowed = core.clone();
+        allowed.extend(crate::agent_workflows::skill_tools(skill.name).unwrap());
+        // After reading only this skill, every listed description names listed tools.
+        let one = serving(false);
+        one.handle(
+            "tools/call",
+            &json!({"name":"read_jazyk_skill","arguments":{"name":skill.name}}),
+        )
+        .unwrap();
+        for tool in one.handle("tools/list", &json!({})).unwrap()["tools"]
+            .as_array()
+            .unwrap()
+        {
+            let mut text = tool["description"].as_str().unwrap_or_default().to_string();
+            text.push_str(&tool["inputSchema"].to_string());
+            check(
+                &format!("after {}, {} description", skill.name, tool["name"]),
+                &text,
+                &allowed,
+            );
+        }
+        let body = crate::agent_workflows::read(skill.name).unwrap()["body"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        check(&format!("{} skill body", skill.name), &body, &allowed);
+    }
+    assert!(problems.is_empty(), "{}", problems.join("\n"));
 }

@@ -97,6 +97,23 @@ pub struct LoadedSet {
     prev_docs: Option<BTreeMap<String, BTreeMap<String, String>>>,
 }
 
+// Source bodies are a derived read cache. A per-call serving keeps its working
+// set, but the next snapshot must read source history afresh.
+impl Clone for LoadedSet {
+    fn clone(&self) -> Self {
+        Self {
+            items: self.items.clone(),
+            budget: self.budget,
+            high_water: self.high_water,
+            last_referenced: self.last_referenced.clone(),
+            round: self.round,
+            initial_pack: self.initial_pack.clone(),
+            deferred: self.deferred.clone(),
+            prev_docs: None,
+        }
+    }
+}
+
 pub(crate) fn fmt_k(n: usize) -> String {
     if n >= 1000 {
         format!("{:.1}k", n as f64 / 1000.0)
@@ -110,6 +127,29 @@ pub(crate) fn fmt_k(n: usize) -> String {
 // loaded `doc.md` verbatim, and the documents the project holds are listed so the
 // next call can name one (docs/compiler/context.md#the-loaded-set).
 pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
+    if let Some(doc) = id
+        .strip_prefix("alignment:")
+        .filter(|doc| store.docs.contains_key(*doc))
+    {
+        let pending = store
+            .status
+            .alignment
+            .iter()
+            .map(|block| block.doc.as_str())
+            .collect::<Vec<_>>();
+        return format!(
+            include_str!(concat!(
+                env!("OUT_DIR"),
+                "/payloads/goals/prompts/inline/context/no-pending-alignment.md"
+            )),
+            doc,
+            if pending.is_empty() {
+                "(none)".to_string()
+            } else {
+                pending.join(", ")
+            }
+        );
+    }
     let placeholder = matches!(
         id.trim_end_matches("#/ref"),
         "doc.md" | "ent:..." | "req:..." | "crit:..." | "view:..." | "diag:..." | "scope:<scope>"
@@ -140,6 +180,29 @@ pub(crate) fn unknown_target(store: &Store, id: &str) -> String {
             ""
         },
         listing
+    )
+}
+
+fn unknown_section(store: &Store, doc: &str, section: &str) -> String {
+    let available = store
+        .docs
+        .get(doc)
+        .map(|record| {
+            record
+                .sections
+                .keys()
+                .take(12)
+                .map(|section| format!("{doc}#{section}"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    format!(
+        include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/context/missing-section.md"
+        )),
+        format!("{doc}#{section}"),
+        available.join(", ")
     )
 }
 
@@ -807,6 +870,7 @@ impl LoadedSet {
                     d.sections
                         .iter()
                         .find(|(_, s)| s.kind == "root")
+                        .or_else(|| d.sections.get_key_value("/"))
                         .map(|(r, _)| r.clone())
                 })
                 .ok_or_else(|| format!("document {} has no root section", id))?;
@@ -1210,7 +1274,7 @@ impl LoadedSet {
         let s = rec
             .sections
             .get(sec)
-            .ok_or_else(|| format!("unknown section {}#{}", doc, sec))?;
+            .ok_or_else(|| unknown_section(store, doc, sec))?;
         let target = format!("{}#{}", doc, sec);
         b.push(&format!("## Section {} ({})", target, s.title));
         let cov = rec
@@ -1716,6 +1780,50 @@ mod tests {
             .expand(&store, "h:crit:footer-3")
             .unwrap()
             .contains("Smotana"));
+    }
+
+    #[test]
+    fn document_loading_and_errors_offer_real_sections_and_alignment_state() {
+        let mut store = fixture();
+        store.docs.insert(
+            "guide.md".into(),
+            crate::model::DocRecord {
+                sections: crate::md::parse_sections(
+                    "# Intro\n\nRead this article.\n\n## Setup\n\nInstall it.\n",
+                ),
+                ..Default::default()
+            },
+        );
+        let mut set = LoadedSet::new(24_000);
+        let error = set.load(&store, "guide.md#/", 1).unwrap_err();
+        assert!(error.contains("guide.md#/intro"));
+        assert!(error.contains("guide.md#/intro/setup"));
+        assert!(set
+            .load(&store, "guide.md", 1)
+            .unwrap()
+            .contains("Read this article."));
+        let error = set.load(&store, "alignment:guide.md", 1).unwrap_err();
+        assert!(error.contains("exists but has no pending alignment proposals"));
+        store.docs.insert(
+            "plain.md".into(),
+            crate::model::DocRecord {
+                sections: crate::md::parse_sections("Prose without a heading."),
+                ..Default::default()
+            },
+        );
+        assert!(set
+            .load(&store, "plain.md", 1)
+            .unwrap()
+            .contains("Prose without a heading."));
+        store
+            .docs
+            .get_mut("plain.md")
+            .unwrap()
+            .sections
+            .get_mut("/")
+            .unwrap()
+            .kind = "blob".into();
+        assert!(set.load(&store, "plain.md", 1).is_ok());
     }
 
     #[test]

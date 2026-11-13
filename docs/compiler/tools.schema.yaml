@@ -533,6 +533,19 @@ definitions:
         items:
           $ref: '#/definitions/attributeInput'
     additionalProperties: false
+  retractEntityMention:
+    description: Retract one independent exact graph mention without changing prose
+    type: object
+    required: [id, source, reason]
+    properties:
+      id:
+        type: string
+      source:
+        $ref: 'graph.json#/definitions/sourceRef'
+      reason:
+        type: string
+        minLength: 1
+    additionalProperties: false
   deleteEntity:
     description: >-
       Request payload of delete_entity. Rejected while any requirement references the
@@ -1872,7 +1885,9 @@ definitions:
   generationTasksRequest:
     description: Request payload of generation_tasks
     type: object
-    properties: {}
+    properties:
+      entity:
+        type: string
     additionalProperties: false
   generationTasksResponse:
     description: Response of generation_tasks
@@ -1991,7 +2006,9 @@ definitions:
   bindingTasksRequest:
     description: Request payload of binding_tasks
     type: object
-    properties: {}
+    properties:
+      entity:
+        type: string
     additionalProperties: false
   bindingTasksResponse:
     description: Response of binding_tasks

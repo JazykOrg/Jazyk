@@ -15,6 +15,11 @@ Use for failed tools, conflicts, interrupted work, and blocked synchronization.
   an existing recoverable run instead of repeating uncertain external actions.
 - If requirements are ambiguous, surface a diagnostic or ask for the concrete
   missing decision. Do not settle a product choice silently in code.
+- Before declaring a missing capability, inspect the current tool catalog and
+  the actual rejected operation. Check supported equivalent tools and atomic
+  transactions. A reference list alone does not prove a capability is missing.
+  Feedback describes observed errors and attempted repairs, not an untested
+  assumption. If one part is blocked, continue independent authorized work.
 - A missing capability, credential, release, or approval is a blocker. Name it
   once and stop dependent actions. Do not try unrelated lifecycles to evade it.
 - Use `report_feedback` for wrong or confusing Jazyk instructions, tools, or

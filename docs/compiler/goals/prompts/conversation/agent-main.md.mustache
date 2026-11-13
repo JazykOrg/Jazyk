@@ -80,7 +80,10 @@ unless the user authorized it. A review alone does not authorize graph edits.
 
 ### Workflow skills
 
-Before a workflow, call `read_jazyk_skill` with its name below. Use
+Before a workflow, call `read_jazyk_skill` with its name below. Reuse that skill
+while its instructions remain in context. A new claim or a repeated read result
+does not require rereading it. Refresh after a relevant instruction change or
+history compaction removed the body. Use
 `list_jazyk_skills` for the current catalog and required capabilities. These
 built-in skills carry the detailed procedures. Read only the relevant skills.
 

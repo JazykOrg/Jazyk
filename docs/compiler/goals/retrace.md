@@ -222,7 +222,8 @@ The `retrace` toolset ([toolsets](../tools.md#toolsets)):
 - The [view tools](../tools.md#view-tools): `upsert_view`, `update_view` (`members`,
   `add_members`, `remove_members`, `exclude`, `collapse`), `delete_view({id, reason})`.
 - Entity tools: `upsert_entity`, `update_entity` (an attribute removed or re-anchored,
-  a `parent` corrected), `delete_entity({id, reason})`, `merge_entities`.
+  a `parent` corrected), `retract_entity_mention` (an independent stale quote),
+  `delete_entity({id, reason})`, `merge_entities`.
 - Requirement tools: `upsert_requirement` (a value re-anchored to the sentence that
   still states it), `update_requirement` (an edge or an entity reference on a derived
   requirement), `delete_requirement({id, reason})`.

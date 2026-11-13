@@ -253,7 +253,8 @@ impl ToolSession {
         // In a serving, the first node of a kind loaded brings the kind's
         // skill, once; a batch works under its goal kinds' skills and reads
         // other nodes as reference. Mirrors docs/compiler/sessions.md#skills.
-        if self.scope.goals.is_empty() && !self.skills.has_pinned() {
+        if self.scope.goals.is_empty() && self.scope.target.is_empty() && !self.skills.has_pinned()
+        {
             if let Some(skill) = crate::session::skill_for_target(&self.snapshot, &id) {
                 if let Ok(SkillLoad::Rendered(payload)) = self.skills.activate(skill) {
                     v["skill"] = json!(format!("[skill: {} (active)]\n{}", skill, payload));
@@ -707,8 +708,15 @@ impl ToolSession {
         }
         let bytes = crate::vfs::read(project.root.join(&path))
             .map_err(|e| ToolError::new("input-unavailable", e.to_string()))?;
+        let sections = self
+            .snapshot
+            .docs
+            .get(&path)
+            .map(|record| record.sections.keys().collect::<Vec<_>>())
+            .unwrap_or_default();
         Ok(
-            json!({"path":path,"sha256":crate::task_runtime::digest(&bytes),"size":bytes.len(),"classification":self.snapshot.decisions.inputs.get(&path),"quoteReferences":self.snapshot.input_quote_references(&path)}),
+            json!({"path":path,"sha256":crate::task_runtime::digest(&bytes),"size":bytes.len(),"classification":self.snapshot.decisions.inputs.get(&path),"quoteReferences":self.snapshot.input_quote_references(&path),
+                "sectionCount":sections.len(),"sectionRefs":sections.iter().take(24).map(|section| format!("{path}#{section}")).collect::<Vec<_>>(),"sectionRefsTruncated":sections.len()>24}),
         )
     }
 }

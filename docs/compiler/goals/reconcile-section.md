@@ -301,7 +301,8 @@ The `reconcile-section` toolset ([toolsets](../tools.md#toolsets)):
   `load_skill`, `done`.
 - Entity tools: `upsert_entity` (with `mention`, `stereotype`, `parent`, `attributes`
   where the section states them), `update_entity` (`add_aliases` for a wording found
-  under another name), `delete_entity`.
+  under another name), `retract_entity_mention` (an independent incorrect mention),
+  `delete_entity`.
 - Requirement tools: `upsert_requirement` (statement, entities, section, quote, edges,
   transition, facets), `update_requirement`, `delete_requirement`.
 - Criterion tools: `upsert_criterion` (the stated criteria: a test case's lead-in, an

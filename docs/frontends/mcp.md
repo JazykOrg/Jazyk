@@ -356,6 +356,15 @@ Bind and Generate use a generation serving. Verify uses a verification serving.
 
 The agent-facing loop, common to the compile, generate, and verify toolsets:
 
+Task queries accept an optional `entity` ID to inspect only that entity's rows.
+Unknown IDs are errors, not empty successful results. The reply includes
+`readyCount` for board-backed task queries. When no row is ready, its `next`
+guidance describes the outstanding prerequisites instead of claiming a begin
+operation can proceed. Release approval and compile prerequisites remain distinct.
+An explicit verification `filter` lists ledger rows by derived status, including
+findings without an open verify goal. These rows describe evidence, not readiness.
+Omit `filter` to inspect the board and its `readyCount`.
+
 1. Ask for work: `goals`, `binding_tasks`, `generation_tasks`, or
    `verification_tasks`. An empty answer is an answer, not an error; the board
    carries the build verdict when no goal is open.

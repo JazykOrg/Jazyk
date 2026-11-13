@@ -720,11 +720,73 @@ impl McpServer {
                         "generation_tasks" => "generate",
                         _ => "verify",
                     };
+                    if params["arguments"]
+                        .get("entity")
+                        .is_some_and(|id| !id.is_null() && !id.is_string())
+                    {
+                        return Ok(text_result(
+                            json!({"error":{"rule":"bad-argument","message":"entity must be an entity ID string"}}),
+                            true,
+                        ));
+                    }
+                    let scope_store = Store::load(&self.out);
+                    let entity = params["arguments"]["entity"]
+                        .as_str()
+                        .map(|id| scope_store.resolve_id(id).to_string());
+                    if let Some(id) = entity
+                        .as_deref()
+                        .filter(|id| !scope_store.graph.entities.contains_key(*id))
+                    {
+                        return Ok(text_result(
+                            json!({"error":{"rule":"unknown-id","message":format!("unknown entity `{id}`")}}),
+                            true,
+                        ));
+                    }
+                    if kind == "verify" {
+                        if let Some(filter) =
+                            params["arguments"].get("filter").filter(|v| !v.is_null())
+                        {
+                            let Some(filter) = filter
+                                .as_str()
+                                .filter(|f| matches!(*f, "stale" | "failing" | "all"))
+                            else {
+                                return Ok(text_result(
+                                    json!({"error":{"rule":"bad-argument","message":"filter must be stale, failing, or all"}}),
+                                    true,
+                                ));
+                            };
+                            let rows = crate::verify::pending(
+                                &scope_store,
+                                &self.current_gen_settings(),
+                                Some(filter),
+                                entity.as_deref(),
+                            );
+                            return Ok(text_result(
+                                json!({
+                                    "tasks": rows,
+                                    "count": rows.len(),
+                                    "next": SERVING.get("ledger-verification-status"),
+                                }),
+                                false,
+                            ));
+                        }
+                    }
                     let board = crate::board::Board::compute(&self.current_project(), &self.out);
                     let rows: Vec<Value> = board
                         .goals
                         .iter()
                         .filter(|g| g.kind == kind)
+                        .filter(|g| {
+                            entity.as_deref().is_none_or(|id| {
+                                if kind == "generate" {
+                                    g.target == id
+                                } else {
+                                    g.change["entity"]
+                                        .as_str()
+                                        .is_some_and(|owner| scope_store.resolve_id(owner) == id)
+                                }
+                            })
+                        })
                         .map(|g| {
                             let mut v = json!({
                                 "goal": g.id,
@@ -763,6 +825,9 @@ impl McpServer {
                             .iter()
                             .filter(|(rid, row)| {
                                 store.graph.requirements.contains_key(*rid)
+                                    && entity
+                                        .as_deref()
+                                        .is_none_or(|id| scope_store.resolve_id(&row.entity) == id)
                                     && matches!(
                                         crate::verify::status_of(&store, rid, row, &gs).0.as_str(),
                                         "stale-test" | "stale-code"
@@ -775,19 +840,33 @@ impl McpServer {
                         None
                     };
                     let binding = if kind == "generate" {
-                        board.goals.iter().filter(|g| g.kind == "bind").count()
+                        board
+                            .goals
+                            .iter()
+                            .filter(|g| {
+                                g.kind == "bind"
+                                    && entity.as_deref().is_none_or(|id| {
+                                        g.change["entity"].as_str().is_some_and(|owner| {
+                                            scope_store.resolve_id(owner) == id
+                                        })
+                                    })
+                            })
+                            .count()
                     } else {
                         0
                     };
                     let mut reply = json!({
                         "tasks": rows,
                         "count": rows.len(),
+                        "readyCount": rows.iter().filter(|row| row["ready"] == true).count(),
                         "next": if rows.is_empty() {
                             SERVING.get("ledger-nothing-owed").to_string()
                         } else if rows.iter().all(|r| r["gated"] == json!(true)) {
                             SERVING.fill("ledger-gated", &[("begin", begin)])
-                        } else {
+                        } else if rows.iter().any(|row| row["ready"] == true) {
                             SERVING.fill("ledger-ready", &[("begin", begin)])
+                        } else {
+                            SERVING.get("ledger-blocked").to_string()
                         },
                     });
                     if kind == "generate" {

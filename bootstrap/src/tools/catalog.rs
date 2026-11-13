@@ -122,6 +122,11 @@ pub fn catalog() -> Vec<ToolDef> {
             ),
         },
         ToolDef {
+            name: "retract_entity_mention",
+            description: "Remove one exact independent entity mention from the graph without editing prose. Preserve other mentions and facts. A live requirement's derived mention must be repaired through that requirement instead. Can share edit_graph with asset classification. Normal orphan cleanup still applies.",
+            parameters: obj(json!({"id":{"type":"string"},"source":{"type":"object","properties":{"doc":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"}},"required":["doc","section","quote"],"additionalProperties":false},"reason":{"type":"string","minLength":1}}), &["id","source","reason"]),
+        },
+        ToolDef {
             name: "delete_entity",
             description: "Delete an entity that no requirement references.",
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
@@ -281,7 +286,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "inspect_input",
-            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size, persisted processing decision, and quoteReferences identifying facts to repair before asset classification. Entity mentions list their supplying requirement IDs. Use before classify_input, including for PDF inputs whose parsing fails.",
+            description: "Inspect a selected input without invoking its parser. Returns exact byte SHA-256, size, persisted processing decision, stored sectionRefs, and quoteReferences identifying facts to repair before asset classification. Entity mentions list their supplying requirement IDs. Use before classify_input, including for PDF inputs whose parsing fails.",
             parameters: obj(json!({"path":{"type":"string"}}), &["path"]),
         },
         ToolDef {
@@ -386,7 +391,7 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "generation_tasks",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/generation-work-currently-derived-for-entities-develop-2a8e4.md")),
-            parameters: obj(json!({}), &[]),
+            parameters: obj(json!({"entity":{"type":"string"}}), &[]),
         },
         ToolDef {
             name: "begin_generation",
@@ -442,7 +447,7 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "binding_tasks",
             description: "Requirements owing a binding, with a reason (unbound, requirement-changed, artifact-gone). A binding ties one requirement to the deliverable: the implementing files (possibly none), the test that judges it, and the verdict. Deterministic; no model involved. Next: begin_binding on one requirement.",
-            parameters: obj(json!({}), &[]),
+            parameters: obj(json!({"entity":{"type":"string"}}), &[]),
         },
         ToolDef {
             name: "begin_binding",
@@ -672,7 +677,7 @@ pub(super) const REANSWERABLE_TOOLS: [&str; 10] = [
 
 // The graph write tools, each all or nothing at staging.
 // Mirrors docs/compiler/tools.md#write-tools.
-pub const GRAPH_WRITE_TOOLS: [&str; 22] = [
+pub const GRAPH_WRITE_TOOLS: [&str; 23] = [
     "upsert_entity",
     "update_entity",
     "delete_entity",
@@ -686,6 +691,7 @@ pub const GRAPH_WRITE_TOOLS: [&str; 22] = [
     "update_criterion",
     "delete_criterion",
     "classify_input",
+    "retract_entity_mention",
     "set_coverage",
     "report_diagnostic",
     "update_diagnostic",

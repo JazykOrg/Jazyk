@@ -79,7 +79,7 @@ pub enum SkillLoad {
 // The skills rendered this session, active or inactive, capped. Rendered text stays
 // in the conversation, so the cap counts every rendering and an inactive skill keeps
 // its chars. Mirrors docs/compiler/sessions.md#skills.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct SkillState {
     pub rendered: Vec<SkillEntry>,
     pub cap: usize,

@@ -35,9 +35,11 @@ and a second user request with no response in this export.
 6. Five byte inspections are repeated without intervening changes. Two section
    loads inject large extraction skills, and `goals(full: true)` fetches unrelated
    human questions. Reuse current evidence and request focused or compact data.
-7. Several raw outputs end near 8 KiB inside JSON or text. This limits what this
-   export proves about complete tool responses. It does not prove provider input
-   was similarly truncated. Treat export truncation separately from tool failure.
+7. Several raw outputs end near 8 KiB inside JSON or text. Source inspection of
+   Cloud's record writer confirms this cap applies to the timeline only; model
+   history keeps the complete tool output. The stored `truncated` flag was not
+   carried into the activity UI, which could interpret a clipped preview as a
+   complete successful result. The UI now preserves that distinction.
 8. The final response correctly admits that nothing was built or tested. Its
    categorical missing-capability diagnosis and requirement for fresh generation
    approval are not established by the attempted tools. The feedback repeats that
@@ -265,3 +267,47 @@ not merely the agent's claims. They do not establish the docs deliverable exists
   continuation the Footer is implemented and verified, while documentation remains
   incomplete. The earlier blanket impression that nothing is ever generated is
   no longer accurate for job 1686.
+
+## Completion audit
+
+A read-only database recheck confirms that `chat-21` still ends at update 301
+and 29 history entries, last active at `2026-11-13 16:38:33 UTC`.
+
+This checklist covers the concrete findings in the 301-update review and the
+related recovery paths inspected in the engine and editor. It is a finite audit,
+not a claim that every possible future model or product defect is eliminated.
+
+| Finding | Addressed behavior | Evidence |
+| --- | --- | --- |
+| Build stops after metadata edits | Generation guidance checks actual files, links, manifest, and verification before completion. Independent work continues while another part is blocked. | Existing workflow delivery tests and revised shared workflow policy. |
+| Incorrect article requirements | Inspect exact quote references, delete mistaken requirements and classify atomically without rewriting supplied articles. | Atomic reclassification test retains layout requirements, original bytes, and a real deliverable symlink. |
+| Independent entity mentions | `retract_entity_mention` removes an exact independent mention. It refuses live requirement-derived mentions and rolls back stale requests. | MCP atomic transaction regression preserves source bytes and live requirements. |
+| Asset article hides JPEG | Asset link inventory propagates incoming provenance and generation dependencies transitively. | Cycle, escaping-path, image coverage, and byte-fingerprint regression. |
+| Criteria cannot load | Criteria support full context loads, stubs, and handle expansion. | Criterion load and expansion regression. |
+| Loaded context disappears between MCP calls | The serving retains its working set and skill state in its ledger unit and protected checkpoint. | Multi-call, unload, expand, and checkpoint recovery regression. |
+| Cached context survives a changed graph | A new graph generation clears the working set, while retaining already rendered skill bodies. Source caches are reconstructed. | Generation-change assertion in the same recovery regression. |
+| Repeated large extraction instructions | The serving retains skill activation; binding and generation claims read source as reference without auto-loading extraction. Workflow skills are reused while present in context. | Skill renders once across separate reads; targeted source read emits no extraction skill. |
+| Unrelated task lists | Task queries accept an entity ID, reject unknown or invalid scope, and resolve redirects. | Scoped tasks, redirect, and invalid-scope regression. |
+| Misleading ready guidance | Board-backed queries report `readyCount` and distinguish approval gates from unfinished prerequisites. | A generation row blocked on judgment does not instruct the agent to begin it. |
+| Premature release and repeated approval requests | Repair graph prerequisites before release; reuse explicit build authority for the current stage. | Existing release gates remain intact; workflow and gated-task guidance updated. |
+| Stale criterion anchor | Re-source with the existing upsert/update transaction. | Guidance matches the successful operation recorded in updates 187-188. |
+| Guessed Markdown `/` | Bare paths load the real root, preamble, or blob. Errors and inspection return real section references. | Root, preamble, blob, and missing-section regression. |
+| Invented alignment target | Errors distinguish a real document without pending alignment from a missing document. | Absent-alignment regression. |
+| Skipped calls look like independent failures | A skipped action is neutral, says it did not run, and assigns recovery to the agent. It does not show proposed task changes as saved. | Logic and rendered-card tests. |
+| Tool failures say needs attention | Context lookup errors identify agent recovery; stage approval, prerequisites, and active work have distinct waiting labels. | Waiting-state and rendered-card tests. |
+| Runner error looks like a failed acceptance assertion | Runner failures and failures to inspect task status have distinct labels from failed checks. | Task outcome tests. |
+| Shortened history looks complete | The UI honors timeline shortening flags, hides malformed output from the ordinary view, preserves explicit failures, and restores semantics if a complete event is loaded. | Saved timeline and hydration regression, plus rendered shortened-preview test. |
+| Unsupported missing-capability claim | Recovery guidance requires checking the actual catalog and rejected operation before reporting a gap. Feedback alone does not finish a build. | New repair capability and revised recovery skill. |
+| Chat job completion looks like a completed product | Session completion remains separate from recorded generation and verification. The review identifies Footer completion and unfinished docs separately. | Database job 1686 and its accepted manifest and verification receipts. |
+
+The fail-after-error tool batch safeguard remains intentional. It prevents later
+mutations in an uncertain reply from executing. The recovery UI and instructions
+now explain skipped work and preserve successful evidence instead of treating each
+skipped call as a separate product failure.
+
+Local source verification is separate from deployment and model replay. This work
+does not alter the live project's graph or generated files, deploy the editor or
+hosted service, or run additional paid model sessions. A live replay after adopting
+the new engine remains the way to measure the next model's execution of the full
+request. Missing authored articles remain real missing content; this review does
+not invent them to make the build appear complete.

@@ -180,7 +180,10 @@ fn turn_effects(id: &str, message_id: &str) -> Value {
     ensure_loaded(id);
     fn read(tool: &str) -> bool {
         crate::tools::toolset("mcp-read").contains(&tool)
-            || matches!(tool, "read_text_file" | "list_files" | "list_document_sets")
+            || matches!(
+                tool,
+                "read_text_file" | "list_files" | "search_files" | "list_document_sets"
+            )
             || matches!(
                 tool,
                 "binding_tasks" | "generation_tasks" | "verification_tasks"
@@ -424,6 +427,7 @@ fn open_serving(
         crate::mcp::BridgeFlags {
             ephemeral: true,
             reader,
+            progressive: !reader,
             ..Default::default()
         },
     );
@@ -455,7 +459,12 @@ fn open_serving(
     let (instructions, extras) = if reader {
         (instructions, crate::agent_context::Extras::default())
     } else {
-        let taken = tools.iter().map(|t| t.name.clone()).collect();
+        // Skill-gated tools are not listed yet but stay reserved names.
+        let mut taken: std::collections::BTreeSet<String> =
+            tools.iter().map(|t| t.name.clone()).collect();
+        for skill in crate::agent_workflows::SKILLS {
+            taken.extend(crate::agent_workflows::skill_tools(skill.name).unwrap_or_default());
+        }
         let host = crate::portable::host_context();
         match crate::agent_context::conversation(&crate::portable::root(), host.as_deref(), &taken)
         {
@@ -538,6 +547,24 @@ fn refresh_context(history: &mut [Value], humans: &[String], instructions: &str)
         }
     }
     removed
+}
+
+// The workflow skills a conversation history read with read_jazyk_skill.
+fn read_skills(history: &[Value]) -> Vec<String> {
+    history
+        .iter()
+        .filter_map(|m| m["tool_calls"].as_array())
+        .flatten()
+        .filter(|call| call["function"]["name"] == "read_jazyk_skill")
+        .filter_map(|call| {
+            let args = &call["function"]["arguments"];
+            let parsed: Value = match args.as_str() {
+                Some(text) => serde_json::from_str(text).ok()?,
+                None => args.clone(),
+            };
+            parsed["name"].as_str().map(str::to_owned)
+        })
+        .collect()
 }
 
 // A user message into the history. Two user messages in a row are merged: some chat
@@ -705,6 +732,13 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             }
         },
     };
+    // A reopened serving lists the tools of the skills this history already read.
+    // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+    if server.skill_gated() {
+        for name in read_skills(&history) {
+            server.activate_skill(&name);
+        }
+    }
     let mut recovery =
         match crate::session_recovery::McpRecovery::new(&server, recovery_key.clone()) {
             Ok(recovery) => recovery,
@@ -1435,6 +1469,24 @@ impl Drop for Scope {
 #[cfg(test)]
 mod context_tests {
     use super::*;
+
+    // A reopened serving reapplies the skills its history read, whether the
+    // provider recorded the arguments as text or as an object.
+    // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+    #[test]
+    fn read_skills_come_from_history_tool_calls() {
+        let history = vec![
+            json!({"role":"user","content":"run the tests"}),
+            json!({"role":"assistant","content":null,"tool_calls":[
+                {"id":"a","type":"function","function":{"name":"read_jazyk_skill","arguments":"{\"name\":\"execute-task\"}"}},
+                {"id":"b","type":"function","function":{"name":"read_text_file","arguments":"{\"path\":\"a\"}"}}
+            ]}),
+            json!({"role":"assistant","content":null,"tool_calls":[
+                {"id":"c","type":"function","function":{"name":"read_jazyk_skill","arguments":{"name":"verify"}}}
+            ]}),
+        ];
+        assert_eq!(read_skills(&history), vec!["execute-task", "verify"]);
+    }
 
     #[test]
     fn protected_stop_history_matches_running_chat_and_turn() {

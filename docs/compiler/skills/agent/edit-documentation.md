@@ -2,13 +2,55 @@
 name: edit-documentation
 description: "Edit prose, requirements, criteria, or intended behavior without implicit compilation."
 requiredCapabilities: "document writes"
+tools:
+  - edit_graph
+  - revise_requirement
+  - add_requirement
+  - retract_requirement
+  - edit_fact
+  - retract_decree
+  - bump_limit
+  - answer_diagnostic
+  - upsert_entity
+  - update_entity
+  - retract_entity_mention
+  - delete_entity
+  - merge_entities
+  - group_entities
+  - dissolve_entity
+  - upsert_requirement
+  - update_requirement
+  - delete_requirement
+  - upsert_criterion
+  - update_criterion
+  - delete_criterion
+  - classify_input
+  - set_coverage
+  - report_diagnostic
+  - update_diagnostic
+  - resolve_diagnostic
+  - place_anchor
+  - orphan_anchor
+  - upsert_view
+  - update_view
+  - delete_view
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
+  - update_project_settings
 ---
 # Edit documentation
 
 Use for prose, requirements, criteria, and intended behavior changes.
 
-- Read current text with `read_document`. Preserve unrelated prose and use its
-  `hash` as `baseHash` with `write_document`. New files omit `baseHash`.
+- Read current text with `read_document`. For a change to an existing document,
+  call `write_document` with `old_text` copied exactly from that read and `text`
+  as its replacement. It sends only the changed region, preserves unrelated prose,
+  and guards the edit with the hash of your read. Use `replaceAll` to change every
+  occurrence. Replace a whole document only for a complete rewrite, with its
+  `hash` as `baseHash`. New files omit `baseHash`.
 - Use format-specific editing for binary documents. Do not overwrite DOCX or PDF
   with text. A stale hash requires a fresh read before retrying.
 - For an identified compiled requirement, prefer `revise_requirement`,

@@ -6,4 +6,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/mcp/catalog.rs"
 ---
-Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines. Private state and credentials are excluded.
+Read an eligible file, capped at 64 KiB. line is one-based and limit counts lines; a cut reply carries nextLine. hash covers the whole file. Private state and credentials are excluded.

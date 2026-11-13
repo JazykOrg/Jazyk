@@ -1056,8 +1056,14 @@ impl McpServer {
                     && !self.modes.iter().any(|m| m == "compile")
                     && !matches!(
                         name.as_str(),
-                        "inspect_input" | "classify_input" | "report_feedback"
+                        "inspect_input"
+                            | "classify_input"
+                            | "report_feedback"
                     )
+                    // File tools need no graph: an agent explores and edits the
+                    // project before its first compile; writes keep their gates.
+                    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+                    && !crate::tools::FILE_TOOLS.contains(&name.as_str())
                     && name != crate::tools::SPEND_TOOL
                 {
                     return Ok(text_result(
@@ -1105,7 +1111,7 @@ impl McpServer {
                 {
                     let mut memory = self.call_memory.lock().unwrap();
                     if memory.0 != unit {
-                        *memory = (unit.clone(), Default::default());
+                        *memory = (unit.clone(), memory.1.for_new_unit());
                     }
                     session.adopt_memory(memory.1.clone());
                 }

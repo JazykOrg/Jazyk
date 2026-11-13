@@ -12,6 +12,19 @@ pub struct CallMemory {
     loaded: Option<LoadedSet>,
     skills: Option<SkillState>,
     generation: Option<u64>,
+    file_hashes: std::collections::BTreeMap<String, String>,
+}
+
+impl CallMemory {
+    // A new unit starts a fresh guard, but the file versions the serving last saw
+    // stay valid: a literal edit after a new ledger claim still applies to them.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    pub fn for_new_unit(&self) -> CallMemory {
+        CallMemory {
+            file_hashes: self.file_hashes.clone(),
+            ..Default::default()
+        }
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -77,6 +90,11 @@ pub struct ToolSession {
     // (docs/compiler/goals/generate.md#what-the-model-sees).
     #[serde(default)]
     pub opening_contracts: bool,
+    // The whole-file hash each file tool path last returned to this session: the
+    // version a literal edit without expectedHash applies to.
+    // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+    #[serde(default)]
+    pub(super) file_hashes: std::collections::BTreeMap<String, String>,
 }
 
 // A begin_binding or begin_generation reply to a session whose opening prompt
@@ -143,6 +161,7 @@ impl ToolSession {
             implicit_done: false,
             lint: Default::default(),
             opening_contracts: false,
+            file_hashes: Default::default(),
         }
     }
 
@@ -159,6 +178,7 @@ impl ToolSession {
         if let Some(skills) = memory.skills {
             self.skills = skills;
         }
+        self.file_hashes = memory.file_hashes;
     }
 
     pub fn memory(&self) -> CallMemory {
@@ -169,6 +189,7 @@ impl ToolSession {
             loaded: Some(self.loaded.clone()),
             skills: Some(self.skills.clone()),
             generation: Some(self.snapshot.status.generation),
+            file_hashes: self.file_hashes.clone(),
         }
     }
 

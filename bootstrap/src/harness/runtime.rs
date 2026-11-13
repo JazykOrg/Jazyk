@@ -180,10 +180,19 @@ impl Operation<Session, Effect> for Policy {
                 if !self.names.contains(&call.name.to_string()) {
                     response.add_tool_response_with_metadata(
                         request.id.clone(),
-                        Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                            "Tool '{}' is not available in this session",
-                            call.name
-                        ))])),
+                        Ok(CallToolResult::error(vec![ContentBlock::text(
+                            if self.names.iter().any(|n| n == "read_jazyk_skill") {
+                                format!(
+                                    include_str!(concat!(
+                                        env!("OUT_DIR"),
+                                        "/payloads/goals/prompts/inline/harness-runtime/tool-not-listed-read-its-skill-4d2a8.md"
+                                    )),
+                                    name = call.name
+                                )
+                            } else {
+                                format!("Tool '{}' is not available in this session", call.name)
+                            },
+                        )])),
                         request.metadata.as_ref(),
                     );
                 }
@@ -1057,7 +1066,12 @@ async fn handle_action(
                 .into())
             } else if (args.cancelled)() {
                 Err("Skipped: the session was cancelled before this call started".into())
-            } else if state.failed_tool_transition == Some(state.transition) {
+            } else if state.failed_tool_transition == Some(state.transition)
+                && !crate::tools::read_only(&name)
+            {
+                // Later reads of the same reply still run; only a call that could
+                // act on the failed call's assumption is skipped.
+                // Mirrors docs/compiler/agent-runtime.md#models-and-tools.
                 Err(include_str!(concat!(
                     env!("OUT_DIR"),
                     "/payloads/goals/prompts/inline/harness-runtime/skipped-an-earlier-call-in-this-reply-2a110.md"
@@ -1088,7 +1102,9 @@ async fn handle_action(
             if !ok && !skipped && state.failed_tool_transition != Some(state.transition) {
                 state.consecutive_tool_errors += 1;
                 state.failed_tool_transition = Some(state.transition);
-            } else if ok {
+            } else if ok && state.failed_tool_transition != Some(state.transition) {
+                // A read that runs after a failure in the same reply does not clear
+                // that reply's error.
                 state.consecutive_tool_errors = 0;
             }
             let digest = Some(super::arguments_digest(&parameters));

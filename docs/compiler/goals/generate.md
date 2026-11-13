@@ -163,7 +163,7 @@ Two worker modes, selected by [`gen.worker`](../project-settings.md#generation).
 
 The session prompt is [assembled](../sessions.md#the-prompt): the agent contract,
 the project block, the goals block, the loaded set. The goal block carries the
-contract paragraph from [`prompts/generate.md`](./prompts/generate.md) (claim the
+contract paragraph from [`prompts/goals/generate.md`](./prompts/goals/generate.md) (claim the
 entity with `begin_generation`, follow the package, write real files, record, run),
 the change in one line, the gate in one line, and the hints; the last hint names
 the resolving calls: `begin_generation`, then `record_generation`, then
@@ -171,7 +171,7 @@ the resolving calls: `begin_generation`, then `record_generation`, then
 its requirements, and its parent and children as stubs.
 
 A session whose batch holds a `generate` goal opens with one generation contract,
-[`prompts/generate-contract.md`](./prompts/generate-contract.md) (`{GROUP}` replaced
+[`prompts/generation/20-generate-contract.md.mustache`](./prompts/generation/20-generate-contract.md.mustache) (`{GROUP}` replaced
 by the part size, 20 requirements), after the assembled prompt. Every session form
 assembles it the same way: an owned worker batch, a benchmark case, a snippet, a
 replay. Its `begin_generation` replies then omit `instructions`. A standalone serving
@@ -298,12 +298,20 @@ serves these:
   checks the resolved symlink target and its owning project. Ordinary documents,
   build evidence and explicit `.github` files
   remain readable without requiring them to be Source.
-- `write_text_file({path, content, append?, old_text?, expectedHash?})`: write one
-  file, or append when `append` is true. Use `old_text` for a small literal edit:
-  it must match exactly once, and `content` replaces that occurrence. Empty,
-  missing or repeated matches are rejected without changing the file. Replacement
-  requires `expectedHash` from the last read or write, and cannot combine with
-  `append: true`. Quotes, backslashes and line endings are literal, not a regex.
+- `write_text_file({path, content, append?, old_text?, replaceAll?, expectedHash?})`:
+  write one file, or append when `append` is true. Use `old_text` for a small
+  literal edit: it must match exactly once, and `content` replaces that occurrence.
+  With `replaceAll: true` it replaces every occurrence instead, at least one.
+  Empty or missing matches are rejected without changing the file, and so are
+  repeated matches without `replaceAll`. The refusal counts the matches and, when
+  only whitespace differs, names the line where a near match starts.
+  A replacement is guarded by the hash of the file as the caller last saw it, and
+  cannot combine with `append: true`. `expectedHash` supplies that hash. Without
+  it, the serving uses the hash its own last `read_text_file` or `write_text_file`
+  of that path returned. A serving remembers these hashes across its calls,
+  including across ledger claims. A replacement of a file the serving never read
+  or wrote, with no `expectedHash`, is refused toward `read_text_file`.
+  Quotes, backslashes and line endings are literal, not a regex.
   `expectedHash` also guards ordinary overwrites and appends when supplied.
   A mismatch returns `file-conflict` with the current hash. Read the affected
   region again and reconsider the edit. Do not retry the stale edit blindly.
@@ -320,12 +328,41 @@ serves these:
   to every write mode. During a `bind` goal, a path the ledger records as any
   entity's implementing file is rejected the same way. A path that restates the
   deliverable directory's name is normalized under the root, here and in
-  `read_text_file` and `list_files`, and the reply's `note` says so
+  `read_text_file`, `list_files` and `search_files`, and the reply's `note` says so
   ([file ownership](../../consumers/gen.md#file-ownership-and-conventions)).
-- `list_files({path?})`: the deliverable tree, walked breadth first in name order.
-  A directory reached again through a symlink is walked once. The reply names at most
-  500 files and carries `truncated: true` when the walk stopped there; list a
-  subdirectory with `path` to see more of it.
+- `list_files({path?, pattern?, offset?, limit?})`: the deliverable tree, walked
+  breadth first in name order. A directory reached again through a symlink is
+  walked once. `pattern` is a glob over the listed paths, relative to the same root
+  as the reply (e.g. `**/*.rs`, `src/*.ts`); a pattern without `/` matches file
+  names at any depth. Pages follow the walk after the filter. The reply names at
+  most `limit` files (default and maximum 500) and carries `truncated: true` and
+  `nextOffset` when more remain; `offset` takes it, with the same query, to
+  continue. No file past the cap is unreachable.
+- `search_files({pattern, path?, glob?, literal?, ignoreCase?, context?, filesOnly?, cursor?})`:
+  search eligible file contents, the way a coding agent runs `grep`. `pattern` is a
+  regular expression (Rust `regex` syntax), or literal text with `literal: true`.
+  `path` narrows to a file or subdirectory, `glob` filters paths as in `list_files`.
+  It walks the same files `list_files` lists, under the same protected-path fence
+  as `read_text_file`. Files that are not UTF-8 text or exceed 1 MiB are skipped
+  and counted in `skipped`. The reply lists matches in path and line order as
+  `{path, line, column, text}`. A line over 300 characters is quoted as a
+  300-character excerpt that starts shortly before its first match, so the match is
+  always shown. Up to 5 `context` lines before and after come as `before` and
+  `after`. With `filesOnly: true` it lists `{path, count}` per
+  matching file instead. Files are searched in sorted path order. One reply holds
+  at most 100 matches and 32 KiB, and one call reads at most 8 MiB of files. Every
+  reply carries `scanComplete`. When a cap stops the scan, `scanComplete` is
+  `false` and `next` is `{path, line}`, the file and line where the scan stopped.
+  Passing `next` unchanged as `cursor`, with the same `pattern`, `path` and `glob`,
+  resumes there without rescanning earlier files, so every match is reachable and a
+  stopped scan with no matches yet never reads as no match. The cursor names a path,
+  not a position in a frozen inventory: files added before it are not revisited.
+  `files` counts the files searched. It runs in process over the
+  workspace's filesystem, so a hosted workspace without a shell searches the same
+  way. An invalid pattern is refused with the parser's message.
+- The file tools need no graph: a serving answers them before the project's first
+  compile, so an agent explores and edits project files as a coding agent does. A
+  write still passes the Source, ownership and protected-path gates.
 - The [task tools](../tools.md#task-runtime-tools) execute saved commands in finite
   isolated runs. The session inspects status, logs, retained changes, and test reports,
   then repairs its source and submits another run when needed.
@@ -337,7 +374,8 @@ methods; the tools ride the injected MCP serving like every other jazyk tool. Pa
 that escape the deliverable are rejected. Command execution during generation is the
 same trust decision as `jazyk test` running recorded commands, made at generation
 time. A [`verify`](./verify.md) session is served the read-only subset
-(`read_text_file`, `list_files`) and the task tools, with no `write_text_file`.
+(`read_text_file`, `list_files`, `search_files`) and the task tools, with no
+`write_text_file`.
 
 ### The finish contract
 

@@ -6,4 +6,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/mcp/router.rs"
 ---
-Create or replace one prose document without compilation. Read first and send its hash as baseHash. Omit baseHash only to create a missing document. Preserves document-save dirtiness; does not release or run compile work.
+Create, replace, or edit one prose document without compilation. For a change to an existing document, prefer a literal edit: old_text copied exactly from read_document (matching once, or every match with replaceAll true) and text as its replacement; baseHash then defaults to the hash of your last read or write of this path. A complete replacement sends the whole document as text with baseHash from read_document. Omit baseHash only to create a missing document. Preserves document-save dirtiness; does not release or run compile work.

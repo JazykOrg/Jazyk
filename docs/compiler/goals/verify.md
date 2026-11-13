@@ -90,7 +90,7 @@ changed one, and the goal derives again.
 Only an `llm` row's goal reaches a model
 ([generation sessions](../sessions.md#generation-sessions)). The session prompt is
 [assembled](../sessions.md#the-prompt): the goal block carries the contract paragraph
-from [`prompts/verify.md`](./prompts/verify.md) (confirm the requirement is satisfied
+from [`prompts/goals/verify.md`](./prompts/goals/verify.md) (confirm the requirement is satisfied
 by the implementing files, follow the criteria's confirm steps, report `pass` only
 when every criterion is met, state what was inspected or executed and what was
 observed), the change in one line, the gate in one line, the hints. The loaded set
@@ -152,7 +152,7 @@ An `llm` session's serving runs in `verify` mode ([toolsets](../tools.md#toolset
   `begin_verification`, `run_tests`, `record_verdict`.
 - [`report_feedback`](../tools.md#feedback-tool).
 - The read-only [file tools](./generate.md#file-and-command-tools)
-  (`read_text_file`, `list_files`) when the profile sets
+  (`read_text_file`, `list_files`, `search_files`) when the profile sets
   [`serve_files`](../project-settings.md#acp). A verify session writes no file.
 - The [task tools](../tools.md#task-runtime-tools) for finite checks that require
   execution. The model observes results and records its judgment without editing

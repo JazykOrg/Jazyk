@@ -308,8 +308,9 @@ and coverage tools for `reconcile-section`; judgment tools for `rejudge-pair` an
 executor's profile sets `serve_files` ([generation sessions](#generation-sessions)), a
 `bind` or `generate` batch adds the
 [file tools](./goals/generate.md#file-and-command-tools) `read_text_file`,
-`write_text_file`, and `list_files`, and a `verify` batch adds only the read-only
-`read_text_file` and `list_files` ([verify tools](./goals/verify.md#tools)). A
+`write_text_file`, `list_files`, and `search_files`, and a `verify` batch adds only
+the read-only `read_text_file`, `list_files`, and `search_files`
+([verify tools](./goals/verify.md#tools)). A
 tool outside the batch's toolset is not served, so the model cannot call it.
 
 A batch resolves to exactly one executor: the scheduler never groups goals whose kinds
@@ -401,7 +402,7 @@ served more than the graph tools and finish through the ledger:
   `record_verdict`, and `run_tests` ([binding](./tools.md#binding-tools),
   [generation](./tools.md#generation-tools), [verification](./tools.md#verification-tools)),
   and the [file tools](./goals/generate.md#file-and-command-tools)
-  `read_text_file`, `write_text_file`, and `list_files`.
+  `read_text_file`, `write_text_file`, `list_files`, and `search_files`.
 - The file tools are served when the agent's profile sets
   [`serve_files`](./project-settings.md#acp): the
   [embedded agent](../frontends/acp.md#the-embedded-agent) has no editor or shell, a

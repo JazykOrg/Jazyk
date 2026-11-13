@@ -2,6 +2,13 @@
 name: reverse-compile
 description: "Draft documentation from observed implementation and surface intent conflicts."
 requiredCapabilities: "decompilation or authorized code inspection and drafting"
+tools:
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
+  - inspect_asset_link
 ---
 # Reverse compile implementation
 

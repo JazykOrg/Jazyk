@@ -2,6 +2,16 @@
 name: publish
 description: "Push, publish, or deploy only with explicit authority and verified integration state."
 requiredCapabilities: "publication integration and authority"
+tools:
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
 ---
 # Publish changes
 

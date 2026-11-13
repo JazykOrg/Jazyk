@@ -2,6 +2,43 @@
 name: compile
 description: "Compile documentation into the semantic graph and resolve reconciliation goals."
 requiredCapabilities: "compile orchestration or goal loop"
+tools:
+  - goals
+  - begin_goals
+  - done
+  - abandon_goals
+  - mark_goal_done
+  - mark_goal_failed
+  - settle_pairs
+  - load_skill
+  - report_spend
+  - release_work
+  - compile_document_sets
+  - await_changes
+  - upsert_entity
+  - update_entity
+  - retract_entity_mention
+  - delete_entity
+  - merge_entities
+  - group_entities
+  - dissolve_entity
+  - upsert_requirement
+  - update_requirement
+  - delete_requirement
+  - upsert_criterion
+  - update_criterion
+  - delete_criterion
+  - classify_input
+  - set_coverage
+  - report_diagnostic
+  - update_diagnostic
+  - resolve_diagnostic
+  - place_anchor
+  - orphan_anchor
+  - upsert_view
+  - update_view
+  - delete_view
+  - edit_graph
 ---
 # Compile documentation
 

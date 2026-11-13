@@ -2210,8 +2210,14 @@ definitions:
       old_text:
         type: string
         description: Literal text matching exactly once, replaced by content
+      replaceAll:
+        type: boolean
+        description: Replace every occurrence of old_text, at least one
       expectedHash:
         type: string
+        description: >-
+          The whole-file hash the edit applies to. A replacement without it uses the
+          hash the serving last returned for the path
     additionalProperties: false
   listFiles:
     description: Request payload of list_files. At most 500 files, breadth first in name order
@@ -2220,6 +2226,57 @@ definitions:
       path:
         type: string
         description: A subdirectory to list
+      pattern:
+        type: string
+        description: A glob over the listed paths; without `/` it matches file names at any depth
+      offset:
+        type: integer
+        minimum: 0
+        description: The nextOffset of a previous reply with the same query
+      limit:
+        type: integer
+        minimum: 1
+        maximum: 500
+    additionalProperties: false
+  searchFiles:
+    description: >-
+      Request payload of search_files. At most 100 matches, 32 KiB and 8 MiB of scanned
+      files per reply, in path and line order, resumable through cursor
+    type: object
+    required:
+      - pattern
+    properties:
+      pattern:
+        type: string
+        description: A regular expression, or literal text with literal true
+      path:
+        type: string
+        description: A file or subdirectory to search
+      glob:
+        type: string
+        description: A glob over the searched paths, as in list_files
+      literal:
+        type: boolean
+      ignoreCase:
+        type: boolean
+      context:
+        type: integer
+        description: Lines before and after each match, at most 5
+      filesOnly:
+        type: boolean
+        description: List matching files with their match counts instead of lines
+      cursor:
+        type: object
+        description: The next of a previous reply, passed unchanged with the same query
+        required:
+          - path
+        properties:
+          path:
+            type: string
+          line:
+            type: integer
+            minimum: 1
+        additionalProperties: false
     additionalProperties: false
   taskContext:
     description: Request payload of task_context

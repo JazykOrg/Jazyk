@@ -548,12 +548,29 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "write_text_file",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/write-one-deliverable-file-atomically-for-a-d2316.md")),
-            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, "old_text": {"type": "string"}, "expectedHash": {"type": "string"}}), &["path", "content"]),
+            parameters: obj(json!({"path": {"type": "string"}, "content": {"type": "string"}, "append": {"type": "boolean"}, "old_text": {"type": "string"}, "replaceAll": {"type": "boolean"}, "expectedHash": {"type": "string"}}), &["path", "content"]),
         },
         ToolDef {
             name: "list_files",
-            description: "The deliverable's file tree, paths relative to the deliverable directory. path narrows to a subdirectory.",
-            parameters: obj(json!({"path": {"type": "string"}}), &[]),
+            description: "The deliverable's file tree, paths relative to the deliverable directory. path narrows to a subdirectory; pattern is a glob such as **/*.rs (without / it matches file names at any depth). At most limit files (default and maximum 500); a cut reply carries nextOffset, which offset takes with the same query to continue.",
+            parameters: obj(json!({"path": {"type": "string"}, "pattern": {"type": "string"}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}), &[]),
+        },
+        ToolDef {
+            name: "search_files",
+            description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/search-eligible-file-contents-9a4d1.md")),
+            parameters: obj(
+                json!({
+                    "pattern": {"type": "string"},
+                    "path": {"type": "string"},
+                    "glob": {"type": "string"},
+                    "literal": {"type": "boolean"},
+                    "ignoreCase": {"type": "boolean"},
+                    "context": {"type": "integer", "minimum": 0, "maximum": 5},
+                    "filesOnly": {"type": "boolean"},
+                    "cursor": {"type": "object", "properties": {"path": {"type": "string"}, "line": {"type": "integer", "minimum": 1}}, "required": ["path"], "additionalProperties": false}
+                }),
+                &["pattern"],
+            ),
         },
         ToolDef {
             name: "task_context",
@@ -662,7 +679,7 @@ pub const READ_TOOLS: [&str; 10] = [
 
 // The calls without side effects whose answer the repeated-call guard recomputes before
 // it refuses a third identical call. Mirrors docs/compiler/sessions.md#repeated-calls.
-pub(super) const REANSWERABLE_TOOLS: [&str; 10] = [
+pub(super) const REANSWERABLE_TOOLS: [&str; 11] = [
     "graph_status",
     "search",
     "read_section",
@@ -671,6 +688,7 @@ pub(super) const REANSWERABLE_TOOLS: [&str; 10] = [
     "diagnostics",
     "read_text_file",
     "list_files",
+    "search_files",
     "generation_tasks",
     "binding_tasks",
 ];
@@ -702,6 +720,46 @@ pub const GRAPH_WRITE_TOOLS: [&str; 23] = [
     "update_view",
     "delete_view",
 ];
+
+// The tools that only observe: a failed call earlier in the same model reply does
+// not skip them. Mirrors docs/compiler/agent-runtime.md#models-and-tools.
+pub fn read_only(name: &str) -> bool {
+    READ_TOOLS.contains(&name)
+        || REANSWERABLE_TOOLS.contains(&name)
+        || matches!(
+            name,
+            "inspect_asset_link"
+                | "read_document"
+                | "list_document_sets"
+                | "preview_document_set"
+                | "project_context"
+                | "list_jazyk_skills"
+                | "read_jazyk_skill"
+                | "load_skill"
+                | "goals"
+                | "recent_edits"
+                | "verification_tasks"
+                | "task_context"
+                | "inspect_run"
+                | "read_run_log"
+                | "search_run_log"
+                | "read_run_changes"
+        )
+}
+
+// One search_files reply: matches, bytes, the context cap, and the longest line
+// it quotes. Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
+pub(super) const SEARCH_FILES_MATCHES: usize = 100;
+
+pub(super) const SEARCH_FILES_BYTES: usize = 32 * 1024;
+
+pub(super) const SEARCH_FILES_CONTEXT: usize = 5;
+
+pub(super) const SEARCH_FILES_LINE_CHARS: usize = 300;
+
+pub(super) const SEARCH_FILES_FILE_BYTES: usize = 1024 * 1024;
+
+pub(super) const SEARCH_FILES_SCAN_BYTES: usize = 8 * 1024 * 1024;
 
 // The files one list_files reply names at most.
 // Mirrors docs/compiler/goals/generate.md#file-and-command-tools.
@@ -742,10 +800,11 @@ pub const VERIFY_TOOLS: [&str; 4] = [
 ];
 
 // In-process only: a generation turn's file tools, never served over MCP.
-pub const FILE_TOOLS: [&str; 6] = [
+pub const FILE_TOOLS: [&str; 7] = [
     "read_text_file",
     "write_text_file",
     "list_files",
+    "search_files",
     "link_asset",
     "inspect_asset_link",
     "remove_asset_link",

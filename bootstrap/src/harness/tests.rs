@@ -2497,3 +2497,104 @@ fn protected_stop_keeps_one_finished_answer_without_inference_id_notes() {
         );
     }
 }
+
+fn named_tool(name: &str) -> GenericTool {
+    GenericTool {
+        name: name.into(),
+        description: name.into(),
+        parameters: json!({"type":"object","properties":{},"additionalProperties":false}),
+    }
+}
+
+fn reply_with_calls(names: &[&str], round: usize) -> Value {
+    let calls: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| json!({"id":format!("call-{round}-{i}"),"type":"function","function":{"name":name,"arguments":"{}"}}))
+        .collect();
+    json!({"choices":[{"message":{"role":"assistant","content":"","tool_calls":calls},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}})
+}
+
+// After a failed call, a reply's later reads still run and its later writes are
+// skipped; a read that succeeds after the failure does not clear the reply's
+// error. Mirrors docs/compiler/agent-runtime.md#models-and-tools.
+#[test]
+fn reads_after_a_failed_call_in_the_same_reply_still_run() {
+    let tools = [named_tool("write_text_file"), named_tool("read_text_file")];
+    let mut host = Host::new(vec![
+        reply_with_calls(&["write_text_file", "read_text_file", "write_text_file"], 0),
+        response("finished"),
+    ]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Edit"})];
+    let mut ran = Vec::new();
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |name, _| {
+                ran.push(name.to_string());
+                if name == "write_text_file" {
+                    Err("edit-match".into())
+                } else {
+                    Ok("{\"content\":\"current\"}".into())
+                }
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "reads".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(ran, vec!["write_text_file", "read_text_file"]);
+    let state = store.saved.as_ref().unwrap();
+    let receipts: Vec<_> = state.tool_receipts.values().collect();
+    assert_eq!(receipts.iter().filter(|r| r.ok).count(), 1);
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|r| r.result.starts_with("Skipped"))
+            .count(),
+        1
+    );
+
+    let replies: Vec<Value> = (0..crate::limits::AGENT_TOOL_ERROR_LIMIT as usize)
+        .map(|round| reply_with_calls(&["write_text_file", "read_text_file"], round))
+        .collect();
+    let mut host = Host::new(replies);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Edit"})];
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |name, _| {
+                if name == "write_text_file" {
+                    Err("edit-match".into())
+                } else {
+                    Ok("{}".into())
+                }
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: crate::limits::AGENT_TOOL_ERROR_LIMIT + 8,
+            label: "loop".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert!(matches!(stop, Stop::Error(error) if error.contains("consecutive")));
+}

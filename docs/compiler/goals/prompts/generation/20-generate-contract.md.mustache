@@ -440,9 +440,13 @@ later.
 
 ## Guard writes to existing files
 
-With file tools, prefer guarded replacements for an existing file: use write_text_file with
-old_text, replacement content, and expectedHash from the last read or write. old_text must match
-exactly once; use enough unchanged surrounding text to identify the intended site.
+With file tools, prefer guarded replacements for an existing file: read it, then use
+write_text_file with old_text and replacement content. The edit applies to the version your last
+read or write returned; expectedHash defaults to that hash. old_text must match exactly once; use
+enough unchanged surrounding text to identify the intended site, or replaceAll for every occurrence.
+
+Find code with search_files (a regular expression over file contents) and list_files with a glob
+pattern before reading files one by one.
 
 The hash covers the whole file even after a partial read.
 

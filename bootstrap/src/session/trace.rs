@@ -615,7 +615,7 @@ impl Trace {
         kind: &str,
         goals: &[String],
     ) -> Trace {
-        if crate::vfs::is_scoped() {
+        if !crate::vfs::host_logs() {
             return self;
         }
         use std::io::Write;

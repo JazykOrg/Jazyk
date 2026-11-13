@@ -507,7 +507,8 @@ private to whoever ran it, so they live outside the project and never enter git.
   directory's name and `<key>` the first eight hex digits of a hash of its absolute path.
   `jazyk status` prints the path. Files older than 30 days are removed when a build
   starts.
-- In the browser, in the page's storage ([wasm](../frontends/wasm.md)).
+- In the browser, in the page's storage ([wasm](../frontends/wasm.md)). The engine
+  writes no log files there: its in-memory workspace has no host log directory.
 - Hosted, through the host's record store ([host records](./hosted-runtime.md#host-records)).
 
 | Path in the log directory | What it is | Format |

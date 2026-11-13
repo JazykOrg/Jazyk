@@ -148,6 +148,14 @@ midway stages neither the grouping nor any reparent).
   `parent` obeys the same gates as on create. No gate compares `parent` with committed
   `composition` edges: composition consistency is the `containment-mismatch`
   [check](./compilation.md#checks).
+- `retract_entity_mention({id, source: {doc, section, quote}, reason})` removes one
+  exact entity mention from the graph without changing prose or other mentions.
+  It preserves independent requirements, attributes, and provenance. A mention
+  supplied by a live requirement cannot be retracted independently: delete or
+  relocate that requirement instead. The normal orphan sweep still applies.
+  The source must match a current mention and the reason must be nonempty.
+  Use `edit_graph` to combine independent mention retractions with asset
+  classification. A failed edit rolls the transaction back.
 - `delete_entity({id, reason})`: rejected while any requirement references the entity
   or any entity names it as `parent`; the error lists them. Deleting an entity a view,
   a transition, or a `from` list references is allowed: the references left dangling are
@@ -689,7 +697,7 @@ Markdown link is relative to its document; use the package's `referencedAssets.p
 for a file tool call. The served schemas name the current path root. A direct tool
 session with an explicit deliverable directory keeps paths relative to that directory.
 
-- `generation_tasks({})`: entities whose facts differ from the ledger, the targets of
+- `generation_tasks({entity?})`: entities whose facts differ from the ledger, the targets of
   the open `generate` goals: `{entity, reason, changed, ready, blockedBy?}` where
   `changed` lists the requirement ids added, removed, or reworded since the entity was
   last generated and `blockedBy` is the board's readiness reason for a row that is not
@@ -751,7 +759,7 @@ session with an explicit deliverable directory keeps paths relative to that dire
 work from. Same worker model as generation: the agent searches and edits with its own
 tools; jazyk holds the ledger. These tools never mutate the graph.
 
-- `binding_tasks({})` (rows sorted by entity with a `byEntity` count, since generation
+- `binding_tasks({entity?})` (rows sorted by entity with a `byEntity` count, since generation
   works per entity and a session once bound an entity's rows by hand to make its task
   useful): requirements owing a binding, the targets of the open
   [`bind`](./goals/bind.md) goals, with a `reason` (`unbound`, `requirement-changed`,

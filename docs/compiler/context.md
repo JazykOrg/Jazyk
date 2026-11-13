@@ -80,6 +80,13 @@ auto-load the full extraction skill. Other skills remain available by name.
 
 The loading tools are [read tools](./tools.md#read-tools), served everywhere:
 
+A bare document path loads its actual root, or its whole-file or preamble section
+when that document has no heading root. A missing section error names available
+section references from that document. An absent alignment target distinguishes
+an existing document without pending proposals from a missing document.
+`inspect_input` returns a bounded `sectionRefs` list and `sectionCount` from the
+current stored section tree. A stale tree still requires normal reconciliation.
+
 - `load({target, depth?})`: load a target and its immediate neighborhood. The target is
   any node id (entity, requirement, criterion, view, diagnostic), a section reference,
   `alignment:<document>` for pending section changes and anchor proposals, or

@@ -3,11 +3,15 @@ use super::*;
 // What the repeated-call guard and the feedback cap remember, carried between the
 // per-call sessions of a serving with no open batch
 // (docs/compiler/sessions.md#repeated-calls).
-#[derive(Default, Clone)]
+#[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct CallMemory {
     repeats: std::collections::BTreeMap<String, u32>,
     last_answers: std::collections::BTreeMap<String, (String, (u64, usize))>,
     feedback_count: usize,
+    loaded: Option<LoadedSet>,
+    skills: Option<SkillState>,
+    generation: Option<u64>,
     file_hashes: std::collections::BTreeMap<String, String>,
 }
 
@@ -166,6 +170,14 @@ impl ToolSession {
         self.repeats = memory.repeats;
         self.last_answers = memory.last_answers;
         self.feedback_count = memory.feedback_count;
+        if memory.generation == Some(self.snapshot.status.generation) {
+            if let Some(loaded) = memory.loaded {
+                self.loaded = loaded;
+            }
+        }
+        if let Some(skills) = memory.skills {
+            self.skills = skills;
+        }
         self.file_hashes = memory.file_hashes;
     }
 
@@ -174,6 +186,9 @@ impl ToolSession {
             repeats: self.repeats.clone(),
             last_answers: self.last_answers.clone(),
             feedback_count: self.feedback_count,
+            loaded: Some(self.loaded.clone()),
+            skills: Some(self.skills.clone()),
+            generation: Some(self.snapshot.status.generation),
             file_hashes: self.file_hashes.clone(),
         }
     }

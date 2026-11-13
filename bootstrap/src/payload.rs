@@ -235,6 +235,8 @@ mod tests {
                 ("began-note", &[]),
                 ("ledger-nothing-owed", &[]),
                 ("ledger-gated", &["begin"]),
+                ("ledger-blocked", &[]),
+                ("ledger-verification-status", &[]),
                 ("ledger-ready", &["begin"]),
                 ("ledger-stale", &["count"]),
                 ("source-mapping", &[]),

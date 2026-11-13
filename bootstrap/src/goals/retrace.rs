@@ -39,6 +39,11 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
                     }
                 }
             }
+            Op::RetractEntityMention { id, source, .. } => {
+                if let Some(entity) = g.entities.get_mut(id) {
+                    entity.mentions.retain(|mention| mention != source);
+                }
+            }
             Op::DeleteEntity { id, .. } | Op::DissolveEntity { id, .. } => {
                 g.entities.remove(id);
             }
@@ -331,6 +336,7 @@ impl GoalKind for Retrace {
             "delete_view",
             "upsert_entity",
             "update_entity",
+            "retract_entity_mention",
             "delete_entity",
             "merge_entities",
             "upsert_requirement",

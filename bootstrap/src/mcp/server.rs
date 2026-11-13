@@ -300,6 +300,7 @@ impl McpServer {
             "finished": &*self.finished.lock().map_err(|_| "MCP completion state poisoned")?,
             "ledgerTarget": &*self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")?,
             "client": &*self.client.lock().map_err(|_| "MCP client state poisoned")?,
+            "callMemory": &*self.call_memory.lock().map_err(|_| "MCP call memory poisoned")?,
             "skills": &*self.skills.lock().map_err(|_| "MCP skill state poisoned")?,
             "children": children
         }))
@@ -316,6 +317,10 @@ impl McpServer {
         {
             return Err("MCP checkpoint is incompatible with this project configuration.".into());
         }
+        let call_memory = match value.get("callMemory") {
+            Some(memory) => serde_json::from_value(memory.clone()).map_err(|e| e.to_string())?,
+            None => Default::default(),
+        };
         let mut open: Option<OpenBatch> =
             serde_json::from_value(value["open"].clone()).map_err(|e| e.to_string())?;
         if let Some(batch) = open.as_mut() {
@@ -373,6 +378,10 @@ impl McpServer {
             .lock()
             .map_err(|_| "MCP client state poisoned")? =
             serde_json::from_value(value["client"].clone()).map_err(|e| e.to_string())?;
+        *self
+            .call_memory
+            .lock()
+            .map_err(|_| "MCP call memory poisoned")? = call_memory;
         if let Some(children) = value["children"].as_object() {
             let workspace =
                 crate::document_sets::Workspace::load(&self.project.root).map_err(|e| e.1)?;

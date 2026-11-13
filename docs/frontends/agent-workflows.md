@@ -16,6 +16,10 @@ operations and do not introduce a second policy.
 The main policy contains rules needed on every turn:
 
 - Follow the current request and preserve its scope and authorization.
+- A request to build a deliverable includes the necessary documentation
+  reconciliation, implementation, and local verification within that scope.
+  Carry the request through those stages. Report concrete blockers and continue
+  independent work. Honor separate cost, human decision, and publication gates.
 - Treat prose as intended behavior and implementation as observed behavior.
 - Keep code within requirements, or update the docs first for an authorized
   behavior change. Do not invent requirements to justify an implementation.

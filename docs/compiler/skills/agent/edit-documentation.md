@@ -57,11 +57,22 @@ Use for prose, requirements, criteria, and intended behavior changes.
   and `value` for an identified entity, requirement, or view fact.
 - Use `update_criterion` for a criterion. It can commit in chat without
   `begin_goals`. `edit_fact` does not accept criterion IDs.
+  To change an existing criterion's quote anchor, use `upsert_criterion` with its
+  current requirement and statement, then `update_criterion` for wording changes
+  in the same `edit_graph` transaction. `update_criterion` cannot re-source an
+  already quoted criterion.
 - For relevant graph repairs, use the authored mutation tools directly in writable
   chat. No build goal or compile release is needed. Use `edit_graph` for related
   mutations that must commit together or for an edit independent of an open batch.
   Supply derived provenance for model judgment. Use `decision` only to record an
   explicit human choice. Keep follow-up reconciliation pending unless authorized.
+- For asset reclassification, inspect the input's `quoteReferences`. When
+  extracted requirements describe the supplied content rather than this product,
+  delete those requirements with `delete_requirement` and classify the input in
+  one `edit_graph` transaction. This preserves prose and prunes their cached
+  entity mentions. `retract_requirement` removes prose and is unsuitable here.
+  Repair independent quotes explicitly. Do not infer a missing capability merely
+  from an entity's mention list. Keep referring layout requirements as requirements.
 - Do not compile merely to obtain graph IDs. A direct prose edit is valid input;
   the next authorized compile reconciles it.
 - Describe a requested behavior in docs before implementing it. If the behavior

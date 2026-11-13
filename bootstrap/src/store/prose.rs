@@ -476,6 +476,57 @@ impl Store {
 }
 
 impl Store {
+    pub(crate) fn input_quote_references(&self, doc: &str) -> serde_json::Value {
+        let quoted = |p: &Provenance| matches!(p, Provenance::Quote(s) if s.doc == doc);
+        let requirements: Vec<_> = self
+            .graph
+            .requirements
+            .iter()
+            .filter(|(_, r)| {
+                r.provenance()
+                    .is_some_and(|p| matches!(p, ProvenanceRef::Quote(s) if s.doc == doc))
+            })
+            .map(|(id, _)| id)
+            .collect();
+        let mut mentions = Vec::new();
+        let mut facts = Vec::new();
+        for (id, entity) in &self.graph.entities {
+            for source in entity.mentions.iter().filter(|s| s.doc == doc) {
+                let supplied_by: Vec<_> = self
+                    .graph
+                    .requirements
+                    .iter()
+                    .filter(|(_, r)| r.entities.contains(id) && r.source.as_ref() == Some(source))
+                    .map(|(rid, _)| rid)
+                    .collect();
+                mentions.push(
+                    serde_json::json!({"entity":id,"source":source,"requirements":supplied_by}),
+                );
+            }
+            if entity.provenance.as_ref().is_some_and(quoted) {
+                facts.push(serde_json::json!({"entity":id,"field":"provenance"}));
+            }
+            for attribute in &entity.attributes {
+                if quoted(&attribute.provenance) {
+                    facts.push(
+                        serde_json::json!({"entity":id,"field":"attribute","name":attribute.name}),
+                    );
+                }
+            }
+        }
+        let criteria: Vec<_> = self
+            .graph
+            .criteria
+            .iter()
+            .filter(|(_, c)| {
+                c.source.as_ref().is_some_and(|s| s.doc == doc)
+                    || c.provenance.as_ref().is_some_and(quoted)
+            })
+            .map(|(id, _)| id)
+            .collect();
+        serde_json::json!({"requirements":requirements,"entityMentions":mentions,"entityFacts":facts,"criteria":criteria})
+    }
+
     pub(crate) fn classified_input(
         &self,
         doc: &str,
@@ -502,18 +553,12 @@ impl Store {
             return Err("input changed since sha256 was read; inspect the current bytes".into());
         }
         if check_quotes && decision.mode == "asset" {
-            let quoted = |p: &Provenance| matches!(p, Provenance::Quote(s) if s.doc == doc);
-            let stranded = self.graph.requirements.values().any(|r| {
-                r.provenance()
-                    .is_some_and(|p| matches!(p, ProvenanceRef::Quote(s) if s.doc == doc))
-            }) || self.graph.entities.values().any(|e| {
-                e.mentions.iter().any(|s| s.doc == doc)
-                    || e.provenance.as_ref().is_some_and(quoted)
-                    || e.attributes.iter().any(|a| quoted(&a.provenance))
-            }) || self.graph.criteria.values().any(|c| {
-                c.source.as_ref().is_some_and(|s| s.doc == doc)
-                    || c.provenance.as_ref().is_some_and(quoted)
-            });
+            let references = self.input_quote_references(doc);
+            let stranded = references
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|v| v.as_array().is_some_and(|items| !items.is_empty()));
             if stranded {
                 return Err(
                     "relocate or retract facts quoting this input before marking it as an asset"

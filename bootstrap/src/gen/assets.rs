@@ -447,6 +447,62 @@ pub fn referenced_assets_in(
             });
         }
     }
+    let mut pending: std::collections::VecDeque<_> = assets.keys().cloned().collect();
+    // Each originating reference crosses each asset once, including cyclic graphs.
+    let mut visited = BTreeSet::new();
+    while let Some(parent) = pending.pop_front() {
+        let Some(asset) = assets.get(&parent) else {
+            continue;
+        };
+        if asset.status != "ready" {
+            continue;
+        }
+        let references = asset.references.clone();
+        let links = store
+            .docs
+            .get(&parent)
+            .and_then(|d| d.sections.get("/"))
+            .filter(|s| s.kind == "blob")
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s.raw).ok())
+            .and_then(|v| v["assetLinks"].as_array().cloned())
+            .unwrap_or_default();
+        for reference in references {
+            if !visited.insert((parent.clone(), reference.clone())) {
+                continue;
+            }
+            for href in links.iter().filter_map(serde_json::Value::as_str) {
+                let (path, blocked) = match target_input(&parent, href) {
+                    Target::Local(path)
+                        if crate::md::supported_format(Path::new(&path))
+                            && !store
+                                .decisions
+                                .inputs
+                                .get(&path)
+                                .is_some_and(|d| d.mode == "asset") =>
+                    {
+                        continue
+                    }
+                    Target::Local(path) => (path, false),
+                    Target::Blocked(path) => (path, true),
+                    Target::Ignore => continue,
+                };
+                let child = assets.entry(path.clone()).or_insert_with(|| {
+                    if blocked {
+                        ReferencedAsset::new(
+                            path.clone(),
+                            "blocked",
+                            Some("The reference is not a safe project-local input path."),
+                        )
+                    } else {
+                        inspect(&project.root, &path, &project.gen_code, outputs)
+                    }
+                });
+                if child.references.insert(reference.clone()) {
+                    pending.push_back(path);
+                }
+            }
+        }
+    }
     assets.into_values().collect()
 }
 

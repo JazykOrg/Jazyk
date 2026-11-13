@@ -32,6 +32,19 @@ tools:
 
 Use for implementing documented behavior or recording an owned source repair.
 
+- A request to build or update the deliverable calls for implementation and
+  verification, including necessary reconciliation of the requested docs. Read
+  `compile` for that prerequisite. Classification and graph edits alone do not
+  complete a deliverable request. Continue independent requested work when one
+  part is blocked. Honor separate cost and publication rules.
+- If the requested stage awaits release and `release_work` is available, call it
+  for that stage under the user's explicit build request, then refresh the tasks.
+  Finish graph repairs before releasing generation: releases name the current
+  generation. Keep manual workflow settings unchanged. If release is unavailable
+  or a separate approval is required, name that specific blocker.
+- For unchanged supplied files, use `inspect_input`, `classify_input`, and
+  `link_asset` at selected source destinations. Keep their links in the complete
+  generation manifest and verify the resulting deliverable.
 - Inspect `generation_tasks` for requested scope. An empty list does not prove
   an artifact exists or passes checks. Follow returned prerequisites.
 - If no source mapping exists, inspect `list_document_sets`, then use the current

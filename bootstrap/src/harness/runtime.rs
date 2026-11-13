@@ -1057,7 +1057,12 @@ async fn handle_action(
                 .into())
             } else if (args.cancelled)() {
                 Err("Skipped: the session was cancelled before this call started".into())
-            } else if state.failed_tool_transition == Some(state.transition) {
+            } else if state.failed_tool_transition == Some(state.transition)
+                && !crate::tools::read_only(&name)
+            {
+                // Later reads of the same reply still run; only a call that could
+                // act on the failed call's assumption is skipped.
+                // Mirrors docs/compiler/agent-runtime.md#models-and-tools.
                 Err(include_str!(concat!(
                     env!("OUT_DIR"),
                     "/payloads/goals/prompts/inline/harness-runtime/skipped-an-earlier-call-in-this-reply-2a110.md"
@@ -1088,7 +1093,9 @@ async fn handle_action(
             if !ok && !skipped && state.failed_tool_transition != Some(state.transition) {
                 state.consecutive_tool_errors += 1;
                 state.failed_tool_transition = Some(state.transition);
-            } else if ok {
+            } else if ok && state.failed_tool_transition != Some(state.transition) {
+                // A read that runs after a failure in the same reply does not clear
+                // that reply's error.
                 state.consecutive_tool_errors = 0;
             }
             let digest = Some(super::arguments_digest(&parameters));

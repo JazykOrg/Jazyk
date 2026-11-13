@@ -7,8 +7,12 @@ requiredCapabilities: "document writes"
 
 Use for prose, requirements, criteria, and intended behavior changes.
 
-- Read current text with `read_document`. Preserve unrelated prose and use its
-  `hash` as `baseHash` with `write_document`. New files omit `baseHash`.
+- Read current text with `read_document`. For a change to an existing document,
+  call `write_document` with `old_text` copied exactly from that read and `text`
+  as its replacement. It sends only the changed region, preserves unrelated prose,
+  and guards the edit with the hash of your read. Use `replaceAll` to change every
+  occurrence. Replace a whole document only for a complete rewrite, with its
+  `hash` as `baseHash`. New files omit `baseHash`.
 - Use format-specific editing for binary documents. Do not overwrite DOCX or PDF
   with text. A stale hash requires a fresh read before retrying.
 - For an identified compiled requirement, prefer `revise_requirement`,

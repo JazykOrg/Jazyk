@@ -27,7 +27,12 @@ impl McpServer {
                 .iter()
                 .any(|kind| matches!(kind.as_str(), "bind" | "generate" | "verify"))
             {
-                names.extend(["read_text_file", "list_files", "inspect_asset_link"]);
+                names.extend([
+                    "read_text_file",
+                    "list_files",
+                    "search_files",
+                    "inspect_asset_link",
+                ]);
                 if kinds
                     .iter()
                     .any(|kind| matches!(kind.as_str(), "bind" | "generate"))
@@ -80,7 +85,7 @@ impl McpServer {
         if tools.iter().any(|tool| {
             matches!(
                 tool["name"].as_str(),
-                Some("read_text_file" | "write_text_file" | "list_files")
+                Some("read_text_file" | "write_text_file" | "list_files" | "search_files")
             )
         }) {
             let root = self.current_gen_settings().deliverable;
@@ -102,6 +107,10 @@ impl McpServer {
                     Some("list_files") => include_str!(concat!(
                         env!("OUT_DIR"),
                         "/payloads/goals/prompts/inline/mcp-catalog/list-eligible-files-path-narrows-to-a-461c3.md"
+                    )),
+                    Some("search_files") => include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/mcp-catalog/search-eligible-file-contents-like-grep-7e0b3.md"
                     )),
                     _ => continue,
                 };

@@ -10,6 +10,11 @@ Resolve links inside a document from that document's directory before calling
 it, as described in [file paths](./agent-workflows.md#file-paths). It reads Markdown or a
 [native DOCX/PDF projection](../compiler/binary-documents.md#diagnostics-and-agents)
 with source locations and diagnostics. It does not return binary base64 to agents.
+`line` (1-based) and `limit` (a line count) select part of a text document. A reply
+carries at most 64 KiB of `text`; a cut reply carries `truncated: true`,
+`totalLines`, and `nextLine`. A single line longer than the cap returns a UTF-8-safe
+prefix with `truncated: true` and `truncatedLine`. `hash` always covers the whole
+document.
 
 `jazyk mcp <toolsets>` serves the [tool registry](../compiler/tools.md) over stdio as an
 MCP server: line-delimited JSON-RPC per the Model Context Protocol. It dispatches the

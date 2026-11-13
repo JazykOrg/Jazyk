@@ -36,7 +36,8 @@ pub use self::catalog::{
     PAIR_SETTLE_TOOL, PAIR_VERDICTS, READ_TOOLS, REVIEW_RULES, SPEND_TOOL, VERIFY_TOOLS,
     VIEW_TOOLS,
 };
-pub(crate) use self::catalog::{done_parameters, prompt_schema};
+pub(crate) use self::catalog::{done_parameters, prompt_schema, read_only};
+pub(crate) use self::files::{edit_match_error, literal_edit};
 pub use self::scope::{harness_owned_rule, GoalOutcome, GoalScope, WorkScope};
 pub use self::session::{opened_package, CallMemory, ToolSession};
 

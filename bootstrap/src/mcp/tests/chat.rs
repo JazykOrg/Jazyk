@@ -218,6 +218,95 @@ fn chat_prose_edit_works_before_compile_and_rejects_stale_or_unsafe_writes() {
         .is_empty());
 }
 
+// A chat document edit sends only the changed region: old_text selects one site
+// (or every site with replaceAll) in the version the serving last read or wrote,
+// and read_document pages long documents. Mirrors
+// docs/compiler/tools.md#conversational-document-writes and docs/frontends/mcp.md.
+#[test]
+fn chat_document_literal_edits_apply_to_the_last_read_version() {
+    let dir = bare_dir("chat-literal-doc-edit");
+    let path = dir.join("docs/hosting.md");
+    crate::vfs::write(&path, "# Hosting\n\nUse S3.\n\nS3 serves files.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .files_project();
+    let s = McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        vec!["chat".into()],
+        false,
+        BridgeFlags {
+            ephemeral: true,
+            ..Default::default()
+        },
+    );
+    let call = |name: &str, args: Value| {
+        s.handle("tools/call", &json!({"name":name,"arguments":args}))
+            .unwrap()
+    };
+    let parse = |v: &Value| -> Value {
+        serde_json::from_str(v["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let unread = parse(&call(
+        "write_document",
+        json!({"path":"docs/hosting.md","old_text":"Use S3.","text":"Use R2."}),
+    ));
+    assert_eq!(unread["error"]["rule"], "edit-needs-read", "{unread}");
+    let page = parse(&call(
+        "read_document",
+        json!({"path":"docs/hosting.md","line":3,"limit":1}),
+    ));
+    assert_eq!(page["text"], "Use S3.\n", "{page}");
+    assert_eq!(page["nextLine"], 4, "{page}");
+    assert_eq!(page["totalLines"], 5, "{page}");
+    let ambiguous = parse(&call(
+        "write_document",
+        json!({"path":"docs/hosting.md","old_text":"S3","text":"R2"}),
+    ));
+    assert_eq!(ambiguous["error"]["rule"], "edit-match", "{ambiguous}");
+    let edited = call(
+        "write_document",
+        json!({"path":"docs/hosting.md","old_text":"S3","text":"R2","replaceAll":true}),
+    );
+    assert!(!edited["isError"].as_bool().unwrap_or(false), "{edited}");
+    assert_eq!(
+        crate::vfs::read_to_string(&path).unwrap(),
+        "# Hosting\n\nUse R2.\n\nR2 serves files.\n"
+    );
+    // The write's hash is the next edit's version; an outside change is stale.
+    let again = call(
+        "write_document",
+        json!({"path":"docs/hosting.md","old_text":"Use R2.","text":"Use R2 behind a CDN."}),
+    );
+    assert!(!again["isError"].as_bool().unwrap_or(false), "{again}");
+    crate::vfs::write(&path, "# Hosting\n\nRewritten elsewhere.\n").unwrap();
+    let stale = parse(&call(
+        "write_document",
+        json!({"path":"docs/hosting.md","old_text":"Rewritten","text":"x"}),
+    ));
+    assert_eq!(stale["error"]["rule"], "stale-document", "{stale}");
+    assert_eq!(
+        crate::vfs::read_to_string(&path).unwrap(),
+        "# Hosting\n\nRewritten elsewhere.\n"
+    );
+    crate::vfs::write(dir.join("docs/wide.md"), "w".repeat(70 * 1024)).unwrap();
+    let wide = parse(&call("read_document", json!({"path":"docs/wide.md"})));
+    assert_eq!(wide["truncated"], true);
+    assert_eq!(wide["truncatedLine"], 1);
+    assert_eq!(wide["text"].as_str().unwrap().len(), 64 * 1024);
+    let listed = s.handle("tools/list", &json!({})).unwrap();
+    let names: Vec<&str> = listed["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["name"].as_str())
+        .collect();
+    #[cfg(not(target_arch = "wasm32"))]
+    assert!(names.contains(&"search_files"), "{names:?}");
+    let found = parse(&call("search_files", json!({"pattern":"Rewritten"})));
+    assert_eq!(found["matches"][0]["path"], "docs/hosting.md", "{found}");
+}
+
 // Mirrors docs/frontends/mcp.md#watching-edits.
 #[test]
 fn recent_edits_reports_an_outside_edit_with_its_derived_goals() {

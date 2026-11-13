@@ -180,7 +180,10 @@ fn turn_effects(id: &str, message_id: &str) -> Value {
     ensure_loaded(id);
     fn read(tool: &str) -> bool {
         crate::tools::toolset("mcp-read").contains(&tool)
-            || matches!(tool, "read_text_file" | "list_files" | "list_document_sets")
+            || matches!(
+                tool,
+                "read_text_file" | "list_files" | "search_files" | "list_document_sets"
+            )
             || matches!(
                 tool,
                 "binding_tasks" | "generation_tasks" | "verification_tasks"

@@ -273,6 +273,7 @@ impl McpServer {
             ledger_target: std::sync::Mutex::new(None),
             interrupts: Default::default(),
             call_memory: Default::default(),
+            doc_hashes: Default::default(),
         }
     }
 

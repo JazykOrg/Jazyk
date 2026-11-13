@@ -57,6 +57,10 @@ pub struct McpServer {
     // The guard and feedback cap across per-call sessions outside a batch, keyed by
     // the ledger claim they ran under. Mirrors docs/compiler/sessions.md#repeated-calls.
     call_memory: std::sync::Mutex<(Option<String>, crate::tools::CallMemory)>,
+    // The document hash each read_document or write_document of a path last
+    // returned: the version a write_document literal edit applies to without
+    // baseHash. Mirrors docs/compiler/tools.md#conversational-document-writes.
+    doc_hashes: std::sync::Mutex<std::collections::BTreeMap<String, String>>,
     // Whether the transport carries server-to-client notifications (the stdio loop
     // does), and the tool names the client last listed: the baseline a
     // `notifications/tools/list_changed` compares against.

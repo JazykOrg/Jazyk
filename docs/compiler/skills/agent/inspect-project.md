@@ -16,6 +16,10 @@ Use for project questions, explanations, reviews, status, and change impact.
 - Discover a document set only when a set-local query requires it.
 - Distinguish documented intent, implemented behavior, derived graph state,
   recorded evidence, and your inference. Name stale or missing evidence.
+- When file tools are available, locate code by content with `search_files` and
+  paths with `list_files` and a glob `pattern` before reading files one by one.
+  Continue a search with `scanComplete: false` by passing its `next` as `cursor`. Read the surrounding code with
+  `read_text_file`, then edit with `old_text`; the edit applies to that read.
 - Reviews and status requests do not authorize edits, compilation, or execution.
 - Stop investigating when the evidence answers the question. Report findings
   and material uncertainty, without turning a question into implementation work.

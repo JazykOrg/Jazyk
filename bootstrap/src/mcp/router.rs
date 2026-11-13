@@ -215,9 +215,9 @@ impl McpServer {
                 t["inputSchema"]["properties"]["setId"] = json!({"type":"string","description":"Document set ID from list_document_sets. Required when multiple sets exist."});
             }
             tools.push(json!({"name":"list_document_sets","description":"List every document set, its file selections, state and configuration hash.","inputSchema":{"type":"object","properties":{}}}));
-            tools.push(json!({"name":"read_document","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-router/read-a-project-document-as-compiler-text-716d3.md")),"inputSchema":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"],"additionalProperties":false}}));
+            tools.push(json!({"name":"read_document","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-router/read-a-project-document-as-compiler-text-716d3.md")),"inputSchema":{"type":"object","properties":{"path":{"type":"string"},"line":{"type":"integer","minimum":1},"limit":{"type":"integer","minimum":1}},"required":["path"],"additionalProperties":false}}));
             if writable && self.modes.iter().any(|m| m == "chat") {
-                tools.push(json!({"name":"write_document","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-router/create-or-replace-one-prose-document-without-92210.md")),"inputSchema":{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"baseHash":{"type":"string"}},"required":["path","text"],"additionalProperties":false}}));
+                tools.push(json!({"name":"write_document","description":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-router/create-or-replace-one-prose-document-without-92210.md")),"inputSchema":{"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"baseHash":{"type":"string"},"old_text":{"type":"string"},"replaceAll":{"type":"boolean"}},"required":["path","text"],"additionalProperties":false}}));
             }
             if writable {
                 for (name,description) in [("preview_document_set","Preview a document-set edit without writing."),("save_document_set","Create or edit one set, preserving its identity and graph."),("create_document_set","Create a named document set."),("update_document_set","Update a document set while preserving its identity."),("remove_document_set","Remove a set from the project. Documents and its retained graph remain on disk.")] {
@@ -258,7 +258,53 @@ impl McpServer {
                 .as_str()
                 .ok_or((-32602, "text is required".into()))?;
             let project = w.files_project();
-            let base = args["baseHash"].as_str();
+            let mut base = args["baseHash"].as_str().map(str::to_owned);
+            // A literal edit: old_text selects the site, text replaces it, and the
+            // version it applies to is baseHash or the serving's last read or write
+            // of the path. Mirrors docs/compiler/tools.md#conversational-document-writes.
+            let edited;
+            let text = match args.get("old_text") {
+                None => text,
+                Some(old) => {
+                    let old = old
+                        .as_str()
+                        .ok_or((-32602, "old_text must be a string".into()))?;
+                    if base.is_none() {
+                        base = self.doc_hashes.lock().unwrap().get(path).cloned();
+                    }
+                    let Some(expected) = base.clone() else {
+                        return Ok(text_result(
+                            json!({"error":{"rule":"edit-needs-read","message":format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-router/document-edit-needs-a-read-first-b7c40.md")), path = path)}}),
+                            true,
+                        ));
+                    };
+                    let current = crate::webapi::docs::safe_doc_path_why(&project, path)
+                        .ok()
+                        .and_then(|abs| crate::vfs::read_to_string(&abs).ok());
+                    let Some(current) = current else {
+                        return Err((-32602, format!("cannot read `{path}` before editing; read_document shows what exists")));
+                    };
+                    let disk = crate::model::hash_hex(&current);
+                    if disk != expected {
+                        return Ok(text_result(
+                            json!({"error":{"rule":"stale-document","message":"document changed since your last read; read_document before retrying","diskHash":disk}}),
+                            true,
+                        ));
+                    }
+                    let all = args["replaceAll"].as_bool() == Some(true);
+                    match crate::tools::literal_edit(&current, old, text, all) {
+                        Ok((next, _)) => {
+                            edited = next;
+                            edited.as_str()
+                        }
+                        Err(found) => {
+                            let error = crate::tools::edit_match_error(path, &found).to_value();
+                            return Ok(text_result(error, true));
+                        }
+                    }
+                }
+            };
+            let base = base.as_deref();
             // Validate and version-check before asking an attached editor to write.
             if let Some(sink) = &self.bridge.edit_sink {
                 let abs = crate::webapi::docs::safe_doc_path_why(&project, path)
@@ -301,6 +347,10 @@ impl McpServer {
                 }
                 match sink_write(sink, &abs, old.as_deref().unwrap_or_default(), text, text) {
                     Ok(()) => {
+                        self.doc_hashes
+                            .lock()
+                            .unwrap()
+                            .insert(path.to_owned(), crate::model::hash_hex(text));
                         let mut v = json!({"path":path,"hash":crate::model::hash_hex(text),"delegated":true});
                         if let Some(f) =
                             crate::effects::file_effect(&project.root, path, old.as_deref(), text)
@@ -326,6 +376,10 @@ impl McpServer {
                 .and_then(|abs| crate::vfs::read_to_string(&abs).ok());
             return match crate::webapi::docs::doc_write(&project, path, text, base) {
                 crate::webapi::docs::DocWrite::Written(mut v) => {
+                    self.doc_hashes
+                        .lock()
+                        .unwrap()
+                        .insert(path.to_owned(), crate::model::hash_hex(text));
                     if let Some(f) =
                         crate::effects::file_effect(&project.root, path, before.as_deref(), text)
                     {
@@ -365,6 +419,13 @@ impl McpServer {
             if let Some(object) = value.as_object_mut() {
                 object.remove("base64");
             }
+            if let Some(hash) = value["hash"].as_str() {
+                self.doc_hashes
+                    .lock()
+                    .unwrap()
+                    .insert(path.to_owned(), hash.to_owned());
+            }
+            page_document(&mut value, &params["arguments"]);
             return Ok(result_value(value));
         }
         if name == "compile_document_sets" {
@@ -496,5 +557,53 @@ impl McpServer {
         } else {
             Ok(result_value(json!({"sets":replies})))
         }
+    }
+}
+
+// A read_document reply's text, cut to the requested lines and to 64 KiB. hash
+// still covers the whole document. Mirrors docs/frontends/mcp.md.
+fn page_document(value: &mut Value, args: &Value) {
+    const BYTES: usize = 64 * 1024;
+    let Some(text) = value["text"].as_str() else {
+        return;
+    };
+    let start = args["line"].as_u64().unwrap_or(1).max(1) as usize - 1;
+    let limit = args["limit"].as_u64().map(|l| l as usize);
+    if start == 0 && limit.is_none() && text.len() <= BYTES {
+        return;
+    }
+    let total = text.split_inclusive('\n').count();
+    let mut out = String::new();
+    let mut taken = 0usize;
+    for line in text
+        .split_inclusive('\n')
+        .skip(start)
+        .take(limit.unwrap_or(usize::MAX))
+    {
+        if out.len() + line.len() > BYTES {
+            if taken == 0 {
+                let mut end = BYTES.min(line.len());
+                while !line.is_char_boundary(end) {
+                    end -= 1;
+                }
+                out.push_str(&line[..end]);
+                taken = 1;
+                value["truncated"] = json!(true);
+                value["truncatedLine"] = json!(start + 1);
+            }
+            break;
+        }
+        out.push_str(line);
+        taken += 1;
+    }
+    value["text"] = json!(out);
+    if value["truncatedLine"].is_number() {
+        value["notice"] =
+            json!("Line exceeds the 64 KiB response limit; only a UTF-8-safe prefix is returned.");
+    }
+    value["totalLines"] = json!(total);
+    if start + taken < total {
+        value["truncated"] = json!(true);
+        value["nextLine"] = json!(start + taken + 1);
     }
 }

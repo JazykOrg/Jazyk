@@ -6,4 +6,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/mcp/catalog.rs"
 ---
-List eligible files. path narrows to a subdirectory; returned paths use the same root.
+List eligible files. path narrows to a subdirectory; pattern is a glob such as **/*.rs (without / it matches file names at any depth). A cut reply carries nextOffset; pass it as offset with the same query to continue. Returned paths use the same root.

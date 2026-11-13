@@ -33,6 +33,15 @@ to the existing serving. Hosted and browser tools execute in process against the
 virtual workspace. Native remote MCP uses the maintained Rust MCP SDK. Tools are
 authorized again before execution and after recovery.
 
+One model reply can carry several tool calls. They run in order. After a call in
+the reply fails, its later calls that are not read-only are skipped with a notice to
+inspect the failure first, so no write runs on an assumption the failed call broke.
+Later read-only calls still run: one failed lookup does not discard the independent
+reads issued beside it. The tool registry names the read-only tools: the
+[read tools](./tools.md#read-tools), the file reads, listings and searches, and the
+task, ledger, document and skill lookups. A skipped call does not count as another
+tool error.
+
 Hosted profiles register no native developer file tools, shell tools, automatic
 extensions or subprocess transports. Image paths in model text do not authorize
 host filesystem reads. File edits use the existing workspace mutation contract.

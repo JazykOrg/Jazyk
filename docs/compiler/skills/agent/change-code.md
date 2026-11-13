@@ -30,4 +30,8 @@ Use for bug fixes, refactors, and features in an existing deliverable.
 - If code is undocumented or requirements do not cover the change, read
   `reverse-compile` to inspect observed behavior or propose missing docs. Do not
   treat a draft as ratified intent. Explain any blocked synchronization step.
+- When file tools are available, locate code by content with `search_files` and
+  paths with `list_files` and a glob `pattern` before reading files one by one.
+  Continue a search with `scanComplete: false` by passing its `next` as `cursor`. Read the surrounding code with
+  `read_text_file`, then edit with `old_text`; the edit applies to that read.
 - Report source changes, docs changes, recorded evidence, and remaining sync.

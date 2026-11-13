@@ -2,6 +2,43 @@
 name: edit-documentation
 description: "Edit prose, requirements, criteria, or intended behavior without implicit compilation."
 requiredCapabilities: "document writes"
+tools:
+  - edit_graph
+  - revise_requirement
+  - add_requirement
+  - retract_requirement
+  - edit_fact
+  - retract_decree
+  - bump_limit
+  - answer_diagnostic
+  - upsert_entity
+  - update_entity
+  - delete_entity
+  - merge_entities
+  - group_entities
+  - dissolve_entity
+  - upsert_requirement
+  - update_requirement
+  - delete_requirement
+  - upsert_criterion
+  - update_criterion
+  - delete_criterion
+  - classify_input
+  - set_coverage
+  - report_diagnostic
+  - update_diagnostic
+  - resolve_diagnostic
+  - place_anchor
+  - orphan_anchor
+  - upsert_view
+  - update_view
+  - delete_view
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
+  - update_project_settings
 ---
 # Edit documentation
 

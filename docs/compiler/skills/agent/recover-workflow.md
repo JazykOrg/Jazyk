@@ -2,6 +2,27 @@
 name: recover-workflow
 description: "Diagnose failed tools, conflicts, interrupted work, or missing prerequisites."
 requiredCapabilities: "relevant inspection and repair tools"
+tools:
+  - goals
+  - abandon_goals
+  - mark_goal_failed
+  - release_work
+  - await_changes
+  - answer_diagnostic
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
 ---
 # Recover a workflow
 

@@ -180,10 +180,19 @@ impl Operation<Session, Effect> for Policy {
                 if !self.names.contains(&call.name.to_string()) {
                     response.add_tool_response_with_metadata(
                         request.id.clone(),
-                        Ok(CallToolResult::error(vec![ContentBlock::text(format!(
-                            "Tool '{}' is not available in this session",
-                            call.name
-                        ))])),
+                        Ok(CallToolResult::error(vec![ContentBlock::text(
+                            if self.names.iter().any(|n| n == "read_jazyk_skill") {
+                                format!(
+                                    include_str!(concat!(
+                                        env!("OUT_DIR"),
+                                        "/payloads/goals/prompts/inline/harness-runtime/tool-not-listed-read-its-skill-4d2a8.md"
+                                    )),
+                                    name = call.name
+                                )
+                            } else {
+                                format!("Tool '{}' is not available in this session", call.name)
+                            },
+                        )])),
                         request.metadata.as_ref(),
                     );
                 }

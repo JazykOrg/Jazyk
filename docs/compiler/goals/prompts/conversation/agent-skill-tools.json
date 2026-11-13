@@ -1,10 +1,10 @@
 {
   "$comment": "Source context: bootstrap/src/agent_workflows.rs reads note and tools separately. The note explains workflow authorization; the tools define deferred skill discovery and reads. This comment is author metadata and is not part of either returned value.",
-  "note": "Read a skill before its workflow. Availability and authorization come from the serving and its gates, not from reading a skill.",
+  "note": "Read a skill before its workflow. Each skill lists the tools its procedure uses; for Jazyk's own agents, reading it adds them to the tool catalog. Authorization still comes from the serving and its gates.",
   "tools": [
     {
       "name": "list_jazyk_skills",
-      "description": "List built-in deferred Jazyk workflow skills, their triggers, required capabilities, and source paths. Read-only. No graph or setId needed.",
+      "description": "List built-in deferred Jazyk workflow skills, their triggers, required capabilities, the tools each uses, and source paths. Read-only. No graph or setId needed.",
       "inputSchema": {
         "type": "object",
         "properties": {},
@@ -13,7 +13,7 @@
     },
     {
       "name": "read_jazyk_skill",
-      "description": "Read the exact instructions of one built-in Jazyk workflow skill before using it. A skill grants no new tool, permission, or cost approval. No graph or setId needed.",
+      "description": "Read the exact instructions of one built-in Jazyk workflow skill before using it. When a tool you need is not in your catalog, read the skill that lists it: the reply names the skill's tools, and they are added to your catalog. A skill grants no permission or cost approval. No graph or setId needed.",
       "inputSchema": {
         "type": "object",
         "properties": {

@@ -84,7 +84,11 @@ impl McpServer {
                 let name = params["arguments"]["name"]
                     .as_str()
                     .ok_or((-32602, "name is required".into()))?;
-                crate::agent_workflows::read(name).map_err(|e| (-32602, e))?
+                let value = crate::agent_workflows::read(name).map_err(|e| (-32602, e))?;
+                if self.skill_gated() {
+                    self.activate_skill(name);
+                }
+                value
             };
             return Ok(text_result(value, false));
         }

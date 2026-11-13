@@ -430,6 +430,7 @@ impl AcpRunner {
                 cancel_file: None,
                 serve_files: matches!(mode, "generate" | "verify") && agent.serve_files,
                 edit_sink: None,
+                progressive: false,
                 reader: false,
             },
         }

@@ -2,6 +2,16 @@
 name: inspect-project
 description: "Inspect project questions, code, docs, reviews, and status without changing them."
 requiredCapabilities: "read"
+tools:
+  - goals
+  - await_changes
+  - inspect_asset_link
+  - task_context
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
 ---
 # Inspect a project
 

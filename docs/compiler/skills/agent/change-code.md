@@ -2,6 +2,32 @@
 name: change-code
 description: "Repair or change code within requirements; update docs first for authorized behavior changes."
 requiredCapabilities: "source reads and writes, generation recording"
+tools:
+  - generation_tasks
+  - begin_generation
+  - record_medium
+  - record_generation
+  - binding_tasks
+  - begin_binding
+  - record_binding
+  - run_tests
+  - link_asset
+  - inspect_asset_link
+  - remove_asset_link
+  - task_context
+  - update_tasks
+  - run_task
+  - inspect_run
+  - wait_run
+  - read_run_log
+  - search_run_log
+  - read_run_changes
+  - cancel_run
+  - preview_document_set
+  - save_document_set
+  - create_document_set
+  - update_document_set
+  - remove_document_set
 ---
 # Change code
 

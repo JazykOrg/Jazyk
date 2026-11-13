@@ -9,6 +9,48 @@ pub const TEMPLATE: &str = include_str!(concat!(
 ));
 pub const TOOLS: [&str; 2] = ["list_jazyk_skills", "read_jazyk_skill"];
 
+// What a skill-gated chat catalog always lists; each workflow skill's front
+// matter lists the rest under `tools`.
+// Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+pub const CORE_TOOLS: [&str; 22] = [
+    "project_context",
+    "list_jazyk_skills",
+    "read_jazyk_skill",
+    "load",
+    "expand",
+    "unload",
+    "graph_status",
+    "search",
+    "read_section",
+    "get_entity",
+    "get_view",
+    "diagnostics",
+    "inspect_input",
+    "read_text_file",
+    "write_text_file",
+    "list_files",
+    "search_files",
+    "read_document",
+    "write_document",
+    "list_document_sets",
+    "recent_edits",
+    "report_feedback",
+];
+
+// The tools one workflow skill's front matter lists, or None for an unknown skill.
+pub fn skill_tools(name: &str) -> Option<Vec<String>> {
+    let skill = SKILLS.iter().find(|s| s.name == name)?;
+    let metadata = skill.metadata().ok()?;
+    Some(
+        metadata["tools"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| t.as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
 pub struct Skill {
     pub name: &'static str,
     pub source: &'static str,

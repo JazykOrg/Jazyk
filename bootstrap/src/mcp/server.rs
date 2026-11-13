@@ -274,6 +274,7 @@ impl McpServer {
             interrupts: Default::default(),
             call_memory: Default::default(),
             doc_hashes: Default::default(),
+            skills: Default::default(),
         }
     }
 
@@ -299,6 +300,7 @@ impl McpServer {
             "finished": &*self.finished.lock().map_err(|_| "MCP completion state poisoned")?,
             "ledgerTarget": &*self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")?,
             "client": &*self.client.lock().map_err(|_| "MCP client state poisoned")?,
+            "skills": &*self.skills.lock().map_err(|_| "MCP skill state poisoned")?,
             "children": children
         }))
     }
@@ -342,6 +344,9 @@ impl McpServer {
                 })?;
         }
         *self.open.lock().map_err(|_| "MCP batch state poisoned")? = open;
+        // A checkpoint written before skill gating has no skills: the core catalog.
+        *self.skills.lock().map_err(|_| "MCP skill state poisoned")? =
+            serde_json::from_value(value["skills"].clone()).unwrap_or_default();
         *self
             .delivered
             .lock()

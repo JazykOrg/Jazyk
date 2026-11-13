@@ -694,3 +694,101 @@ fn a_reader_chat_serving_offers_and_serves_no_writes() {
     );
     crate::vfs::remove_dir_all(dir).ok();
 }
+
+fn chat_serving(dir: &std::path::Path, flags: BridgeFlags) -> McpServer {
+    let project = crate::document_sets::Workspace::load(dir)
+        .unwrap()
+        .files_project();
+    McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        vec!["chat".into()],
+        false,
+        flags,
+    )
+}
+
+// A skill-gated chat catalog lists the core and grows by each read skill's tools;
+// an ungated chat serving lists everything, and every chat tool is reachable
+// through the core or a skill. Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
+#[test]
+fn skill_gated_chat_catalog_grows_by_read_skills() {
+    let dir = bare_dir("skill-gated-catalog");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nText.\n").unwrap();
+    let full = tool_names(&chat_serving(&dir, BridgeFlags::default()));
+    let gated = chat_serving(
+        &dir,
+        BridgeFlags {
+            ephemeral: true,
+            progressive: true,
+            ..Default::default()
+        },
+    );
+    let core = tool_names(&gated);
+    assert!(
+        core.len() < full.len() / 2,
+        "{} of {}",
+        core.len(),
+        full.len()
+    );
+    for name in &core {
+        assert!(
+            crate::agent_workflows::CORE_TOOLS.contains(&name.as_str()),
+            "{name} listed outside the core"
+        );
+    }
+    assert!(core.iter().any(|n| n == "search_files"));
+    assert!(!core.iter().any(|n| n == "run_task"));
+    // Every chat tool is in the core or a skill, and every skill tool exists.
+    let mut reachable: BTreeSet<String> = crate::agent_workflows::CORE_TOOLS
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    for skill in crate::agent_workflows::SKILLS {
+        let tools = crate::agent_workflows::skill_tools(skill.name).unwrap();
+        for tool in &tools {
+            assert!(
+                full.contains(tool),
+                "{} lists unknown tool {tool}",
+                skill.name
+            );
+        }
+        reachable.extend(tools);
+    }
+    for name in &full {
+        assert!(reachable.contains(name), "{name} is in no skill");
+    }
+    // Reading a skill lists its tools from the next listing on.
+    let read = gated
+        .handle(
+            "tools/call",
+            &json!({"name":"read_jazyk_skill","arguments":{"name":"execute-task"}}),
+        )
+        .unwrap();
+    let body: Value = serde_json::from_str(read["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert!(body["tools"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("run_task")));
+    let grown = tool_names(&gated);
+    assert!(grown.iter().any(|n| n == "run_task"));
+    assert!(!grown.iter().any(|n| n == "upsert_entity"));
+    // An unlisted served tool still answers a direct call under its gates.
+    let direct = gated
+        .handle("tools/call", &json!({"name":"goals","arguments":{}}))
+        .unwrap();
+    assert!(direct["content"].is_array(), "{direct}");
+    // The read skills survive a checkpoint.
+    let saved = gated.checkpoint().unwrap();
+    let restored = chat_serving(
+        &dir,
+        BridgeFlags {
+            ephemeral: true,
+            progressive: true,
+            ..Default::default()
+        },
+    );
+    restored.restore(saved).unwrap();
+    assert!(tool_names(&restored).iter().any(|n| n == "run_task"));
+    crate::vfs::remove_dir_all(dir).ok();
+}

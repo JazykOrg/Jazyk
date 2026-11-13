@@ -674,7 +674,7 @@ pub(super) fn report_write(path: &Path, r: std::io::Result<()>) {
 // when `jazyk compile --record` asked for it. Mirrors docs/compiler/sessions.md#snapshots.
 // A hosted workspace keeps none (docs/compiler/hosted-runtime.md#workspace-snapshots).
 pub fn snapshot_graph(out: &Path, label: &str) {
-    if crate::vfs::is_scoped() || !crate::logs::recording() {
+    if !crate::vfs::host_logs() || !crate::logs::recording() {
         return;
     }
     let dir = crate::layout::snapshots_dir(out).join(label.replace(['/', ':'], "_"));

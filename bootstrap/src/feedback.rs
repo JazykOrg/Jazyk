@@ -28,7 +28,7 @@ pub struct Caller {
     pub client: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Entry {
     pub at: String,
@@ -105,7 +105,7 @@ pub fn append(out: &Path, entry: &Entry) {
     }
     // A hosted run without a record store keeps no feedback: the entry is dropped, never
     // written into the workspace snapshot (docs/compiler/hosted-runtime.md#host-records).
-    if crate::vfs::is_scoped() {
+    if !crate::vfs::host_logs() {
         return;
     }
     let file = path(out);

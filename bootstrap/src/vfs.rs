@@ -714,6 +714,15 @@ pub fn is_scoped() -> bool {
     SCOPED.with(|s| s.get())
 }
 
+/// Whether log files (transcripts, feedback, snapshots, pruning) go to the host's log
+/// directory: only on a native, unscoped filesystem. A hosted workspace keeps its
+/// records with the host; the browser's in-memory workspace has no host directory at
+/// all, and resolving one would reach `std::env::temp_dir`, which panics there.
+/// Mirrors docs/compiler/jazyk-folder.md#logs.
+pub fn host_logs() -> bool {
+    !cfg!(target_arch = "wasm32") && !is_scoped()
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn scoped_snapshot() -> Result<crate::file_tree::Snapshot, String> {
     if !is_scoped() {

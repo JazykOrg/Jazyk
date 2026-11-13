@@ -23,7 +23,7 @@ pub fn recording() -> bool {
 /// Best effort, native only: a scoped (hosted or browser) file system keeps no logs of
 /// its own to prune. Returns the number of files removed.
 pub fn prune(out: &Path) -> usize {
-    if crate::vfs::is_scoped() {
+    if !crate::vfs::host_logs() {
         return 0;
     }
     let dir = crate::layout::project_log_dir(out);
@@ -61,6 +61,45 @@ fn prune_dir(dir: &Path, cutoff: std::time::SystemTime) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // An in-memory workspace writes no log files to a host directory: opening a
+    // serving (its transcript), feedback, pruning and snapshots all skip the log
+    // directory. The browser has no host directory at all, and resolving one there
+    // reaches std::env::temp_dir, which panics on wasm32.
+    // Mirrors docs/compiler/jazyk-folder.md#logs.
+    #[test]
+    fn in_memory_workspaces_write_no_host_log_files() {
+        assert!(crate::vfs::host_logs() || crate::vfs::is_scoped());
+        let _scope = crate::vfs::Scope::enter(&crate::file_tree::Snapshot::new());
+        assert!(!crate::vfs::host_logs());
+        let root = Path::new("/project");
+        crate::vfs::create_dir_all(root.join(".jazyk")).unwrap();
+        crate::vfs::write(
+            root.join(".jazyk/jazyk.toml"),
+            "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = []\nsource = []\n",
+        )
+        .unwrap();
+        let out = root.join(".jazyk/ds_main");
+        let host = crate::layout::project_log_dir(&out);
+        assert!(!std::path::Path::new(&host).exists());
+        let project = crate::document_sets::Workspace::load(root)
+            .unwrap()
+            .files_project();
+        let _serving = crate::mcp::McpServer::new(project, out.clone(), vec!["chat".into()], false);
+        crate::feedback::append(
+            &out,
+            &crate::feedback::Entry {
+                at: "2026-11-13T00:00:00Z".into(),
+                kind: "other".into(),
+                message: "probe".into(),
+                ..Default::default()
+            },
+        );
+        assert_eq!(prune(&out), 0);
+        crate::store::snapshot_graph(&out, "probe");
+        assert!(!std::path::Path::new(&host).exists(), "{}", host.display());
+        assert!(!crate::vfs::exists(&crate::layout::feedback_file(&out)));
+    }
 
     #[test]
     fn prune_removes_only_files_past_retention() {

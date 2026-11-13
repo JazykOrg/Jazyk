@@ -297,6 +297,7 @@ impl LoadedSet {
         let stub_of_node = axis.is_empty()
             && (store.graph.entities.contains_key(&target)
                 || store.graph.requirements.contains_key(&target)
+                || store.graph.criteria.contains_key(&target)
                 || store.graph.views.contains_key(&target));
         // An axis handle is open only while its item still carries it: an expansion
         // replaces its handle with the continuation, so a consumed handle is closed

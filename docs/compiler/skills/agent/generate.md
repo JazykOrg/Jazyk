@@ -53,6 +53,10 @@ Use for implementing documented behavior or recording an owned source repair.
 - For unchanged supplied files, use `inspect_input`, `classify_input`, and
   `link_asset` at selected source destinations. Keep their links in the complete
   generation manifest and verify the resulting deliverable.
+- Inspect `generation_tasks` with `entity` for a named entity. Resolve the returned
+  `blockedBy` prerequisites before beginning it. Use the full task list only for
+  a request spanning entities. An empty scoped answer is not evidence about other
+  entities.
 - Inspect `generation_tasks` for requested scope. An empty list does not prove
   an artifact exists or passes checks. Follow returned prerequisites.
 - If no source mapping exists, inspect `list_document_sets`, then use the current
@@ -74,5 +78,9 @@ Use for implementing documented behavior or recording an owned source repair.
   Surface product or behavior gaps rather than silently deciding them.
 - Recording frees the claim. Complete other assigned entities only when in
   scope. Read `verify` to run programmatic checks at a useful milestone.
+- Before ending a deliverable request, compare the requested scope with saved
+  implementation files and links, recorded manifests, and verification evidence.
+  Metadata edits or feedback alone do not establish a generated deliverable.
+  Name a remaining blocker from observed evidence and preserve completed work.
 - LLM criteria remain unjudged until evidence-based verification. Report what
   exists and what is still unverified. Do not infer publication from generation.

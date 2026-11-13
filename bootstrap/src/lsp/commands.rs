@@ -204,37 +204,22 @@ impl Lsp {
         let Some(r) = self.store.graph.requirements.get(&resolved) else {
             return Value::Null;
         };
-        let Some(ent) = r.entities.first() else {
+        let target = self.requirement_document_location(&resolved).or_else(|| {
+            let source = r.source.as_ref()?;
+            let range = crate::md::locate(&self.doc_text(&source.doc), &source.quote)?;
+            Some(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}))
+        });
+        let Some(target) = target else {
             return Value::Null;
         };
-        let slug = self
-            .store
-            .resolve_id(ent)
-            .strip_prefix("ent:")
-            .unwrap_or(ent)
-            .to_string();
-        let path = crate::layout::docsgen_dir(&self.out).join(format!("{}.md", slug));
-        let Ok(text) = crate::vfs::read_to_string(&path) else {
-            eprintln!(
-                "[jazyk-lsp] {}: no requirements document at {}",
-                resolved,
-                path.display()
-            );
-            return Value::Null;
-        };
-        let heading = format!("### `{}`", resolved);
-        let line = text.lines().position(|l| l.trim() == heading).unwrap_or(0);
         let msg = json!({
             "jsonrpc": "2.0",
             "id": format!("jazyk-srv-{}", self.next_srv_id),
             "method": "window/showDocument",
             "params": {
-                "uri": path_to_uri(&path),
+                "uri": target["uri"],
                 "takeFocus": true,
-                "selection": {
-                    "start": {"line": line, "character": 0},
-                    "end": {"line": line, "character": 0}
-                }
+                "selection": target["range"]
             }
         });
         self.next_srv_id += 1;

@@ -43,6 +43,16 @@ impl Lsp {
                 }),
             ));
         }
+        for (rid, line) in self.code_requirements(&doc) {
+            let title = match statuses.get(&rid) {
+                Some(st) => format!("{} · {}", rid, st.word),
+                None => rid.clone(),
+            };
+            lenses.push((line, 0, json!({
+                "range": self.range((line, 0, line, 0)),
+                "command": {"title": title, "command": "jazyk.openRequirement", "arguments": [rid]}
+            })));
+        }
         // A section whose text moved since the last build lenses on its heading.
         // Mirrors docs/frontends/lsp.md#capabilities.
         for line in self.changed_sections(&doc, &text) {

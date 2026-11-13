@@ -13,6 +13,7 @@ tools:
   - answer_diagnostic
   - upsert_entity
   - update_entity
+  - retract_entity_mention
   - delete_entity
   - merge_entities
   - group_entities
@@ -71,7 +72,8 @@ Use for prose, requirements, criteria, and intended behavior changes.
   delete those requirements with `delete_requirement` and classify the input in
   one `edit_graph` transaction. This preserves prose and prunes their cached
   entity mentions. `retract_requirement` removes prose and is unsuitable here.
-  Repair independent quotes explicitly. Do not infer a missing capability merely
+  Use `retract_entity_mention` for an independent mention, supplying its exact
+  `source` from inspection. Repair other independent quoted fields explicitly. Do not infer a missing capability merely
   from an entity's mention list. Keep referring layout requirements as requirements.
 - Do not compile merely to obtain graph IDs. A direct prose edit is valid input;
   the next authorized compile reconciles it.

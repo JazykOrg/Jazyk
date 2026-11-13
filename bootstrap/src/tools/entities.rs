@@ -882,6 +882,22 @@ impl ToolSession {
         Ok(json!({"id": rid, "updated": true}))
     }
 
+    pub(super) fn retract_entity_mention_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let id = Self::str_arg(args, "id")?;
+        let Some(rid) = self.canon_entity_id(&id) else {
+            return Err(self.unknown_entity_error(&id));
+        };
+        let source: SourceRef = serde_json::from_value(args["source"].clone())
+            .map_err(|error| ToolError::new("bad-argument", error.to_string()))?;
+        let reason = Self::str_arg(args, "reason")?;
+        self.stage(Op::RetractEntityMention {
+            id: rid.clone(),
+            source,
+            reason,
+        })?;
+        Ok(json!({"id":rid,"retracted":true}))
+    }
+
     pub(super) fn delete_entity_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
         let id = Self::str_arg(args, "id")?;
         let reason = Self::str_arg(args, "reason")?;

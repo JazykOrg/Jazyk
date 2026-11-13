@@ -489,6 +489,38 @@ impl Store {
                         provenance,
                     });
                 }
+                Op::RetractEntityMention { id, source, reason } => {
+                    let rid = resolve(&remap, self, &id);
+                    if reason.trim().is_empty() {
+                        skipped.push("retract_entity_mention: reason is empty".into());
+                        continue;
+                    }
+                    if reference_sources(&self.graph)
+                        .get(&rid)
+                        .is_some_and(|refs| refs.contains(&source))
+                    {
+                        skipped.push(format!("retract_entity_mention {rid}: mention is supplied by a live requirement"));
+                        continue;
+                    }
+                    let Some(entity) = self.graph.entities.get_mut(&rid) else {
+                        skipped.push(format!("retract_entity_mention: unknown entity {rid}"));
+                        continue;
+                    };
+                    if !entity.mentions.contains(&source) {
+                        skipped.push(format!(
+                            "retract_entity_mention {rid}: source no longer matches a mention"
+                        ));
+                        continue;
+                    }
+                    entity.mentions.retain(|mention| mention != &source);
+                    entity.updated = Some(build.clone());
+                    dirt.entity(&rid, m, "fields");
+                    applied.push(Op::RetractEntityMention {
+                        id: rid,
+                        source,
+                        reason,
+                    });
+                }
                 Op::DeleteEntity { id, reason } => {
                     let rid = resolve(&remap, self, &id);
                     if !self.graph.entities.contains_key(&rid) {

@@ -248,7 +248,16 @@ The lifecycle inside a session:
   [goal catalog](./reconciler.md#the-catalog)) render in the prompt as active. A goal
   kind's skill stays active while a goal of that kind is open in the batch.
 - Auto-load: in a session with no fixed goals (a serving), the first node of a
-  kind loaded brings the kind's skill, once. A fixed goal batch never auto-loads
+  kind loaded brings the kind's skill, once. Standalone MCP calls carry their
+  loaded set and skill activation state between calls in the same ledger unit.
+  Expanding and unloading operate on that retained set. A new graph generation
+  clears the loaded set so its status cannot describe stale facts as current.
+  Already rendered skill bodies remain available without another rendering.
+  Source caches are rebuilt from the current snapshot. The protected MCP checkpoint retains this state;
+  older checkpoints without it start with an empty working set.
+  A binding or generation claim loads document and view nodes as reference, just
+  like a fixed goal batch. It does not auto-load extraction or view curation
+  skills. Those skills remain available explicitly by name. A fixed goal batch never auto-loads
   skills from reference nodes, even when none of its goal kinds assigns a skill.
   A section brings `extraction`; a flow view
   (`use-case`, `activity`, `sequence`, `communication`, `timing`, `overview`) brings

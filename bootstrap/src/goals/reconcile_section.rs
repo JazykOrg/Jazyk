@@ -883,6 +883,7 @@ impl GoalKind for ReconcileSection {
         &[
             "upsert_entity",
             "update_entity",
+            "retract_entity_mention",
             "delete_entity",
             "upsert_requirement",
             "update_requirement",

@@ -194,6 +194,9 @@ impl Lsp {
         let Some((doc, line, ch)) = self.pos(params) else {
             return Value::Null;
         };
+        if let Some(targets) = self.code_definition(&doc, line) {
+            return targets;
+        }
         let Some((_, e)) = self.entity_at(&doc, line, ch) else {
             return Value::Null;
         };
@@ -246,6 +249,30 @@ impl Lsp {
         let Some((doc, line, ch)) = self.pos(params) else {
             return Value::Null;
         };
+        let cards: Vec<String> = self
+            .code_requirements(&doc)
+            .into_iter()
+            .filter(|(_, l)| *l == line)
+            .filter_map(|(rid, _)| {
+                self.store
+                    .graph
+                    .requirements
+                    .get(&rid)
+                    .map(|r| self.requirement_card(&rid, r))
+            })
+            .collect();
+        if !cards.is_empty() {
+            let text = self.overlay.get(&doc).cloned().unwrap_or_else(|| {
+                crate::vfs::read_to_string(self.root.join(&doc)).unwrap_or_default()
+            });
+            let len = text
+                .lines()
+                .nth(line)
+                .map(|l| l.encode_utf16().count())
+                .unwrap_or(0);
+            return json!({"contents": {"kind": "markdown", "value": cards.join("\n\n---\n\n")},
+                "range": self.range((line, 0, line, len))});
+        }
         if let Some((id, _)) = self.entity_at(&doc, line, ch) {
             let Some(mut value) = self.entity_card_short(&id) else {
                 return Value::Null;
@@ -338,6 +365,36 @@ impl Lsp {
         ));
         if let Some(link) = self.docsgen_link(rid, r) {
             s.push_str(&format!("[the requirement →]({})\n\n", link));
+        }
+        let criteria: Vec<_> = self
+            .store
+            .graph
+            .criteria
+            .iter()
+            .filter(|(_, c)| self.store.resolve_id(&c.requirement) == rid)
+            .collect();
+        if !criteria.is_empty() {
+            s.push_str("**acceptance criteria**\n\n");
+            for (cid, criterion) in criteria {
+                s.push_str(&format!("- `{}` · {}\n", cid, criterion.statement));
+                if let Some(test) = row.and_then(|row| row.tests.get(cid)) {
+                    let artifact = crate::gen::artifact_path(&self.out, &self.gen, &test.test);
+                    let line = crate::vfs::read_to_string(&artifact).ok().and_then(|text| {
+                        text.lines().position(|line| {
+                            !test.test.name.is_empty() && line.contains(&test.test.name)
+                        })
+                    });
+                    let target = match line {
+                        Some(line) => format!("{}#L{}", path_to_uri(&artifact), line + 1),
+                        None => path_to_uri(&artifact),
+                    };
+                    s.push_str(&format!(
+                        "  - [test: `{}`]({}) · {}\n",
+                        test.test.name, target, test.verdict
+                    ));
+                }
+            }
+            s.push('\n');
         }
         s.push_str("---\n\n");
 

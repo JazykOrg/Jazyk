@@ -495,3 +495,182 @@ fn status_words_map_the_derived_statuses() {
         assert_eq!(w(s, r, false), "not built");
     }
 }
+
+#[test]
+fn source_traceability_uses_unsaved_anchors_and_criterion_tests() {
+    let tmp = std::env::temp_dir().join(format!("jz-code-trace-{}", std::process::id()));
+    std::fs::create_dir_all(tmp.join("product")).unwrap();
+    let out = tmp.join(".jazyk");
+    let mut store = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    store
+        .graph
+        .requirements
+        .insert("req:shop-1".into(), requirement());
+    store.graph.criteria.insert(
+        "crit:extra".into(),
+        crate::model::Criterion {
+            requirement: "req:shop-1".into(),
+            statement: "An extra item is retained.".into(),
+            ..Default::default()
+        },
+    );
+    let mut lsp = lsp_at(tmp.clone(), out.clone(), store);
+    lsp.gen.deliverable = tmp.join("product");
+    lsp.overlay
+        .insert("shop.md".into(), "# Shop\nCart holds items.\n".into());
+    lsp.overlay.insert(
+        "product/cart.rs".into(),
+        "// unsaved header\n\nfn hold() {}\n".into(),
+    );
+    lsp.overlay.insert(
+        "product/tests.rs".into(),
+        "fn first() {}\nfn crit_cart_extra_abcd() {}\n".into(),
+    );
+    let test = TestRef {
+        kind: "programmatic".into(),
+        label: "unit".into(),
+        artifact: "tests.rs".into(),
+        name: "first".into(),
+        run: "cargo test first".into(),
+        cwd: ".".into(),
+    };
+    let mut ledger = Ledger::default();
+    ledger.requirements.insert(
+        "req:shop-1".into(),
+        ReqRow {
+            entity: "ent:cart".into(),
+            files: vec!["cart.rs".into()],
+            sites: vec![Site {
+                file: "cart.rs".into(),
+                line: 1,
+                head: "fn hold() {}".into(),
+            }],
+            test: test.clone(),
+            tests: std::collections::BTreeMap::from([(
+                "crit:extra".into(),
+                crate::gen::CritTest {
+                    test: TestRef {
+                        name: "crit_cart_extra_abcd".into(),
+                        ..test
+                    },
+                    criterion_hash: "abcd".into(),
+                    test_hash: String::new(),
+                    verdict: "none".into(),
+                    last_run: None,
+                    exit_code: None,
+                    evidence: None,
+                },
+            )]),
+            hashes: RowHashes::default(),
+            verdict: "none".into(),
+            last_run: None,
+            exit_code: None,
+            evidence: None,
+        },
+    );
+    ledger.save(&out).unwrap();
+    let params = json!({"textDocument": {"uri": path_to_uri(&tmp.join("product/cart.rs"))},
+        "position": {"line": 2, "character": 3}});
+    let lenses = lsp.on_code_lens(&params);
+    assert_eq!(lenses[0]["range"]["start"]["line"], 2);
+    assert_eq!(lenses[0]["command"]["arguments"][0], "req:shop-1");
+    assert!(lsp.on_hover(&params)["contents"]["value"]
+        .as_str()
+        .unwrap()
+        .contains("The Cart shall hold items."));
+    let hover = lsp.on_hover(&params)["contents"]["value"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(hover.contains("An extra item is retained."));
+    assert!(hover.contains("crit_cart_extra_abcd"));
+    assert_eq!(lsp.on_definition(&params)[0]["range"]["start"]["line"], 1);
+    assert_eq!(lsp.code_requirements("product/tests.rs").len(), 2);
+    assert!(lsp.code_requirements("product/unrelated.rs").is_empty());
+    lsp.overlay
+        .insert("product/cart.rs".into(), "fn renamed() {}\n".into());
+    assert!(lsp.on_code_lens(&params).as_array().unwrap().is_empty());
+    assert!(lsp.on_hover(&params).is_null());
+    // Removed requirements cannot retain clickable anchors.
+    lsp.store.graph.requirements.clear();
+    assert!(lsp.code_requirements("product/tests.rs").is_empty());
+    std::fs::remove_dir_all(tmp).unwrap();
+}
+
+#[test]
+fn source_traceability_qualifies_shared_sites_and_opens_each_sets_requirement() {
+    let root = std::env::temp_dir().join(format!("jz-code-trace-sets-{}", std::process::id()));
+    std::fs::create_dir_all(root.join(".jazyk")).unwrap();
+    std::fs::write(root.join(".jazyk/jazyk.toml"),
+        "version = 1\n[[sets]]\nid = 'ds_a'\nname = 'A'\ndocs = ['a.md']\nsource = ['product/**']\n[[sets]]\nid = 'ds_b'\nname = 'B'\ndocs = ['b.md']\nsource = ['product/**']\n").unwrap();
+    for id in ["ds_a", "ds_b"] {
+        let out = root.join(".jazyk").join(id);
+        let mut store = Store::load(&out);
+        store
+            .graph
+            .requirements
+            .insert("req:shop-1".into(), requirement());
+        store.save_for_test();
+        let mut ledger = Ledger::default();
+        ledger.requirements.insert(
+            "req:shop-1".into(),
+            ReqRow {
+                entity: "ent:cart".into(),
+                files: vec!["product/cart.rs".into()],
+                sites: vec![Site {
+                    file: "product/cart.rs".into(),
+                    line: 1,
+                    head: "fn hold() {}".into(),
+                }],
+                test: TestRef {
+                    kind: "programmatic".into(),
+                    label: "unit".into(),
+                    artifact: "test.rs".into(),
+                    name: "holds".into(),
+                    run: "test".into(),
+                    cwd: ".".into(),
+                },
+                tests: Default::default(),
+                hashes: RowHashes::default(),
+                verdict: "none".into(),
+                last_run: None,
+                exit_code: None,
+                evidence: None,
+            },
+        );
+        ledger.save(&out).unwrap();
+        std::fs::create_dir_all(crate::layout::docsgen_dir(&out)).unwrap();
+        std::fs::write(
+            crate::layout::docsgen_dir(&out).join("cart.md"),
+            "# Cart\n### `req:shop-1`\n",
+        )
+        .unwrap();
+    }
+    let out = root.join(".jazyk");
+    let store = super::super::read_project_store(&root, &out);
+    let mut lsp = lsp_at(root.clone(), out, store);
+    lsp.overlay
+        .insert("product/cart.rs".into(), "fn hold() {}\n".into());
+    let found = lsp.code_requirements("product/cart.rs");
+    assert_eq!(
+        found,
+        vec![
+            ("req:ds_a::shop-1".into(), 0),
+            ("req:ds_b::shop-1".into(), 0)
+        ]
+    );
+    for id in ["ds_a", "ds_b"] {
+        let target = lsp
+            .requirement_document_location(&format!("req:{}::shop-1", id))
+            .unwrap();
+        assert!(target["uri"]
+            .as_str()
+            .unwrap()
+            .contains(&format!("/{}/derived/docsgen/cart.md", id)));
+        assert_eq!(target["range"]["start"]["line"], 1);
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}

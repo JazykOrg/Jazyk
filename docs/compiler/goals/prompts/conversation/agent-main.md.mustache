@@ -83,8 +83,11 @@ unless the user authorized it. A review alone does not authorize graph edits.
 Before a workflow, call `read_jazyk_skill` with its name below. A skill carries
 the workflow's procedure and lists the tools it uses. Reading it adds those tools
 to your tool list when they are not there yet, so read the skill before looking
-for a workflow's tools. Use `list_jazyk_skills` for the current catalog, required
-capabilities and each skill's tools. Read only the relevant skills.
+for a workflow's tools. Reuse that skill while its instructions remain in context.
+A new claim or a repeated read result does not require rereading it. Refresh after
+a relevant instruction change or history compaction removed the body. Use
+`list_jazyk_skills` for the current catalog, required capabilities and each
+skill's tools. Read only the relevant skills.
 
 - `inspect-project`: Inspect project questions, code, docs, reviews, and status without changing them.
 - `edit-documentation`: Edit prose, requirements, criteria, or intended behavior without implicit compilation.

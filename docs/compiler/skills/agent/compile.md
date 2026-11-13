@@ -17,6 +17,7 @@ tools:
   - await_changes
   - upsert_entity
   - update_entity
+  - retract_entity_mention
   - delete_entity
   - merge_entities
   - group_entities

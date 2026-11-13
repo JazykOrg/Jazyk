@@ -91,6 +91,16 @@ the CLI and ACP chat.
   nothing for it.
   Prompt code actions use those same ranges, including related context.
   Related document locations identify the affected context without inventing a quote.
+- Recorded implementation sites and programmatic test names also expose traceability
+  in source files. Each located anchor shows a clickable requirement code lens.
+  Hovering its line shows the requirement card, its acceptance criteria, and each
+  criterion's recorded test link and verdict. Go to definition opens the original
+  requirement quote, or its generated requirement heading when no quote is available.
+  Shared lines expose every attached requirement. Anchors relocate against the open
+  editor buffer. Lost anchors and requirements removed from the graph show no lens.
+  Project-wide servers read every document set's ledger and qualify requirement IDs.
+  The VS Code adapter attaches to source files as well as Markdown. Other language
+  servers keep providing their language features.
 - Go to definition: entity → its defining mention.
 - References: entity → all mentions across documents.
 - Hover on an entity: the [card](../consumers/docsgen.md#entity-cards) in short,

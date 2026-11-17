@@ -1267,7 +1267,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             "<p><span class=\"k\">entities</span> {}</p>",
             links.join(" ")
         );
-        match r.source.as_ref() {
+        match r.sources.first() {
             Some(src) => {
                 let _ = write!(
                     body,
@@ -1338,8 +1338,8 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             );
         }
         let doc = r
-            .source
-            .as_ref()
+            .sources
+            .first()
             .map(|s| s.doc.as_str())
             .unwrap_or_default();
         let s = search_attr(&[id, &r.statement, doc]);
@@ -1635,11 +1635,11 @@ mod tests {
                     reasoning: "bounded".into(),
                     measure: Some("2 seconds".into()),
                 }],
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: "shop.md".into(),
                     section: "/shop".into(),
                     quote: "holds".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );
@@ -1754,11 +1754,11 @@ mod tests {
                 reasoning: "a flow".into(),
                 measure: None,
             }],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "asks".into(),
-            }),
+            }],
             ..Default::default()
         }
     }

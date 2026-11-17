@@ -1376,3 +1376,9 @@ Coverage is a query over the graph, not over the deliverable:
 The inverse query, deliverable files no binding names, is the
 [unclaimed report](./bind.md#the-unclaimed-report), and its per-entity slice is the
 `files` part of the [unattached remainder](#the-unattached-remainder).
+
+## Requirement source locations
+
+Generation reads all requirement sources. Ledger requirement hashes and test names
+depend on the immutable id and normalized obligation statement, not source locations.
+A merge follows redirects and preserves only evidence matching the surviving obligation.

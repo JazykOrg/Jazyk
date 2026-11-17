@@ -307,3 +307,8 @@ the extension's output panel):
 
 The log is a mirror of the journal, so watching the output panel during a build shows
 the same additions, updates, deletions, and goal movements the audit trail records.
+
+## Requirement source locations
+
+Diagnostic locations, navigation, and traceability include every source location
+of a requirement. Multi-sentence quotes use their full located range.

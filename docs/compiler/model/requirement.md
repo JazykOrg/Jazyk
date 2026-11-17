@@ -30,10 +30,11 @@ prescribing a syntax. See [statements](../concepts/statements.md).
   describes a state change. See [transition](#transition).
 - `facets`: `[{facet, reasoning, measure?}]`, the judged facets of the statement. See
   [facets](#facets).
-- `source`: `{doc, section, quote}` for a requirement extracted from prose. The `quote` is
-  the verbatim source sentence, located by whitespace-insensitive string search.
+- `sources`: a non-empty list of `{doc, section, quote}` locations for an obligation
+  extracted from prose. Each quote is verbatim, located by whitespace-insensitive
+  string search, and may span consecutive sentences within its section.
 - `provenance`: `{derived: {from, reasoning}}` or `{decree: {author, at, note}}` for a
-  requirement with no sentence behind it yet. A requirement has exactly one of `source` or
+  requirement with no sentence behind it yet. A requirement has exactly one of non-empty `sources` or
   `provenance`. See [provenance](../model.md#provenance).
 - `confidence` and `reasoning`.
 - `created` and `updated`: generation markers.
@@ -46,8 +47,9 @@ req:shop-3:
   entities: [ent:order-service, ent:stock-api]
   edges: [{a: ent:order-service, b: ent:stock-api, type: dependency}]
   facets: [{facet: behavior, reasoning: A step the order service performs on an event.}]
-  source: {doc: docs/shop.md, section: /shop/checkout,
-           quote: "When checkout succeeds, the order service reserves stock through the stock API."}
+  sources:
+  - {doc: docs/shop.md, section: /shop/checkout,
+     quote: "When checkout succeeds, the order service reserves stock through the stock API."}
   confidence: 0.9
   created: g12
   updated: g12
@@ -132,27 +134,26 @@ in [generation](../../consumers/gen.md).
 
 ## Identity
 
-- The natural key is the source section plus the punctuation-insensitive statement text,
-  so a punctuation or spacing edit to a sentence matches its existing requirement and
-  refreshes `statement` and `quote` in place. `upsert_requirement` keys on it. A retry
-  lands on the existing node. An upsert whose quote matches a stale anchor of an existing
-  requirement in the same section lands on that requirement. See
-  [mutations](../graph.md#mutations).
-- A derived requirement keys on its `statement` within its `from` set. A decree
-  requirement keys on `statement` alone. When a `reconcile-section` upsert's statement
-  matches a derived or decree requirement whose ratification proposal targets that
-  section, the upsert lands on that node and gives it a `source`. That is ratification
-  completing by hand. See [ratification proposals](./diagnostic.md#ratification-proposals).
-- The id is `req:<stem>-<hash>`, minted by the store from the natural key, stem `x` for
-  derived and decree requirements. E.g. `req:catalog-search-9k2d`. See
-  [identifiers](../model.md#identifiers).
-- A change to `statement` or to the source `quote` in substance changes the
-  requirement's statement hash, so its [`pairs/` decisions](../jazyk-folder.md#graphdecisionskindidyaml)
-  stop matching and [`rejudge-pair`](../goals/rejudge-pair.md) derives on its neighbors,
-  as it does for a new requirement. A change to `edges`, `transition`, or `facets`
-  changes the fact hash of the entities it names, which their review covers. Both are
-  computed, never recorded ([what needs building](../graph.md#what-needs-building)). See
-  [goal derivation](../reconciler.md#goal-derivation).
-- Deleting a requirement needs a `reason`. Its edges leave the relationships and its
-  transition leaves the machine at commit. Curated views and instances that referenced it
-  open [`retrace`](../goals/retrace.md).
+- A requirement is one obligation, independent of the sentences that state it.
+  Its immutable id survives statement edits, source attachment, and source removal.
+- The quoted natural key is the punctuation-insensitive statement within its entity
+  scopes. Source locations do not participate. Operators, signs, and decimals remain
+  significant. An upsert unions sources on the matching requirement.
+- Search existing requirements before creating one. Semantic equivalents with different
+  wording attach their source with `add_requirement_source` to the existing id.
+  A stale anchor in the same section identifies an edited obligation before minting
+  another id. Ambiguous matches require an explicit id, never an arbitrary merge.
+- Derived requirements key on the normalized statement within their sorted `from` set.
+  Decreed requirements key on the normalized statement. Ratification preserves the id
+  and replaces provenance with non-empty sources.
+- Statement hashes depend only on normalized obligation text. Source attachment,
+  removal, relocation, and quote formatting do not invalidate pair decisions,
+  criterion `statement_hash`, ledger `hashes.requirement`, or test names. Changing
+  the obligation invalidates them. Review fact hashes include all source locations.
+- `remove_requirement_source` removes exactly the named location. Reconciliation of
+  section A removes only A's obsolete anchors. Removing the last source deletes the
+  requirement and its criteria. Derived and decreed facts have no quote sources.
+- `merge_requirements` unions sources, entities, edges, and facets, reparents criteria,
+  and redirects the loser to the survivor. Conflicting transitions require an explicit
+  reconciliation before merging. Ledger rows, views, diagnostics, derived references,
+  and pair decisions follow redirects. Changed obligation hashes retain no false pass.

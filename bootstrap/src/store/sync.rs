@@ -170,7 +170,7 @@ impl Store {
                 .graph
                 .requirements
                 .values()
-                .filter_map(|r| r.source.as_ref())
+                .flat_map(|r| r.sources.iter())
                 .filter(|s| s.doc == at.doc && s.section == at.section)
                 .map(|s| s.quote.as_str())
                 .collect();
@@ -278,7 +278,8 @@ impl Store {
                     }
                     let ok = match self.graph.requirements.get(&a) {
                         Some(q) => q
-                            .source
+                            .sources
+                            .first()
                             .as_ref()
                             .map(|s| text_contains(&sec.raw, &s.quote))
                             .unwrap_or(true),
@@ -499,23 +500,34 @@ impl Store {
         let mut sections: Vec<String> = Vec::new();
         let rec = self.docs.get(doc);
         // An anchor with a pending proposal is the align session's to place, not stale.
-        let proposed = self.proposed_anchors();
+        let proposed: BTreeSet<(String, String, String)> = self
+            .status
+            .alignment
+            .iter()
+            .flat_map(|b| b.proposals.iter())
+            .map(|p| (p.anchor.clone(), p.from.clone(), p.quote.clone()))
+            .collect();
         for (rid, r) in &self.graph.requirements {
-            let Some(src) = r.source.as_ref() else {
-                continue;
-            };
-            if src.doc != doc || proposed.contains(rid) {
-                continue;
-            }
-            let unlocated = !self.quote_locates(&src.doc, &src.section, &src.quote);
-            if unlocated || self.status.reevaluate.iter().any(|x| x == rid) {
-                stale.push(rid.clone());
-                if rec
-                    .map(|x| x.sections.contains_key(&src.section))
-                    .unwrap_or(false)
-                    && !sections.contains(&src.section)
+            for src in &r.sources {
+                if src.doc != doc
+                    || proposed.contains(&(
+                        rid.clone(),
+                        format!("{}#{}", src.doc, src.section),
+                        src.quote.clone(),
+                    ))
                 {
-                    sections.push(src.section.clone());
+                    continue;
+                }
+                let unlocated = !self.quote_locates(&src.doc, &src.section, &src.quote);
+                if unlocated || self.status.reevaluate.iter().any(|x| x == rid) {
+                    stale.push(rid.clone());
+                    if rec
+                        .map(|x| x.sections.contains_key(&src.section))
+                        .unwrap_or(false)
+                        && !sections.contains(&src.section)
+                    {
+                        sections.push(src.section.clone());
+                    }
                 }
             }
         }
@@ -536,11 +548,10 @@ impl Store {
     fn anchors_in_doc(&self, doc: &str, section: Option<&str>) -> Vec<String> {
         let mut out = Vec::new();
         for (id, r) in &self.graph.requirements {
-            let Some(src) = r.source.as_ref() else {
-                continue;
-            };
-            if src.doc == doc && section.map(|s| src.section == s).unwrap_or(true) {
-                out.push(id.clone());
+            for src in &r.sources {
+                if src.doc == doc && section.map(|s| src.section == s).unwrap_or(true) {
+                    out.push(id.clone());
+                }
             }
         }
         for (id, e) in &self.graph.entities {
@@ -567,7 +578,7 @@ impl Store {
             .graph
             .requirements
             .values_mut()
-            .filter_map(|r| r.source.as_mut())
+            .flat_map(|r| r.sources.iter_mut())
         {
             moved(src);
         }

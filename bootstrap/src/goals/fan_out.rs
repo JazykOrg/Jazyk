@@ -248,7 +248,7 @@ pub fn dominant_document(store: &Store, id: &str) -> Option<String> {
     }
     if by_doc.is_empty() {
         for rid in store.requirements_referencing(id) {
-            if let Some(s) = &store.graph.requirements[&rid].source {
+            if let Some(s) = &store.graph.requirements[&rid].sources.first() {
                 *by_doc.entry(s.doc.clone()).or_insert(0) += 1;
             }
         }

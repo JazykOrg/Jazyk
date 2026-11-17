@@ -14,11 +14,11 @@ fn chat_links_pending_criterion_to_existing_description_without_editing_prose() 
         "req:landing-1".into(),
         crate::model::Requirement {
             statement: "The hero title displays Jazyk and its pronunciation.".into(),
-            source: Some(crate::model::SourceRef {
+            sources: vec![crate::model::SourceRef {
                 doc: "docs/landing.md".into(),
                 section: "/landing-page/hero/title".into(),
                 quote: "`Jazyk` with pronunciation `/jazɪk/` (smaller font and greyed out).".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -79,7 +79,13 @@ fn chat_links_pending_criterion_to_existing_description_without_editing_prose() 
     let c = &store.graph.criteria[&cid];
     assert_eq!(c.statement, statement);
     assert!(c.provenance.is_none());
-    assert_eq!(c.source, store.graph.requirements["req:landing-1"].source);
+    assert_eq!(
+        c.source,
+        store.graph.requirements["req:landing-1"]
+            .sources
+            .first()
+            .cloned()
+    );
     assert_eq!(store.pending_proposals(), 0);
     assert!(!store
         .status
@@ -728,11 +734,11 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
                 requirement: Requirement {
                     statement: quote.into(),
                     entities: vec!["ent:order".into()],
-                    source: Some(SourceRef {
+                    sources: vec![SourceRef {
                         doc: "docs/pay.md".into(),
                         section: "/pay".into(),
                         quote: quote.into(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             },
@@ -754,7 +760,7 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
     let mut s = Store::load(&out);
     assert_eq!(s.status.generation, before + 1, "one changeset");
     let r = &s.graph.requirements["req:pay-1"];
-    assert_eq!(r.source.as_ref().unwrap().quote, new_text);
+    assert_eq!(r.sources.first().unwrap().quote, new_text);
     assert_eq!(r.statement, new_text);
     let (parsed, _) = crate::reconcile::parse_all(&project);
     assert_eq!(s.docs["docs/pay.md"].content_hash, parsed["docs/pay.md"].0);
@@ -770,7 +776,7 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
     assert_eq!(v["path"], "decree", "{}", v);
     let s = Store::load(&out);
     let r = &s.graph.requirements["req:pay-1"];
-    assert!(r.source.is_none() && matches!(r.provenance, Some(Provenance::Decree { .. })));
+    assert!(r.sources.is_empty() && matches!(r.provenance, Some(Provenance::Decree { .. })));
     assert_eq!(r.facets.len(), 1);
     assert!(s
         .graph
@@ -910,11 +916,11 @@ fn add_requirement_anchors_after_quote_inside_its_section() {
                 requirement: crate::model::Requirement {
                     statement: "An Order is paid on time.".into(),
                     entities: vec!["ent:order".into()],
-                    source: Some(crate::model::SourceRef {
+                    sources: vec![crate::model::SourceRef {
                         doc: "docs/pay.md".into(),
                         section: terms,
                         quote: "An Order is paid on time.".into(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             },
@@ -1073,11 +1079,11 @@ fn chat_classify_input_commits_without_release_and_preserves_safety_checks() {
         "req:reader".into(),
         crate::model::Requirement {
             statement: "Reader-facing documentation.".into(),
-            source: Some(crate::model::SourceRef {
+            sources: vec![crate::model::SourceRef {
                 doc: "docs/reader.md".into(),
                 section: "/reader".into(),
                 quote: "Reader-facing documentation.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

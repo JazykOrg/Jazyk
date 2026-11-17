@@ -123,10 +123,11 @@ impl McpServer {
                 let r = &store.graph.requirements[&case.target];
                 reply["instructions"] = json!(SERVING.get("benchmark-verify"));
                 reply["package"] = json!({
-                    "statement": r.statement,
-                    "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
-                    "files": case.deliverable.keys().map(|f| gs.deliverable.join(f).to_string_lossy().to_string()).collect::<Vec<_>>(),
-                });
+                            "statement": r.statement,
+                            "sources": r.sources,
+                "quote": r.sources.iter().map(|s| s.quote.as_str()).collect::<Vec<_>>().join("\n"),
+                            "files": case.deliverable.keys().map(|f| gs.deliverable.join(f).to_string_lossy().to_string()).collect::<Vec<_>>(),
+                        });
             }
             _ => {
                 if case.task_type == "generate-entity" {

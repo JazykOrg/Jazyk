@@ -58,3 +58,6 @@ sub-entities carry parent and derived provenance, detail moved, docs proposals s
 
 <!-- unknown -->
 the kind's page states the gate
+
+<!-- consolidate-requirements -->
+every candidate pair merged or distinguished with a reason in evidence

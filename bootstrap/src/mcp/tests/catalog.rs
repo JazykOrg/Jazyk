@@ -33,8 +33,8 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
         .unwrap();
     // Every session kind from the captured build advertises its registry slice.
     for (kind, count) in [
-        ("reconcile-section", 31),
-        ("review-entity", 25),
+        ("reconcile-section", 34),
+        ("review-entity", 26),
         ("derive-criteria", 23),
         ("declare-edges", 20),
     ] {

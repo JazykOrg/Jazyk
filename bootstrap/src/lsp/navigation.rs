@@ -306,9 +306,10 @@ impl Lsp {
             let mut hover = json!({ "contents": { "kind": "markdown", "value": value } });
             // The hover range is the located quote, so the whole statement highlights.
             if let Some(q) = r
-                .source
-                .as_ref()
-                .and_then(|s| md::locate(&self.doc_text(&doc), &s.quote))
+                .sources
+                .iter()
+                .filter(|s| s.doc == doc)
+                .find_map(|s| md::locate(&self.doc_text(&doc), &s.quote))
             {
                 hover["range"] = self.range(q);
             }
@@ -536,14 +537,13 @@ impl Lsp {
     ) -> Option<(String, &crate::model::Requirement)> {
         let text = self.doc_text(doc);
         for (rid, r) in &self.store.graph.requirements {
-            let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) else {
-                continue;
-            };
-            if let Some((sl, sc, el, ec)) = md::locate(&text, &src.quote) {
-                let after_start = line > sl || (line == sl && character >= sc);
-                let before_end = line < el || (line == el && character <= ec);
-                if after_start && before_end {
-                    return Some((rid.clone(), r));
+            for src in r.sources.iter().filter(|s| s.doc == doc) {
+                if let Some((sl, sc, el, ec)) = md::locate(&text, &src.quote) {
+                    let after_start = line > sl || (line == sl && character >= sc);
+                    let before_end = line < el || (line == el && character <= ec);
+                    if after_start && before_end {
+                        return Some((rid.clone(), r));
+                    }
                 }
             }
         }

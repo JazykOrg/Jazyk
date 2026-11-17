@@ -765,10 +765,10 @@ impl Store {
                     {
                         *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
                     }
-                    if requirement.source.is_some() {
+                    if !requirement.sources.is_empty() {
                         requirement.provenance = None;
                     }
-                    if requirement.source.is_none() && requirement.provenance.is_none() {
+                    if requirement.sources.is_empty() && requirement.provenance.is_none() {
                         skipped.push(format!(
                             "create_requirement {}: no provenance (a quote source, a derivation, or a decree)",
                             id
@@ -805,54 +805,43 @@ impl Store {
                     // The incoming side normalizes once; a stored requirement only
                     // when its section or provenance kind already matches.
                     let incoming_statement = normalize_statement(&requirement.statement);
-                    let incoming_quote = requirement
-                        .source
-                        .as_ref()
-                        .map(|s| normalize_statement(&s.quote));
                     let same_key = |r: &Requirement, incoming: &Requirement| -> bool {
-                        let same_statement =
-                            || normalize_statement(&r.statement) == incoming_statement;
-                        match (
-                            &r.source,
-                            &incoming.source,
-                            &r.provenance,
-                            &incoming.provenance,
-                        ) {
-                            (Some(a), Some(b), _, _) => {
-                                a.doc == b.doc
-                                    && a.section == b.section
-                                    && (same_statement()
-                                        || (incoming_quote.as_deref()
-                                            == Some(normalize_statement(&a.quote).as_str())
-                                            && statement_rewords(
-                                                &r.statement,
-                                                &incoming.statement,
-                                            )))
-                            }
+                        if !r.sources.is_empty() && !incoming.sources.is_empty() {
+                            return (normalize_statement(&r.statement) == incoming_statement
+                                && self.requirement_scopes(r)
+                                    == self.requirement_scopes(incoming))
+                                || r.sources.iter().any(|a| {
+                                    incoming.sources.iter().any(|b| {
+                                        a.doc == b.doc
+                                            && a.section == b.section
+                                            && normalize_statement(&a.quote)
+                                                == normalize_statement(&b.quote)
+                                            && statement_rewords(&r.statement, &incoming.statement)
+                                    })
+                                });
+                        }
+                        match (&r.provenance, &incoming.provenance) {
                             (
-                                None,
-                                None,
-                                Some(Provenance::Derived { from: fa, .. }),
-                                Some(Provenance::Derived { from: fb, .. }),
+                                Some(Provenance::Derived { from: a, .. }),
+                                Some(Provenance::Derived { from: b, .. }),
                             ) => {
-                                same_statement()
-                                    && fa.iter().collect::<BTreeSet<_>>()
-                                        == fb.iter().collect::<BTreeSet<_>>()
+                                normalize_statement(&r.statement) == incoming_statement
+                                    && a.iter().collect::<BTreeSet<_>>()
+                                        == b.iter().collect::<BTreeSet<_>>()
                             }
-                            (
-                                None,
-                                None,
-                                Some(Provenance::Decree { .. }),
-                                Some(Provenance::Decree { .. }),
-                            ) => same_statement(),
+                            (Some(Provenance::Decree { .. }), Some(Provenance::Decree { .. })) => {
+                                normalize_statement(&r.statement) == incoming_statement
+                            }
                             _ => false,
                         }
                     };
                     let same_anchor = |r: &Requirement, incoming: &Requirement| -> bool {
-                        match (&r.source, &incoming.source) {
-                            (Some(a), Some(b)) => a.doc == b.doc && a.section == b.section,
-                            _ => false,
-                        }
+                        r.sources.iter().any(|a| {
+                            incoming
+                                .sources
+                                .iter()
+                                .any(|b| a.doc == b.doc && a.section == b.section)
+                        })
                     };
                     let fold_target = self
                         .graph
@@ -907,18 +896,18 @@ impl Store {
                             r.statement = requirement.statement.clone();
                             refreshed_statement = Some(requirement.statement.clone());
                         }
-                        if let Some(incoming) = requirement.source.as_ref() {
-                            let old_quote = r.source.as_ref().map(|s| s.quote.clone());
-                            if old_quote.as_deref() != Some(incoming.quote.as_str()) {
-                                // A quote that changed in substance (not punctuation) means
-                                // the document text under the statement changed: revised,
-                                // even when the session kept the old wording.
-                                if old_quote.map(|q| normalize_statement(&q))
-                                    != Some(normalize_statement(&incoming.quote))
-                                {
-                                    dirt.revised(&existing, m, "quote");
-                                }
-                                r.source = Some(incoming.clone());
+                        r.sources.retain(|old| {
+                            !requirement.sources.iter().any(|incoming| {
+                                incoming.doc == old.doc && incoming.section == old.section
+                            }) || self
+                                .docs
+                                .get(&old.doc)
+                                .and_then(|d| d.sections.get(&old.section))
+                                .is_some_and(|section| text_contains(&section.raw, &old.quote))
+                        });
+                        for incoming in &requirement.sources {
+                            if !r.sources.contains(incoming) {
+                                r.sources.push(incoming.clone());
                                 r.provenance = None;
                                 refreshed_source = Some(incoming.clone());
                             }
@@ -959,7 +948,7 @@ impl Store {
                     }
                     // A committed requirement adds its source as a mention on every entity
                     // it references, so reuse accumulates cross-document presence.
-                    if let Some(src) = requirement.source.as_ref() {
+                    for src in &requirement.sources {
                         for e in &requirement.entities {
                             if let Some(ent) = self.graph.entities.get_mut(e) {
                                 if !ent.mentions.contains(src) {
@@ -1088,31 +1077,29 @@ impl Store {
                         // Same rule as the create fold: a re-anchored quote that
                         // changed in substance marks the statement revised. A quote
                         // landing on a derived or decreed fact makes it quoted.
-                        if r.source.as_ref().map(|q| normalize_statement(&q.quote))
-                            != Some(normalize_statement(&s.quote))
-                        {
-                            dirt.revised(&rid, m, "quote");
-                        }
-                        r.source = Some(s.clone());
+                        r.sources
+                            .retain(|old| old.doc != s.doc || old.section != s.section);
+                        r.sources.push(s.clone());
                         r.provenance = None;
                     } else if let Some(p) = &provenance {
                         // A decree or derivation over the fact: the quote gives way.
                         // A decree over a quoted fact records the prior value and
                         // source in the journal, so a later retract restores them.
                         if matches!(p, Provenance::Decree { .. }) {
-                            if let Some(prior_src) = &r.source {
+                            if let Some(prior_src) = &r.sources.first() {
                                 annotations.push((
                                     applied.len(),
                                     serde_json::json!({
                                         "prior": {
                                             "statement": statement_before,
+                                            "sources": r.sources,
                                             "source": prior_src,
                                         }
                                     }),
                                 ));
                             }
                         }
-                        r.source = None;
+                        r.sources.clear();
                         r.provenance = Some(p.clone());
                         dirt.pending(&rid, m, p);
                     }
@@ -1158,6 +1145,220 @@ impl Store {
                         facets,
                         source,
                         provenance,
+                    });
+                }
+                Op::AddRequirementSource { id, source } => {
+                    let id = resolve(&remap, self, &id);
+                    if !self.quote_locates(&source.doc, &source.section, &source.quote) {
+                        skipped.push(format!(
+                            "add_requirement_source {}: quote does not locate",
+                            id
+                        ));
+                        continue;
+                    }
+                    let Some(r) = self.graph.requirements.get_mut(&id) else {
+                        skipped.push(format!("add_requirement_source: unknown id {}", id));
+                        continue;
+                    };
+                    if !r.sources.contains(&source) {
+                        r.sources.push(source.clone());
+                    }
+                    r.provenance = None;
+                    r.updated = Some(build.clone());
+                    dirt.entities(r.entities.iter(), m);
+                    applied.push(Op::AddRequirementSource { id, source });
+                }
+                Op::RemoveRequirementSource { id, source, reason } => {
+                    let id = resolve(&remap, self, &id);
+                    if let Some(r) = self.graph.requirements.get_mut(&id) {
+                        if !r.sources.contains(&source) {
+                            continue;
+                        }
+                        r.sources.retain(|s| s != &source);
+                        r.updated = Some(build.clone());
+                        dirt.entities(r.entities.iter(), m);
+                        if r.sources.is_empty() && r.provenance.is_none() {
+                            self.graph.requirements.remove(&id);
+                            self.graph.criteria.retain(|_, c| c.requirement != id);
+                            dirt.deleted(&id, m);
+                        }
+                        applied.push(Op::RemoveRequirementSource { id, source, reason });
+                    }
+                }
+                Op::MergeRequirements {
+                    keep,
+                    absorb,
+                    reason,
+                } => {
+                    let keep = resolve(&remap, self, &keep);
+                    let absorb = resolve(&remap, self, &absorb);
+                    if keep == absorb {
+                        continue;
+                    }
+                    let (Some(k), Some(a)) = (
+                        self.graph.requirements.get(&keep),
+                        self.graph.requirements.get(&absorb),
+                    ) else {
+                        skipped.push(format!(
+                            "merge_requirements: unknown pair {} {}",
+                            keep, absorb
+                        ));
+                        continue;
+                    };
+                    if k.transition.is_some()
+                        && a.transition.is_some()
+                        && k.transition != a.transition
+                    {
+                        skipped.push(
+                            "merge_requirements: reconcile conflicting transitions first".into(),
+                        );
+                        continue;
+                    }
+                    if let Err(error) = crate::gen::Ledger::update(&self.out, |ledger| {
+                        if let Some(error) = &ledger.unreadable {
+                            return Err(error.clone());
+                        }
+                        if let Some(row) = ledger.requirements.remove(&absorb) {
+                            if let Some(survivor) = ledger.requirements.get_mut(&keep) {
+                                for file in row.files {
+                                    if !survivor.files.contains(&file) {
+                                        survivor.files.push(file);
+                                    }
+                                }
+                                for site in row.sites {
+                                    if !survivor.sites.contains(&site) {
+                                        survivor.sites.push(site);
+                                    }
+                                }
+                                survivor.tests.extend(row.tests);
+                            } else {
+                                ledger.requirements.insert(keep.clone(), row);
+                            }
+                        }
+                        for entity in ledger.entities.values_mut() {
+                            for id in &mut entity.requirements {
+                                if *id == absorb {
+                                    *id = keep.clone();
+                                }
+                            }
+                            dedup_keep_order(&mut entity.requirements);
+                        }
+                        if let Some(diags) = ledger.contradicted.remove(&absorb) {
+                            ledger
+                                .contradicted
+                                .entry(keep.clone())
+                                .or_default()
+                                .extend(diags);
+                        }
+                        Ok(())
+                    }) {
+                        skipped.push(format!("merge_requirements: {}", error));
+                        continue;
+                    }
+                    let a = self.graph.requirements.remove(&absorb).unwrap();
+                    dirt.named(&keep, m);
+                    if normalize_statement(&a.statement)
+                        != normalize_statement(&self.graph.requirements[&keep].statement)
+                    {
+                        dirt.revised(&keep, m, "merge");
+                    }
+                    let k = self.graph.requirements.get_mut(&keep).unwrap();
+                    for source in a.sources {
+                        if !k.sources.contains(&source) {
+                            k.sources.push(source);
+                        }
+                    }
+                    for entity in a.entities {
+                        if !k.entities.contains(&entity) {
+                            k.entities.push(entity);
+                        }
+                    }
+                    for edge in a.edges {
+                        if !k.edges.contains(&edge) {
+                            k.edges.push(edge);
+                        }
+                    }
+                    for facet in a.facets {
+                        if !k.facets.contains(&facet) {
+                            k.facets.push(facet);
+                        }
+                    }
+                    if k.transition.is_none() {
+                        k.transition = a.transition;
+                    }
+                    if !k.sources.is_empty() {
+                        k.provenance = None;
+                    }
+                    dirt.entities(k.entities.iter(), m);
+                    let rewire = |s: &mut String| {
+                        if *s == absorb {
+                            *s = keep.clone();
+                        }
+                    };
+                    for c in self.graph.criteria.values_mut() {
+                        if c.requirement == absorb
+                            && normalize_statement(&a.statement)
+                                != normalize_statement(&k.statement)
+                            && c.source.is_none()
+                        {
+                            c.stale = true;
+                        }
+                        rewire(&mut c.requirement);
+                    }
+                    for v in self.graph.views.values_mut() {
+                        v.members.iter_mut().for_each(rewire);
+                        dedup_keep_order(&mut v.members);
+                        v.collapse.iter_mut().for_each(rewire);
+                        for x in &mut v.excluded {
+                            rewire(&mut x.id);
+                        }
+                    }
+                    for d in self.graph.diagnostics.values_mut() {
+                        d.subjects.iter_mut().for_each(rewire);
+                        dedup_keep_order(&mut d.subjects);
+                    }
+                    let rewire_provenance = |p: &mut Option<Provenance>| {
+                        if let Some(Provenance::Derived { from, .. }) = p {
+                            from.iter_mut().for_each(rewire);
+                            dedup_keep_order(from);
+                        }
+                    };
+                    for r in self.graph.requirements.values_mut() {
+                        rewire_provenance(&mut r.provenance);
+                    }
+                    for c in self.graph.criteria.values_mut() {
+                        rewire_provenance(&mut c.provenance);
+                    }
+                    for v in self.graph.views.values_mut() {
+                        rewire_provenance(&mut v.provenance);
+                    }
+                    for e in self.graph.entities.values_mut() {
+                        rewire_provenance(&mut e.provenance);
+                        for attr in &mut e.attributes {
+                            if let Provenance::Derived { from, .. } = &mut attr.provenance {
+                                from.iter_mut().for_each(rewire);
+                                dedup_keep_order(from);
+                            }
+                        }
+                    }
+                    let pairs = std::mem::take(&mut self.decisions.pairs);
+                    for (_, mut decision) in pairs {
+                        if let Some(hash) = decision.statements.remove(&absorb) {
+                            decision.statements.entry(keep.clone()).or_insert(hash);
+                        }
+                        let ids: Vec<_> = decision.statements.keys().cloned().collect();
+                        if ids.len() == 2 {
+                            self.decisions
+                                .pairs
+                                .insert(super::v5::pair_key(&ids[0], &ids[1]), decision);
+                        }
+                    }
+                    self.redirect(&absorb, &keep);
+                    remap.insert(absorb.clone(), keep.clone());
+                    applied.push(Op::MergeRequirements {
+                        keep,
+                        absorb,
+                        reason,
                     });
                 }
                 Op::DeleteRequirement { id, reason } => {
@@ -1300,7 +1501,7 @@ impl Store {
                         .graph
                         .requirements
                         .get(&criterion.requirement)
-                        .and_then(|r| r.source.as_ref())
+                        .and_then(|r| r.sources.first())
                         .or(criterion.source.as_ref());
                     let base = format!("crit:{}-", Self::req_id_stem(source));
                     let mut final_id = id.clone();
@@ -1658,11 +1859,11 @@ impl Store {
                         continue;
                     }
                     if let Some(r) = self.graph.requirements.get_mut(&rid) {
-                        if r.source.is_some() {
+                        if !r.sources.is_empty() {
                             skipped.push(format!("ratify_provenance {}: already quoted", rid));
                             continue;
                         }
-                        r.source = Some(source.clone());
+                        r.sources = vec![source.clone()];
                         r.provenance = None;
                         r.updated = Some(build.clone());
                         let ents = r.entities.clone();
@@ -1717,7 +1918,7 @@ impl Store {
                     if self.graph.requirements.contains_key(&rid) {
                         {
                             let r = &self.graph.requirements[&rid];
-                            if r.source.is_some() || !pending(&r.provenance) {
+                            if !r.sources.is_empty() || !pending(&r.provenance) {
                                 skipped.push(format!("retract_decree {}: not a decree", rid));
                                 continue;
                             }
@@ -1741,7 +1942,7 @@ impl Store {
                                 if let Some(st) = prior["statement"].as_str() {
                                     r.statement = st.to_string();
                                 }
-                                r.source = Some(source);
+                                r.sources = vec![source];
                                 r.provenance = None;
                                 r.updated = Some(build.clone());
                                 let ents = r.entities.clone();
@@ -1952,13 +2153,11 @@ impl Store {
                     let rid = resolve(&remap, self, &id);
                     let locates = self.quote_locates(&to.doc, &to.section, &to.quote);
                     if let Some(r) = self.graph.requirements.get_mut(&rid) {
-                        if r.source.as_ref().map(|s| normalize_statement(&s.quote))
-                            != Some(normalize_statement(&to.quote))
-                        {
-                            dirt.revised(&rid, m, "quote");
-                        }
-                        let old_source =
-                            r.source.replace(to.clone()).unwrap_or_else(|| from.clone());
+                        let Some(index) = r.sources.iter().position(|s| s == &from) else {
+                            skipped.push(format!("place_anchor {}: source not found", rid));
+                            continue;
+                        };
+                        let old_source = std::mem::replace(&mut r.sources[index], to.clone());
                         r.provenance = None;
                         r.updated = Some(build.clone());
                         let ents = r.entities.clone();
@@ -2466,20 +2665,22 @@ impl Store {
 
         // A decided proposal leaves its document's alignment block; an emptied block
         // goes. A resolved place-anchors goal clears its document's block outright.
-        let decided: Vec<(String, String)> = applied
+        let decided: Vec<(String, String, String)> = applied
             .iter()
             .filter_map(|o| match o {
-                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from } => {
-                    Some((id.clone(), format!("{}#{}", from.doc, from.section)))
-                }
+                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from } => Some((
+                    id.clone(),
+                    format!("{}#{}", from.doc, from.section),
+                    from.quote.clone(),
+                )),
                 _ => None,
             })
             .collect();
         for b in self.status.alignment.iter_mut() {
             b.proposals.retain(|p| {
-                !decided
-                    .iter()
-                    .any(|(id, from)| *id == p.anchor && *from == p.from)
+                !decided.iter().any(|(id, from, quote)| {
+                    *id == p.anchor && *from == p.from && *quote == p.quote
+                })
             });
         }
         self.status.alignment.retain(|b| !b.proposals.is_empty());
@@ -2510,7 +2711,7 @@ impl Store {
             if addressed.contains(rid) {
                 return false;
             }
-            let Some(src) = reqs.get(rid).and_then(|r| r.source.as_ref()) else {
+            let Some(src) = reqs.get(rid).and_then(|r| r.sources.first()) else {
                 return false;
             };
             !resolved_targets.iter().any(|(kind, target)| {

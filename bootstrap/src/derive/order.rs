@@ -82,7 +82,7 @@ fn document_order_with(store: &Store, levels: &BTreeMap<String, usize>) -> Vec<S
         .requirements
         .iter()
         .map(|(id, r)| {
-            let key = match r.source.as_ref() {
+            let key = match r.sources.first() {
                 Some(s) => {
                     let line = store
                         .docs

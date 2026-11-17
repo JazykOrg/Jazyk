@@ -304,11 +304,11 @@ fn pending_diff_and_mark_lifecycle() {
             statement: "The Cart shall empty on checkout.".into(),
             entities: vec!["ent:cart".into()],
             edges: vec![],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "empty".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -685,11 +685,11 @@ fn invented_choices_stage_one_graded_diagnostic_per_scope() {
             statement: "The Cart shall print items.".into(),
             entities: vec!["ent:cart".into()],
             edges: vec![],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "holds".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

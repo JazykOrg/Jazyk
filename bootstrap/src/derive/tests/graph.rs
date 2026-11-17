@@ -16,7 +16,7 @@ fn relationships_group_per_direction_and_type() {
         statement: "x".into(),
         entities: vec!["ent:a".into(), "ent:b".into()],
         edges,
-        source: Some(src("t.md", "/t", "x")),
+        sources: vec![src("t.md", "/t", "x")],
         ..Default::default()
     };
     s.graph.requirements.insert(
@@ -86,7 +86,7 @@ fn state_machine_derives_initial_and_keeps_a_nondeterministic_pair() {
                 trigger: Some("payment succeeds".into()),
                 guard: None,
             }),
-            source: Some(src("shop.md", "/shop/orders", "twice")),
+            sources: vec![src("shop.md", "/shop/orders", "twice")],
             ..Default::default()
         },
     );
@@ -138,7 +138,7 @@ fn state_machine_merges_a_restated_transition_into_one_arrow() {
                     trigger: trigger.map(str::to_string),
                     guard: guard.map(str::to_string),
                 }),
-                source: Some(src("shop.md", "/shop/orders", statement)),
+                sources: vec![src("shop.md", "/shop/orders", statement)],
                 ..Default::default()
             }
         };
@@ -272,7 +272,7 @@ fn document_order_takes_link_levels_ahead_of_path() {
     }
     let req = |doc: &str, section: &str| Requirement {
         statement: format!("{} states a fact.", doc),
-        source: Some(src(doc, section, "")),
+        sources: vec![src(doc, section, "")],
         ..Default::default()
     };
     s.graph

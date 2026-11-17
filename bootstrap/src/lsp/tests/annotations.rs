@@ -70,7 +70,7 @@ fn editor_fixture(name: &str) -> (std::path::PathBuf, Lsp) {
         Requirement {
             statement: "The Cart shall hold items.".into(),
             entities: vec!["ent:cart".into()],
-            source: Some(mention("The Cart shall hold items.", "/shop")),
+            sources: vec![mention("The Cart shall hold items.", "/shop")],
             ..Default::default()
         },
     );

@@ -2,8 +2,7 @@
 
 `rejudge-pair` judges one pair of requirements: one that was created or revised,
 against one neighbor the reconciler picked because it overlaps it. The session owes
-exactly one verdict: duplicate (delete the worse-sourced one, or file
-`duplicate-requirement` for intentional cross-document redundancy), contradiction (file
+exactly one verdict: duplicate (merge obligations and union their sources), contradiction (file
 `contradiction`, with a [prompt](../model/diagnostic.md#prompts) when the repair is
 enumerable), or consistent (no action, stated in the justification). It also settles an
 open pair diagnostic whose condition lapsed or whose other subject died. Focused
@@ -125,9 +124,7 @@ refuses a false one naming the rule:
 
 - `verdict` is one of `duplicate`, `contradiction`, `consistent`, handed as
   `{verdict}` or bare. A claim without one is `bad-evidence`.
-- `duplicate`: a `delete_requirement` on one side is staged in this session, or an open
-  `duplicate-requirement` diagnostic naming both ids is staged or recorded
-  (`duplicate-unbacked`).
+- `duplicate`: a `merge_requirements` on the two ids is staged (`duplicate-unbacked`).
 - `contradiction`: an open `contradiction` diagnostic naming both ids is staged or
   recorded, or the one `carried_by` names is open and names one side, the same
   threshold conflict across several pairs being one finding
@@ -177,8 +174,7 @@ Computed by the harness and rendered under the goal block:
 - The pair's score (the neighbor score, [pairs](../reconciler.md#pairs)) and, per
   side, how many of its pairs wait under the cap: `score 4; req:orders-6: 3 pair(s)
   waiting, req:payment-9: none waiting`.
-- Whether the two quote the same document: same document, delete the worse-sourced
-  duplicate; different documents, keep both and file `duplicate-requirement`.
+- Whether the two quote the same document: merge duplicates regardless of source document.
 - The open diagnostics naming either side, with `(deleted)` on dead subjects.
 - `load req:<id>` when a side is not in the loaded set in full.
 - `skill judgment`, and the tool per verdict: duplicate, `delete_requirement` or
@@ -281,3 +277,9 @@ leaves a finding for the next build. A contradiction or duplicate found against 
 statement the batch did not pair is filed with `report_diagnostic` all the same,
 provided the evidence is in quotes the session has read; the diagnostic makes the pair
 sticky, and the next change on either side re-judges it.
+
+## Duplicate consolidation
+
+A `duplicate` verdict calls `merge_requirements`. Union all sources and reconcile
+criteria, edges, facets, and transitions. Keep one immutable id and redirect the
+loser. Cross-document repetition supplies another location on the same obligation.

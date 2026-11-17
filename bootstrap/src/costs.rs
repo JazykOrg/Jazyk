@@ -209,7 +209,7 @@ fn node_document_at(id: &str, graph: &Graph, depth: usize) -> Option<String> {
         return e.mentions.first().map(|m| m.doc.clone());
     }
     if let Some(r) = graph.requirements.get(cur) {
-        return quoted(&r.provenance, &r.source);
+        return quoted(&r.provenance, &r.sources.first().cloned());
     }
     if let Some(c) = graph.criteria.get(cur) {
         return quoted(&c.provenance, &c.source)

@@ -21,7 +21,7 @@ Test cases and examples are criteria, not requirements. A case with concrete inp
 
 Quotes. Copy the quote character for character from the section body loaded for you: for a list item, that one bullet line; for a step, that one line. Never paraphrase, merge, or reflow a quote. A quote that is not in the section is rejected. The sentences in this skill are illustrations, never content: extract only from the loaded bodies.
 
-Displayed prose. A blockquote or paragraph of page copy can contain several sentences. Record each source sentence as its own display requirement, quoting only that sentence verbatim. Do not quote the whole paragraph for one requirement, even when one UI element displays it. Keep the obligation on the page that displays the text. A hero displaying `Every requirement has a test.` has a display obligation. It does not assert that every requirement in this project already has a test. Reuse an existing display requirement that already carries that sentence. After a `quote-multi-sentence` refusal, split the rejected quote by its source sentences and repair the skipped calls before marking coverage.
+Displayed prose. A blockquote or paragraph of page copy can contain several sentences. Record each source sentence as its own display requirement, quoting only that sentence verbatim. Do not quote the whole paragraph for one requirement, even when one UI element displays it. Keep the obligation on the page that displays the text. A hero displaying `Every requirement has a test.` has a display obligation. It does not assert that every requirement in this project already has a test. Reuse an existing display requirement that already carries that sentence. Quotes may span consecutive sentences when they jointly state one obligation.
 
 
 Entities are the subject's own parts, actors, and domain objects: a component, a type, a role, a stored record, a product, a slide, a chapter, a character, a department. Never file paths, flags, markdown constructs, generic phrases, operation names, or technologies (React, Go, PostgreSQL belong in the statement text). The document itself (a glossary, an overview, a roadmap) is not an entity. A tool, store, or place named only as the channel or location of an action ("filed on form EX-12 in the expense tool", "stored under a shared drive path") is requirement detail on the acting entity, never an entity.
@@ -60,3 +60,10 @@ Coverage honesty. After a section's extraction, call `set_coverage` exactly once
 Record the facts as stated, even when sections disagree: judging contradictions and duplicates belongs to the judgment goals that follow, and a conflict you notice is not lost.
 
 When an enumeration selects opaque inputs, the membership quote includes the linked items needed to identify those inputs. A lead-in alone does not select a linked file.
+
+## Obligation identity
+
+Search existing requirements before creating one. One obligation has one id and
+all supporting `sources`. Attach a matching source with `add_requirement_source`.
+Quotes may span consecutive sentences within one section. Remove only obsolete
+locations. Merge duplicate obligations with `merge_requirements`, preserving sources.

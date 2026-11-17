@@ -81,11 +81,11 @@ impl ToolSession {
             .graph
             .requirements
             .get(&rid)
-            .and_then(|r| r.source.clone())
+            .and_then(|r| r.sources.first().cloned())
             .or_else(|| {
                 self.staged.iter().find_map(|o| match o {
                     Op::CreateRequirement { id, requirement } if *id == rid => {
-                        requirement.source.clone()
+                        requirement.sources.first().cloned()
                     }
                     _ => None,
                 })
@@ -376,7 +376,6 @@ impl ToolSession {
             }
         }
         let quote = self.check_quote(&doc, &sec, &quote)?;
-        self.one_sentence(&doc, &sec, &quote)?;
         let raw_entities = Self::str_list(args, "entities");
         if raw_entities.is_empty() {
             return Err(ToolError::new(
@@ -427,7 +426,7 @@ impl ToolSession {
             edges,
             transition,
             facets,
-            source: Some(source.clone()),
+            sources: vec![source.clone()],
             reasoning: Self::opt_str(args, "reasoning"),
             ..Default::default()
         };
@@ -436,14 +435,16 @@ impl ToolSession {
         let norm_statement = crate::store::normalize_statement(&requirement.statement);
         let norm_quote = crate::store::normalize_statement(&source.quote);
         let same_key = |r: &Requirement| {
-            let Some(rs) = r.source.as_ref() else {
-                return false;
-            };
-            rs.doc == source.doc
-                && rs.section == source.section
-                && (crate::store::normalize_statement(&r.statement) == norm_statement
-                    || (crate::store::normalize_statement(&rs.quote) == norm_quote
-                        && crate::store::statement_rewords(&r.statement, &requirement.statement)))
+            (!r.sources.is_empty()
+                && crate::store::normalize_statement(&r.statement) == norm_statement
+                && self.snapshot.requirement_scopes(r)
+                    == self.snapshot.requirement_scopes(&requirement))
+                || r.sources.iter().any(|rs| {
+                    rs.doc == source.doc
+                        && rs.section == source.section
+                        && crate::store::normalize_statement(&rs.quote) == norm_quote
+                        && crate::store::statement_rewords(&r.statement, &requirement.statement)
+                })
         };
         // A statement this turn already staged: refresh that staged call in
         // place, so a repeated upsert is idempotent within the turn.
@@ -477,7 +478,11 @@ impl ToolSession {
             let matched = (crate::store::normalize_statement(&r.statement) != norm_statement)
                 .then(|| r.statement.clone());
             r.statement = requirement.statement;
-            r.source = requirement.source;
+            for src in requirement.sources {
+                if !r.sources.contains(&src) {
+                    r.sources.push(src);
+                }
+            }
             let mut v = json!({"id": id.clone(), "updated": true});
             if let Some(m) = matched {
                 v["matched"] = json!(m);
@@ -500,7 +505,7 @@ impl ToolSession {
                     .iter()
                     .find(|a| {
                         self.snapshot.graph.requirements.get(*a).is_some_and(|r| {
-                            r.source.as_ref().is_some_and(|rs| {
+                            r.sources.iter().any(|rs| {
                                 rs.doc == source.doc
                                     && rs.section == source.section
                                     && !self.snapshot.quote_locates(&rs.doc, &rs.section, &rs.quote)
@@ -665,7 +670,7 @@ impl ToolSession {
         // meaning to change `entities`; name the existing anchor so the repair
         // is to drop the two fields, not to guess another sentence.
         let anchor_hint = || {
-            match self.snapshot.graph.requirements.get(&id).and_then(|r| r.source.as_ref()) {
+            match self.snapshot.graph.requirements.get(&id).and_then(|r| r.sources.first()) {
             Some(src) => format!(
                 "{} is anchored at {}#{} quoting \"{}\". `quote` is the document's own sentence, never the statement. To change only the entities or edges, omit `section` and `quote`",
                 id,
@@ -684,7 +689,7 @@ impl ToolSession {
                 if let Some(wd) = self.scope.reconcile_doc() {
                     let reference_repair = crate::input::is_blob(&self.snapshot, &wd, "/")
                         && self.snapshot.graph.requirements.get(&id)
-                            .and_then(|r| r.source.as_ref())
+                            .and_then(|r| r.sources.first())
                             .is_some_and(|source| source.doc == doc && source.section == sec)
                         && crate::input::staged_requirement_links(
                             &self.snapshot,
@@ -709,7 +714,6 @@ impl ToolSession {
                 let q = self
                     .check_quote(&doc, &sec, &q)
                     .map_err(|e| ToolError::new(&e.rule, format!("{}; {}", e.message, anchor_hint())))?;
-                self.one_sentence(&doc, &sec, &q)?;
                 Some(SourceRef { doc, section: sec, quote: q.trim().to_string() })
             }
             (None, None) => None,
@@ -787,7 +791,7 @@ impl ToolSession {
         };
         let norm = crate::store::normalize_statement(&statement);
         let same_key = |r: &Requirement| {
-            r.source.is_none()
+            r.sources.is_empty()
                 && matches!(&r.provenance, Some(Provenance::Derived { from, .. })
                     if from.iter().cloned().collect::<BTreeSet<String>>() == from_set)
                 && crate::store::normalize_statement(&r.statement) == norm
@@ -860,5 +864,52 @@ impl ToolSession {
         Ok(
             json!({"id": id, "created": true, "note": "a derived statement; a ratification proposal asks the owner to state it in the documents"}),
         )
+    }
+}
+
+impl ToolSession {
+    pub(super) fn requirement_source_tool(
+        &mut self,
+        args: &Value,
+        remove: bool,
+    ) -> Result<Value, ToolError> {
+        let id = self.canon_req_id(&Self::str_arg(args, "id")?)?;
+        let (doc, section) = self.resolve_section(&Self::str_arg(args, "section")?)?;
+        let quote = Self::str_arg(args, "quote")?;
+        let quote = if remove {
+            quote
+        } else {
+            self.check_quote(&doc, &section, &quote)?
+        };
+        let source = SourceRef {
+            doc,
+            section,
+            quote,
+        };
+        let op = if remove {
+            Op::RemoveRequirementSource {
+                id: id.clone(),
+                source,
+                reason: Self::str_arg(args, "reason")?,
+            }
+        } else {
+            Op::AddRequirementSource {
+                id: id.clone(),
+                source,
+            }
+        };
+        self.stage(op)?;
+        Ok(json!({"id": id, "updated": true}))
+    }
+    pub(super) fn merge_requirements_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
+        let keep = self.canon_req_id(&Self::str_arg(args, "keep")?)?;
+        let absorb = self.canon_req_id(&Self::str_arg(args, "absorb")?)?;
+        let reason = Self::str_arg(args, "reason")?;
+        self.stage(Op::MergeRequirements {
+            keep: keep.clone(),
+            absorb,
+            reason,
+        })?;
+        Ok(json!({"id": keep, "merged": true}))
     }
 }

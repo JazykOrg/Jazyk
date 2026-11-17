@@ -868,3 +868,10 @@ alternation of a child between parents. With them,
 idempotence makes convergence a fixed point rather than a loop: a session that re-derives
 an unchanged conclusion stages a no-op upsert, no mutation lands, no finding changes,
 and that branch of the cascade dies.
+
+## Requirement consolidation
+
+Any changed source section dirties its requirement. Pair judgment compares obligation
+text, independent of location. A duplicate verdict merges requirements and their sources.
+The [consolidate-requirements](./goals/consolidate-requirements.md) GC goal handles
+near-identical clusters after their compile cone settles.

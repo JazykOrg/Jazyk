@@ -32,11 +32,11 @@ fn an_answer_carrying_an_edit_writes_no_entity_changed() {
                 requirement: Requirement {
                     statement: "An Order is paid within 30 days.".into(),
                     entities: vec!["ent:order".into()],
-                    source: Some(mention(
+                    sources: vec![mention(
                         "docs/pay.md",
                         "/pay",
                         "An Order is paid within 30 days.",
-                    )),
+                    )],
                     ..Default::default()
                 },
             },
@@ -123,11 +123,11 @@ fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
                 requirement: Requirement {
                     statement: "An Order is paid within 30 days.".into(),
                     entities: vec!["ent:order".into()],
-                    source: Some(mention(
+                    sources: vec![mention(
                         "docs/pay.md",
                         "/pay",
                         "An Order is paid within 30 days.",
-                    )),
+                    )],
                     ..Default::default()
                 },
             },
@@ -176,7 +176,7 @@ fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
     assert_eq!(s.docs["docs/pay.md"].content_hash, hash_hex(&on_disk));
     let r = &s.graph.requirements["req:pay-1"];
     assert_eq!(
-        r.source.as_ref().unwrap().quote,
+        r.sources.first().unwrap().quote,
         "An Order is paid within 21 days."
     );
     assert!(r.statement.contains("21 days"));
@@ -442,7 +442,7 @@ fn derived_and_decreed_requirements_pend_ratify_and_retract() {
     );
     assert_eq!(r.applied, 2, "{:?}", r.skipped);
     let q = &s.graph.requirements[&x1];
-    assert!(q.source.is_some() && q.provenance.is_none());
+    assert!(!q.sources.is_empty() && q.provenance.is_none());
     assert!(!s.status.has_change(CHANGE_PROVENANCE_PENDING, &x1));
     // An accepted proposal is a human edit: the mention the landed sentence adds
     // opens no review of the Cart. Mirrors docs/compiler/goals/ratify.md#accept.
@@ -527,7 +527,7 @@ fn retracting_a_derived_grouping_dissolves_it_onto_its_parent() {
                 requirement: Requirement {
                     statement: "The cart holds items.".into(),
                     entities: vec!["ent:cart".into(), "ent:selection".into()],
-                    source: Some(mention("t.md", "/t", "The cart holds items.")),
+                    sources: vec![mention("t.md", "/t", "The cart holds items.")],
                     ..Default::default()
                 },
             },

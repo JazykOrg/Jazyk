@@ -177,3 +177,9 @@ A blob participates in change detection by its envelope hash and stable file
 reference. Alignment never searches its generated context as a quote home or
 matches its contents as prose. A referring sentence remains anchored in its
 authored document even when repeated in an input envelope.
+
+## Independent requirement anchors
+
+Alignment tracks every requirement source separately. Moving or orphaning one
+location preserves all other locations on the requirement. A multi-sentence quote
+locates as one contiguous whitespace-insensitive passage within its section.

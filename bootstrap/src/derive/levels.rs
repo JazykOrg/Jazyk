@@ -45,7 +45,7 @@ pub(super) fn entity_document_rank_with(
         best.insert(id.clone(), key);
     }
     for r in store.graph.requirements.values() {
-        let Some(src) = r.source.as_ref() else {
+        let Some(src) = r.sources.first() else {
             continue;
         };
         let pos = position(src);
@@ -375,7 +375,7 @@ impl Levels {
                 .facets
                 .iter()
                 .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
-            let Some(doc) = r.source.as_ref().map(|s| s.doc.clone()) else {
+            let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
                 continue;
             };
             if !flows {
@@ -558,7 +558,7 @@ fn flow_view_rules_scan(
             .facets
             .iter()
             .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
-        let Some(doc) = r.source.as_ref().map(|s| s.doc.clone()) else {
+        let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
             continue;
         };
         if !flows {

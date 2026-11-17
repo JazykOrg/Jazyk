@@ -571,6 +571,60 @@ impl ToolSession {
     fn kind_evidence(&self, gs: &GoalScope, goal: &str, evidence: &Value) -> Result<(), ToolError> {
         let r = |x: &str| self.snapshot.resolve_id(x).to_string();
         match gs.kind.as_str() {
+            "consolidate-requirements" => {
+                let mut parent: BTreeMap<String, String> = BTreeMap::new();
+                for op in &self.staged {
+                    if let Op::MergeRequirements { keep, absorb, .. } = op {
+                        parent.insert(r(absorb), r(keep));
+                    }
+                }
+                let survivor = |id: &str| {
+                    let mut id = r(id);
+                    for _ in 0..parent.len() {
+                        if let Some(next) = parent.get(&id) {
+                            id = next.clone();
+                        } else {
+                            break;
+                        }
+                    }
+                    id
+                };
+                let ids: Vec<_> = gs.change["requirements"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .collect();
+                for (i, a) in ids.iter().enumerate() {
+                    for b in ids.iter().skip(i + 1) {
+                        if survivor(a) == survivor(b) {
+                            continue;
+                        }
+                        let distinguished = evidence["distinct"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|p| {
+                                let (Some(x), Some(y)) = (p["a"].as_str(), p["b"].as_str()) else {
+                                    return false;
+                                };
+                                ((survivor(x) == survivor(a) && survivor(y) == survivor(b))
+                                    || (survivor(y) == survivor(a) && survivor(x) == survivor(b)))
+                                    && p["reason"].as_str().is_some_and(|s| !s.trim().is_empty())
+                            });
+                        if !distinguished {
+                            return Err(ToolError::new(
+                                "consolidation-unbacked",
+                                format!(
+                                    "{} and {} require a merge or distinct evidence with a reason",
+                                    a, b
+                                ),
+                            ));
+                        }
+                    }
+                }
+            }
+
             "rejudge-pair" => {
                 let Some((a, b)) = crate::goals::pair_members(&gs.target) else {
                     return Ok(());
@@ -582,11 +636,6 @@ impl ToolSession {
                 let open = self.open_diagnostics();
                 let pair_open =
                     |rule: &str| open.iter().any(|(_, d)| d.rule == rule && names_both(d));
-                let deleted = |x: &str| {
-                    self.staged
-                        .iter()
-                        .any(|o| matches!(o, Op::DeleteRequirement { id, .. } if r(id) == x))
-                };
                 // A finding naming a deleted side cannot stand as filed.
                 let alive = |x: &str| {
                     let x = r(x);
@@ -605,7 +654,10 @@ impl ToolSession {
                 }
                 match Self::evidence_verdict(evidence).as_deref() {
                     Some("duplicate") => {
-                        if !deleted(&a) && !deleted(&b) && !pair_open("duplicate-requirement") {
+                        if !self.staged.iter().any(|op| {
+                            matches!(op, Op::MergeRequirements { keep, absorb, .. }
+                            if (r(keep) == a && r(absorb) == b) || (r(keep) == b && r(absorb) == a))
+                        }) {
                             return Err(ToolError::new(
                                 "duplicate-unbacked",
                                 format!("{} claims duplicate, but neither side is deleted in this session and no open duplicate-requirement names both; delete_requirement the worse-sourced side (one document), or report_diagnostic duplicate-requirement (two documents)", goal),
@@ -1521,40 +1573,13 @@ impl ToolSession {
             let evidence = match verdict.as_str() {
                 "consistent" => json!({"verdict": "consistent"}),
                 "duplicate" => {
-                    // Two quotes of one document are the same-document case: the
-                    // worse-sourced side is deleted, never kept beside a finding.
-                    // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
-                    let doc_of = |id: &str| {
-                        self.snapshot
-                            .graph
-                            .requirements
-                            .get(id)
-                            .and_then(|r| r.source.as_ref())
-                            .map(|s| s.doc.clone())
-                    };
-                    if let (Some(da), Some(db)) = (doc_of(&a), doc_of(&b)) {
-                        if da == db {
-                            return Err(ToolError::new(
-                                "same-document-duplicate",
-                                format!(
-                                    "{} and {} both quote {}: a same-document duplicate is settled by delete_requirement on the worse-sourced side plus mark_goal_done with evidence {{verdict: duplicate, carried_by: <deleted id>}}, never by a duplicate-requirement finding that keeps both",
-                                    a, b, da
-                                ),
-                            ));
-                        }
-                    }
-                    let filed = self.dispatch_inner(
-                        "report_diagnostic",
-                        &json!({
-                            "rule": "duplicate-requirement",
-                            "severity": Self::opt_str(entry, "severity").unwrap_or_else(|| "info".into()),
-                            "subjects": [a, b],
-                            "message": Self::opt_str(entry, "message").unwrap_or_else(|| format!("{} and {} state the same obligation from different documents; both are kept.", a, b)),
-                            "reasoning": Self::opt_str(entry, "reasoning").unwrap_or_else(|| justification.clone()),
-                        }),
-                    )?;
-                    result["diagnostic"] = filed["id"].clone();
-                    json!({"verdict": "duplicate", "carried_by": filed["id"]})
+                    self.stage(Op::MergeRequirements {
+                        keep: a.clone(),
+                        absorb: b.clone(),
+                        reason: justification.clone(),
+                    })?;
+                    result["survivor"] = json!(a);
+                    json!({"verdict":"duplicate", "carried_by": a})
                 }
                 "contradiction" => {
                     // A standing contradiction the entry names carries the verdict even

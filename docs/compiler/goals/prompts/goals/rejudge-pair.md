@@ -11,7 +11,10 @@ Ground the verdict in the quotes as much as in the statements: the quote is the 
 
 Decide exactly one verdict, as the judgment skill defines them.
 
-Duplicate: the same obligation reworded, not the same topic; when both quote the same document, delete the worse-sourced one with delete_requirement (keep the one whose quote states the obligation directly), and when they quote different documents the redundancy is intentional, so keep both and report_diagnostic rule duplicate-requirement, severity info, subjects both ids, message saying both are kept.
+Duplicate: the same obligation reworded. Merge the requirements with
+merge_requirements, preserving every source location and redirecting the loser.
+Reconcile criteria, edges, facets, and transitions. Repetition across documents is
+another source location on the same obligation.
 
 Contradiction: the two cannot both hold, in their statements or their quotes (opposite defaults, opposite behavior for the same condition, incompatible values, two numeric bounds for the same subject and measurement even when one satisfies the other, and two sources partitioning one decision by numeric thresholds that disagree inside any band of the union, since a table assigning an outcome per band is exhaustive for that band, never a floor); report_diagnostic rule contradiction, subjects both ids, message quoting the conflicting claims, severity error when no reading lets both hold and warning otherwise, and when the repair is enumerable attach a prompt: a one-sentence question naming the conflict, one edit option per side rewriting the other document's sentence to agree (old_text copied verbatim from that document's section, the quote itself as a rule or a data block's line when the wrong value sits there, rewriting only the conflicting part), freeform true.
 

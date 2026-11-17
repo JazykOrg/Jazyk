@@ -168,7 +168,7 @@ fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
         .graph
         .requirements
         .get_mut("req:a")
-        .and_then(|r| r.source.as_mut())
+        .and_then(|r| r.sources.first_mut())
     {
         src.doc = "other.md".into();
     }
@@ -209,8 +209,8 @@ fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
         )
         .unwrap();
     let r = v["results"].as_array().unwrap();
-    let dup = r[0]["diagnostic"].as_str().unwrap().to_string();
-    assert!(dup.starts_with("diag:duplicate-requirement-"), "{}", r[0]);
+    let dup = r[0]["survivor"].as_str().unwrap().to_string();
+    assert_eq!(dup, "req:a");
     assert_eq!(
         r[1]["resolved"],
         json!(["diag:contradiction-7"]),
@@ -234,18 +234,13 @@ fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
             ]}),
         )
         .unwrap();
-    assert_eq!(
-        same["results"][0]["error"]["rule"], "same-document-duplicate",
-        "{}",
-        same
-    );
+    assert_eq!(same["results"][0]["survivor"], "req:b", "{}", same);
     assert_eq!(r[5]["error"]["rule"], "bad-severity", "{}", r[5]);
     // Two staged ops: the duplicate filing and the resolve; the refused
     // contradiction staged nothing.
-    assert_eq!(t.staged.len(), 2, "{:?}", t.staged);
+    assert_eq!(t.staged.len(), 3, "{:?}", t.staged);
     assert!(
-        matches!(&t.staged[0], Op::ReportDiagnostic { diagnostic, .. }
-        if diagnostic.rule == "duplicate-requirement" && diagnostic.severity == "info")
+        matches!(&t.staged[0], Op::MergeRequirements { keep, absorb, .. } if keep == "req:a" && absorb == "req:b")
     );
     assert!(
         matches!(&t.staged[1], Op::ResolveDiagnostic { id, .. } if id == "diag:contradiction-7")
@@ -261,7 +256,7 @@ fn settle_pairs_duplicate_resolved_and_the_per_entry_guard() {
     ]});
     let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
     assert!(v["results"][0]["repeat"].is_string(), "{}", v);
-    assert_eq!(v["results"][0]["diagnostic"], dup.as_str());
+    assert_eq!(v["results"][0]["survivor"], dup.as_str());
     let v = t.dispatch(PAIR_SETTLE_TOOL, &again).unwrap();
     assert_eq!(v["results"][0]["error"]["rule"], "repeated-call", "{}", v);
     assert!(v["settled"].as_array().unwrap().is_empty());

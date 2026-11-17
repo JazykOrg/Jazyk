@@ -47,7 +47,7 @@ fn goal_gate_of(
 
 #[test]
 fn registry_covers_seventeen_kinds_with_pages_and_prompts() {
-    assert_eq!(REGISTRY.len(), 17);
+    assert_eq!(REGISTRY.len(), 18);
     let mut names: BTreeSet<&str> = BTreeSet::new();
     for k in REGISTRY.iter() {
         assert!(names.insert(k.kind()), "duplicate kind {}", k.kind());
@@ -74,7 +74,10 @@ fn registry_covers_seventeen_kinds_with_pages_and_prompts() {
             // not from a record kind of their own.
             assert!(
                 !record_kinds(k.kind()).is_empty()
-                    || matches!(k.kind(), "bind" | "derive-criteria")
+                    || matches!(
+                        k.kind(),
+                        "bind" | "derive-criteria" | "consolidate-requirements"
+                    )
             );
         }
         match k.class() {
@@ -120,11 +123,11 @@ fn link(s: &mut Store, n: usize, a: &str, b: &str) {
         Requirement {
             statement: format!("{} calls {}.", a, b),
             entities: vec![a.into(), b.into()],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "api.md".into(),
                 section: "/x".into(),
                 quote: "calls".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -162,11 +165,11 @@ fn statement(s: &mut Store, id: &str, text: &str, entities: &[&str], section: &s
         Requirement {
             statement: text.into(),
             entities: entities.iter().map(|e| e.to_string()).collect(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "svc.md".into(),
                 section: section.into(),
                 quote: text.into(),
-            }),
+            }],
             ..Default::default()
         },
     );

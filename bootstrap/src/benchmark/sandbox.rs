@@ -232,7 +232,7 @@ pub fn seed_verification(
         hash_hex(&r.statement),
         rid,
         r.statement,
-        r.source.as_ref().map(|s| s.quote.as_str()).unwrap_or_default(),
+        r.sources.first().map(|s| s.quote.as_str()).unwrap_or_default(),
         files.iter().map(|f| format!("- {}", f)).collect::<Vec<_>>().join("\n")
     );
     let crit_path = store.out.join("gen").join(&artifact);

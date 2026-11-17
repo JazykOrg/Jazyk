@@ -100,11 +100,11 @@ fn classified_pdf_contributes_exact_bytes_to_generation() {
         "req:download".into(),
         Requirement {
             statement: "Offer the brochure.".into(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "docs/site.md".into(),
                 section: "/site".into(),
                 quote: "The site offers the [brochure](brochure.pdf) for download.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -132,11 +132,11 @@ fn classification_rejects_stale_bytes_and_stranded_provenance() {
     store.graph.requirements.insert(
         "req:keep".into(),
         Requirement {
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "docs/site.md".into(),
                 section: "/site".into(),
                 quote: "The site offers the [brochure](brochure.pdf) for download.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -307,15 +307,19 @@ fn reclassification_and_quote_retraction_share_one_atomic_changeset() {
         "req:keep".into(),
         Requirement {
             statement: "Offer the brochure.".into(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "docs/site.md".into(),
                 section: "/site".into(),
                 quote: "The site offers the [brochure](brochure.pdf) for download.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
-    let source = store.graph.requirements["req:keep"].source.clone().unwrap();
+    let source = store.graph.requirements["req:keep"]
+        .sources
+        .first()
+        .cloned()
+        .unwrap();
     store
         .graph
         .requirements
@@ -326,7 +330,7 @@ fn reclassification_and_quote_retraction_share_one_atomic_changeset() {
         "ent:site".into(),
         Entity {
             name: "Site".into(),
-            mentions: vec![source],
+            mentions: vec![source.clone()],
             ..Default::default()
         },
     );

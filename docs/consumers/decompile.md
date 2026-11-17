@@ -128,3 +128,8 @@ generate from the graph, and run both test suites. The distance between the orig
 code and the regenerated code, judged by the tests, is a fidelity score for the whole
 chain. A codebase whose docs already exist by hand is ground truth: decompile it into
 a scratch project and diff the drafts against the human documents.
+
+## Obligation locations
+
+Reverse compilation searches existing obligations and attaches supporting locations
+instead of creating a requirement for each sentence.

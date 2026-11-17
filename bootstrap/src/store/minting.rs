@@ -19,6 +19,22 @@ impl Store {
         cur
     }
 
+    pub fn requirement_scopes(&self, r: &Requirement) -> Vec<String> {
+        let mut scopes: Vec<String> = r
+            .entities
+            .iter()
+            .filter_map(|id| {
+                self.graph
+                    .entities
+                    .get(self.resolve_id(id))
+                    .map(|e| e.scope.clone())
+            })
+            .collect();
+        scopes.sort();
+        scopes.dedup();
+        scopes
+    }
+
     // ---- id minting ----
 
     // Ids carry no counter: a slug of the natural key and, where the kind needs one or
@@ -61,24 +77,23 @@ impl Store {
     // sorted `from` ids and the statement for a derived or decreed requirement.
     pub fn mint_req_id(&self, r: &Requirement, taken: &BTreeSet<String>) -> String {
         let statement = normalize_statement(&r.statement);
-        let key = match &r.source {
-            Some(src) => format!("{}#{}\n{}", src.doc, src.section, statement),
-            None => {
-                let mut from: Vec<String> = match &r.provenance {
-                    Some(Provenance::Derived { from, .. }) => from.clone(),
-                    _ => Vec::new(),
-                };
-                from.sort();
-                format!("x\n{}\n{}", from.join(","), statement)
-            }
+        let key = if !r.sources.is_empty() {
+            format!("{}\n{}", self.requirement_scopes(r).join(","), statement)
+        } else {
+            let mut from = match &r.provenance {
+                Some(Provenance::Derived { from, .. }) => from.clone(),
+                _ => Vec::new(),
+            };
+            from.sort();
+            format!("x\n{}\n{}", from.join(","), statement)
         };
-        let base = format!("req:{}", Self::req_id_stem(r.source.as_ref()));
+        let base = format!("req:{}", Self::req_id_stem(r.sources.first()));
         crate::ids::unique(&base, &key, |id| self.id_taken(id, taken))
     }
 
     // The id stem of a requirement: its source document, or `x` without a quote.
     pub fn req_stem(r: &Requirement) -> &str {
-        r.source.as_ref().map(|s| s.doc.as_str()).unwrap_or("x")
+        r.sources.first().map(|s| s.doc.as_str()).unwrap_or("x")
     }
 
     // `crit:<stem>-<hash>`: the stem of its requirement (else of its own quote, else
@@ -96,7 +111,7 @@ impl Store {
             .graph
             .requirements
             .get(&c.requirement)
-            .and_then(|r| r.source.as_ref())
+            .and_then(|r| r.sources.first())
             .or(req_source)
             .or(c.source.as_ref());
         let key = format!("{}\n{}", c.requirement, normalize_statement(&c.statement));
@@ -111,7 +126,7 @@ impl Store {
         self.graph
             .requirements
             .get(&c.requirement)
-            .and_then(|r| r.source.as_ref())
+            .and_then(|r| r.sources.first())
             .map(|s| s.doc.clone())
             .or_else(|| c.source.as_ref().map(|s| s.doc.clone()))
             .unwrap_or_else(|| "x".to_string())

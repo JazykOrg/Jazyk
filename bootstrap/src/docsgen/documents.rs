@@ -387,7 +387,7 @@ pub(super) fn write_documents(
                     .graph
                     .requirements
                     .get(rid)
-                    .and_then(|r| r.source.as_ref())
+                    .and_then(|r| r.sources.first())
                 {
                     Some(src) => {
                         let order = store
@@ -414,7 +414,7 @@ pub(super) fn write_documents(
                     let Some(r) = store.graph.requirements.get(rid) else {
                         continue;
                     };
-                    let label = match r.source.as_ref() {
+                    let label = match r.sources.first() {
                         Some(src) => {
                             let t = store
                                 .docs
@@ -451,12 +451,12 @@ pub(super) fn write_documents(
                 let Some(r) = store.graph.requirements.get(rid) else {
                     continue;
                 };
-                let group = match r.source.as_ref() {
+                let group = match r.sources.first() {
                     Some(src) => (src.doc.clone(), src.section.clone()),
                     None => (String::new(), String::new()),
                 };
                 if last_group.as_ref() != Some(&group) {
-                    let title = match r.source.as_ref() {
+                    let title = match r.sources.first() {
                         Some(src) => {
                             let t = store
                                 .docs
@@ -546,26 +546,28 @@ pub(super) fn write_documents(
                     };
                     norm(a) == norm(b)
                 };
-                match r.source.as_ref() {
-                    // The quote is omitted when it equals the statement: a page once
-                    // repeated every statement twice.
-                    Some(src) if same(&src.quote, &r.statement) => {
-                        s.push_str(&format!("Source: `{}#{}`", src.doc, src.section))
+                for src in &r.sources {
+                    match Some(src) {
+                        // The quote is omitted when it equals the statement: a page once
+                        // repeated every statement twice.
+                        Some(src) if same(&src.quote, &r.statement) => {
+                            s.push_str(&format!("Source: `{}#{}`", src.doc, src.section))
+                        }
+                        Some(src) => s.push_str(&format!(
+                            "> {}\n\nSource: `{}#{}`",
+                            relink_quote(
+                                &src.quote.split_whitespace().collect::<Vec<_>>().join(" "),
+                                &src.doc,
+                                store
+                            ),
+                            src.doc,
+                            src.section
+                        )),
+                        None => s.push_str(&format!(
+                            "Provenance: {}",
+                            crate::session::provenance_line(r)
+                        )),
                     }
-                    Some(src) => s.push_str(&format!(
-                        "> {}\n\nSource: `{}#{}`",
-                        relink_quote(
-                            &src.quote.split_whitespace().collect::<Vec<_>>().join(" "),
-                            &src.doc,
-                            store
-                        ),
-                        src.doc,
-                        src.section
-                    )),
-                    None => s.push_str(&format!(
-                        "Provenance: {}",
-                        crate::session::provenance_line(r)
-                    )),
                 }
                 let others: Vec<String> = r
                     .entities

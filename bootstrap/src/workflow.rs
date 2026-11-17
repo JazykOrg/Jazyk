@@ -573,7 +573,7 @@ mod tests {
                 Requirement {
                     statement: format!("Site shows item {index}."),
                     entities: vec!["ent:site".into()],
-                    source: Some(source(index)),
+                    sources: vec![source(index)],
                     provenance: Some(Provenance::Quote(source(index))),
                     ..Default::default()
                 },

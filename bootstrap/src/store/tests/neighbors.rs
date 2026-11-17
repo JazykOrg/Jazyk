@@ -63,7 +63,7 @@ fn requirement_neighbors_find_the_topic_cluster() {
     let mk = |statement: &str| Requirement {
         statement: statement.into(),
         entities: vec!["ent:util".into()],
-        source: Some(mention("m.md", "/m", "q")),
+        sources: vec![mention("m.md", "/m", "q")],
         ..Default::default()
     };
     // The example-sort failure: three statements about reverse-order sorting were
@@ -96,7 +96,7 @@ fn requirement_neighbors_pair_on_shared_entities_alone() {
     let mk = |statement: &str, entities: &[&str]| Requirement {
         statement: statement.into(),
         entities: entities.iter().map(|e| e.to_string()).collect(),
-        source: Some(mention("m.md", "/m", "q")),
+        sources: vec![mention("m.md", "/m", "q")],
         ..Default::default()
     };
     // A glossary definition restating an inventory rule shares both entities
@@ -177,7 +177,7 @@ fn requirement_neighbors_pair_intro_restatements_and_same_transitions() {
     let mk = |statement: &str, entities: &[&str], section: &str| Requirement {
         statement: statement.into(),
         entities: entities.iter().map(|e| e.to_string()).collect(),
-        source: Some(mention("expenses.md", section, "q")),
+        sources: vec![mention("expenses.md", section, "q")],
         ..Default::default()
     };
     // expenses-5 ~ expenses-6: one shared entity, one shared token ("file").
@@ -237,7 +237,7 @@ fn requirement_neighbors_pair_intro_restatements_and_same_transitions() {
         "req:policies-4".into(),
         Requirement {
             transition: tr("Approved", "Reimbursed"),
-            source: Some(mention("policies.md", "/policies", "q")),
+            sources: vec![mention("policies.md", "/policies", "q")],
             ..mk(
                 "The next run settles the money owed.",
                 &["ent:expense-claim", "ent:payroll"],
@@ -249,7 +249,7 @@ fn requirement_neighbors_pair_intro_restatements_and_same_transitions() {
         "req:policies-5".into(),
         Requirement {
             transition: tr("approved", "rejected"),
-            source: Some(mention("policies.md", "/policies", "q")),
+            sources: vec![mention("policies.md", "/policies", "q")],
             ..mk(
                 "A wrong total sends it back.",
                 &["ent:expense-claim"],
@@ -280,7 +280,7 @@ fn sibling_transitions_of_one_machine_never_pair() {
             trigger: None,
             guard: None,
         }),
-        source: Some(mention("hiring.md", "/moving", "q")),
+        sources: vec![mention("hiring.md", "/moving", "q")],
         ..Default::default()
     };
     s.graph.requirements.insert(
@@ -327,7 +327,7 @@ fn entity_boilerplate_never_counts_as_a_shared_token() {
     let mk = |statement: &str| Requirement {
         statement: statement.into(),
         entities: vec!["ent:um".into(), "ent:ua".into()],
-        source: Some(mention("user.md", "/ops", "q")),
+        sources: vec![mention("user.md", "/ops", "q")],
         ..Default::default()
     };
     for (id, st) in [
@@ -378,7 +378,7 @@ fn requirement_neighbors_discount_the_hub() {
     let mk = |statement: &str, entities: &[&str]| Requirement {
         statement: statement.into(),
         entities: entities.iter().map(|e| e.to_string()).collect(),
-        source: Some(mention("m.md", "/m", "q")),
+        sources: vec![mention("m.md", "/m", "q")],
         ..Default::default()
     };
     // ent:order meets three peers; every other entity meets one.

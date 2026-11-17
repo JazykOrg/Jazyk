@@ -17,7 +17,7 @@ store on every commit and has no write tool.
 | id | kind | authored or derived | natural key |
 | --- | --- | --- | --- |
 | `ent:<slug>` | [entity](./model/entity.md) | authored | `name` + `scope` (+ `parent` when supplied) |
-| `req:<stem>-<hash>` | [requirement](./model/requirement.md) | authored | source section + statement |
+| `req:<stem>-<hash>` | [requirement](./model/requirement.md) | authored | entity scopes + normalized statement |
 | `crit:<stem>-<hash>` | [criterion](./model/criterion.md) | authored | owning requirement + statement |
 | `view:<kind>/<slug>` | [view](./model/view.md) | authored (defaults derived) | `kind` + `title` |
 | `rel:<a>~<b>` | [relationship](./model/relationship.md) | derived from requirement `edges` | member pair |
@@ -101,8 +101,8 @@ Where the provenance sits:
   whatever mentions its requirements add by reference. A mention that names the entity
   removes it: an `upsert_entity` whose `mention` names it, or an accepted ratification
   proposal. That is the flip to `quote`. See [entity fields](./model/entity.md#fields).
-- Requirement: `source: {doc, section, quote}` is the quote form. `provenance` carries the
-  other two kinds. A requirement has exactly one of `source` or `provenance`.
+- Requirement: non-empty `sources: [{doc, section, quote}]` is the quote form. `provenance` carries the
+  other two kinds. A requirement has exactly one of non-empty `sources` or `provenance`.
 - Attribute: each attribute carries its own `provenance`, any of the three kinds.
 - View: `provenance` is `derived` for default views and for views a session curates,
   `decree` for views a human creates. Views are projections and are not ratified. Their
@@ -214,3 +214,9 @@ reliably than opaque tokens.
 - `limits`: `{<limit>: n}` on entities and views, a per-node bump above a built-in limit.
   Dismissing a size goal writes this field with decree provenance. The goal derives again
   only when the raised threshold is crossed. See [limits](./graph.md#limits).
+
+## Requirement provenance
+
+A requirement has exactly one of non-empty `sources: [{doc, section, quote}]` or
+derived/decree `provenance`. Each quote may span consecutive sentences in one section.
+Other fact kinds retain their existing provenance representation.

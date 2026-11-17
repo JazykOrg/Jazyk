@@ -218,6 +218,11 @@ fn source_sections(node: &Value) -> Vec<String> {
     if let Some(src) = node.get("source") {
         add(src);
     }
+    if let Some(Value::Sequence(ms)) = node.get("sources") {
+        for source in ms {
+            add(source);
+        }
+    }
     if let Some(Value::Sequence(ms)) = node.get("mentions") {
         for m in ms {
             add(m);

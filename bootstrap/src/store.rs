@@ -122,6 +122,20 @@ pub enum Op {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provenance: Option<Provenance>,
     },
+    AddRequirementSource {
+        id: String,
+        source: SourceRef,
+    },
+    RemoveRequirementSource {
+        id: String,
+        source: SourceRef,
+        reason: String,
+    },
+    MergeRequirements {
+        keep: String,
+        absorb: String,
+        reason: String,
+    },
     DeleteRequirement {
         id: String,
         reason: String,
@@ -319,11 +333,11 @@ pub const JUDGED_RULES: [&str; 6] = [
 ];
 
 // The store version written to store.yaml. Mirrors docs/compiler/graph.md#store-version.
-pub const STORE_VERSION: u32 = 5;
+pub const STORE_VERSION: u32 = 6;
 
 // The one earlier version a load reads as it is: the next build's opening rewrites it
 // in the version 5 layout, ids kept. Mirrors docs/compiler/graph.md#store-version.
-pub const UPGRADABLE_VERSION: u32 = 4;
+pub const UPGRADABLE_VERSION: u32 = 5;
 
 pub fn readable_version(v: u32) -> bool {
     v == STORE_VERSION || v == UPGRADABLE_VERSION

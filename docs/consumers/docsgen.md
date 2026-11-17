@@ -392,3 +392,7 @@ same triage queue, and is resolved like any other diagnostic.
 Generated source links account for the document set directory. A page directly
 under `.jazyk/<set-id>/docsgen/` reaches project files with `../../../`. Links
 within the same graph output remain relative to that set's store.
+
+## Obligation locations
+
+Render each requirement once and list all its source locations.

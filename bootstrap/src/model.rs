@@ -309,10 +309,15 @@ pub struct Requirement {
     pub transition: Option<Transition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub facets: Vec<Facet>,
-    // The quote form of provenance. A requirement has exactly one of `source` or
+    // The quote form of provenance. A requirement has exactly one of non-empty `sources` or
     // `provenance`. Mirrors docs/compiler/model/requirement.md#fields.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source: Option<SourceRef>,
+    #[serde(
+        default,
+        alias = "source",
+        deserialize_with = "requirement_sources",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub sources: Vec<SourceRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -366,25 +371,19 @@ pub struct Criterion {
 pub const CRITERION_KINDS: [&str; 4] = ["positive", "negative", "boundary", "quality"];
 
 impl Requirement {
-    // The one provenance, whichever field carries it. None only on a requirement that
-    // never got one (a fixture built from `Default`).
     pub fn provenance(&self) -> Option<ProvenanceRef<'_>> {
-        match (&self.source, &self.provenance) {
-            (Some(s), _) => Some(ProvenanceRef::Quote(s)),
-            (None, Some(p)) => Some(p.as_ref()),
-            (None, None) => None,
-        }
+        self.sources
+            .first()
+            .map(ProvenanceRef::Quote)
+            .or_else(|| self.provenance.as_ref().map(Provenance::as_ref))
     }
-
     pub fn is_quoted(&self) -> bool {
-        self.source.is_some()
+        !self.sources.is_empty()
     }
-
-    // Whether the quote source sits in the named section.
     pub fn anchored_at(&self, doc: &str, section: &str) -> bool {
-        self.source
-            .as_ref()
-            .is_some_and(|s| s.doc == doc && s.section == section)
+        self.sources
+            .iter()
+            .any(|s| s.doc == doc && s.section == section)
     }
 }
 
@@ -1550,6 +1549,20 @@ pub fn split_section_ref(full: &str) -> Option<(String, String)> {
     Some((doc.to_string(), sec.to_string()))
 }
 
+// Version 5 used a singleton source. Version 6 writes only the list form.
+fn requirement_sources<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<SourceRef>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Sources {
+        Many(Vec<SourceRef>),
+        One(SourceRef),
+    }
+    Ok(match Sources::deserialize(d)? {
+        Sources::Many(s) => s,
+        Sources::One(s) => vec![s],
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1581,7 +1594,7 @@ mod tests {
         let quoted = Requirement {
             statement: "The cart holds items.".into(),
             entities: vec!["ent:cart".into()],
-            source: Some(quote("t.md", "/t", "The cart holds items.")),
+            sources: vec![quote("t.md", "/t", "The cart holds items.")],
             ..Default::default()
         };
         assert!(matches!(quoted.provenance(), Some(ProvenanceRef::Quote(s)) if s.section == "/t"));
@@ -1759,7 +1772,7 @@ mod tests {
                     measure: Some("2 seconds".into()),
                 },
             ],
-            source: Some(src.clone()),
+            sources: vec![src.clone()],
             ..Default::default()
         };
         let y = serde_norway::to_string(&req).unwrap();
@@ -1769,7 +1782,7 @@ mod tests {
         assert_eq!(back.transition, req.transition);
         assert_eq!(back.facets, req.facets);
         assert_eq!(back.edges, req.edges);
-        assert_eq!(back.source, req.source);
+        assert_eq!(back.sources.first(), req.sources.first());
 
         let view = View {
             kind: "sequence".into(),

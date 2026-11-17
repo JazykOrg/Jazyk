@@ -807,7 +807,7 @@ impl LoadedSet {
             )
         } else if let Some(r) = store.graph.requirements.get(id) {
             self.render_requirement(store, id, r, &mut b);
-            let src = match r.source.as_ref() {
+            let src = match r.sources.first() {
                 Some(s) => format!("source {}#{}", s.doc, s.section),
                 None => "derived".to_string(),
             };
@@ -1103,21 +1103,19 @@ impl LoadedSet {
     ) {
         b.push(&format!("## {}  full", id));
         b.push(&format!("statement: {}", r.statement));
-        match r.source.as_ref() {
-            Some(src) => {
-                b.push(&format!(
-                    "source: {}#{} \"{}\"",
-                    src.doc,
-                    src.section,
-                    crate::llm::truncate(&src.quote, 200)
-                ));
-            }
-            None => {
-                b.push(&format!(
-                    "provenance: {}",
-                    crate::session::provenance_line(r)
-                ));
-            }
+        for src in &r.sources {
+            b.push(&format!(
+                "source: {}#{} \"{}\"",
+                src.doc,
+                src.section,
+                crate::llm::truncate(&src.quote, 200)
+            ));
+        }
+        if r.sources.is_empty() {
+            b.push(&format!(
+                "provenance: {}",
+                crate::session::provenance_line(r)
+            ));
         }
         if let Some(t) = &r.transition {
             b.push(&format!(
@@ -1733,11 +1731,11 @@ mod tests {
                     ),
                     entities: vec!["ent:shopping-cart".into(), "ent:customer".into()],
                     edges: vec![],
-                    source: Some(SourceRef {
+                    sources: vec![SourceRef {
                         doc: "shop.md".into(),
                         section: "/shop/cart".into(),
                         quote: "holds items".into(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             );

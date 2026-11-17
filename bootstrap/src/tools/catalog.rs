@@ -156,6 +156,21 @@ pub fn catalog() -> Vec<ToolDef> {
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
+            name: "add_requirement_source",
+            description: "Attach a verbatim source location to an existing obligation without changing its statement or tests.",
+            parameters: obj(json!({"id":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"}}), &["id","section","quote"]),
+        },
+        ToolDef {
+            name: "remove_requirement_source",
+            description: "Remove exactly one source location. Delete the requirement only when its last source is gone.",
+            parameters: obj(json!({"id":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"},"reason":{"type":"string"}}), &["id","section","quote","reason"]),
+        },
+        ToolDef {
+            name: "merge_requirements",
+            description: "Consolidate duplicate obligations, union their sources and facts, reparent criteria, and redirect the absorbed id. Reconcile conflicting transitions first.",
+            parameters: obj(json!({"keep":{"type":"string"},"absorb":{"type":"string"},"reason":{"type":"string"}}), &["keep","absorb","reason"]),
+        },
+        ToolDef {
             name: "upsert_requirement",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/record-one-requirement-a-free-form-statement-65a84.md")),
             parameters: obj(
@@ -243,7 +258,7 @@ pub fn catalog() -> Vec<ToolDef> {
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/move-one-proposed-anchor-a-requirement-or-65ff4.md")),
             parameters: obj(
                 json!({
-                    "id": {"type": "string"},
+                    "id": {"type": "string"}, "from": {"type":"object","required":["doc","section","quote"],"properties":{"doc":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"}}},
                     "section": {"type": "string"},
                     "quote": {"type": "string"},
                     "reevaluate": {"type": "boolean"}
@@ -254,7 +269,7 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "orphan_anchor",
             description: "Leave one proposed anchor homeless: no candidate section states it any more. While its old section still exists it stays a stale anchor there for the extraction turn, which will delete it unless the document still states it; an anchor whose section is gone is deleted by the sweep at commit.",
-            parameters: obj(json!({"id": {"type": "string"}}), &["id"]),
+            parameters: obj(json!({"id": {"type": "string"}, "from": {"type":"object","required":["doc","section","quote"],"properties":{"doc":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"}}}}), &["id"]),
         },
         ToolDef {
             name: "report_diagnostic",
@@ -695,7 +710,7 @@ pub(super) const REANSWERABLE_TOOLS: [&str; 11] = [
 
 // The graph write tools, each all or nothing at staging.
 // Mirrors docs/compiler/tools.md#write-tools.
-pub const GRAPH_WRITE_TOOLS: [&str; 23] = [
+pub const GRAPH_WRITE_TOOLS: [&str; 26] = [
     "upsert_entity",
     "update_entity",
     "delete_entity",
@@ -703,6 +718,9 @@ pub const GRAPH_WRITE_TOOLS: [&str; 23] = [
     "group_entities",
     "dissolve_entity",
     "upsert_requirement",
+    "add_requirement_source",
+    "remove_requirement_source",
+    "merge_requirements",
     "update_requirement",
     "delete_requirement",
     "upsert_criterion",

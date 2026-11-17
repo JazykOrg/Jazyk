@@ -292,12 +292,11 @@ fn anchors_in(graph: &Graph, at: &Full) -> Vec<(String, String)> {
     let mut out = Vec::new();
     let mut sources: BTreeSet<&str> = BTreeSet::new();
     for (id, r) in &graph.requirements {
-        let Some(src) = r.source.as_ref() else {
-            continue;
-        };
-        if src.doc == at.doc && src.section == at.section {
-            out.push((id.clone(), src.quote.clone()));
-            sources.insert(src.quote.as_str());
+        for src in &r.sources {
+            if src.doc == at.doc && src.section == at.section {
+                out.push((id.clone(), src.quote.clone()));
+                sources.insert(src.quote.as_str());
+            }
         }
     }
     for (id, e) in &graph.entities {
@@ -750,11 +749,11 @@ mod tests {
                 Requirement {
                     statement: format!("The system shall {}.", quote),
                     entities: vec!["ent:x".into()],
-                    source: Some(SourceRef {
+                    sources: vec![SourceRef {
                         doc: doc.to_string(),
                         section: sec.to_string(),
                         quote: quote.to_string(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             );

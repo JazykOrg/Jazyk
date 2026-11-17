@@ -334,7 +334,8 @@ pub fn task(store: &Store, rid: &str, gs: &GenSettings) -> Result<Value, String>
         "pathsNote": "existingTests, files, and test artifact paths are relative to the deliverable directory",
         "reason": reason,
         "statement": r.statement,
-        "quote": r.source.as_ref().map(|s| s.quote.clone()).unwrap_or_default(),
+        "sources": r.sources,
+        "quote": r.sources.iter().map(|s| s.quote.as_str()).collect::<Vec<_>>().join("\n"),
         "provenance": crate::session::provenance_line(r),
         "factHash": hash_hex(&r.statement),
         "criteriaFrontMatter": crate::gen::criteria_front_matter(&rid, None, &r.statement),
@@ -1259,11 +1260,11 @@ mod tests {
                 statement: "The shop shall list items.".into(),
                 entities: vec!["ent:shop".into()],
                 edges: vec![],
-                source: Some(crate::model::SourceRef {
+                sources: vec![crate::model::SourceRef {
                     doc: "shop.md".into(),
                     section: "/shop".into(),
                     quote: "lists items".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );

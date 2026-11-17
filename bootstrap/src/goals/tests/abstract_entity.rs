@@ -161,11 +161,11 @@ fn defining_section_prefers_the_document_headed_with_the_name() {
             Requirement {
                 statement: "The API Server routes.".into(),
                 entities: vec!["ent:api-server".into()],
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: doc.into(),
                     section: section.into(),
                     quote: "routes".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );

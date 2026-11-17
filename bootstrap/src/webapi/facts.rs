@@ -89,7 +89,7 @@ fn mechanical_sentence(store: &Store, id: &str, field: &str, value: &Value) -> O
 fn is_quoted(store: &Store, id: &str, field: &str) -> bool {
     let id = store.resolve_id(id);
     if let Some(r) = store.graph.requirements.get(id) {
-        return r.source.is_some();
+        return !r.sources.is_empty();
     }
     if let Some(e) = store.graph.entities.get(id) {
         if let Some(rest) = field.strip_prefix("attributes.") {
@@ -458,7 +458,7 @@ mod tests {
         let r = store.graph.requirements.get(&rid).unwrap();
         assert_eq!(r.statement, "The shop stores every order.");
         assert_eq!(
-            r.source.as_ref().unwrap().quote,
+            r.sources.first().unwrap().quote,
             "The shop stores every order."
         );
         // The commit absorbed the new hash: the document is not dirty against the graph.
@@ -517,7 +517,7 @@ mod tests {
         assert!(v["ratification"].is_string(), "a proposal was filed");
         let store = Store::load(&out);
         let r = store.graph.requirements.get(&rid).unwrap();
-        assert!(r.source.is_none(), "the quote gave way to the decree");
+        assert!(r.sources.is_empty(), "the quote gave way to the decree");
         assert!(matches!(
             r.provenance,
             Some(crate::model::Provenance::Decree { .. })

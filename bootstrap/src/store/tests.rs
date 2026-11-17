@@ -8,6 +8,7 @@ mod lock;
 mod mutations;
 mod neighbors;
 mod prose;
+mod requirement_concepts;
 mod sync;
 
 // A fresh directory per call: parallel tests each hold a store of their own, so a
@@ -44,7 +45,7 @@ fn every_kind_graph() -> Store {
     s.graph.entities.insert("ent:čaj".into(), entity("Čaj"));
     let mut r = seeded_req("orders.md", "An order holds a payment.");
     r.entities = vec!["ent:order".into(), "ent:payment".into()];
-    r.source = Some(mention("orders.md", "/orders", "An order holds a payment."));
+    r.sources = vec![mention("orders.md", "/orders", "An order holds a payment.")];
     // As a commit leaves it: the requirement's source is a mention on its entities.
     for e in ["ent:order", "ent:payment"] {
         s.graph
@@ -52,7 +53,7 @@ fn every_kind_graph() -> Store {
             .get_mut(e)
             .unwrap()
             .mentions
-            .push(r.source.clone().unwrap());
+            .push(r.sources.first().cloned().unwrap());
     }
     r.edges = vec![ReqEdge {
         a: "ent:order".into(),
@@ -265,7 +266,7 @@ fn seeded_req(doc: &str, statement: &str) -> Requirement {
     Requirement {
         statement: statement.into(),
         entities: vec!["ent:cart".into()],
-        source: Some(mention(doc, "/t", "The Cart holds items.")),
+        sources: vec![mention(doc, "/t", "The Cart holds items.")],
         ..Default::default()
     }
 }
@@ -274,7 +275,7 @@ fn req_at(doc: &str, sec: &str, quote: &str) -> Requirement {
     Requirement {
         statement: format!("The A {}", quote.trim_end_matches('.')),
         entities: vec!["ent:a".into()],
-        source: Some(mention(doc, sec, quote)),
+        sources: vec![mention(doc, sec, quote)],
         ..Default::default()
     }
 }

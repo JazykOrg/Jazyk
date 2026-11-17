@@ -6,4 +6,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/goals/rejudge_pair.rs"
 ---
-no (a duplicate verdict would keep both and file duplicate-requirement)
+no (a duplicate verdict would merge both obligations and union sources and file duplicate-requirement)

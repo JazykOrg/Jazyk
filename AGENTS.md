@@ -127,9 +127,13 @@ models. Prompt/skill directories are excluded from the docs glob.
 - Use an isolated local worktree and local branch for each change. Preserve
   unrelated edits. Commit coherent changes after verification; leave the worktree
   clean at each step.
-- Keep work branches local. Do not push feature branches or create GitHub branches
-  or PRs. Get explicit approval before merging into local `master`; then merge
-  locally and push only `master`, never merge through GitHub.
+- After verification, commit your changes, merge the work branch into local
+  `master` with `git merge --no-ff`, and push `master` without asking for further
+  approval. Keep work branches local; do not push feature branches or create
+  GitHub branches or PRs. Never merge through GitHub.
+- Deploy only when explicitly instructed. This includes pushing changes that
+  trigger automatic deployment; get explicit deployment instructions before
+  pushing those changes.
 - Remote: `git@github.com:JazykOrg/Jazyk.git`. Relevant `site/` or site-workflow
   changes on `master` publish jazyk.org. Engine-only pushes do not deploy or start CI.
 - Keep secrets out of tracked files. `.env`, `*.env`, `/bootstrap/target/`, and

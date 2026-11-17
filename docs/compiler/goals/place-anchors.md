@@ -193,3 +193,8 @@ holds the statement, and re-evaluating costs one re-check, never information.
 
 An anchor names one requirement source, including its document, section, and quote.
 Placement or orphaning changes only that source and preserves the other locations.
+
+`place_anchor` and `orphan_anchor` accept `from: {doc, section, quote}` to
+select one source. A requirement with several proposals requires this selector.
+Completion and proposal retirement identify each source by its quote as well as
+its document and section.

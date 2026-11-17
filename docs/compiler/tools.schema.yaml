@@ -845,6 +845,13 @@ definitions:
       - section
       - reevaluate
     properties:
+      from:
+        type: object
+        required: [doc, section, quote]
+        properties:
+          doc: {type: string}
+          section: {type: string}
+          quote: {type: string}
       id:
         type: string
         description: A requirement or entity id named by the batch's proposals
@@ -864,6 +871,13 @@ definitions:
     required:
       - id
     properties:
+      from:
+        type: object
+        required: [doc, section, quote]
+        properties:
+          doc: {type: string}
+          section: {type: string}
+          quote: {type: string}
       id:
         type: string
     additionalProperties: false

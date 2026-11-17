@@ -702,7 +702,10 @@ same information persists in the [journal](./graph.md#journal).
 Every event carries a `label`: the batch id (`b413-3`) for everything a session produces,
 `gen ent:cart` or `verify req:...` for the worker kinds, and `build` for what the
 scheduler emits between sessions. The label is the grouping key, so a reader reassembles
-one session from the transcript. A `step` names the position inside the label (`r3` for
+one session from the transcript. A build that runs sessions concurrently
+([scheduling](./reconciler.md#scheduling)) interleaves their events in one trace; each
+session keeps its own batch id, so the label still separates them, and the `goal` events
+that settle a session carry that session's label. A `step` names the position inside the label (`r3` for
 a round, `product 1/2` for a generation part).
 
 The event kinds:

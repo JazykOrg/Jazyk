@@ -153,7 +153,9 @@ Project and store reads:
 - `GET /api/status`: `store.yaml` and `local/build.yaml` (the store version, the
   generation, the [verdict](../compiler/compilation.md#convergence) with its counts, the
   costs), the running build's `parked` goals each with its `reason` (none when no build
-  runs), the open `goal-failed` diagnostics, plus
+  runs), the open `goal-failed` diagnostics, `runs` (every running build of the set
+  from its [run file](../compiler/graph.md#a-builds-progress): its command, sessions,
+  spend, batches in flight, and parked goals), plus
   node counts, the coverage fraction, open diagnostics by severity, and the board
   counts. The same summary as `jazyk status`.
 - `GET /api/overview`: the same summary without the board counts, plus verification

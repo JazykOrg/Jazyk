@@ -504,6 +504,9 @@ store at the working directory. The lines, in order:
 
 - the store `version` and the generation counter,
 - the last verdict with its counts,
+- one `running:` line per build running on the set, from its
+  [run file](../compiler/graph.md#a-builds-progress): its command, the sessions it
+  started, its batches in flight, and the goals it parked so far,
 - the board counts: open goals by class (compile, GC), blocked, parked,
   failed, optional advised, and the pairs waiting under the degree cap when any do
   ([pairs](../compiler/reconciler.md#pairs)). The board is derived from disk the same

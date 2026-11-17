@@ -487,8 +487,25 @@ one batch ([concurrent work](./control-plane.md#concurrent-work)); with
   (`openBy`). Overlap is allowed when nothing else is ready: the first commit wins and
   the other session gets a [commit conflict](./graph.md#commit-conflicts). Avoiding
   overlap saves spend; commits keep it correct.
+- A batch that overlaps a batch this build has in flight waits for that session to
+  end. Two batches overlap when they share a locality key (one document, one entity
+  neighborhood) or when a goal target of one lies in the [cone](#cones) of a goal
+  target of the other. Overlap with another worker's open work only lowers a batch's
+  rank.
+- A goal this build has in flight forms no other batch. Batch ids skip the ids of the
+  build's batches in flight, so two sessions never share a label.
 - A GC goal is ready when no compile goal is open or in flight in its cone.
-- When a session ends, re-derive the board and fill the free slot.
+- Each executor runs at most its `max_sessions` sessions at once. Slots are counted
+  per executor profile, so a cheap extraction profile and a strong GC profile fill
+  their own slots.
+- When a session ends, re-derive the board and fill the free slots.
+- A session that ends without landing its batch, a commit conflict it did not repair
+  included, follows the [retry rule](#parked-and-failed): goals another commit resolved
+  count as resolved, and the rest spend one of their four attempts.
+- The session cap and the dead-endpoint breaker stop the loop from opening sessions.
+  The sessions in flight finish and commit; then the open goals park.
+- A build in a browser tab or in the [hosted runtime](./hosted-runtime.md) runs one
+  session at a time, whatever `max_sessions` says.
 
 Each session follows the same steps:
 
@@ -772,9 +789,9 @@ attempts no model made, 302 in its last minutes.
 Parked is a build's progress, failed is the graph's. Neither is a stored work queue.
 
 - Parked goals live in the build that parked them
-  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the
-  machine-local `local/run.yaml`, so the next `jazyk compile` on that machine resumes
-  them, or in the host's database for a hosted build paused and resumed. They count as
+  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the build's
+  run file while it runs, then in the machine-local `local/run.yaml` when it ends, so
+  the next `jazyk compile` on that machine resumes them, or in the host's database for a hosted build paused and resumed. They count as
   open in the verdict meanwhile (`incomplete`). Another checkout, which has no
   `run.yaml`, derives the same goals again from the same findings. Unfinished work is
   never silent, and it needs no committed record.

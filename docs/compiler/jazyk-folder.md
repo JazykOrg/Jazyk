@@ -237,8 +237,8 @@ entities:
 facets:
 - facet: constraint
   reasoning: the sentence states a fact the subject holds
-source:
-  doc: docs/services.md
+sources:
+- doc: docs/services.md
   section: /services
   quote: The Platform is built from sixteen services.
 ```

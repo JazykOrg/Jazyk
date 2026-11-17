@@ -106,7 +106,7 @@ fn fixture() -> Snapshot {
             Requirement {
                 statement: statement.into(),
                 entities: vec![format!("ent:{name}")],
-                source: Some(quote.clone()),
+                sources: vec![quote.clone()],
                 provenance: Some(Provenance::Quote(quote)),
                 ..Default::default()
             },
@@ -166,7 +166,7 @@ fn reanchor(files: &Snapshot, quote: &str, extra: &[(&str, &[u8])]) -> Snapshot 
     let mut store = Store::load(&project.out);
     store.sync_docs(&crate::reconcile::parse_all(&project).0);
     let requirement = store.graph.requirements.get_mut("req:site").unwrap();
-    requirement.source = Some(source("/site", quote));
+    requirement.sources = vec![source("/site", quote)];
     requirement.provenance = Some(Provenance::Quote(source("/site", quote)));
     assert_eq!(
         requirement.statement, SITE,
@@ -688,7 +688,7 @@ fn native_symlinks_cannot_import_outside_or_private_input_bytes() {
         std::fs::write(root.path().join("docs/main.md"), document(&quote)).unwrap();
         let mut store = Store::load(&project.out);
         let requirement = store.graph.requirements.get_mut("req:site").unwrap();
-        requirement.source = Some(source("/site", &quote));
+        requirement.sources = vec![source("/site", &quote)];
         requirement.provenance = Some(Provenance::Quote(source("/site", &quote)));
         let gs = GenSettings::resolve(&project);
         let package = task_package(&store, "ent:site", &gs).unwrap();

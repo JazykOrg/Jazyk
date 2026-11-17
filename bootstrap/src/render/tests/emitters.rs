@@ -52,11 +52,11 @@ fn a_level_sequence_view_lifts_endpoints_to_the_level_members() {
             reasoning: String::new(),
             measure: None,
         }],
-        source: Some(SourceRef {
+        sources: vec![SourceRef {
             doc: "checkout.md".into(),
             section: "/checkout".into(),
             quote: text.into(),
-        }),
+        }],
         ..Default::default()
     };
     s.graph.requirements.insert(
@@ -584,11 +584,11 @@ fn reversed_association_keeps_its_cardinality() {
                 rel_type: Some("association".into()),
                 cardinality: Some("0..*".into()),
             }],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "t.md".into(),
                 section: "/t".into(),
                 quote: "q".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

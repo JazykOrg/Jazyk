@@ -571,11 +571,12 @@ pub fn stored_doc(out: &Path, rel: &str) -> Option<DocRecord> {
 pub(super) fn reference_sources(graph: &Graph) -> BTreeMap<String, Vec<SourceRef>> {
     let mut out: BTreeMap<String, Vec<SourceRef>> = BTreeMap::new();
     for r in graph.requirements.values() {
-        let Some(src) = &r.source else { continue };
-        for e in &r.entities {
-            let list = out.entry(e.clone()).or_default();
-            if !list.contains(src) {
-                list.push(src.clone());
+        for src in &r.sources {
+            for e in &r.entities {
+                let list = out.entry(e.clone()).or_default();
+                if !list.contains(src) {
+                    list.push(src.clone());
+                }
             }
         }
     }
@@ -863,7 +864,7 @@ impl Store {
             if ledger.unreadable.is_none() {
                 let _ = ledger.save(out);
             }
-            super::v5::retire_v4_layout(out);
+
             eprintln!(
                 "[jazyk] upgraded {} from store version {} to {}",
                 out.display(),

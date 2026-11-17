@@ -66,6 +66,9 @@ pub fn dishonest_covered(store: &Store, staged: &[Op]) -> Option<Violation> {
             || store.graph.criteria.values().any(|c| crit_at(&c.source))
             || staged.iter().any(|o| match o {
                 Op::CreateRequirement { requirement, .. } => requirement.anchored_at(doc, section),
+                Op::AddRequirementSource { source, .. } => {
+                    source.doc == *doc && source.section == *section
+                }
                 Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
                 _ => false,
             });
@@ -99,7 +102,7 @@ struct SectionWork {
 fn requirements_per_section(store: &Store) -> BTreeMap<String, usize> {
     let mut out: BTreeMap<String, usize> = BTreeMap::new();
     for r in store.graph.requirements.values() {
-        if let Some(s) = &r.source {
+        for s in &r.sources {
             *out.entry(format!("{}#{}", s.doc, s.section)).or_insert(0) += 1;
         }
     }
@@ -244,10 +247,9 @@ fn anchor_stale(store: &Store, id: &str) -> bool {
     }
     if let Some(r) = store.graph.requirements.get(id) {
         return r
-            .source
-            .as_ref()
-            .map(|q| !store.quote_locates(&q.doc, &q.section, &q.quote))
-            .unwrap_or(false);
+            .sources
+            .iter()
+            .any(|q| !store.quote_locates(&q.doc, &q.section, &q.quote));
     }
     if let Some(e) = store.graph.entities.get(id) {
         return e
@@ -302,25 +304,24 @@ pub fn linked_subjects_all(store: &Store) -> BTreeMap<String, Vec<(String, Strin
         }
     }
     for r in store.graph.requirements.values() {
-        let Some(src) = r.source.as_ref() else {
-            continue;
-        };
-        for l in crate::md::doc_links(&src.quote, &src.doc) {
-            if l == src.doc {
-                continue;
-            }
-            for e in &r.entities {
-                let id = store.resolve_id(e).to_string();
-                if listed(&out, &l, &id) {
+        for src in &r.sources {
+            for l in crate::md::doc_links(&src.quote, &src.doc) {
+                if l == src.doc {
                     continue;
                 }
-                if let Some(ent) = store.graph.entities.get(&id) {
-                    if names(ent, &src.quote) {
-                        out.entry(l.clone()).or_default().push((
-                            id,
-                            ent.name.clone(),
-                            format!("{}#{}", src.doc, src.section),
-                        ));
+                for e in &r.entities {
+                    let id = store.resolve_id(e).to_string();
+                    if listed(&out, &l, &id) {
+                        continue;
+                    }
+                    if let Some(ent) = store.graph.entities.get(&id) {
+                        if names(ent, &src.quote) {
+                            out.entry(l.clone()).or_default().push((
+                                id,
+                                ent.name.clone(),
+                                format!("{}#{}", src.doc, src.section),
+                            ));
+                        }
                     }
                 }
             }
@@ -365,7 +366,7 @@ pub(crate) fn linked_subjects_scan(store: &Store, doc: &str) -> Vec<(String, Str
         }
     }
     for r in store.graph.requirements.values() {
-        let Some(s) = r.source.as_ref() else { continue };
+        let Some(s) = r.sources.first() else { continue };
         if s.doc == doc
             || !crate::md::doc_links(&s.quote, &s.doc)
                 .iter()
@@ -653,7 +654,7 @@ impl GoalKind for ReconcileSection {
                     .graph
                     .requirements
                     .get(&rid)
-                    .and_then(|r| r.source.as_ref())
+                    .and_then(|r| r.sources.first())
                 else {
                     continue;
                 };
@@ -758,7 +759,7 @@ impl GoalKind for ReconcileSection {
                             "\"{}\" was quoted \"{}\"",
                             truncate(&r.statement, 80),
                             truncate(
-                                r.source.as_ref().map(|s| s.quote.as_str()).unwrap_or(""),
+                                r.sources.first().map(|s| s.quote.as_str()).unwrap_or(""),
                                 60
                             )
                         )
@@ -886,6 +887,9 @@ impl GoalKind for ReconcileSection {
             "retract_entity_mention",
             "delete_entity",
             "upsert_requirement",
+            "add_requirement_source",
+            "remove_requirement_source",
+            "merge_requirements",
             "update_requirement",
             "delete_requirement",
             "upsert_criterion",
@@ -963,6 +967,9 @@ impl GoalKind for ReconcileSection {
                                 Op::UpdateRequirement {
                                     source: Some(s), ..
                                 } => s.doc == *doc && s.section == *section,
+                                Op::AddRequirementSource { source, .. } => {
+                                    source.doc == *doc && source.section == *section
+                                }
                                 Op::CreateCriterion { criterion, .. } => crit_at(&criterion.source),
                                 _ => false,
                             });
@@ -1017,7 +1024,7 @@ impl GoalKind for ReconcileSection {
                     }
                 }
                 Op::CreateRequirement { id, requirement } => {
-                    if let Some(s) = requirement.source.as_ref() {
+                    if let Some(s) = requirement.sources.first() {
                         if !store.quote_locates(&s.doc, &s.section, &s.quote) {
                             out.push(Violation::new(
                                 "quote-not-found",

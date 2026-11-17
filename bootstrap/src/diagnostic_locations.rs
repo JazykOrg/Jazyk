@@ -75,7 +75,7 @@ fn walk(
         return;
     }
     if let Some(r) = store.graph.requirements.get(&id) {
-        if let Some(s) = &r.source {
+        for s in &r.sources {
             source(s, related, out);
         }
         provenance(store, r.provenance.as_ref(), seen, out);

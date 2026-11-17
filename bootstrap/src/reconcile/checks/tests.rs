@@ -946,11 +946,11 @@ fn flow_placement_flags_an_unplaced_behavior_and_feeds_curate_view() {
                 reasoning: "a step".into(),
                 measure: None,
             }],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "returns.md".into(),
                 section: "/returns".into(),
                 quote: "returns body".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -1004,11 +1004,11 @@ fn provider_check_names_missing_and_ambiguous_realizers() {
                 rel_type: Some("realization".into()),
                 cardinality: None,
             }],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "The shop.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

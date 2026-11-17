@@ -47,7 +47,7 @@ pub fn cohesion_groups(store: &Store, id: &str) -> Vec<(String, usize, String)> 
         .map(|(tok, rids)| {
             let mut sections: BTreeMap<String, usize> = BTreeMap::new();
             for rid in &rids {
-                if let Some(s) = store.graph.requirements[*rid].source.as_ref() {
+                if let Some(s) = store.graph.requirements[*rid].sources.first() {
                     *sections.entry(s.section.clone()).or_insert(0) += 1;
                 }
             }
@@ -96,7 +96,7 @@ pub fn defining_section(store: &Store, id: &str) -> Option<(String, String)> {
     }
     let mut quoting: BTreeMap<(String, String), usize> = BTreeMap::new();
     for rid in store.requirements_referencing(id) {
-        if let Some(s) = &store.graph.requirements[&rid].source {
+        if let Some(s) = &store.graph.requirements[&rid].sources.first() {
             *quoting
                 .entry((s.doc.clone(), s.section.clone()))
                 .or_insert(0) += 1;
@@ -363,6 +363,9 @@ impl GoalKind for AbstractEntity {
             "upsert_entity",
             "update_entity",
             "upsert_requirement",
+            "add_requirement_source",
+            "remove_requirement_source",
+            "merge_requirements",
             "update_requirement",
             "group_entities",
             "dissolve_entity",

@@ -6,84 +6,6 @@ impl ToolSession {
     // backslash-escapes markdown inside JSON (\` for `); the source never carries
     // the backslashes, so the unescaped form is tried as a fallback and stored.
     // Mirrors docs/compiler/graph.md#validation-gates.
-    // A requirement quotes one sentence: past a leading list number, at most one of its
-    // sentences runs to four words (a fact line "Age 58." stands). A code block or a
-    // diagram quotes its own line. Mirrors docs/compiler/graph.md#validation-gates.
-    pub(super) fn one_sentence(&self, doc: &str, sec: &str, quote: &str) -> Result<(), ToolError> {
-        let kind = self
-            .snapshot
-            .docs
-            .get(doc)
-            .and_then(|r| r.sections.get(sec))
-            .map(|s| s.kind.clone())
-            .unwrap_or_default();
-        if kind == "code-block" || kind == "diagram" {
-            return Ok(());
-        }
-        let body = quote.trim_start();
-        let digits = body.chars().take_while(|c| c.is_ascii_digit()).count();
-        let body = if digits > 0 && body[digits..].starts_with(". ") {
-            &body[digits + 2..]
-        } else {
-            body
-        };
-        let chars: Vec<char> = body.chars().collect();
-        let mut sentences: Vec<String> = Vec::new();
-        let mut cur = String::new();
-        let mut i = 0;
-        while i < chars.len() {
-            let c = chars[i];
-            cur.push(c);
-            if matches!(c, '.' | '!' | '?') {
-                let mut j = i + 1;
-                while j < chars.len() && matches!(chars[j], '.' | '!' | '?') {
-                    cur.push(chars[j]);
-                    j += 1;
-                }
-                let mut k = j;
-                while k < chars.len() && chars[k].is_whitespace() {
-                    k += 1;
-                }
-                let boundary = j < chars.len()
-                    && chars[j].is_whitespace()
-                    && k < chars.len()
-                    && (chars[k].is_uppercase()
-                        || chars[k].is_ascii_digit()
-                        || matches!(chars[k], '"' | '\'' | '(' | '[' | '`' | '«'));
-                if boundary {
-                    sentences.push(std::mem::take(&mut cur));
-                    i = k;
-                    continue;
-                }
-                i = j;
-                continue;
-            }
-            i += 1;
-        }
-        sentences.push(cur);
-        let full: Vec<String> = sentences
-            .into_iter()
-            .map(|s| s.trim().to_string())
-            .filter(|s| {
-                s.split(|c: char| !c.is_alphanumeric())
-                    .filter(|w| !w.is_empty())
-                    .count()
-                    >= 4
-            })
-            .collect();
-        if full.len() > 1 {
-            return Err(ToolError::new(
-                "quote-multi-sentence",
-                format!(
-                    "the quote spans {} sentences ({}); a requirement quotes one sentence: record one requirement per sentence, each quoting its own",
-                    full.len(),
-                    full.iter().map(|s| format!("\"{}\"", s)).collect::<Vec<_>>().join(", ")
-                ),
-            ));
-        }
-        Ok(())
-    }
-
     pub(super) fn check_quote(
         &self,
         doc: &str,
@@ -178,6 +100,14 @@ impl ToolSession {
         // with several proposed mentions is decided in one call: every one of
         // them goes to the same section.
         let pdoc = self.scope.place_doc().or_else(|| self.scope.doc());
+        let selector: Option<SourceRef> = args
+            .get("from")
+            .filter(|s| !s.is_null())
+            .map(|s| {
+                serde_json::from_value(s.clone())
+                    .map_err(|e| ToolError::new("bad-source", e.to_string()))
+            })
+            .transpose()?;
         let proposals: Vec<AnchorProposal> = self
             .snapshot
             .status
@@ -186,8 +116,19 @@ impl ToolSession {
             .filter(|b| Some(&b.doc) == pdoc.as_ref())
             .flat_map(|b| b.proposals.iter())
             .filter(|p| p.anchor == id)
+            .filter(|p| {
+                selector.as_ref().is_none_or(|s| {
+                    p.from == format!("{}#{}", s.doc, s.section) && p.quote == s.quote
+                })
+            })
             .cloned()
             .collect();
+        if id.starts_with("req:") && proposals.len() > 1 {
+            return Err(ToolError::new(
+                "source-selection-required",
+                "Ambiguous requirement source: several proposals share this id.".into(),
+            ));
+        }
         if proposals.is_empty() {
             return Err(ToolError::new(
                 "unknown-anchor",

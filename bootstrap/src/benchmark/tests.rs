@@ -306,7 +306,7 @@ fn derived_cases_seed_and_derive_their_goal() {
         assert_eq!(goal.target, case.target, "{}", case.name);
         // Every fixture quote locates, or the case is unwinnable.
         for (id, r) in &store.graph.requirements {
-            let s = r.source.as_ref().unwrap();
+            let s = r.sources.first().unwrap();
             assert!(
                 store.quote_locates(&s.doc, &s.section, &s.quote),
                 "{}: {} quote does not locate",
@@ -528,8 +528,8 @@ fn sandbox_seeds_fixture() {
     // The fixture's quote must locate in the parsed section, or the case is unwinnable.
     let r = &s.graph.requirements["req:shop-1"];
     assert!(s.quote_locates(
-        &r.source.as_ref().unwrap().doc,
-        &r.source.as_ref().unwrap().section,
-        &r.source.as_ref().unwrap().quote
+        &r.sources.first().unwrap().doc,
+        &r.sources.first().unwrap().section,
+        &r.sources.first().unwrap().quote
     ));
 }

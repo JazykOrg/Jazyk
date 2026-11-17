@@ -899,11 +899,11 @@ fn caps_session() -> ToolSession {
             Requirement {
                 statement: format!("The Service persists record {} in the Database.", i),
                 entities: ents.iter().map(|e| e.to_string()).collect(),
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: "svc.md".into(),
                     section: "/svc".into(),
                     quote: "persists".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );

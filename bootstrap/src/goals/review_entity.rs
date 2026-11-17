@@ -91,7 +91,8 @@ pub fn unreferenced_statements(store: &Store, id: &str) -> Vec<(String, String)>
         // name the entity: a paraphrase that added the name fails the first, a sentence
         // split into several statements fails the second for the parts not about it.
         let quote_text = blank_code(
-            r.source
+            r.sources
+                .first()
                 .as_ref()
                 .map(|s| s.quote.as_str())
                 .unwrap_or(&r.statement),
@@ -363,6 +364,7 @@ impl GoalKind for ReviewEntity {
         &[
             "update_entity",
             "merge_entities",
+            "merge_requirements",
             "update_requirement",
             "delete_requirement",
             "report_diagnostic",

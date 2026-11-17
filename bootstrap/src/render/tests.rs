@@ -168,11 +168,11 @@ fn add_req(s: &mut Store, id: &str, a: &str, b: &str, t: &str) {
                 rel_type: Some(t.into()),
                 cardinality: None,
             }],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "t.md".into(),
                 section: "/t".into(),
                 quote: "q".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

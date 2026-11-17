@@ -72,6 +72,9 @@ fn task_docs_name_every_tool() {
             "generate" => include_str!("../../../../docs/compiler/goals/generate.md"),
             "verify" => include_str!("../../../../docs/compiler/goals/verify.md"),
             "declare-edges" => include_str!("../../../../docs/compiler/goals/declare-edges.md"),
+            "consolidate-requirements" => {
+                include_str!("../../../../docs/compiler/goals/consolidate-requirements.md")
+            }
             "dedupe-candidates" => {
                 include_str!("../../../../docs/compiler/goals/dedupe-candidates.md")
             }

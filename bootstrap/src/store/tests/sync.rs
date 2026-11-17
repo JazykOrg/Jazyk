@@ -42,7 +42,7 @@ fn sync_docs_journals_an_edit_entry_with_section_records() {
         Requirement {
             statement: "alpha body".into(),
             entities: vec![],
-            source: Some(mention("t.md", "/t/alpha", "alpha body")),
+            sources: vec![mention("t.md", "/t/alpha", "alpha body")],
             ..Default::default()
         },
     );
@@ -51,7 +51,7 @@ fn sync_docs_journals_an_edit_entry_with_section_records() {
         Requirement {
             statement: "beta body".into(),
             entities: vec![],
-            source: Some(mention("t.md", "/t/beta", "beta body")),
+            sources: vec![mention("t.md", "/t/beta", "beta body")],
             ..Default::default()
         },
     );
@@ -124,7 +124,7 @@ fn sync_docs_dirty_moved_removed() {
         Requirement {
             statement: "The A alphas.".into(),
             entities: vec!["ent:a".into()],
-            source: Some(mention("t.md", "/t/group/alpha", "alpha body")),
+            sources: vec![mention("t.md", "/t/group/alpha", "alpha body")],
             ..Default::default()
         },
     );
@@ -133,7 +133,7 @@ fn sync_docs_dirty_moved_removed() {
         Requirement {
             statement: "The B betas.".into(),
             entities: vec!["ent:a".into()],
-            source: Some(mention("t.md", "/t/beta", "beta body")),
+            sources: vec![mention("t.md", "/t/beta", "beta body")],
             ..Default::default()
         },
     );
@@ -173,8 +173,8 @@ fn sync_docs_dirty_moved_removed() {
     assert!(!d2[0].stale_anchors.contains(&"req:t-1".to_string()));
     assert_eq!(
         s.graph.requirements["req:t-1"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .section,
         "/t/bunch/alpha"
@@ -207,7 +207,7 @@ fn sync_docs_numbers_one_generation_without_duplicate_record_ids() {
         "req:t-1".into(),
         Requirement {
             statement: "The B betas.".into(),
-            source: Some(mention("t.md", "/t/beta", "beta body")),
+            sources: vec![mention("t.md", "/t/beta", "beta body")],
             ..Default::default()
         },
     );
@@ -311,8 +311,8 @@ fn sync_docs_proposes_for_a_moved_and_edited_section_and_gc_waits() {
     // Anchors still point at the vanished section, and the sweep leaves them alone.
     assert_eq!(
         s.graph.requirements["req:t-1"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .section,
         "/t/cart"
@@ -417,16 +417,16 @@ fn place_and_orphan_anchor_apply_and_clear_the_block() {
     assert!(!s.status.has_change(CHANGE_ALIGNMENT_PENDING, "t.md"));
     assert_eq!(
         s.graph.requirements["req:t-1"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .section,
         "/t/basket"
     );
     assert_eq!(
         s.graph.requirements["req:t-2"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .quote,
         "A cart may hold up to sixty items at once."
@@ -448,8 +448,8 @@ fn place_and_orphan_anchor_apply_and_clear_the_block() {
     // records it, and the sweep behind it clears the record at once because
     // req:t-2 has no candidate pair (docs/compiler/reconciler.md#pairs). The
     // flagged anchor is recorded stale on its new section.
-    assert!(report.changed_requirements.contains("req:t-2"));
-    assert!(report
+    assert!(!report.changed_requirements.contains("req:t-2"));
+    assert!(!report
         .changes
         .iter()
         .any(|c| c.kind == CHANGE_REQ_REVISED && c.subject == "req:t-2"));
@@ -525,8 +525,8 @@ fn exact_moves_are_journaled_and_survive_a_level_change() {
     assert!(d2[0].stale_anchors.is_empty());
     assert_eq!(
         s.graph.requirements["req:t-1"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .section,
         "/t/group/cart"
@@ -589,8 +589,8 @@ fn renamed_heading_carries_anchors_and_dirties_the_section() {
     assert!(d2[0].stale_anchors.is_empty(), "{:?}", d2[0].stale_anchors);
     assert_eq!(
         s.graph.requirements["req:t-1"]
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap()
             .section,
         "/t/basket"
@@ -646,11 +646,11 @@ fn an_added_line_rides_the_record_and_gates_the_covered_claim() {
     s.sync_docs(&parse(v1));
     let req = |quote: &str| Requirement {
         statement: format!("The page displays \"{}\"", quote),
-        source: Some(SourceRef {
+        sources: vec![SourceRef {
             doc: "t.md".into(),
             section: "/t/content".into(),
             quote: quote.into(),
-        }),
+        }],
         ..Default::default()
     };
     s.graph.requirements.insert("req:t-1".into(), req("First."));

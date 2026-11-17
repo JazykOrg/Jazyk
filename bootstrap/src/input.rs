@@ -326,15 +326,14 @@ pub fn staged_requirement_links(
             } => {
                 if let Some(requirement) = projected.graph.requirements.get_mut(id) {
                     if let Some(source) = source {
-                        requirement.source = Some(source.clone());
-                        requirement.provenance =
-                            Some(crate::model::Provenance::Quote(source.clone()));
+                        requirement.sources = vec![source.clone()];
+                        requirement.provenance = None;
                     }
                     if let Some(provenance) = provenance {
                         requirement.provenance = Some(provenance.clone());
-                        requirement.source = match provenance {
-                            crate::model::Provenance::Quote(source) => Some(source.clone()),
-                            _ => None,
+                        requirement.sources = match provenance {
+                            crate::model::Provenance::Quote(source) => vec![source.clone()],
+                            _ => Vec::new(),
                         };
                     }
                 }
@@ -427,11 +426,11 @@ mod tests {
             Requirement {
                 statement: "The site uses the supplied logo.".into(),
                 entities: vec!["ent:site".into()],
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: "main.md".into(),
                     section: "/site".into(),
                     quote: "The site uses the supplied [logo][brand].".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );
@@ -479,11 +478,11 @@ mod tests {
             "req:article".into(),
             Requirement {
                 statement: "The site displays the supplied article.".into(),
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: "main.md".into(),
                     section: "/site".into(),
                     quote: quote.into(),
-                }),
+                }],
                 ..Default::default()
             },
         );
@@ -647,8 +646,8 @@ mod tests {
             .requirements
             .get_mut("req:logo")
             .unwrap()
-            .source
-            .as_mut()
+            .sources
+            .first_mut()
             .unwrap()
             .quote = "The site uses the supplied".into();
         let goal = crate::model::Goal {
@@ -799,11 +798,11 @@ mod session_tests {
             Requirement {
                 statement: "The site uses the logo.".into(),
                 entities: vec!["ent:site".into()],
-                source: Some(SourceRef {
+                sources: vec![SourceRef {
                     doc: "main.md".into(),
                     section: "/site".into(),
                     quote: "The site uses [logo](logo.svg).".into(),
-                }),
+                }],
                 ..Default::default()
             },
         );

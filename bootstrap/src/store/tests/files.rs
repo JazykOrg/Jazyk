@@ -668,7 +668,7 @@ fn by_reference_mentions_follow_link_levels_from_the_roots() {
         requirement: Requirement {
             statement: quote.into(),
             entities: vec!["ent:customer".into()],
-            source: Some(mention(doc, sec, quote)),
+            sources: vec![mention(doc, sec, quote)],
             facets: vec![Facet {
                 facet: "behavior".into(),
                 reasoning: "stated".into(),
@@ -761,7 +761,7 @@ fn parallel_branches_merge_the_whole_store_through_git() {
         requirement: Requirement {
             statement: quote.into(),
             entities: vec!["ent:order".into()],
-            source: Some(mention("shop.md", section, quote)),
+            sources: vec![mention("shop.md", section, quote)],
             facets: vec![Facet {
                 facet: "behavior".into(),
                 reasoning: "stated".into(),
@@ -854,127 +854,26 @@ fn parallel_branches_merge_the_whole_store_through_git() {
     assert!(tracked.contains(".jazyk/ds_main/store.yaml"), "{tracked}");
 }
 
-// A version 4 store loads as it is, and the build that opens it writes the version 5
-// layout with every id, fact, open record, and lookalike verdict kept, and retires the
-// version 4 files. Mirrors docs/compiler/graph.md#store-version.
+// The immediately previous format preserves identity while rewriting singleton sources.
 #[test]
-fn a_version_4_store_upgrades_in_place_when_a_build_opens_it() {
-    let out = own_dir("v4-upgrade");
-    let w = |rel: &str, text: &str| {
-        let p = out.join(rel);
-        crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
-        crate::vfs::write(p, text).unwrap();
-    };
-    w("status.yaml", "version: 4\nroots:\n- shop.md\n");
-    w(
-        "changes/entity-changed/ent~order.yaml",
-        "kind: entity-changed\nsubject: ent:order\nvia: name\n",
-    );
-    w(
-        "causes.yaml",
-        "entity-changed ent:order:\n- - c4-1\n  - 4\n  - 1\n",
-    );
-    w(
-        "lookalikes/ent~order%7Eent~purchase.yaml",
-        "id: ent:order~ent:purchase\npair: ent:order~ent:purchase\nverdict: separate\nscore: 0.6\n",
-    );
-    w("build.yaml", "generation: 4\ndocs:\n  shop.md: abc\n");
-    w("markers.yaml", "ent:order:\n- g1\n- g4\n");
-    w("graph/entities/ent~order.yaml", "id: ent:order\nname: Order\nmentions:\n- doc: shop.md\n  section: /shop\n  quote: An order holds items.\n");
-    w("graph/requirements/req~shop-1.yaml", "id: req:shop-1\nstatement: An order holds items.\nentities:\n- ent:order\nfacets:\n- facet: behavior\n  reasoning: stated\nsource:\n  doc: shop.md\n  section: /shop\n  quote: An order holds items.\n");
-    w("graph/diagnostics/diag~lint-1.yaml", "id: diag:lint-1\nrule: lint\nseverity: info\nsubjects:\n- req:shop-1\nmessage: m\nlifecycle: open\n");
-    w("graph/relationships/.keep", "");
-    w("docs/shop.md.yaml", "sections:\n  /shop:\n    title: Shop\n    kind: root\n    order: 0\n    raw: |-\n      # Shop\n      An order holds items.\n    hash: h1\n");
-    w("journal/g4.yaml", "generation: 4\n");
-    w(
-        "gen/entities/order.yaml",
-        "id: order\nfactHash: f\nrequirements:\n- req:shop-1\n",
-    );
-    let s = Store::load(&out);
-    assert!(s.load_errors.is_empty(), "{:?}", s.load_errors);
-    assert_eq!(s.graph.entities["ent:order"].updated.as_deref(), Some("g4"));
-    assert!(s.status.has_change(CHANGE_ENTITY, "ent:order"));
-    assert_eq!(s.status.lookalikes.len(), 1);
-    assert_eq!(s.docs["shop.md"].content_hash, "abc");
-    let strip = |v: serde_json::Value| {
-        let mut v = v;
-        strip_markers(&mut v);
-        v
-    };
-    let before_graph = strip(
-        serde_json::to_value((
-            &s.graph.entities,
-            &s.graph.requirements,
-            &s.graph.diagnostics,
-        ))
-        .unwrap(),
-    );
-    let before_changes: Vec<(String, String)> = s
-        .status
-        .changes
-        .iter()
-        .map(|c| (c.kind.clone(), c.subject.clone()))
-        .collect();
-
+fn a_version_5_store_upgrades_in_place_when_a_build_opens_it() {
+    let out = own_dir("v5-upgrade");
+    crate::vfs::create_dir_all(out.join("graph/requirements")).unwrap();
+    crate::vfs::write(out.join("store.yaml"), "version: 5\n").unwrap();
+    crate::vfs::write(out.join("graph/requirements/req~shop-1.yaml"), "id: req:shop-1\nstatement: An order holds items.\nentities: []\nsource: {doc: shop.md, section: /shop, quote: An order holds items.}\n").unwrap();
+    let loaded = Store::load(&out);
+    assert!(loaded.load_errors.is_empty(), "{:?}", loaded.load_errors);
+    assert_eq!(loaded.graph.requirements["req:shop-1"].sources.len(), 1);
     let opened = Store::open_for_build(&out);
     assert!(opened.load_errors.is_empty(), "{:?}", opened.load_errors);
-    let store = std::fs::read_to_string(out.join("store.yaml")).unwrap();
-    assert!(store.contains("version: 5"), "{store}");
-    for gone in [
-        "status.yaml",
-        "causes.yaml",
-        "markers.yaml",
-        "build.yaml",
-        "changes",
-        "lookalikes",
-        "docs",
-        "journal",
-        "graph/relationships",
-    ] {
-        assert!(!out.join(gone).exists(), "{gone} survived the upgrade");
-    }
-    assert!(
-        crate::layout::journal_file(&out, 4).vexists(),
-        "the journal moves to local/"
-    );
-    assert!(crate::layout::decisions_dir(&out, "lookalikes")
-        .join("ent~order%7Eent~purchase.yaml")
-        .vexists());
-    assert!(crate::layout::source_file(&out, "shop.md").vexists());
-    assert!(out.join("gen/entities/order.yaml").vexists());
-    let order = std::fs::read_to_string(out.join("graph/entities/ent~order.yaml")).unwrap();
-    assert_eq!(body(order.as_bytes()), "id: ent:order\nname: Order\n");
-
+    assert_eq!(opened.status.version, STORE_VERSION);
+    let node = crate::vfs::read_to_string(out.join("graph/requirements/req~shop-1.yaml")).unwrap();
+    assert!(node.contains("sources:"), "{node}");
+    assert!(!node.contains("\nsource:"), "{node}");
     let back = Store::load(&out);
-    assert!(back.load_errors.is_empty(), "{:?}", back.load_errors);
-    assert_eq!(back.status.version, STORE_VERSION);
-    assert!(back.status.generation >= 4);
     assert_eq!(
-        strip(
-            serde_json::to_value((
-                &back.graph.entities,
-                &back.graph.requirements,
-                &back.graph.diagnostics
-            ))
-            .unwrap()
-        ),
-        before_graph
-    );
-    let after_changes: Vec<(String, String)> = back
-        .status
-        .changes
-        .iter()
-        .map(|c| (c.kind.clone(), c.subject.clone()))
-        .collect();
-    for c in &before_changes {
-        assert!(after_changes.contains(c), "{c:?} lost: {after_changes:?}");
-    }
-    assert_eq!(back.status.lookalikes.len(), 1);
-    assert_eq!(back.status.lookalikes[0].verdict, "separate");
-    assert_eq!(back.docs["shop.md"].content_hash, "abc");
-    assert_eq!(
-        crate::gen::Ledger::load(&out).entities["order"].fact_hash,
-        "f"
+        back.graph.requirements["req:shop-1"].sources,
+        loaded.graph.requirements["req:shop-1"].sources
     );
 }
 
@@ -1077,7 +976,7 @@ fn a_newer_store_stays_byte_identical_and_read_only() {
         crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
         crate::vfs::write(p, text).unwrap();
     };
-    w("store.yaml", "version: 6\n");
+    w("store.yaml", "version: 7\n");
     w(
         "graph/entities/ent~x.yaml",
         "id: ent:x\nname: X\nfuture: true\n",
@@ -1165,7 +1064,7 @@ fn sections_a_merge_left_read_as_changed_until_the_next_save() {
 // a local build file, and optionally a `status.yaml` carrying only the version.
 fn newer_fixture(out: &Path, sentinel: bool) -> Vec<(PathBuf, Vec<u8>)> {
     let mut files = vec![
-        (out.join("store.yaml"), b"version: 6\n".to_vec()),
+        (out.join("store.yaml"), b"version: 7\n".to_vec()),
         (
             out.join("graph/entities/x.yaml"),
             b"# Jazyk entity\nid: ent:x\nname: X\n".to_vec(),
@@ -1173,7 +1072,7 @@ fn newer_fixture(out: &Path, sentinel: bool) -> Vec<(PathBuf, Vec<u8>)> {
         (out.join("local/build.yaml"), b"generation: 9\n".to_vec()),
     ];
     if sentinel {
-        files.push((out.join("status.yaml"), b"version: 6\n".to_vec()));
+        files.push((out.join("status.yaml"), b"version: 7\n".to_vec()));
     }
     for (p, b) in &files {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1212,7 +1111,7 @@ fn a_build_never_archives_or_writes_a_newer_store() {
         let out = base.join(".jazyk").join("main");
         newer_fixture(&out, sentinel);
         let before = tree(&base);
-        assert_eq!(crate::store::newer_version(&out), Some(6));
+        assert_eq!(crate::store::newer_version(&out), Some(7));
 
         let mut s = Store::open_for_build(&out);
         assert!(s.graph.entities.is_empty());

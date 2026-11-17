@@ -443,7 +443,7 @@ impl ScriptedRunner {
             .graph
             .requirements
             .values()
-            .filter_map(|r| r.source.as_ref())
+            .filter_map(|r| r.sources.first())
             .filter(|s| s.doc == doc && s.section == sec)
             .map(|s| norm(&s.quote))
             .collect();
@@ -1112,8 +1112,8 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     );
     for (id, r) in &store.graph.requirements {
         let src = r
-            .source
-            .as_ref()
+            .sources
+            .first()
             .unwrap_or_else(|| panic!("{} has no quote", id));
         assert!(r.provenance.is_none(), "{} carries {:?}", id, r.provenance);
         assert!(
@@ -1366,7 +1366,7 @@ fn editing_one_sentence_of_f1_reconciles_only_its_section_and_keeps_the_other_id
         .graph
         .requirements
         .iter()
-        .find(|(_, r)| r.source.as_ref().is_some_and(|s| s.quote == old))
+        .find(|(_, r)| r.sources.first().is_some_and(|s| s.quote == old))
         .map(|(id, _)| id.clone())
         .expect("the Email statement");
     let path = dir.join("docs/system.md");
@@ -1454,11 +1454,11 @@ fn editing_one_sentence_of_f1_reconciles_only_its_section_and_keeps_the_other_id
             .get(id)
             .unwrap_or_else(|| panic!("{} vanished", id));
         if id == &edited_id {
-            assert_eq!(now.source.as_ref().unwrap().quote, new);
+            assert_eq!(now.sources.first().unwrap().quote, new);
             assert_eq!(now.statement, new);
         } else {
             assert_eq!(now.statement, was.statement, "{}", id);
-            assert_eq!(now.source, was.source, "{}", id);
+            assert_eq!(now.sources.first(), was.sources.first(), "{}", id);
         }
     }
     for id in before.graph.entities.keys() {
@@ -1886,7 +1886,7 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
         .graph
         .requirements
         .iter()
-        .find(|(_, r)| r.source.is_none())
+        .find(|(_, r)| r.sources.is_empty())
         .expect("the derived requirement");
     assert!(
         matches!(r.provenance, Some(Provenance::Derived { .. })),
@@ -1954,7 +1954,7 @@ fn accepting_a_ratification_proposal_lands_the_sentence_and_flips_the_fact_to_a_
     );
     let r = &after.graph.requirements[rid];
     assert!(r.provenance.is_none(), "{:?}", r.provenance);
-    let src = r.source.as_ref().expect("a quote");
+    let src = r.sources.first().expect("a quote");
     assert_eq!(
         (src.doc.as_str(), src.section.as_str(), src.quote.as_str()),
         ("docs/system.md", edit.section.as_str(), sentence)
@@ -2013,7 +2013,7 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
         .graph
         .requirements
         .iter()
-        .find(|(_, r)| r.source.as_ref().is_some_and(|s| s.quote == old))
+        .find(|(_, r)| r.sources.first().is_some_and(|s| s.quote == old))
         .map(|(id, _)| id.clone())
         .expect("the Product statement");
     let journal_before = journal_len(&out);
@@ -2047,12 +2047,17 @@ fn a_dual_write_moves_the_sentence_and_the_requirement_together_without_redirtyi
         before.graph.requirements.len()
     );
     let r = &after.graph.requirements[&rid];
-    assert_eq!(r.source.as_ref().unwrap().quote, new);
+    assert_eq!(r.sources.first().unwrap().quote, new);
     assert_eq!(r.statement, new);
     assert!(r.provenance.is_none(), "{:?}", r.provenance);
     for (id, was) in &before.graph.requirements {
         if id != &rid {
-            assert_eq!(after.graph.requirements[id].source, was.source, "{}", id);
+            assert_eq!(
+                after.graph.requirements[id].sources.first(),
+                was.sources.first(),
+                "{}",
+                id
+            );
         }
     }
     let entries = crate::goals::read_journal_range(&out, 0, after.status.generation);
@@ -2161,12 +2166,12 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 5);
+    assert_eq!(store.status.version, 6);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
     assert!(crate::vfs::read_to_string(out.join("store.yaml"))
         .unwrap()
-        .contains("version: 5"));
+        .contains("version: 6"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }

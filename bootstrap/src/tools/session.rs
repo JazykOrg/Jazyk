@@ -403,7 +403,8 @@ impl ToolSession {
             .iter()
             .filter_map(|o| match o {
                 Op::CreateRequirement { requirement, .. } => requirement
-                    .source
+                    .sources
+                    .first()
                     .as_ref()
                     .map(|s| (s.doc.clone(), s.section.clone())),
                 _ => None,

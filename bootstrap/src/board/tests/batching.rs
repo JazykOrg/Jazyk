@@ -139,7 +139,7 @@ fn pair_batches_fill_across_node_localities() {
     let req = |statement: &str, ents: &[&str], quote: &str| Requirement {
         statement: statement.into(),
         entities: ents.iter().map(|e| e.to_string()).collect(),
-        source: Some(mention(quote)),
+        sources: vec![mention(quote)],
         ..Default::default()
     };
     s.graph.requirements.insert(

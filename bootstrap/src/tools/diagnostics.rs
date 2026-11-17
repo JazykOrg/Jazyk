@@ -65,8 +65,8 @@ impl ToolSession {
                 ));
             };
             let here = r
-                .source
-                .as_ref()
+                .sources
+                .first()
                 .is_some_and(|q| q.doc == doc && q.section == section);
             if !here {
                 return Err(fail(
@@ -591,7 +591,7 @@ impl ToolSession {
                 }
             }
             let sentence = statement.clone().unwrap_or_else(|| r.statement.clone());
-            return match (r.source.as_ref(), note.as_deref()) {
+            return match (r.sources.first(), note.as_deref()) {
                 (Some(src), Some(rewrite)) if !graph_only => {
                     let rewrite = rewrite.trim().to_string();
                     self.stage(Op::UpdateRequirement {
@@ -624,7 +624,7 @@ impl ToolSession {
                         &rid,
                         &sentence,
                         &provenance,
-                        r.source.as_ref(),
+                        r.sources.first(),
                         &r.entities,
                         None,
                     );

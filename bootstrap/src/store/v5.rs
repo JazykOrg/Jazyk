@@ -145,13 +145,15 @@ pub fn entity_fact_hash(store: &Store, id: &str) -> String {
     aliases.sort();
     // Only the mentions the entity's file states: a mention that is the source of a
     // requirement naming the entity comes back at load, so it is covered by `reqs`.
-    let by_reference: Vec<&SourceRef> = store
+    let mut by_reference: Vec<&SourceRef> = store
         .graph
         .requirements
         .values()
         .filter(|r| r.entities.iter().any(|x| x == id))
-        .filter_map(|r| r.source.as_ref())
+        .flat_map(|r| r.sources.iter())
         .collect();
+    by_reference
+        .sort_by(|a, b| (&a.doc, &a.section, &a.quote).cmp(&(&b.doc, &b.section, &b.quote)));
     let mut mentions: Vec<String> = e
         .mentions
         .iter()
@@ -167,11 +169,15 @@ pub fn entity_fact_hash(store: &Store, id: &str) -> String {
         .map(|(cid, _)| cid)
         .collect();
     children.sort();
-    let mut reqs: Vec<&String> = Vec::new();
+    let mut reqs: Vec<serde_json::Value> = Vec::new();
     let mut edges: Vec<String> = Vec::new();
     for (rid, r) in &store.graph.requirements {
         if r.entities.iter().any(|x| x == id) {
-            reqs.push(rid);
+            let mut sources = r.sources.clone();
+            sources.sort_by(|a, b| {
+                (&a.doc, &a.section, &a.quote).cmp(&(&b.doc, &b.section, &b.quote))
+            });
+            reqs.push(serde_json::json!({"id":rid,"statement": normalize_statement(&r.statement),"sources":sources,"provenance":r.provenance,"facets":r.facets,"transition":r.transition}));
         }
         for ed in &r.edges {
             if ed.a == id || ed.b == id {
@@ -195,6 +201,7 @@ pub fn entity_fact_hash(store: &Store, id: &str) -> String {
         "mentions": mentions,
         "children": children,
         "requirements": reqs,
+        "requirementSources": by_reference,
         "edges": edges,
     });
     hash_hex(&v.to_string())
@@ -627,7 +634,7 @@ impl Store {
         };
         let mut stale: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for (rid, r) in &self.graph.requirements {
-            if let Some(src) = &r.source {
+            for src in &r.sources {
                 if self.docs.contains_key(&src.doc) && !locates(&src.doc, &src.section, &src.quote)
                 {
                     stale
@@ -872,97 +879,5 @@ impl Store {
             .map(|(r, _)| r.clone())
             .unwrap_or_else(|| "/".to_string());
         format!("{}#{}", doc, first)
-    }
-}
-
-// ---- the version 4 layout ----
-
-// What a version 4 store kept where version 5 keeps nothing, or keeps it elsewhere.
-// Removed or moved by the build's opening that rewrites the store.
-// Mirrors docs/compiler/graph.md#store-version.
-pub(super) fn retire_v4_layout(out: &Path) {
-    let remove_dir = |p: PathBuf| {
-        crate::vfs::remove_dir_all(&p).ok();
-    };
-    let remove_file = |p: PathBuf| {
-        crate::vfs::remove_file(&p).ok();
-    };
-    for d in [
-        "changes",
-        "parked",
-        "failed",
-        "alignment",
-        "lookalikes",
-        "docs",
-    ] {
-        remove_dir(out.join(d));
-    }
-    for d in ["default-views", "relationships", "state-machines"] {
-        remove_dir(out.join("graph").join(d));
-    }
-    for f in [
-        "status.yaml",
-        "build.yaml",
-        "markers.yaml",
-        "causes.yaml",
-        "feedback.jsonl",
-    ] {
-        remove_file(out.join(f));
-    }
-    // The journal and the control plane move into local/; rebuilt output and logs go:
-    // the next build's tail rewrites the output, and logs are history.
-    let moves = [
-        (out.join("journal"), layout::journal_dir(out)),
-        (out.join("control.yaml"), layout::control_file(out)),
-        (out.join("workers"), layout::workers_dir(out)),
-        (out.join("leases"), layout::leases_dir(out)),
-        (out.join("decompile"), layout::decompile_dir(out)),
-        (
-            out.join("deliverable-baseline"),
-            layout::deliverable_baseline_dir(out),
-        ),
-    ];
-    for (from, to) in moves {
-        if !from.vexists() {
-            continue;
-        }
-        if let Some(parent) = to.parent() {
-            crate::vfs::create_dir_all(parent).ok();
-        }
-        if from.vis_dir() && to.vis_dir() {
-            // The build that is upgrading already wrote here (its own lease, say):
-            // what it wrote stays, and the old entries join it.
-            if let Ok(rd) = crate::vfs::read_dir(&from) {
-                for e in rd.flatten() {
-                    let target = to.join(e.file_name());
-                    if !target.vexists() {
-                        crate::vfs::rename(e.path(), &target).ok();
-                    }
-                }
-            }
-            remove_dir(from);
-        } else {
-            // A file the opening build wrote from defaults gives way to the old one,
-            // which holds this operator's modes and releases.
-            crate::vfs::rename(&from, &to).ok();
-        }
-    }
-    remove_file(out.join(".ledger.lock"));
-    if let Some(jazyk) = layout::jazyk_dir_of(out) {
-        remove_file(jazyk.join("project.lock"));
-    }
-    for d in [
-        "diagrams",
-        "docsgen",
-        "last-build",
-        "preview",
-        "snapshots",
-        "trace",
-        "sessions",
-    ] {
-        remove_dir(out.join(d));
-    }
-    for f in [".lock", ".leases.lock", ".committing"] {
-        remove_file(out.join(f));
     }
 }

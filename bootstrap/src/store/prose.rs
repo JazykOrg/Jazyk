@@ -72,12 +72,13 @@ impl Store {
         self.graph
             .requirements
             .iter()
-            .filter_map(|(qid, r)| {
-                let src = r.source.as_ref()?;
-                if src.doc != edit.doc || src.section != edit.section {
-                    return None;
-                }
-                edit.splice(&src.quote).map(|q| (qid.clone(), q))
+            .flat_map(|(qid, r)| {
+                r.sources.iter().filter_map(move |src| {
+                    if src.doc != edit.doc || src.section != edit.section {
+                        return None;
+                    }
+                    edit.splice(&src.quote).map(|q| (qid.clone(), q))
+                })
             })
             .collect()
     }
@@ -171,7 +172,8 @@ impl Store {
             let id = self.resolve_id(id);
             if let Some(r) = self.graph.requirements.get(id) {
                 return r
-                    .source
+                    .sources
+                    .first()
                     .as_ref()
                     .map(|s| (s.doc.clone(), s.section.clone()));
             }
@@ -496,7 +498,7 @@ impl Store {
                     .graph
                     .requirements
                     .iter()
-                    .filter(|(_, r)| r.entities.contains(id) && r.source.as_ref() == Some(source))
+                    .filter(|(_, r)| r.entities.contains(id) && r.sources.contains(source))
                     .map(|(rid, _)| rid)
                     .collect();
                 mentions.push(

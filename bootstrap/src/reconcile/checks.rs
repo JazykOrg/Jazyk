@@ -248,7 +248,7 @@ fn flow_placement_ranking(store: &Store, ix: &Indices, rid: &str) -> Vec<String>
         .iter()
         .map(|e| store.resolve_id(e).to_string())
         .collect();
-    let doc = r.source.as_ref().map(|s| s.doc.clone()).unwrap_or_default();
+    let doc = r.sources.first().map(|s| s.doc.clone()).unwrap_or_default();
     let position = |id: &str| {
         ix.requirement_position
             .get(id)
@@ -276,7 +276,7 @@ fn flow_placement_ranking(store: &Store, ix: &Indices, rid: &str) -> Vec<String>
                 .count();
             let same_doc = members
                 .iter()
-                .any(|m| m.source.as_ref().is_some_and(|s| s.doc == doc));
+                .any(|m| m.sources.first().is_some_and(|s| s.doc == doc));
             let first = v.members.first().map(|m| position(m)).unwrap_or(usize::MAX);
             (
                 std::cmp::Reverse(shared),
@@ -741,7 +741,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     if !flagged.insert(key.clone()) {
                         continue;
                     }
-                    let (Some(sa), Some(sb)) = (ra.source.as_ref(), rb.source.as_ref()) else {
+                    let (Some(sa), Some(sb)) = (ra.sources.first(), rb.sources.first()) else {
                         continue;
                     };
                     // A pair a session judged is its finding, not the check's: a
@@ -812,21 +812,20 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
     }
     // Quotes that no longer locate.
     for (rid, r) in &store.graph.requirements {
-        let Some(src) = r.source.as_ref() else {
-            continue;
-        };
-        if section_alive(store, &src.doc, &src.section)
-            && !store.quote_locates(&src.doc, &src.section, &src.quote)
-        {
-            f.push(finding(
-                "stale-provenance",
-                rid,
-                "warning",
-                format!(
-                    "{}'s quote no longer locates in {}#{}",
-                    rid, src.doc, src.section
-                ),
-            ));
+        for src in &r.sources {
+            if section_alive(store, &src.doc, &src.section)
+                && !store.quote_locates(&src.doc, &src.section, &src.quote)
+            {
+                f.push(finding(
+                    "stale-provenance",
+                    rid,
+                    "warning",
+                    format!(
+                        "{}'s quote no longer locates in {}#{}",
+                        rid, src.doc, src.section
+                    ),
+                ));
+            }
         }
     }
     // Justification closure: every fact walks to a quote in a live section, or to a

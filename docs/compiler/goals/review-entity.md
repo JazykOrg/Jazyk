@@ -313,3 +313,6 @@ view tools. A merge's tool reply previews the goals it opens at commit
 ([bubbling](../reconciler.md#bubbling)): the reviews of the entities whose statements
 gained a reference. A merge opens no `retrace`, because it rewrites every reference
 mechanically.
+
+`merge_requirements` consolidates duplicate obligations found during entity review.
+It preserves every source location and redirects the absorbed requirement.

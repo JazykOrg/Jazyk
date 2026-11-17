@@ -46,6 +46,14 @@ struct Chat {
     turn_id: Option<String>,
     #[serde(default)]
     inputs: BTreeMap<String, Value>,
+    // A sub-agent's place in its agent tree: parentId, rootId, depth, task, write,
+    // and its turn count; None for a conversation a person opened. Mirrors
+    // docs/frontends/subagents.md#the-agent-tree.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tree: Option<Value>,
+    // A sub-agent's last turn result, {status, text}.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    result: Option<Value>,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -55,6 +63,9 @@ struct Book {
 }
 
 thread_local! {
+    // The sub-agents running in this workspace's thread. Their turns live inside
+    // their parent's prompt (docs/frontends/subagents.md#where-sub-agents-run).
+    static AGENTS: RefCell<harness::agents::Tree> = RefCell::new(Default::default());
     static BOOK: RefCell<Book> = RefCell::new(Book::default());
     static BUILD_CONVERSATION: RefCell<Option<String>> = const { RefCell::new(None) };
 }
@@ -159,6 +170,23 @@ pub(crate) fn build_input_delivered(id: &str, input: Value) {
 // A new project starts with no conversations.
 pub fn reset() {
     BOOK.with(|b| *b.borrow_mut() = Book::default());
+    AGENTS.with(|a| *a.borrow_mut() = Default::default());
+}
+
+// The agent tree fields every conversation carries (docs/frontends/gui.md#agents).
+fn tree_fields(c: &Chat) -> Value {
+    match &c.tree {
+        Some(tree) => json!({"parentId": tree["parentId"], "rootId": tree["rootId"],
+            "depth": tree["depth"], "task": tree["task"], "write": tree["write"]}),
+        None => json!({"parentId": null, "rootId": c.id, "depth": 0, "task": null, "write": null}),
+    }
+}
+
+fn with_tree(mut row: Value, c: &Chat) -> Value {
+    if let (Some(row), Value::Object(fields)) = (row.as_object_mut(), tree_fields(c)) {
+        row.extend(fields);
+    }
+    row
 }
 
 fn snapshot() -> Vec<Value> {
@@ -167,11 +195,74 @@ fn snapshot() -> Vec<Value> {
             .chats
             .values()
             .map(|c| {
-                json!({"id": c.id, "title": c.title, "state": c.state, "updates": c.next_n,
-                       "pending": [], "turnId":c.turn_id, "inputs":c.inputs.values().collect::<Vec<_>>()})
+                with_tree(json!({"id": c.id, "title": c.title, "state": c.state, "updates": c.next_n,
+                       "pending": [], "turnId":c.turn_id, "inputs":c.inputs.values().collect::<Vec<_>>()}), c)
             })
             .collect()
     })
+}
+
+// The file a conversation's latest tool call named.
+fn location(c: &Chat) -> Option<Value> {
+    c.updates.iter().rev().find_map(|(_, u)| {
+        if u["sessionUpdate"] != "tool_call" {
+            return None;
+        }
+        let input = &u["rawInput"];
+        let path = input["path"].as_str().or_else(|| input["doc"].as_str())?;
+        let mut location = json!({"path": path});
+        if let Some(section) = input["section"].as_str() {
+            location["section"] = json!(section);
+        }
+        Some(location)
+    })
+}
+
+// The agent list: running conversations first, then the most recent idle ones.
+// Builds in a tab run inside the request, so there are no build rows.
+// Mirrors docs/frontends/gui.md#agents.
+pub fn agent_rows() -> Vec<Value> {
+    let mut rows: Vec<(u64, Value)> = BOOK.with(|b| {
+        b.borrow()
+            .chats
+            .values()
+            .map(|c| {
+                let n = c.id.trim_start_matches("chat-").parse().unwrap_or(0);
+                let mut row = with_tree(
+                    json!({"id": c.id, "agentId": c.id,
+                        "kind": if c.tree.is_some() { "subagent" } else { "chat" },
+                        "title": c.title, "state": c.state}),
+                    c,
+                );
+                if let Some(location) = location(c) {
+                    row["location"] = location;
+                }
+                if let Some(result) = &c.result {
+                    row["result"] = result.clone();
+                }
+                (n, row)
+            })
+            .collect()
+    });
+    rows.sort_by(|(a, ra), (b, rb)| {
+        (rb["state"] == "running")
+            .cmp(&(ra["state"] == "running"))
+            .then(b.cmp(a))
+    });
+    let mut idle = 0;
+    rows.into_iter()
+        .filter(|(_, row)| {
+            row["state"] == "running" || {
+                idle += 1;
+                idle <= 20
+            }
+        })
+        .map(|(_, row)| row)
+        .collect()
+}
+
+pub fn agent_tree() -> Value {
+    json!({"agents": agent_rows()})
 }
 
 // The turn's receipt: every call other than a read, from the turn's own tool
@@ -258,6 +349,7 @@ fn turn_effects(id: &str, message_id: &str) -> Value {
 
 fn publish_sessions() {
     crate::portable::emit_event("chat.sessions", json!({"sessions": snapshot()}));
+    crate::portable::emit_event("agents", agent_tree());
 }
 
 // One numbered update into the transcript, and to the page.
@@ -358,6 +450,8 @@ pub fn create(body: &Value) -> Value {
                 history_context_version: 2,
                 turn_id: None,
                 inputs: BTreeMap::new(),
+                tree: None,
+                result: None,
             },
         );
         id
@@ -382,10 +476,11 @@ pub fn get(id: &str) -> Option<Value> {
             .iter()
             .map(|(n, u)| json!({"n": n, "update": u}))
             .collect();
-        Some(
+        Some(with_tree(
             json!({"id": c.id, "title": c.title, "state": c.state, "pending": [],
                     "updates": updates, "turnId":c.turn_id,"inputs":c.inputs.values().collect::<Vec<_>>()}),
-        )
+            c,
+        ))
     })
 }
 
@@ -796,22 +891,6 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text)}),
     );
 
-    let generations = || {
-        crate::document_sets::Workspace::load(&crate::portable::root())
-            .map(|w| {
-                w.sets
-                    .iter()
-                    .map(|s| {
-                        (
-                            s.id.clone(),
-                            crate::store::read_generation(&w.root.join(".jazyk").join(&s.id)),
-                        )
-                    })
-                    .collect::<std::collections::BTreeMap<_, _>>()
-            })
-            .unwrap_or_default()
-    };
-    let mut generation = generations();
     let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
         match server.handle("tools/call", &json!({"name": name, "arguments": args})) {
             Ok(v) => {
@@ -828,57 +907,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             Err((_, m)) => Err(m),
         }
     };
-    // The loop's events as the ACP session updates a native chat streams.
-    let chat_id = id.to_string();
-    let mut emit = |ev: AgentEvent| match ev {
-        AgentEvent::ReasoningSummary(s) => append(
-            &chat_id,
-            json!({"sessionUpdate":"agent_thought_chunk", "summary":true, "content":{"type":"text","text":s}}),
-        ),
-        AgentEvent::Thought(s) => append(
-            &chat_id,
-            json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": s}}),
-        ),
-        AgentEvent::Message(s) => append(
-            &chat_id,
-            json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": s}}),
-        ),
-        AgentEvent::ToolCallStart { id, name, args } => append(
-            &chat_id,
-            json!({"sessionUpdate": "tool_call", "toolCallId": id, "title": name,
-                   "status": "in_progress", "rawInput": args}),
-        ),
-        AgentEvent::ToolCallEnd { id, result, ok } => {
-            let mut update = json!({"sessionUpdate": "tool_call_update", "toolCallId": id,
-                   "status": if ok { "completed" } else { "failed" }, "rawOutput": result});
-            crate::effects::decorate(&mut update);
-            append(&chat_id, update);
-            // A dual write committed: the graph views refresh on it, mid-turn.
-            let now = generations();
-            for (set_id, value) in &now {
-                if generation.get(set_id) != Some(value) {
-                    crate::portable::emit_event(
-                        "store.generation",
-                        json!({"setId":set_id,"generation":value}),
-                    );
-                }
-            }
-            generation = now;
-            crate::portable::emit_event("sets.changed", json!({}));
-        }
-        AgentEvent::Input(value) => {
-            let display = value.get("displayText").unwrap_or(&value["text"]);
-            append(
-                &chat_id,
-                json!({"sessionUpdate":"user_message","text":display,"messageId":value["messageId"],"turnId":value["turnId"]}),
-            );
-            delivered(&chat_id, value);
-        }
-        AgentEvent::Timing(value) => {
-            crate::portable::emit_event("chat.timing", json!({"sessionId":chat_id,"timing":value}))
-        }
-        AgentEvent::Usage { .. } => {}
-    };
+    let mut emit = chat_emit(id.to_string());
     let cancelled = || crate::portable::cancel_requested();
     let mut input_source = || {
         let mut seen = std::collections::BTreeSet::new();
@@ -901,26 +930,35 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         }).collect::<Vec<_>>()
     };
     let mut close_inputs = || crate::portable::close_inputs(id);
-    let stop = harness::run_with_hosts(
-        LoopArgs {
-            llm: &model_llm,
-            history: &mut history,
-            tools: &tools,
-            dispatch: &mut dispatch,
-            emit: &mut emit,
-            cancelled: &cancelled,
-            max_rounds: crate::limits::agent_max_rounds(),
-            label: format!("chat {}", id),
-            conversation: true,
-            inputs: Some(&mut input_source),
-            input_close: Some(&mut close_inputs),
-        },
-        &context,
-        &mut model,
-        &mut mcp_tools,
-        &mut recovery,
-    )
-    .await;
+    let args = LoopArgs {
+        llm: &model_llm,
+        history: &mut history,
+        tools: &tools,
+        dispatch: &mut dispatch,
+        emit: &mut emit,
+        cancelled: &cancelled,
+        max_rounds: crate::limits::agent_max_rounds(),
+        label: format!("chat {}", id),
+        conversation: true,
+        inputs: Some(&mut input_source),
+        input_close: Some(&mut close_inputs),
+    };
+    // A reader conversation has no agent tools; any other can start sub-agents
+    // (docs/frontends/wasm.md#chat).
+    let stop = if reader {
+        harness::run_with_hosts(args, &context, &mut model, &mut mcp_tools, &mut recovery).await
+    } else {
+        let run = harness::agents::AgentRun::new(own_run(id), std::rc::Rc::new(BookChildren));
+        harness::run_with_agents(
+            args,
+            &context,
+            &mut model,
+            &mut mcp_tools,
+            &mut recovery,
+            &run,
+        )
+        .await
+    };
     drop(recovery);
 
     BOOK.with(|b| {
@@ -994,6 +1032,293 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         );
     }
     (202, result)
+}
+
+// The loop's events as the ACP session updates a native chat streams, for a
+// conversation and for each of its sub-agents.
+fn chat_emit(chat_id: String) -> impl FnMut(AgentEvent) {
+    let generations = || {
+        crate::document_sets::Workspace::load(&crate::portable::root())
+            .map(|w| {
+                w.sets
+                    .iter()
+                    .map(|s| {
+                        (
+                            s.id.clone(),
+                            crate::store::read_generation(&w.root.join(".jazyk").join(&s.id)),
+                        )
+                    })
+                    .collect::<std::collections::BTreeMap<_, _>>()
+            })
+            .unwrap_or_default()
+    };
+    let mut generation = generations();
+    move |ev: AgentEvent| match ev {
+        AgentEvent::ReasoningSummary(s) => append(
+            &chat_id,
+            json!({"sessionUpdate":"agent_thought_chunk", "summary":true, "content":{"type":"text","text":s}}),
+        ),
+        AgentEvent::Thought(s) => append(
+            &chat_id,
+            json!({"sessionUpdate": "agent_thought_chunk", "content": {"type": "text", "text": s}}),
+        ),
+        AgentEvent::Message(s) => append(
+            &chat_id,
+            json!({"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": s}}),
+        ),
+        AgentEvent::ToolCallStart { id, name, args } => append(
+            &chat_id,
+            json!({"sessionUpdate": "tool_call", "toolCallId": id, "title": name,
+                   "status": "in_progress", "rawInput": args}),
+        ),
+        AgentEvent::ToolCallEnd { id, result, ok } => {
+            let mut update = json!({"sessionUpdate": "tool_call_update", "toolCallId": id,
+                   "status": if ok { "completed" } else { "failed" }, "rawOutput": result});
+            crate::effects::decorate(&mut update);
+            append(&chat_id, update);
+            // A dual write committed: the graph views refresh on it, mid-turn.
+            let now = generations();
+            for (set_id, value) in &now {
+                if generation.get(set_id) != Some(value) {
+                    crate::portable::emit_event(
+                        "store.generation",
+                        json!({"setId":set_id,"generation":value}),
+                    );
+                }
+            }
+            generation = now;
+            crate::portable::emit_event("sets.changed", json!({}));
+        }
+        AgentEvent::Input(value) => {
+            let display = value.get("displayText").unwrap_or(&value["text"]);
+            let mut update = json!({"sessionUpdate":"user_message","text":display,"messageId":value["messageId"],"turnId":value["turnId"]});
+            // A sub-agent's delivered result names it (docs/frontends/subagents.md#results).
+            if let Some(source) = value.get("source") {
+                update["source"] = source.clone();
+            }
+            append(&chat_id, update);
+            delivered(&chat_id, value);
+        }
+        AgentEvent::Timing(value) => {
+            crate::portable::emit_event("chat.timing", json!({"sessionId":chat_id,"timing":value}))
+        }
+        AgentEvent::Usage { .. } => {}
+    }
+}
+
+// ---- sub-agents (docs/frontends/subagents.md) ----
+
+// The workspace's tree, holding every sub-agent conversation the book knows. A
+// sub-agent from an earlier request is idle until its parent messages it.
+fn agents_tree() -> harness::agents::Tree {
+    let tree = AGENTS.with(|a| a.borrow().clone());
+    BOOK.with(|b| {
+        for c in b.borrow().chats.values() {
+            let Some(t) = &c.tree else { continue };
+            tree.adopt(harness::agents::Node {
+                id: c.id.clone(),
+                parent: t["parentId"].as_str().unwrap_or_default().to_string(),
+                root: t["rootId"].as_str().unwrap_or_default().to_string(),
+                depth: t["depth"].as_u64().unwrap_or(1) as u32,
+                title: c.title.clone(),
+                task: t["task"].as_str().unwrap_or_default().to_string(),
+                write: harness::agents::WriteScope::parse(&t["write"])
+                    .unwrap_or(harness::agents::WriteScope::None),
+                state: match c.state.as_str() {
+                    "failed" => harness::agents::AgentState::Failed,
+                    "cancelled" => harness::agents::AgentState::Cancelled,
+                    _ => harness::agents::AgentState::Idle,
+                },
+                turns: t["turns"].as_u64().unwrap_or(0) as u32,
+                results: Default::default(),
+                inbox: Vec::new(),
+                cancel: Default::default(),
+            });
+        }
+    });
+    tree
+}
+
+// The run of a prompt a person sent: a top-level conversation, or a sub-agent
+// conversation prompted directly, which keeps its depth and scope.
+fn own_run(id: &str) -> harness::agents::RunSpec {
+    let tree = agents_tree();
+    match tree.get(id) {
+        Some(node) => harness::agents::RunSpec {
+            cancel: Default::default(),
+            ..harness::agents::RunSpec::of(&node, tree)
+        },
+        None => harness::agents::RunSpec::root(id, tree),
+    }
+}
+
+// Sub-agents of a conversation are conversations of the book, run as tasks on the
+// workspace's thread beside their parent (docs/frontends/wasm.md#chat).
+struct BookChildren;
+
+impl harness::agents::ChildHost for BookChildren {
+    fn create(&self, request: &harness::agents::ChildRequest<'_>) -> Result<String, String> {
+        let id = create(&json!({}))["id"]
+            .as_str()
+            .ok_or("the sub-agent conversation was not created")?
+            .to_string();
+        BOOK.with(|b| {
+            if let Some(c) = b.borrow_mut().chats.get_mut(&id) {
+                c.title = request.title.to_string();
+                c.titled = true;
+                c.tree = Some(
+                    json!({"parentId": request.parent.id, "rootId": request.root,
+                    "depth": request.parent.depth + 1, "task": request.task,
+                    "write": request.write.value(), "turns": 0}),
+                );
+            }
+        });
+        publish_sessions();
+        Ok(id)
+    }
+
+    fn run_turn(
+        &self,
+        child: harness::agents::RunSpec,
+        text: String,
+    ) -> harness::LocalFuture<'static, goose_agent::subagent::SubagentOutcome> {
+        Box::pin(child_turn(child, text))
+    }
+
+    fn root_of(&self, id: &str) -> String {
+        BOOK.with(|b| {
+            b.borrow()
+                .chats
+                .get(id)
+                .and_then(|c| c.tree.as_ref())
+                .and_then(|t| t["rootId"].as_str().map(str::to_owned))
+        })
+        .unwrap_or_else(|| id.to_string())
+    }
+}
+
+// One sub-agent turn: the conversation's own serving and history, the page's or
+// host's model, and the parent's stop. Not checkpointed
+// (docs/frontends/subagents.md#where-sub-agents-run).
+async fn child_turn(
+    spec: harness::agents::RunSpec,
+    text: String,
+) -> goose_agent::subagent::SubagentOutcome {
+    use goose_agent::subagent::SubagentOutcome;
+    let id = spec.id.clone();
+    ensure_loaded(&id);
+    let turn = BOOK.with(|b| {
+        let mut b = b.borrow_mut();
+        let c = b.chats.get_mut(&id)?;
+        let tree = c.tree.as_mut()?;
+        let n = tree["turns"].as_u64().unwrap_or(0) + 1;
+        tree["turns"] = json!(n);
+        let message_id = format!("{id}-turn-{n}");
+        c.turn_id = Some(message_id.clone());
+        c.result = None;
+        Some((message_id, c.serving.take(), std::mem::take(&mut c.history)))
+    });
+    let Some((message_id, serving, mut history)) = turn else {
+        return SubagentOutcome::Failed("the sub-agent's conversation is gone".into());
+    };
+    append(
+        &id,
+        json!({"sessionUpdate":"user_message","text":text,"messageId":message_id,"turnId":message_id}),
+    );
+    set_state(&id, "running");
+    let (server, tools, instructions, extras) = match serving {
+        Some(s) => s,
+        None => match open_serving(false) {
+            Ok(s) => s,
+            Err(e) => {
+                let error = format!("the chat serving failed to start: {e}");
+                BOOK.with(|b| {
+                    if let Some(c) = b.borrow_mut().chats.get_mut(&id) {
+                        c.history = history;
+                        c.result = Some(json!({"status":"failed","text":error}));
+                    }
+                });
+                append(
+                    &id,
+                    json!({"sessionUpdate":"turn_end","stop":"error","error":error}),
+                );
+                set_state(&id, "failed");
+                return SubagentOutcome::Failed(error);
+            }
+        },
+    };
+    if server.skill_gated() {
+        for name in read_skills(&history) {
+            server.activate_skill(&name);
+        }
+    }
+    let context = format!("{instructions}\n\n{CHAT_TURN}");
+    push_user(&mut history, text);
+    let model_llm = crate::portable::llm();
+    let mut model = harness::provider::DefaultModelHost::new(&model_llm);
+    let mut mcp_tools = crate::session_recovery::McpTools(&server, &extras);
+    let mut recovery = harness::MemoryRecovery;
+    let mut emit = chat_emit(id.clone());
+    let tree = spec.tree.clone();
+    let inbox = id.clone();
+    let mut inputs = move || tree.take_inbox(&inbox);
+    let token = spec.cancel.clone();
+    let cancelled = move || token.is_cancelled() || crate::portable::cancel_requested();
+    let run = harness::agents::AgentRun::new(spec, std::rc::Rc::new(BookChildren));
+    let stop = harness::run_with_agents_async(
+        LoopArgs {
+            llm: &model_llm,
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |_, _| Err("tool host unavailable".into()),
+            emit: &mut emit,
+            cancelled: &cancelled,
+            max_rounds: crate::limits::agent_max_rounds(),
+            label: format!("chat {id}"),
+            conversation: true,
+            inputs: Some(&mut inputs),
+            input_close: None,
+        },
+        &context,
+        &mut model,
+        &mut mcp_tools,
+        &mut recovery,
+        &run,
+    )
+    .await;
+    drop(run);
+    let outcome = harness::agents::outcome_of(&stop, &history);
+    let (update, state) = match &stop {
+        Stop::EndTurn => (
+            json!({"sessionUpdate":"turn_end","stop":"end_turn"}),
+            "idle",
+        ),
+        Stop::MaxRounds => (
+            json!({"sessionUpdate":"turn_end","stop":"max_turn_requests"}),
+            "failed",
+        ),
+        Stop::Cancelled => (
+            json!({"sessionUpdate":"turn_end","stop":"cancelled"}),
+            "cancelled",
+        ),
+        Stop::Suspended | Stop::Error(_) => (
+            json!({"sessionUpdate":"turn_end","stop":"error","error":explain(match &outcome {
+                SubagentOutcome::Failed(e) => e,
+                _ => "",
+            })}),
+            "failed",
+        ),
+    };
+    BOOK.with(|b| {
+        if let Some(c) = b.borrow_mut().chats.get_mut(&id) {
+            c.history = history;
+            c.serving = Some((server, tools, instructions, extras));
+            c.result = Some(harness::agents::outcome_value(&outcome));
+        }
+    });
+    append(&id, update);
+    set_state(&id, state);
+    outcome
 }
 
 // Record delivery only after the loop inserted the human text into history.
@@ -1128,6 +1453,7 @@ pub fn import_history(body: &Value) -> Result<Value, String> {
 // load. Mirrors docs/compiler/hosted-runtime.md#host-records.
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) struct Scope {
+    previous_agents: harness::agents::Tree,
     previous_book: Book,
     previous_stored: Option<Stored>,
     previous_unloaded: std::collections::BTreeSet<String>,
@@ -1384,6 +1710,7 @@ impl Scope {
         // conversation and leaves a version 4 file where it is.
         let Ok(store) = crate::hosted::records::store() else {
             return Ok(Self {
+                previous_agents: AGENTS.with(|a| a.replace(Default::default())),
                 previous_book: BOOK.with(|b| b.replace(Book::default())),
                 previous_stored: STORED.with(|s| s.replace(Some(Stored::default()))),
                 previous_unloaded: UNLOADED.with(|u| u.replace(Default::default())),
@@ -1417,6 +1744,7 @@ impl Scope {
             }
         }
         Ok(Self {
+            previous_agents: AGENTS.with(|a| a.replace(Default::default())),
             previous_book,
             previous_stored,
             previous_unloaded,
@@ -1459,6 +1787,7 @@ fn load_stored(id: &str) {
 #[cfg(not(target_arch = "wasm32"))]
 impl Drop for Scope {
     fn drop(&mut self) {
+        AGENTS.with(|a| a.replace(std::mem::take(&mut self.previous_agents)));
         BOOK.with(|b| b.replace(std::mem::take(&mut self.previous_book)));
         STORED.with(|s| s.replace(self.previous_stored.take()));
         UNLOADED.with(|u| u.replace(std::mem::take(&mut self.previous_unloaded)));

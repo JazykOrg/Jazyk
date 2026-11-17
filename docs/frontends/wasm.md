@@ -297,6 +297,18 @@ module.
   the pane renders a tab's conversation exactly as it renders a server's.
 - `GET /api/chat/sessions` and `GET /api/chat/sessions/{id}` answer the native
   shapes.
+- A conversation can start [sub-agents](./subagents.md) with the agent tools. A
+  `reader`-tier conversation cannot. Each sub-agent is a conversation of the worker
+  with its own `chat` serving and the tree fields (`parentId`, `rootId`, `depth`,
+  `task`, `write`). It runs as an asynchronous task on the worker's one thread,
+  interleaved with its parent and its siblings. They mostly await the page's model,
+  so they progress together, and their commits are serial by construction. The
+  parent's prompt request answers once the parent's turn ends, which is after every
+  sub-agent it started has reported. Until then the sub-agents' updates reach the
+  page as `chat.update` events under their own session ids, beside `chat.sessions`
+  and the [`agents`](./gui.md#agents) event. `GET /api/agent-tree` lists the
+  conversations. A sub-agent conversation takes a prompt of its own only while no
+  turn runs, like any conversation.
 - `POST /api/chat/sessions/{id}/cancel` is answered by the page, since the worker is
   inside the turn. The page sets a cancel flag in the shared control buffer and fails
   the model call in flight, so the turn ends at once as `cancelled`. A reply that

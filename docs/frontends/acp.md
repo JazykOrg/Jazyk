@@ -238,6 +238,38 @@ For an external agent the options are its own. The proxy forwards
 `configOptions` it returns back up untouched, so an IDE's model picker drives the
 agent behind jazyk exactly as it would without jazyk in the middle.
 
+### Sub-agent updates
+
+A chat session of the embedded agent offers the [agent tools](./subagents.md#agent-tools).
+A worker session does not. Each sub-agent turn runs on its own thread with its own
+connections to the session's MCP servers, so it gets its own serving. The sub-agent
+lives inside the agent process and has no ACP session of its own. Its traffic
+travels on the parent's session:
+
+- Every `session/update` of a sub-agent is sent on the root session with
+  `_meta.jazyk.agent`: `{id, parentId, depth, title, task, write}`. `id` is the
+  sub-agent's id in the agent process. `parentId` is the root session's id or a
+  parent sub-agent's id. A sub-agent's turn always ends inside its parent's turn,
+  so its updates arrive while the root session's prompt is active.
+- A turn starts with a `user_message_chunk` carrying the turn's prompt and
+  `_meta.jazyk.agent.turn: "started"`.
+- A turn ends with a `usage_update` carrying `_meta.jazyk.agent.turnEnd`:
+  `{stop, result: {status, text}}`. `stop` is `end_turn`, `cancelled`,
+  `max_turn_requests`, or `error`.
+- A result delivered to a parent is a `user_message_chunk` with
+  `_meta.jazyk.input` carrying `source: {agentId}`, like any
+  [delivered input](#steering-active-turns).
+
+The client talks to a sub-agent through `_session/steering` on the root session,
+with `_meta.jazyk.agentId` naming the sub-agent:
+
+- Text steers the running sub-agent turn. An idle sub-agent answers
+  `promptRequired`: only its parent starts a new turn.
+- `_meta.jazyk.cancelAgent: true` stops the sub-agent and its descendants.
+
+The [GUI](./gui.md#agents) shows each sub-agent as a chat session with its tree
+fields and routes the session's inputs and stop through these requests.
+
 ## Sessions
 
 Three session kinds, all the same protocol:
@@ -252,6 +284,10 @@ Three session kinds, all the same protocol:
   compilation, binding, generation, and verification lifecycles, the
   [dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`,
   and the [project tools](#project-tools). Compiler writes require an open goal batch.
+  A chat session of the embedded agent can also start
+  [sub-agents](./subagents.md), which appear as chat sessions with a parent
+  ([sub-agent updates](#sub-agent-updates)). An external agent uses its own
+  sub-agents.
 - Follow sessions: read-only mirrors of worker sessions, so a person can watch
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).

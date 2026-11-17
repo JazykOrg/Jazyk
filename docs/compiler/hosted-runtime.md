@@ -180,6 +180,12 @@ Admission remains open between worker batches. Ending a batch does not call
 preserves any undelivered input. A job without a conversation keeps its existing
 non-conversational execution.
 
+A conversation's [sub-agents](../frontends/subagents.md) run inside its prompt
+request, as asynchronous tasks on the request's thread. They share the execution
+profile: its model transport, its events, and its Stop. Sub-agent turns take no
+checkpoint of their own. A turn resumed after a suspension receives a failed result
+for each sub-agent it still waited for.
+
 Portable capabilities advertise `conversationJobs: true`. The native GUI does not
 advertise it. Its jobs retain their separate build transcript until its ACP job
 runner exposes the same ownership and input delivery contract.

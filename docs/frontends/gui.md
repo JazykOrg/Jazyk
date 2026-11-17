@@ -615,6 +615,7 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
   `job.trace` wraps one structured trace event.
 - `chat.update`, `chat.permission`, `chat.sessions`: the [chat pane](#chat). One
   session update, one pending permission request, or a session list change.
+- `agents`: the [agent list](#agents) changed. Carries every row.
 - `store.lock`: the store lock appeared or disappeared. A build is starting or ending,
   in this process or any other.
 - `store.generation`: the generation counter moved. Carries the new journal entries, so
@@ -824,6 +825,41 @@ A restored conversation opens a new ACP session when its old process is gone. Th
 
 
 Native input admission flushes the original message before returning acceptance. A later transcript write failure marks the session failed, stops the active prompt, and emits a persistence error. The retained admission restores as interrupted when the terminal event could not be written. Incremental transcript writes report errors without flushing each text delta.
+
+## Agents
+
+`GET /api/agent-tree` answers `{"agents": [row]}`: the running build sessions, then
+the conversations and [sub-agents](./subagents.md). Running rows come first, then
+the most recent idle conversations, at most 20 of them. A row:
+
+- `id`, `agentId`: the conversation's id, or `<jobId>:<label>` for a build session.
+- `kind`: `chat` (a conversation a person opened), `subagent`, or `build`.
+- `parentId`, `rootId`, `depth`, `task`: the [agent tree](./subagents.md#the-agent-tree).
+  A build session is its own root.
+- `title`, and `state`: `idle`, `running`, `failed`, or `cancelled`.
+- `location`: `{path, section?}`, the file the agent last named in a tool call, or
+  the document and section a build session works on. Absent when unknown.
+- `jobId`: the job a build session belongs to.
+- `result`: `{status, text}`, a sub-agent's last turn result.
+
+Build sessions come from the running job's trace: a session opens at `sessionStart`,
+moves with `section`, and closes with its terminal event. Several sessions of one
+build run at once ([concurrent work](../compiler/control-plane.md#workers-and-open-work)),
+and each is a row. A running job with no open session is one row.
+
+The `agents` event carries the whole list, `{agents: [row]}`, whenever a row
+appears, changes state, or leaves.
+
+A chat session snapshot (`GET /api/chat/sessions`, `GET /api/chat/sessions/{id}`)
+carries `parentId`, `rootId`, `depth`, `task`, and `write`. A sub-agent's transcript
+is an ordinary conversation. A result delivered to a parent is an `input` and a
+`user_message` with `source: {agentId}`. In the native server a sub-agent's session
+takes inputs only while it runs ([sub-agent updates](./acp.md#sub-agent-updates));
+stopping it stops that sub-agent and its descendants.
+
+The browser engine serves the same route and event for its
+[conversations](./wasm.md#chat). Its builds run inside the request, so it lists no
+build rows.
 
 ## Diagnostic locations
 

@@ -2,6 +2,7 @@
 // the language server over WebSocket. The page itself is jazyk.dev (or --gui-url),
 // opened with the port and the token in the address, and connects back over CORS.
 // Mirrors docs/frontends/gui.md#serving.
+mod agent_tree;
 mod agents;
 mod api;
 mod board_api;

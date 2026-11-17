@@ -65,6 +65,40 @@ GDK events feed existing traces, chat updates and usage events. Hosts drain even
 channels and bound retained events. A slow client cannot block the compiler or
 create an unbounded queue.
 
+## Sub-agents
+
+A conversational run of a Jazyk agent can start [sub-agents](../frontends/subagents.md).
+The runtime owns the agent tools, the tree, the limits, the write scope, and result
+delivery. The host supplies how a sub-agent turn runs: a thread of the
+[embedded agent](../frontends/acp.md#sub-agent-updates), or an asynchronous task of the
+[browser engine](../frontends/wasm.md#chat) and the hosted runtime.
+
+- The agent tools join the run's catalog. Their calls are answered by the runtime
+  before the serving sees them, and their results are ordinary tool receipts.
+- `spawn_agent` and `message_agent` start a sub-agent turn at once. The turn runs
+  beside the parent, polled with the parent's run on the same owner thread, or
+  awaited from its own thread. Its result answers a waiting call or waits for
+  delivery.
+- The run holds one GDK `SubagentOperation` for its whole length, across passes of
+  the state machine. It is the last pipeline step, after inference, so it runs only
+  when the parent has ended its reply. It then waits for the next sub-agent result
+  and appends it as a message the model reads, and inference continues. A run whose
+  sub-agents have not all reported does not finish its turn.
+- The operation decides from the conversation which turns still owe a result.
+  Every `spawn_agent` or `message_agent` result that started a turn requests it. A
+  turn's result returned by a tool call is not requested again; if the operation
+  already holds that turn, its message is recorded hidden from the model and from
+  the transcript.
+- The operation's session has the run's id. The run uses one cancellation token for
+  all its passes, and each sub-agent's token is a child of it. On Stop, an error,
+  or the round budget, the runtime cancels that token and appends the operation's
+  `finalize_cancellation` messages after the interrupted turn is paired.
+- A sub-agent's calls pass its [write scope](../frontends/subagents.md#write-scope)
+  before dispatch. A scope of `none` also removes the tools that are not read-only
+  from its catalog.
+- Sub-agent turns are not checkpointed. A turn that a resumed run still waits for
+  is delivered as failed.
+
 ## Compaction
 
 Jazyk invokes GDK compaction explicitly at valid conversation boundaries. It keeps

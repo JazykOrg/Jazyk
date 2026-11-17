@@ -38,6 +38,7 @@ not in a separate catalog.
 - `verification/`: verdict contracts and evidence framing.
 - `conversation/`: conversational policy, context, answers, and history recovery.
 - `runtime/`: embedded agent, continuation, and compaction.
+- `subagents/`: the opening prompt of a sub-agent.
 - `decompile/`: reverse compilation and worker requests.
 - `serving/`: MCP initialization and next-step guidance.
 - `inline/`: extracted small instructions, grouped by owning source module.

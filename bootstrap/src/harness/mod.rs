@@ -6,6 +6,7 @@ use goose_provider_types::conversation::Conversation;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub mod agents;
 mod compaction;
 pub mod provider;
 mod runtime;
@@ -14,8 +15,8 @@ mod tool_arguments;
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) use runtime::stopped_history;
 pub use runtime::{
-    run_loop, run_loop_async, run_loop_with_instructions, run_with_host, run_with_host_async,
-    run_with_hosts, run_with_hosts_async, MemoryRecovery,
+    run_loop, run_loop_async, run_loop_with_instructions, run_with_agents, run_with_agents_async,
+    run_with_host, run_with_host_async, run_with_hosts, run_with_hosts_async, MemoryRecovery,
 };
 
 pub type ModelDeltaSink = std::sync::Arc<dyn Fn(&str, &str) + Send + Sync>;

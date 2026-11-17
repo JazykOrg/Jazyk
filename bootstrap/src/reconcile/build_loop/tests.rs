@@ -912,7 +912,11 @@ fn an_unfinished_goal_gets_four_fresh_sessions_before_parking() {
         ..Default::default()
     };
     store.sync_docs(&parsed);
-    let project = project_for(&store);
+    let mut project = project_for(&store);
+    project.root = out.join("project");
+    crate::vfs::create_dir_all(project.root.join("docs")).unwrap();
+    crate::vfs::write(project.root.join("docs/main.md"), text).unwrap();
+    project.explicit_files = Some(vec![project.root.join("docs/main.md")]);
     let control = control_auto();
     let trace = Trace::to_sink(
         crate::session::TraceLevel::Normal,
@@ -1203,6 +1207,20 @@ fn the_build_cap_grows_with_the_goals_derived_during_the_build() {
         Default::default(),
     );
     let mut proj = project_for(&s);
+    proj.root = out.join("project");
+    crate::vfs::create_dir_all(proj.root.join("docs")).unwrap();
+    for i in 0..=LATER {
+        crate::vfs::write(
+            proj.root.join(format!("docs/d{i}.md")),
+            doc_text(i, if i == 0 { 1 } else { 2 }),
+        )
+        .unwrap();
+    }
+    proj.explicit_files = Some(
+        (0..=LATER)
+            .map(|i| proj.root.join(format!("docs/d{i}.md")))
+            .collect(),
+    );
     proj.roots = vec!["docs/d0.md".into()];
     let control = control_auto();
     let first_board = Board::derive(&s, &proj, &control);

@@ -32,9 +32,10 @@ fn absorb_derivation(store: &mut Store, board: &Board) {
     }
 }
 
-fn reload(store: &mut Store, out: &Path, parsed: &ParsedDocs) {
+fn reload(store: &mut Store, out: &Path, proj: &Project) {
     *store = Store::load(out);
-    store.sync_docs(parsed);
+    let (parsed, _) = parse_all(proj);
+    store.sync_docs(&parsed);
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), maybe_async::must_be_sync)]
@@ -261,7 +262,7 @@ pub(crate) async fn run_sessions(
     max_sessions: Option<usize>,
     runner: &dyn crate::runner::SessionRunner,
     store: &mut Store,
-    parsed: &ParsedDocs,
+    _parsed: &ParsedDocs,
     control: &Control,
 ) -> SessionsRun {
     let command_key = continuation::key(out);
@@ -617,7 +618,7 @@ pub(crate) async fn run_sessions(
             report.tokens,
             report.cached,
         );
-        reload(store, out, parsed);
+        reload(store, out, proj);
         sweep(store, trace);
         crate::derive::record_ledger_stale(store, &crate::gen::GenSettings::resolve(proj));
         board = Board::derive(store, proj, control);
@@ -728,7 +729,7 @@ pub(crate) async fn run_sessions(
             }
         }
         if !resolved_in_journal.is_empty() || !board.lapsed.is_empty() {
-            reload(store, out, parsed);
+            reload(store, out, proj);
             board = Board::derive(store, proj, control);
         }
         // A resolved goal back on the board with the change it was resolved under is a
@@ -1159,3 +1160,57 @@ pub(crate) fn rate_limited(error: &str) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod input_reload_tests {
+    use super::*;
+
+    #[test]
+    fn reload_keeps_current_classification_and_coverage() {
+        let files = std::collections::BTreeMap::from([
+            (
+                ".jazyk/jazyk.toml".to_string(),
+                b"version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['**']\n".to_vec(),
+            ),
+            (
+                "article.md".to_string(),
+                b"# Article\n\nSupplied content.\n".to_vec(),
+            ),
+        ]);
+        let _fs = crate::vfs::Scope::enter(&files);
+        let project = crate::document_sets::Workspace::load(Path::new("/project"))
+            .unwrap()
+            .resolve(Some("ds_main"))
+            .unwrap();
+        let out = project.out.clone();
+        let mut store = Store::load(&out);
+        store.sync_docs(&parse_all(&project).0);
+        assert!(store.docs["article.md"].sections.contains_key("/article"));
+        store.decisions.inputs.insert(
+            "article.md".into(),
+            crate::model::InputDecision {
+                mode: "asset".into(),
+                sha256: crate::task_runtime::digest(&files["article.md"]),
+                reason: "Supplied article.".into(),
+            },
+        );
+        store.save_for_test();
+        store.sync_docs(&parse_all(&project).0);
+        store.docs.get_mut("article.md").unwrap().coverage.insert(
+            "/".into(),
+            crate::model::Coverage {
+                state: "non-normative".into(),
+                note: Some("Reference material.".into()),
+                claimed_by: None,
+            },
+        );
+        store.save_for_test();
+        reload(&mut store, &out, &project);
+        assert_eq!(store.docs["article.md"].sections["/"].kind, "blob");
+        assert_eq!(
+            store.docs["article.md"].coverage["/"].state,
+            "non-normative"
+        );
+        assert!(!store.docs["article.md"].sections.contains_key("/article"));
+    }
+}

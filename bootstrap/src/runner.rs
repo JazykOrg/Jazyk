@@ -97,6 +97,25 @@ pub trait SessionRunner {
     // whether the goals are resolved, which is read from the store.
     async fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport;
 
+    // The executor slot a batch's session takes (the profile's name) and how many
+    // sessions of it one build runs at once, and the most any executor this runner
+    // serves allows. A runner that runs sessions on the build's own thread runs one.
+    // Mirrors docs/compiler/project-settings.md#acp.
+    fn session_slots(&self, _batch: &BatchRun) -> (String, usize) {
+        (String::new(), 1)
+    }
+    fn max_sessions_any(&self) -> usize {
+        1
+    }
+
+    // The runner as threads may share it, when it runs sessions concurrently. The
+    // build loop runs one session at a time through a runner without it.
+    // Mirrors docs/compiler/reconciler.md#scheduling.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn concurrent(&self) -> Option<&(dyn SessionRunner + Sync)> {
+        None
+    }
+
     // One prompt, one reply, no tools and no session: the ledger's one-shots.
     async fn ask(
         &self,

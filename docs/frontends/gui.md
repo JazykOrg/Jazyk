@@ -571,10 +571,10 @@ The agent chooses the order of source work and checks, as in the CLI and ACP.
   `check`, `gen`, and `test` commands persist the same file (the metadata line carries
   `source: cli` and no job id), so the activity panel also lists builds that ran
   outside the GUI. See [CLI](./cli.md).
-- Jobs run in-process, one at a time, in submission order. Compilation is sequential
-  by design: one build under the build lease, one session at a time within it. Every
-  kind contends on the store lock and the LLM budget, so serializing them is the
-  point.
+- Jobs run in-process, one at a time, in submission order: a queue policy, not a
+  lock. A build job runs its sessions concurrently up to the executor's
+  `max_sessions`, and a build from a terminal or an agent works beside it; commits
+  synchronize them ([concurrent work](../compiler/control-plane.md#concurrent-work)).
 - Submitting a `compile` while one is already queued returns the queued job's id.
   A request with a selection can instead widen a queued or running job
   ([selected builds](#selected-builds)).
@@ -622,7 +622,7 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
   refetches `GET /api/board` for the cards. Derivations coalesce per document set:
   the causes landing within about 300 ms of each other produce one derivation and
   one event, and one derivation runs per set at a time, so a burst of commits or a
-  lease heartbeat never queues work behind itself.
+  worker heartbeat never queues work behind itself.
 - `goal.opened`: one goal joined the board. Carries the goal, its cause (generation,
   mutation, `via`), and the batch that opened it when a session did. One event per
   entry in a committed changeset's `opened_goals`.
@@ -636,8 +636,8 @@ every snapshot. When the drop turns out to be a rejected token (the polling answ
   generate work sits on the board, so its counts travel as `board.changed`.
 - `watch.state`: the workflow modes changed (compile or generation). Carries both.
 - `control.changed`: the [control plane](../compiler/control-plane.md)
-  moved: a release landed, a worker registered or dropped, a lease was taken or
-  freed. Carries the workers snapshot the workers strip renders. The event is
+  moved: a release landed, a worker registered or dropped, a worker opened or
+  ended a batch. Carries the workers snapshot the workers strip renders. The event is
   scoped: one per document set whose control files moved, `setId` naming it, and
   that set's board re-derives behind it.
 

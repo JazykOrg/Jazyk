@@ -122,11 +122,9 @@ still govern execution and file authorization. Existing checkpoints without an
 admission record use their current unchanged settings.
 A source-pattern repair does not authorize a document write, a file outside
 the project, or a file owned by another entity. Read-only, graph, verification and
-runtime workers do not gain these matcher writes. An owned build can edit under
-its existing project lock only when its unique attempt token matches the current
-build lease. A replacement build never inherits the previous attempt's token.
+runtime workers do not gain these matcher writes. An owned build can edit only when its unique attempt token matches its own run.
+A replacement build never inherits the previous attempt's token.
 The short configuration lock and `baseHash` comparison still protect replacement.
-Other callers retain the normal project-lock and build-lease refusals.
 
 On a compile serving, `done` is the one finishing call: the session prompt says
 `done`, so the model never translates a verb.
@@ -138,8 +136,8 @@ server into it: `jazyk mcp` with the batch's toolsets and flags. The flags exist
 this spawning path and are not for standalone servings:
 
 - `--ephemeral`: the serving belongs to one session. It does not register in the
-  [worker registry](../compiler/control-plane.md#workers-and-leases) (the session is not
-  a peer worker, it is part of a run that already holds its lease), and end of input
+  [worker registry](../compiler/control-plane.md#workers-and-open-work) (the session is not
+  a peer worker, it is part of a run that already registered), and end of input
   with an open batch runs the implicit finish: staged work commits under the same
   gates the [budget path](../compiler/sessions.md#budgets) uses, so an agent that dies
   mid-batch still lands its valid extractions. It does not serve `await_changes`
@@ -155,8 +153,7 @@ this spawning path and are not for standalone servings:
   its turn. A plain `no-open-batch` there would send the agent back to `begin_goals`
   (a local model once re-marked goals of a committed batch eight times).
 - `--build-token <id>`: the serving is part of the running internal build. The
-  build-lease refusal and the release gate do not apply to its batch; without this,
-  a build's own sessions would deadlock against the build's own lease.
+  release gate does not apply to its batch: the build's command is its approval.
 - `--packaged`: the bridge already delivered the
   [assembled prompt](../compiler/sessions.md#the-prompt) as the session prompt;
   `begin_goals` answers with a short ack instead of repeating it.
@@ -376,7 +373,7 @@ Omit `filter` to inspect the board and its `readyCount`.
 1. Ask for work: `goals`, `binding_tasks`, `generation_tasks`, or
    `verification_tasks`. An empty answer is an answer, not an error; the board
    carries the build verdict when no goal is open.
-2. Begin: `begin_goals` claims the next ready batch, the named batch, or the named
+2. Begin: `begin_goals` opens the next ready batch, the named batch, or the named
    goals as one batch; `begin_binding`, `begin_generation`, `begin_verification`
    claim one row each. The reply is the batch's contract: the assembled prompt as
    `instructions` and the loaded set as `package` for goals, the package for the
@@ -471,22 +468,25 @@ CLI and GUI release paths. A read-only chat cannot release work.
 The serving is a worker among workers, and says so:
 
 - `initialize` registers the serving in the
-  [worker registry](../compiler/control-plane.md#workers-and-leases) under the client's
+  [worker registry](../compiler/control-plane.md#workers-and-open-work) under the client's
   name (kind `agent`), heartbeats while the process lives, and deregisters on exit.
-- `begin_goals` takes the batch's lease; `done` and `abandon_goals` release it.
-  `begin_binding` and `begin_generation` take the row's lease; `record_binding` and
-  `record_generation` release it, and a row lease nothing records against expires
-  by the lease TTL
-  ([workers and leases](../compiler/control-plane.md#workers-and-leases)), so a
-  row is never abandoned by a tool call, only recorded or left to expire.
-  A batch another worker holds is refused with `claimed` naming the holder; a live
-  internal build refuses every begin with `build-running` (compilation is
-  sequential: one build, one session at a time). Any tool call on the open batch
-  refreshes its lease.
+- `begin_goals` opens a batch; `begin_binding` and `begin_generation` open a ledger
+  row. Opening claims nothing and refuses nothing for another worker's sake: two
+  workers may open the same goals, and the first commit wins
+  ([workers and open work](../compiler/control-plane.md#workers-and-open-work)). The
+  later `done` or `record_*` gets a
+  [commit conflict](../compiler/graph.md#commit-conflicts) naming what changed, and
+  the agent repairs and finishes again. The board's `openBy` per goal names the
+  workers with it open, so an agent can pick other work.
+- A serving holds any number of open batches. With one open, the write tools,
+  `mark_goal_done`, `done`, and `abandon_goals` act on it. With several, they take
+  `batch`, the id `begin_goals` returned; a call without it is refused with
+  `batch-required` listing the open ids. Several open batches let an agent's own
+  subagents, which share its connection, work in parallel.
 - In `manual` mode a gated batch is refused with `awaiting-release`: the reply names
   the release that opens it (`jazyk release compile`, or the GUI). The board carries
-  `gated` and `claimedBy` per goal, so an agent sees the whole board before
-  claiming.
+  `gated` and `openBy` per goal, so an agent sees the whole board before
+  opening work.
 
 ## Compilation over MCP
 
@@ -512,15 +512,14 @@ serving; what it claims is a batch:
   `ready`, `parked`, `failed` are the mandatory ones; `by_class` and `by_kind` include
   both), since a reader once tried to reconcile the block against itself. `full: true` returns every goal whole: kind, class, `mandatory`,
   target, `change`, `cause`, state, hints, [readiness](../compiler/reconciler.md#readiness)
-  (`ready`, or the blocking reason as a sentence), `gated`, `claimedBy`, and for a parked
-  goal `parkedReason`. A goal the
-  calling serving itself holds (its open batch, or a batch of the running build the
-  serving belongs to) reads `claimedBy: you`, and its blocking sentence says the goal
-  is yours to mark and finish, since a session once read its own batch as another
-  worker's claim and reported the board as inconsistent. The batches the reply lists are
-  the ones the scheduler would form next, numbered past the ids live leases hold, so
-  the batch a session is working on never shares an id with one the board would form
-  now. The
+  (`ready`, or the blocking reason as a sentence), `gated`, `openBy`, and for a parked
+  goal `parkedReason`. `openBy` lists the workers with the goal open; the calling
+  serving's own open batch reads `you`, and its blocking sentence says the goal is
+  yours to mark and finish, since a session once read its own batch as another
+  worker's and reported the board as inconsistent. Nothing is hidden or refused for
+  another worker's open batch. The batches the reply lists are the ones the scheduler
+  would form next, numbered past the ids of open batches, so the batch a session is
+  working on never shares an id with one the board would form now. The
   On a converged board that still lists optional batches, the note says how many
   optional goals stay claimable and `next` reads `optional: begin_goals claims <batch>
   or stop here`, since a reader once weighed the verdict against a line inviting a
@@ -644,9 +643,10 @@ any mutation. The protected MCP checkpoint retains it when board batches change
 and across restoration. Binding-only batches keep the full binding contract in `begin_binding`
 and omit the repeated execution contract. Standalone servings keep full instructions.
 The latest successful `begin_generation` or `begin_binding` sets their ownership
-target within that document set. A write renews that target's claim and refuses
-another worker's live claim. Successful recording releases the claim and clears the
-target; a rejected record keeps it available for repair. Editing a recorded entity
+target within that document set. Another worker may open the same target: the first
+recording wins, and a later one meets a recorded row and gets a
+[commit conflict](../compiler/graph.md#commit-conflicts). Successful recording clears
+the target; a rejected record keeps it available for repair. Editing a recorded entity
 again starts with `begin_generation`, including a repair a human requested when no
 generation goal is owed. A serving pinned to a goal keeps that goal's ownership scope.
 Writable native and hosted chat enable these file tools by default. Reads and writes

@@ -182,11 +182,8 @@ host publishes those saved bytes under a fresh ownership fence, closes its runni
 conversation and discards the staged MCP changeset without running the model.
 It replays retained job chat events after the saved cursor before closing the
 conversation. Published partial text keeps its original position and appears once.
-Stop releases the stopped execution's batch, ledger and build claims. Earlier
-commits remain. A lease is released only when its saved task, worker and claim
-time and nonempty random `claimId` still match. A replacement claim gets a new
-ID even when its worker and timestamp match. Legacy claims without an ID remain.
-Claims belonging to another execution remain. Cancellation
+Stop discards the stopped execution's open batches and ends its run. Earlier
+commits remain. Open batches of another execution remain. Cancellation
 discards an open changeset before returning, including after a checkpoint error.
 
 The first upgrade lets legacy agents finish because they have no checkpoints.

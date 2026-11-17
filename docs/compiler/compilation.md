@@ -63,15 +63,16 @@ makes zero LLM calls.
   [verdict](#convergence) lands in `local/build.yaml`. The tail needs no model.
 
 A user stop retains completed commits and drops the active session. It saves the
-incomplete verdict and spend, then releases the build lease. It runs no further
+incomplete verdict and spend, then ends its run. It runs no further
 checks, rendering, or docsgen. The build's progress (what it parked and why) stays in
 its run file until the next build resumes or replaces it
 ([a build's progress](./graph.md#a-builds-progress)). The next Build reads current
 saved documents, derives the board, and runs the ordinary lifecycle. Stop is not a
 failed session and creates no cancellation diagnostic.
 
-Sessions are sequential: one build at a time under the build lease, one session at a
-time within it ([sequential builds](./control-plane.md#sequential-builds)).
+Sessions run concurrently, up to the executor's `max_sessions`, and builds run beside
+each other and beside agents; commits are the only synchronization
+([concurrent work](./control-plane.md#concurrent-work)).
 
 ## Selected builds
 

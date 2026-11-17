@@ -246,8 +246,9 @@ scheduler [batches](../compiler/reconciler.md#batching) ready goals; and
 [sessions](../compiler/sessions.md) resolve them until the board
 [converges](../compiler/compilation.md#convergence). Sessions run as
 [ACP worker sessions](./acp.md#worker-sessions) against the configured
-[agent](../compiler/project-settings.md#acp), one at a time (compilation is sequential;
-the build lease enforces it); the agent process lives for the run. `--sessions N` runs
+[agent](../compiler/project-settings.md#acp), up to the profile's `max_sessions` at once
+([concurrent work](../compiler/control-plane.md#concurrent-work)); the agent process
+lives for the run. `--sessions N` runs
 at most N sessions and stops with an honest `incomplete`, so a project advances one
 batch at a time and any moment can be copied for a
 [snippet](../benchmark/benchmark.md#snippets-from-a-real-project). `--sessions 0`

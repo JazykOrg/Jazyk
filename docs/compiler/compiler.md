@@ -101,8 +101,8 @@ open goals grouped by [locality](./reconciler.md#batching) (one document, one en
 neighborhood, one view), filled until the context budget says stop. A GC goal is ready
 only when no compile goal is open or parked in its target's cone
 ([GC gating](./reconciler.md#gc-gating)), so restructuring sees settled content and the
-two classes interleave in bursts. Sessions run one at a time
-([sequential builds](./control-plane.md#sequential-builds)). Hard thresholds
+two classes interleave in bursts. Sessions run concurrently,
+synchronized only by their commits ([concurrent work](./control-plane.md#concurrent-work)). Hard thresholds
 [escalate](./reconciler.md#escalation) optional goals to mandatory. Exhausted budgets
 [park](./reconciler.md#parked-and-failed) goals; the next build derives the same work.
 [Flip detection](./reconciler.md#flip-detection) parks oscillation for a human.
@@ -137,10 +137,10 @@ in process (`plantuml-little`, `resvg`): no Java, no external tool. See
 
 The [control plane](./control-plane.md) decides whether anyone may act and who is
 acting: everything in `auto` mode, only released work in `manual`
-([modes and releases](./control-plane.md#modes-and-releases)). Modes, releases, workers,
-and leases are files in the out directory, so every frontend reads the same policy. The
-build lease makes compilation sequential: one build at a time, one session at a time
-within it ([workers and leases](./control-plane.md#workers-and-leases)).
+([modes and releases](./control-plane.md#modes-and-releases)). Modes, releases, and the
+worker registry are files in the out directory, so every frontend reads the same
+policy. Nothing claims work: builds, sessions, and agents work the same board at once,
+and the first commit wins ([workers and open work](./control-plane.md#workers-and-open-work)).
 
 ### The ACP bridge
 
@@ -162,7 +162,7 @@ One build, from `jazyk compile` to the verdict:
 open the store → parse → align → dirty set → derive the board → sessions and commits,
 re-deriving after each → checks → verdict
 
-- Open the store for the build and take the build lease. A store of another version is
+- Open the store for the build and register the build's run. A store of another version is
   archived and the graph starts empty. The first build is not special: it is
   reconciliation against an empty graph.
 - Parse every document into its section tree ([parsing](./parsing.md)), align the trees

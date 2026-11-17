@@ -275,8 +275,9 @@ prompt. Graph access stays explicit and subject to existing context budgets.
   Clients drain pending saves first. A failed save prevents submission against old
   text.
 - A grouped run records selected set IDs and config revision. It runs one set at a
-  time, in configuration order, with one model session at a time. A project-wide
-  build lease also applies to CLI, ACP, and external workers.
+  time, in configuration order. Within a set, sessions run up to the executor's
+  `max_sessions`. CLI, ACP, and external workers work beside it; commits synchronize
+  them ([concurrent work](./control-plane.md#concurrent-work)).
 - Recheck a queued set before it starts. Skip a set that became clean. New dirty
   sets are left for the next explicit run; watch mode may enqueue a follow-up.
   Edits during a build retain the existing incremental reconciliation behavior.

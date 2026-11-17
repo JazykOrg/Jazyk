@@ -181,6 +181,15 @@ args = ["--yes", "@agentclientprotocol/codex-acp@2.4.0"]
   `env` adds environment variables; `serve_files` (default `false`) makes jazyk
   serve the [file and command tools](./goals/generate.md#file-and-command-tools) into
   the agent's `generate` sessions, for agents that bring no editor of their own.
+- `max_sessions`: how many sessions of this profile one build runs at once
+  ([concurrent work](./control-plane.md#concurrent-work)). On `[acp]` it sets the
+  default for every profile. Default 4, and 1 for `embedded` when the LLM base URL is
+  a loopback address (a local model serves one request well at a time). E.g.:
+
+  ```toml
+  [acp]
+  max_sessions = 2
+  ```
 
 Like the LLM settings, agent profiles describe the machine as much as the project:
 the same `[acp]` table in the global config is the machine default, and values
@@ -361,8 +370,8 @@ args = ["--readonly"]
 
 Run-level knobs are environment variables only, since they tune one run, not the project.
 They bound the endpoint and the process; session and build budgets are
-[registry constants](./sessions.md#budgets), and builds are
-[sequential](./control-plane.md#sequential-builds), so there is no concurrency knob.
+[registry constants](./sessions.md#budgets), and build concurrency is the
+[ACP profile's](#acp) `max_sessions`.
 
 - `JAZYK_TEMPERATURE`: overrides `temperature` (default 0). A negative value omits the
   field for models that only accept their default.
@@ -371,7 +380,7 @@ They bound the endpoint and the process; session and build budgets are
   remove the cap, or boost a later response. Native responses are bounded to 16 MiB.
 - `JAZYK_CALL_TIMEOUT`: seconds for one whole native LLM call (default 1800).
   Hosted and browser transports enforce their host's deadline. Session round
-  budgets, the ACP idle watchdog and lease TTLs provide additional bounds.
+  budgets, the ACP idle watchdog and the commit lock's wait provide additional bounds.
 - `JAZYK_COMMAND_TIMEOUT`: seconds one shell command may run (default 1800): a recorded
   build or test under `jazyk test`. Past it the harness kills
   the command and records exit `124`

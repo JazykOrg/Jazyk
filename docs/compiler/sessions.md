@@ -30,7 +30,7 @@ A session is given:
 - a batch: one to a handful of goals of one class and one readiness tier, grouped by
   locality ([batching](./reconciler.md#batching)). The batch id `b<generation>-<n>`
   (the generation the board derives from and the batch's index in it) names the
-  session, its lease, its trace file, and the `{target}` of the worker protocol line.
+  session, its registry entry, its trace file, and the `{target}` of the worker protocol line.
 - the assembled [prompt](#the-prompt): the agent contract, the active
   [skills](#skills), the project block, one block per goal, and the initially
   [loaded set](./context.md#the-loaded-set) for the batch's locality.
@@ -89,8 +89,8 @@ prompt, so it can be shown before it is spent. The parts, in order:
    ahead of the claim (an ACP session prompt, `jazyk preview`), which tells the agent
    to call `begin_goals` first; [`serving-protocol.md`](./goals/prompts/session/serving-protocol.md.mustache)
    when `begin_goals` itself returns the prompt over a standalone MCP serving, which
-   says the batch is claimed and not to call `begin_goals` again for it. The two lines
-   describe one loop from either side of the claim. A session run in process with its
+   says the batch is open and not to call `begin_goals` again for it. The two lines
+   describe one loop from either side of opening it. A session run in process with its
    batch already open (a [benchmark](../benchmark/benchmark.md#runs) case, a
    [snippet](../benchmark/benchmark.md#snippets-from-a-real-project), a
    [replay](../benchmark/replays.md)) gets

@@ -101,8 +101,8 @@ tree reuse their last answer:
   the count holds still.
 - Computing a set's [board](../compiler/reconciler.md#goal-derivation) returns a
   copy of the last board for the same out directory and resolved project settings
-  while the count holds still. A board that holds a lease is never reused: a lease
-  lapses with time, not with a write.
+  while the count holds still. A board that lists open batches is never reused: a
+  worker's entry ages out with time, not with a write.
 
 A page that opens a large project asks for the board several times over one
 unchanged tree (the sets, the project, the status, the documents). Each is derived

@@ -633,7 +633,7 @@ serving ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 - `goals({})`: the board: every goal with its kind, class (`compile` or `gc`),
   `mandatory`, target, unit, `change`, `cause`, state, hints, and
   [readiness](./reconciler.md#readiness) (`ready`, or the blocking reason as a
-  sentence), plus `gated` and `claimedBy` from the
+  sentence), plus `gated` and `openBy` from the
   [control plane](./control-plane.md). The reply groups the ready goals into the
   batches the scheduler would form, each under its id. A batch id is
   `b<generation>-<n>`: the generation the board derives from and the batch's index
@@ -713,7 +713,7 @@ session with an explicit deliverable directory keeps paths relative to that dire
   and build. Layout, file names, and run commands are the worker's choices, recorded
   in the manifest; the medium is not, it is already decided, or the package carries
   `mediumNote` asking the worker to decide it first with `record_medium`. Stateless on
-  the server: beginning claims nothing and holds nothing; the lease is the claim.
+  the server: beginning claims nothing and holds nothing; the first recording wins.
   An owned generation batch receives the full generation and execution contracts
   in its opening prompt. Its replies omit those repeated instructions, including
   when the worker reopens a different entity. The current package data remains.
@@ -775,7 +775,7 @@ tools; jazyk holds the ledger. These tools never mutate the graph.
   An owned worker batch receives the execution contract in its opening prompt, so
   this reply carries only the full binding contract. A standalone serving carries
   both contracts.
-  Stateless on the server; the lease is the claim.
+  Stateless on the server; the first recording wins.
 - `record_binding({requirement, files, tests?, test?, verdict?, evidence?})`: record the
   row: the implementing files (an empty list is a finding), one test per
   [criterion](./model/criterion.md) under `tests`
@@ -923,11 +923,16 @@ The named errors a caller meets beyond the gates:
   documents instead ([grouping tools](#grouping-tools)).
 - `awaiting-release`: `begin_goals` or a ledger `begin_*` under a `manual` mode with no
   release ([modes and releases](./control-plane.md#modes-and-releases)).
-- `build-running`: `begin_goals` or a ledger `begin_*` while an internal build holds
-  the build lease; compilation is sequential
-  ([workers and leases](./control-plane.md#workers-and-leases)).
-- `claimed`: `begin_goals` on a batch another worker holds; the error names the holder
+- `batch-required`: a write tool, goal tool, `done`, or `abandon_goals` without
+  `batch` on a serving with several open batches; the error lists the open ids
   ([the control plane over MCP](../frontends/mcp.md#the-control-plane-over-mcp)).
+- `commit-conflict`: `done` or a ledger `record_*` whose changeset collides with a
+  commit that landed after the batch opened. The reply lists each node, section, or
+  goal conflict with the generation that changed it. The batch stays open on the
+  current generation with the conflicting mutations and resolutions dropped
+  ([commit conflicts](./graph.md#commit-conflicts)).
+- `store-busy`: the commit lock stayed held past `STORE_LOCK_WAIT`; nothing changed,
+  retry ([concurrency](./graph.md#concurrency)).
 - `session-complete`: a write tool, goal tool, `done`, `abandon_goals`, or
   `begin_goals` on a scoped serving whose batch already committed; the error names the
   batch and says to end the turn ([`--only`](../frontends/mcp.md#mcp-into-acp-sessions)).
@@ -935,9 +940,6 @@ The named errors a caller meets beyond the gates:
   `begin_goals`. Conversational graph writes need no batch.
 - A tool outside a worker batch's toolset is not served; a cached write still
   reaches the `wrong-toolset` gate. Chat exposes `edit_graph` for independent edits.
-- `batch-stale`: an independent chat edit committed after the batch snapshot.
-  Abandon the batch and reload current goals before restaging. Stale work never
-  commits at end of input.
 
 ## Toolsets
 

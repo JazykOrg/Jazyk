@@ -476,7 +476,21 @@ Decompilation stays outside the board: draft work is released per scope
 
 ## Scheduling
 
-One build runs one loop, sequentially: one session at a time, each with one batch.
+One build runs one loop. It keeps up to `max_sessions` sessions running, each with
+one batch ([concurrent work](./control-plane.md#concurrent-work)); with
+`max_sessions = 1` the loop is the sequential one below.
+
+- Open batches only from the highest ready tier. While a batch the loop opened from a
+  lower tier is in flight, open nothing from a higher tier: the barrier keeps
+  alignment before ingest and ingest before judgment.
+- Prefer ready batches whose cones do not overlap a batch already open by any worker
+  (`openBy`). Overlap is allowed when nothing else is ready: the first commit wins and
+  the other session gets a [commit conflict](./graph.md#commit-conflicts). Avoiding
+  overlap saves spend; commits keep it correct.
+- A GC goal is ready when no compile goal is open or in flight in its cone.
+- When a session ends, re-derive the board and fill the free slot.
+
+Each session follows the same steps:
 
 - Derive the board. Take the highest ready [tier](#readiness) that has an open goal;
   goals an interrupted run of the same build parked resume first.
@@ -676,10 +690,10 @@ GC goal its own commit made ready.
 
 A batch has an id, `b<generation>-<n>`: the generation the board derives from and the
 batch's index within it. A re-derivation of the board renames its batches, so an id
-never outlives the board it came from. Numbering skips the ids of batches a live lease
-holds ([workers and leases](./control-plane.md#workers-and-leases)), so a batch formed
-while another is being worked never takes the working batch's id. It names the session, its lease
-([workers and leases](./control-plane.md#workers-and-leases)), its trace file, and the
+never outlives the board it came from. Numbering skips the ids of batches a worker has open
+([workers and open work](./control-plane.md#workers-and-open-work)), so a batch formed
+while another is being worked never takes the working batch's id. It names the session, its
+registry entry, its trace file, and the
 `{target}` of the worker protocol line. The toolset of the session is the union of the
 batch's kinds' toolsets ([toolsets](./tools.md#toolsets)); the skills are the union of
 their skills ([skills](./sessions.md#skills)). `jazyk preview` renders the next batch's

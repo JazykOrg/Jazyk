@@ -32,10 +32,10 @@ Jazyk takes both protocol roles, depending on the direction:
   tool injection, doc edit translation, build status. See [the IDE proxy](#the-ide-proxy).
 
 One process that runs builds holds one connection per downstream agent it drives, with
-several sessions open on it: one worker session at a time (compilation is
-sequential), chat and follow sessions beside it. The
-[control plane](../compiler/control-plane.md) arbitrates between processes: the build
-lease and the per-batch leases make a CLI run beside a GUI harmless.
+several sessions open on it: worker sessions up to the profile's `max_sessions`,
+chat and follow sessions beside them. Nothing arbitrates between processes: a CLI run
+beside a GUI works the same board, and commits synchronize them
+([concurrent work](../compiler/control-plane.md#concurrent-work)).
 
 ## Agents
 
@@ -244,9 +244,9 @@ Three session kinds, all the same protocol:
 
 - Worker sessions: created by jazyk for one [goal batch](../compiler/reconciler.md#batching).
   One [session](../compiler/sessions.md) per batch, so the session keeps a fresh,
-  focused context and a retry starts clean. Worker sessions run one at a time:
-  [compilation is sequential](../compiler/compilation.md#a-build), and a GC burst is
-  the next session, not a parallel one.
+  focused context and a retry starts clean. Worker sessions run up to the
+  profile's `max_sessions` at once, and commits synchronize them
+  ([concurrent work](../compiler/control-plane.md#concurrent-work)).
 - Chat sessions: created by a user in the [GUI chat pane](./gui.md#chat) or from an
   IDE through the proxy. The agent gets the `chat` toolset: the read tools, the
   compilation, binding, generation, and verification lifecycles, the
@@ -307,7 +307,7 @@ The automated path. For each goal batch the runner:
    whose `mcpServers` list one entry: `jazyk mcp` with the batch's toolsets and the
    spawning flags (`--only <batch>`, `--packaged`, `--ephemeral`, `--build-token`;
    see [MCP into sessions](./mcp.md#mcp-into-acp-sessions)). The batch id
-   (`b<generation>-<n>`) names the session, its lease, and its trace label. The
+   (`b<generation>-<n>`) names the session, its registry entry, and its trace label. The
    toolset is the union of what the batch's goal kinds need
    ([toolsets](../compiler/sessions.md#toolsets)).
    The entry's transport follows the agent's `initialize` reply, decided once per
@@ -360,8 +360,8 @@ The automated path. For each goal batch the runner:
 
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
 default 1800 seconds). Cancellation follows the protocol: pending permission requests
-are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound what a
-dead agent can hold either way. The same timeout bounds the calls the host waits on
+are answered `cancelled`, then `session/cancel` goes out. A dead agent holds nothing: work is
+never claimed. The same timeout bounds the calls the host waits on
 synchronously: an agent that does not answer `initialize`, `session/new`, or
 `session/close` within it fails that call with a message naming the wait, instead of
 holding the build. The session's own task on the host waits for the `session/close`
@@ -724,7 +724,7 @@ documents, open diagnostics, open goals) reaches the IDE's chat surface through 
 proxy instead: on session start and on every
 [control plane](../compiler/control-plane.md) or board change, the proxy refreshes
 the advertised commands and the pending-work plan. The board derives from files (the
-documents, the graph, its decisions and sources) and the leases are files, so the proxy computes
+documents, the graph, its decisions and sources) and the worker registry are files, so the proxy computes
 them the way every other frontend does, no new channel.
 
 ## Registration

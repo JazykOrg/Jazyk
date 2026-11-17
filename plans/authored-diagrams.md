@@ -58,7 +58,9 @@ Read and update these contracts before engine work:
 - [View model](../docs/compiler/model/view.md), [diagrams](../docs/compiler/diagrams.md),
   [levels](../docs/compiler/concepts/levels.md), and [docsgen](../docs/consumers/docsgen.md).
 - [Graph](../docs/compiler/graph.md), [folder layout](../docs/compiler/jazyk-folder.md),
-  [tools](../docs/compiler/tools.md), and both YAML schemas.
+  [tools](../docs/compiler/tools.md), both YAML schemas,
+  [context](../docs/compiler/context.md), and
+  [session toolsets](../docs/compiler/sessions.md#toolsets).
 - [Reconciler](../docs/compiler/reconciler.md), [compilation](../docs/compiler/compilation.md),
   and the curate-view, split-view, retrace, and abstract-entity contracts.
 - [Prompt guide](../docs/compiler/goals/prompts/README.md) before payload edits.
@@ -179,10 +181,132 @@ reasons; that is an authored explanation, not missing semantic data.
 Always escape diagram text through the existing inert-text emitter. Neither
 layout nor annotation fields accept executable renderer syntax or includes.
 
+## Entity context and diagram discovery
+
+Every entity context fetch makes its available authored diagrams discoverable.
+Use a shared reverse index over the snapshot for `load`, `get_entity`, initial
+context packs, `jazyk context`, cards, and portable API reads. Do not discover
+availability from rendering files or well-known default-view IDs.
+
+Match these associations and explain each in the returned summary:
+
+- Direct effective membership, including query membership after exclusions.
+- Participation in a flow through a member requirement's entities or message ends.
+- Subject of a state or timing diagram, and instance/type association for object.
+- Representation through a shown collapsed ancestor, naming that ancestor. Do not
+  claim that the hidden descendant is drawn as its own element.
+- The entity's own area and its immediate parent's containment area, even when
+  the diagram does not draw the entity. Mark these `area` or `parent-context`,
+  distinct from actual membership. A root's parent-context is its scope.
+- Explicit linked detail views of these diagrams, available as references on the
+  diagram summary. Do not recursively inline all linked diagrams or all ancestors.
+
+Return a `diagrams` section of references by default. Each entry contains `id`,
+`kind`, `title`, `purpose`, `area`, association reasons, member/participant counts,
+`factHash`, and whether it is already loaded full. Optional related goal and
+render-failure status are compact flags. Deduplicate diagrams that match several
+associations. Order direct membership/participation/subject first, collapsed
+representation second, own area third, parent-context fourth; break ties by kind,
+normalized title, and ID. References and source identities are useful even when
+rendering failed or the entity has no directly containing diagram.
+
+The same entity read exposes compact area coverage status and the count of active
+suppressions, with references to expand. Do not inline suppression histories or
+mislabel a suppressed absence as an available diagram. A truly empty diagram
+result says `diagrams: none`; a truncated result says how many remain and gives
+its expansion handle. Never silently replace a large list with `none`.
+
+Keep this bounded under the existing context budget. Reuse the `members` axis
+for reverse diagram associations and its paged `h:<entity>:members[:<offset>]`
+handles; add no parallel loading protocol. Read responses outside the loaded set
+use the same bounded list with a continuation accepted by `list_views`.
+`list_views({entity})` uses the same relevance semantics, with an optional
+association filter, not only direct stored membership. Counters and continuation
+metadata distinguish complete, partial, and empty results.
+
+Use references rather than full definitions on ordinary entity fetches. A
+sequence definition may contain many statements and nested fragments, and several
+entities may share it. Automatically loading them all would duplicate context
+and make unrelated entity work expensive. `get_view({id})` reads a definition;
+`load({target: id})` makes it a full persistent loaded-set item under existing
+budget rules. `expand` on an entity's members handle discovers more references;
+it does not secretly load every discovered diagram fully. Existing explicit
+`depth: 2` loading can load neighboring diagram definitions within the budget;
+ordinary depth-1 loads remain summaries only. Full loads include members as
+stubs and expansion handles, not recursively full semantic neighborhoods.
+
+A diagram that is the target of curate-view, split-view, or retrace loads full
+in that goal's initial pack. Diagram-coverage starts with relevant diagram
+summaries and explicitly loads candidates before editing; it does not need every
+existing diagram in full. A model-requested full load appears once in the loaded
+set even when several entities reference it. Compaction, reload, and unload use
+the normal item lifecycle. Read summaries reflect the session snapshot and mark
+staged edits/deletes consistently with the current context contract.
+
+Fetching an entity or loading a diagram never authorizes edits or starts GC.
+Generation, verification, review, and read-only agents can consult the same
+references without receiving diagram write tools.
+
+## Tool availability and prompting lifecycle
+
+The harness computes tool availability from the open batch's goal kinds and
+source subtype, not from a model's desire to draw or its loading a domain skill.
+All mutations retain the batch scope and commit-time gates. A mixed batch receives
+the union of its authorized slices. Refresh the tool catalog at batch transitions,
+and reject cached out-of-scope writes through the existing wrong-toolset gate.
+
+| Consumer or goal | Diagram reads | Diagram writes and suppression |
+|---|---|---|
+| Read-only context, inspection, generation, verification, ordinary entity review | Entity summaries, list/get views, load/expand, coverage and suppression reads | None from diagram discovery. Existing non-diagram permissions remain unchanged. |
+| `diagram-coverage` | All diagram and graph reads | Upsert/update/delete views and suppress/unsuppress for its area/findings, plus goal completion/failure and atomic done. |
+| `curate-view`, `split-view`, view `retrace` | All diagram and graph reads | Existing view mutation slice, extended to authored fields and linked details. No suppression tool unless a coverage goal is also in the batch. |
+| `abstract-entity` | All diagram and graph reads | Existing upsert/update view slice for affected coarse/detail diagrams. No diagram deletion or suppression from abstraction alone. |
+| `reconcile-section` on source PlantUML `diagram` input | All diagram and graph reads | Upsert/update/delete source-anchored views in the section's scope, alongside its existing semantic extraction tools. No coverage suppression. |
+| Explicit human diagram request in writable chat/editor | All diagram and graph reads | Validated graph-edit mutations needed for the request, including suppression only when requested or otherwise authorized. No compiler batch required. |
+
+Source-diagram reconciliation may author the diagram stated by its input; this
+is an explicit ingest goal, not automatic default-view derivation. Select that
+extra write slice deterministically from the source section type when opening
+the batch. Ordinary prose reconciliation does not receive diagram writes merely
+because it mentions entities. Changes to or removal of the source block use the
+same provenance and retrace rules as other quoted facts.
+
+The `diagrams` domain skill guides judgment and does not grant tools. Automatically
+activate it for diagram-coverage and diagram-targeted curate/split/retrace work,
+and when reconciling a source diagram. For abstraction, activate it when that
+batch has affected diagram hints or loads a diagram. The existing structural-views
+and flow-views skills provide kind-specific detail when relevant. Read-only and
+deliverable agents may load the skill by name without gaining mutation authority.
+In writable conversation, the relevant workflow skill exposes authorized tools;
+loading the diagram domain skill alone never widens the workflow capability.
+
+Add a short shared context instruction in docs payloads: entity context lists
+relevant authored diagrams; read the purpose and association, load a relevant
+definition when it helps answer the current question, and treat its membership
+and annotations as authored interpretation backed by the cited semantic facts.
+Do not copy every available diagram into the prompt. Preserve actual provenance
+and verify requirements directly for implementation or verification decisions.
+
+Each coverage goal prompt contains the area, the reason it fired, measured
+counts, soft/hard values, optional/mandatory status, missing candidates, existing
+diagram summaries, suppression status, and the completion gate. It then loads
+the `diagrams` skill for question selection and good/bad examples. The model
+loads the relevant facts, sources, and candidate diagrams, authors or repairs
+what is useful, or records a concrete suppression. Goal hints carry runtime
+evidence; shared instructions and corrective guidance stay in docs payloads.
+There is no unsolicited diagram-authoring prompt on an ordinary entity read.
+
 ## Coverage analysis
 
-Run analysis after relationship and state-machine derivation and query expansion.
-It produces findings and counts only. Use immutable graph IDs for area identity,
+Run analysis after relationship and state-machine derivation and query expansion,
+at commit and again when deriving the board.
+Optional findings run in GC bursts when their cone is ready and the selected
+work scope and remaining build budget permit. They never justify an unsolicited
+model session during a read. Mandatory findings use existing GC scheduling and
+block convergence until covered or validly suppressed. Compile work reopened by
+a diagram edit runs before the affected cone returns to GC.
+
+Analysis produces findings and counts only. Use immutable graph IDs for area identity,
 never a title, name, generated view ID, or document basename.
 
 An area key is a structured `{family, target, document?}` encoded reversibly for
@@ -489,7 +613,9 @@ run the migration on the dogfood to test it.
 6. Extend render scene/emitter support for labels, notes, groups, selection,
    direction, and fragments across the catalog. Keep inert text and deterministic
    output; preserve size accounting and explicit omission visibility.
-7. Implement version-5 migration, store round trips, output pruning, docsgen/card/
+7. Extend `context.rs`, entity reads, context packing, reverse association indexing,
+   members-axis handles, and context/session specifications as defined above.
+   Implement version-5 migration, store round trips, output pruning, docsgen/card/
    viewer/LSP updates, webapi contracts, and native adapters. Version bump lands
    with a working migration and all changed readers, never as a standalone release.
 8. Update fixtures and recorded tool sessions, run validation, commit coherent
@@ -587,6 +713,13 @@ actual gated tool execution, not model output strings asserted in isolation.
   diagrams through tool sessions. Cover coverage → author or suppress → split/
   curate/retrace → rebuild. Keep f1, f2, and relevant example-* traps; replace only
   assertions that specifically promise automatic defaults.
+- Context: entity reads and loads expose direct, flow, subject, collapsed, own-area,
+  and parent-context associations with truthful reasons. Cover exclusions, query
+  matches, deduplication, stable ordering, zero/large lists, members-axis paging,
+  full load on demand, explicit depth-2 behavior, reload after compaction, staged
+  notes, budget ceilings, and native/WASM parity. Read-only loading exposes no
+  mutation tools; mixed-batch slices, source-diagram ingest, skill loading, cached
+  wrong-toolset calls, and coverage-only suppression authority have registry tests.
 - Portable API/docsgen: zero/one/multiple diagrams per level, one-child level,
   member with children but no diagram, authored areas without known IDs, missing
   renderer output, suppression status, navigation links, pagination, native/WASM

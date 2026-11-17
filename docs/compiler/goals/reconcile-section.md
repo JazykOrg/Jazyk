@@ -352,3 +352,5 @@ obligation, even when another section or document states it. A vanished sentence
 removes only the source in this section with `remove_requirement_source`. Delete
 the requirement only after its last source is gone. Coverage and stale-anchor
 justification inspect every source in the reconciled section.
+
+Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.

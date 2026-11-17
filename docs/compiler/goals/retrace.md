@@ -247,3 +247,5 @@ justification died ends the cascade by deleting the fact, and
 
 A requirement merge follows redirects for ledger rows, pair decisions, criteria,
 and view members. Source removal alone requires no retrace while other sources survive.
+
+Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.

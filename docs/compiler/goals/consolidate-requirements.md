@@ -14,3 +14,10 @@
 
 Completion evidence lists `distinct: [{a, b, reason}]` for each surviving pair.
 The store remembers distinct pair verdicts with statement hashes.
+
+Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.
+
+Tools: `load`, `expand`, `unload`, `graph_status`, `search`, `read_section`,
+`get_entity`, `get_view`, `diagnostics`, `inspect_input`, `mark_goal_done`,
+`mark_goal_failed`, `load_skill`, `done`, `feedback`, `update_requirement`,
+`report_diagnostic`.

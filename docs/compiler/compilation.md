@@ -469,3 +469,11 @@ cascade's rule: the re-bind reruns the test, and only an `unimplemented` row (a 
 with no implementing file) opens `generate`. The verify line is a journal entry without
 a session: a programmatic row runs its command and records the verdict, and only the
 four goals that needed a model cost tokens.
+
+## Multi-location obligations
+
+Coverage accepts any requirement source in the section, including an attached source
+on an existing requirement. Justification closure accounts for each stale source
+separately. `stale-provenance` reports each missing anchor. `duplicate-requirement`
+is a consolidation signal, never a reason to retain redundant obligation nodes.
+The sweep removes vanished locations before deleting a requirement with no sources.

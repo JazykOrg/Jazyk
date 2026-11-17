@@ -381,7 +381,7 @@ definitions:
         description: Generation marker (g<N>), read from the local journal; never written to the node file
   requirement:
     description: >-
-      One node file under graph/requirements/. Carries exactly one of source (the quote
+      One node file under graph/requirements/. Carries exactly one of sources (the quote
       form) or provenance (derived or decree)
     type: object
     required:
@@ -389,7 +389,7 @@ definitions:
       - entities
     oneOf:
       - required:
-          - source
+          - sources
         not:
           required:
             - provenance
@@ -397,7 +397,7 @@ definitions:
           - provenance
         not:
           required:
-            - source
+            - sources
     properties:
       id:
         type: string
@@ -422,9 +422,13 @@ definitions:
         type: array
         items:
           $ref: '#/definitions/facet'
-      source:
-        description: The quote form of provenance on a requirement
-        $ref: '#/definitions/sourceRef'
+      sources:
+        description: All supporting source locations of one obligation
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: '#/definitions/sourceRef'
       provenance:
         description: Derived or decree provenance. Never the quote form on a requirement
         oneOf:

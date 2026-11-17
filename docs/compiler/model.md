@@ -214,3 +214,9 @@ reliably than opaque tokens.
 - `limits`: `{<limit>: n}` on entities and views, a per-node bump above a built-in limit.
   Dismissing a size goal writes this field with decree provenance. The goal derives again
   only when the raised threshold is crossed. See [limits](./graph.md#limits).
+
+## Requirement provenance
+
+A requirement has exactly one of non-empty `sources: [{doc, section, quote}]` or
+derived/decree `provenance`. Each quote may span consecutive sentences in one section.
+Other fact kinds retain their existing provenance representation.

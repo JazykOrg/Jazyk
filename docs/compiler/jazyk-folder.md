@@ -194,7 +194,7 @@ The store version, the only thing a load checks before reading the rest
 ```yaml
 # Jazyk store: the version of this set's files. Written by jazyk.
 # yaml-language-server: $schema=https://jazyk.org/schemas/store.json
-version: 5
+version: 6
 ```
 
 ### `graph/<kind>/<id>.yaml`
@@ -571,3 +571,9 @@ classification reason, and original byte SHA-256. The `id` is the project-relati
 input path. These decisions are committed compiler state. A changed byte hash
 invalidates reconciliation, not the processing mode. No user configuration is
 required. See [asset classification](parsing.md#asset-classification).
+
+## Requirement source storage
+
+Version 6 stores requirement `sources` as a non-empty list. Version 5 loads with
+`source` converted to a singleton list and rewrites at the next build opening.
+Older stores archive and rebuild. Requirement ids and ledger bindings are preserved.

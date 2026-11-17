@@ -242,3 +242,8 @@ tool reply ([bubbling](../reconciler.md#bubbling)), so the session sees the next
 of the cascade before it commits it; the `retrace` on a derived fact whose only
 justification died ends the cascade by deleting the fact, and
 [justification closure](../compilation.md#checks) confirms it after the build.
+
+## Consolidated requirements
+
+A requirement merge follows redirects for ledger rows, pair decisions, criteria,
+and view members. Source removal alone requires no retrace while other sources survive.

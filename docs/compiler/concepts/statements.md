@@ -351,3 +351,10 @@ Statements express obligations. Everything else is a separate node or a derivati
 - A contradiction, a duplicate, or an ambiguity in a sentence is a
   [diagnostic](../model/diagnostic.md) filed against the requirement, never a caveat
   written into the statement.
+
+## Obligations and locations
+
+One obligation may be stated across consecutive sentences or repeated in several
+sections and documents. Store one requirement with every supporting source location.
+A sentence may support several independently testable requirements. Search existing
+requirements and attach sources before creating another concept.

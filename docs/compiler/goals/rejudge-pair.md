@@ -281,3 +281,9 @@ leaves a finding for the next build. A contradiction or duplicate found against 
 statement the batch did not pair is filed with `report_diagnostic` all the same,
 provided the evidence is in quotes the session has read; the diagnostic makes the pair
 sticky, and the next change on either side re-judges it.
+
+## Duplicate consolidation
+
+A `duplicate` verdict calls `merge_requirements`. Union all sources and reconcile
+criteria, edges, facets, and transitions. Keep one immutable id and redirect the
+loser. Cross-document repetition supplies another location on the same obligation.

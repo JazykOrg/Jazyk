@@ -344,3 +344,11 @@ reason and is rejected while a requirement references the input. Delivery remain
 [referenced-asset generation](../../consumers/gen.md#referenced-assets).
 
 `classify_input` selects whole-file asset processing or normal document parsing. See [asset classification](../parsing.md#asset-classification).
+
+## Concept extraction
+
+Search existing requirements before creating one. Attach a source to the matching
+obligation, even when another section or document states it. A vanished sentence
+removes only the source in this section with `remove_requirement_source`. Delete
+the requirement only after its last source is gone. Coverage and stale-anchor
+justification inspect every source in the reconciled section.

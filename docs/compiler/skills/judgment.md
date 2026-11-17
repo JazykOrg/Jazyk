@@ -40,3 +40,10 @@ Findings. Report only what the document author can act on. Documentation is loos
 Evidence. A pair goal takes `evidence: {verdict: duplicate | contradiction | consistent}`, and the staged work must match it: a delete or a `duplicate-requirement` for duplicate, a `contradiction` diagnostic for contradiction, nothing tying the pair for consistent. An entity review takes one verdict per lookalike candidate (`merged` or `separate`) and one per open diagnostic on the entity or its statements (`stands`, `resolved`, or `refiled`); a diagnostic with a deleted subject cannot stand. A cross-document lookalike goal is done when the pair is merged or kept with reasoning.
 
 Verdict quality. The gate checks that a verdict exists per pair and per lookalike; it cannot know a `consistent` or `separate` verdict is true. Make each one true: name the evidence in one or two sentences, never an essay. A justification that could be pasted under any pair is not a justification. When the documents are too contradictory to judge, fail the goal with the reason instead of guessing.
+
+## Obligation identity
+
+Search existing requirements before creating one. One obligation has one id and
+all supporting `sources`. Attach a matching source with `add_requirement_source`.
+Quotes may span consecutive sentences within one section. Remove only obsolete
+locations. Merge duplicate obligations with `merge_requirements`, preserving sources.

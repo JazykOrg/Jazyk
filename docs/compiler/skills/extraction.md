@@ -60,3 +60,10 @@ Coverage honesty. After a section's extraction, call `set_coverage` exactly once
 Record the facts as stated, even when sections disagree: judging contradictions and duplicates belongs to the judgment goals that follow, and a conflict you notice is not lost.
 
 When an enumeration selects opaque inputs, the membership quote includes the linked items needed to identify those inputs. A lead-in alone does not select a linked file.
+
+## Obligation identity
+
+Search existing requirements before creating one. One obligation has one id and
+all supporting `sources`. Attach a matching source with `add_requirement_source`.
+Quotes may span consecutive sentences within one section. Remove only obsolete
+locations. Merge duplicate obligations with `merge_requirements`, preserving sources.

@@ -1163,3 +1163,11 @@ cycles, missing targets, protected paths, and external or nested-project targets
 are rejected. Target changes remain asset input changes and invalidate dependent
 generation evidence. Native filesystems keep actual symlinks. Virtual filesystems keep symlink entries
 with relative targets. No separate project file records link targets.
+
+## Requirement source tools
+
+`upsert_requirement` accepts a section and quote and unions that source on its
+natural-key match. `add_requirement_source` accepts `id`, `section`, and `quote`.
+`remove_requirement_source` accepts `id`, `section`, `quote`, and `reason`.
+`merge_requirements` accepts `survivor`, `loser`, and `reason`. Source attachment
+and removal preserve obligation hashes. A duplicate pair verdict merges its sides.

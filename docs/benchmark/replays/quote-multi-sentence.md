@@ -1,13 +1,10 @@
-# A requirement quoting two sentences
+# One obligation across consecutive sentences
 
-A local model merged the React and REST sentences of a warehouse page into one
-statement quoting both (density 0.83). A requirement quote that spans two full
-sentences is refused, naming them; each sentence quoted alone lands as its own
-requirement.
+A color obligation can use two consecutive sentences as one verbatim source.
 
 ```yaml
 name: quote-multi-sentence
-description: A requirement quoting two sentences is refused naming them; one requirement per sentence lands
+description: A requirement locates a multi-sentence source passage
 goal: {kind: reconcile-section, target: docs/warehouse.md}
 given:
   docs:
@@ -16,48 +13,31 @@ given:
 
       ## Frontend
 
-      The frontend is a web application built using React. It communicates with the
-      backend over a REST API.
+      The background is blue. Use #1E40AF for it.
   graph:
     entities:
       ent:frontend:
         name: Frontend
-        definition: The web application the warehouse staff use.
+        definition: The warehouse frontend.
         mentions:
-          - {section: docs/warehouse.md#/warehouse/frontend, quote: "The frontend is a web application built using React."}
+          - {section: docs/warehouse.md#/warehouse/frontend, quote: "The background is blue. Use #1E40AF for it."}
 steps:
   - call: upsert_requirement
     args:
-      statement: The Frontend is a React web application that talks to the backend over a REST API.
+      statement: The Frontend background uses #1E40AF.
       entities: [ent:frontend]
       section: docs/warehouse.md#/warehouse/frontend
-      quote: The frontend is a web application built using React. It communicates with the backend over a REST API.
-      facets: [{facet: constraint, reasoning: the frontend's form}]
-    expect: {rule: quote-multi-sentence, contains: '2 sentences'}
-  - call: upsert_requirement
-    args:
-      statement: The Frontend is a web application built using React.
-      entities: [ent:frontend]
-      section: docs/warehouse.md#/warehouse/frontend
-      quote: The frontend is a web application built using React.
-      facets: [{facet: constraint, reasoning: the frontend's form}]
-  - call: upsert_requirement
-    args:
-      statement: The Frontend communicates with the backend over a REST API.
-      entities: [ent:frontend]
-      section: docs/warehouse.md#/warehouse/frontend
-      quote: It communicates with the backend over a REST API.
-      facets: [{facet: constraint, reasoning: the frontend's interface}]
+      quote: The background is blue. Use #1E40AF for it.
+      facets: [{facet: constraint, reasoning: the background color}]
   - call: set_coverage
-    args: {section: docs/warehouse.md#/warehouse/frontend, state: covered, note: one requirement per sentence}
+    args: {section: docs/warehouse.md#/warehouse/frontend, state: covered, note: the background color obligation}
   - call: mark_goal_done
     args:
       goal: g:reconcile-section:docs/warehouse.md
-      justification: Each of the section's two sentences is its own requirement of the Frontend.
+      justification: One obligation captures the background color and its concrete value.
   - call: done
-    args: {summary: two requirements, one per sentence}
+    args: {summary: one color requirement}
 assert:
-  - requirementExists: {statementPattern: 'built using React', entity: Frontend}
-  - requirementExists: {statementPattern: 'REST API', entity: Frontend}
-  - requirementCount: {max: 2}
+  - requirementExists: {statementPattern: '#1E40AF', entity: Frontend}
+  - requirementCount: {max: 1}
 ```

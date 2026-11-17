@@ -11,3 +11,6 @@
 - Reconcile criteria, edges, facets, and transitions before completion.
 - Keep genuinely distinct obligations and record why they are distinct.
 - Completion requires each candidate to be merged or explicitly distinguished.
+
+Completion evidence lists `distinct: [{a, b, reason}]` for each surviving pair.
+The store remembers distinct pair verdicts with statement hashes.

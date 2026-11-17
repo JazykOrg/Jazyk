@@ -461,6 +461,11 @@ pub(super) fn write_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Resul
     write_atomic(path, text.as_bytes())
 }
 
+// The same write for a local file kept outside the store's own shards.
+pub(crate) fn write_local_yaml<T: Serialize>(path: &Path, value: &T) -> std::io::Result<()> {
+    write_yaml(path, value)
+}
+
 // Write through a sibling temporary file renamed into place, so a reader or a crash
 // never sees a half-written file. Mirrors docs/compiler/graph.md#writes-and-unreadable-files.
 pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -856,7 +861,10 @@ impl Store {
         // progress, and nothing of the old layout stays. Mirrors
         // docs/compiler/graph.md#store-version.
         if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
-            let _flock = FileLock::acquire(out);
+            let flock = FileLock::acquire(out);
+            if flock.busy() {
+                return store;
+            }
             store.status.version = STORE_VERSION;
             store.persist();
             let _ledger_lock = crate::gen::Ledger::lock(out);
@@ -1038,6 +1046,9 @@ impl Store {
     // store of another version, or another writer landed a generation since it loaded.
     // Called under the lock. Mirrors docs/compiler/graph.md#concurrency.
     fn refusal(&self) -> Option<String> {
+        if let Some(why) = busy_refusal(&self.out) {
+            return Some(why);
+        }
         if let Some(why) = self.unreadable() {
             return Some(why);
         }

@@ -280,20 +280,18 @@ impl McpServer {
                     && !LIFECYCLE.contains(&name.as_str()))
                 .then(|| crate::store::read_generation(&self.out));
                 let reply = self.tool_call(&name, params, &label).map(|mut reply| {
+                    // A commit beside the open batch: the batch rebases onto it at done.
                     if reply["isError"] != true
                         && before_generation.is_some_and(|before| {
                             before != crate::store::read_generation(&self.out)
                         })
+                        && self.open.lock().unwrap().is_some()
                     {
-                        if let Some(open) = self.open.lock().unwrap().as_mut() {
-                            open.invalidated = true;
-                            if let Some(text) = reply["content"][0]["text"].as_str() {
-                                if let Ok(mut value) = serde_json::from_str::<Value>(text) {
-                                    value["batchStale"] = json!(true);
-                                    reply["content"][0]["text"] =
-                                        json!(serde_json::to_string_pretty(&value)
-                                            .unwrap_or_default());
-                                }
+                        if let Some(text) = reply["content"][0]["text"].as_str() {
+                            if let Ok(mut value) = serde_json::from_str::<Value>(text) {
+                                value["batchRebases"] = json!(true);
+                                reply["content"][0]["text"] =
+                                    json!(serde_json::to_string_pretty(&value).unwrap_or_default());
                             }
                         }
                     }
@@ -368,9 +366,7 @@ impl McpServer {
                                 true,
                             ));
                         }
-                        if self.open.lock().unwrap().is_some()
-                            || crate::control::build_lease(&self.out).is_some()
-                        {
+                        if self.open.lock().unwrap().is_some() {
                             return Ok(text_result(
                                 json!({"error":{"rule":"work-running","message":"Finish the open batch or wait for the running build before releasing work."}}),
                                 true,
@@ -631,20 +627,12 @@ impl McpServer {
                 if name == "edit_graph" && self.conversational_graph_writer() {
                     let mut reply = self.edit_graph_chat(&args);
                     if reply["committed"] == true && open.is_some() {
-                        reply["batchStale"] = json!(true);
+                        reply["batchRebases"] = json!(true);
                     }
                     let is_err = !reply["error"].is_null();
                     return Ok(text_result(reply, is_err));
                 }
                 if let Some(o) = open.as_mut() {
-                    if is_write
-                        && (o.invalidated
-                            || crate::store::read_generation(&self.out)
-                                != o.session.snapshot.status.generation)
-                    {
-                        o.invalidated = true;
-                        return Ok(text_result(Self::stale_chat_batch(), true));
-                    }
                     let kinds = o.session.scope.kinds();
                     if kinds.iter().all(|kind| kind == "verify")
                         && matches!(
@@ -670,7 +658,7 @@ impl McpServer {
                     }
                     o.rounds += 1;
                     // Activity on the open batch keeps its lease alive.
-                    crate::control::refresh_lease(&self.out, &o.id);
+                    crate::control::refresh_lease(&self.out, &o.id, &self.worker_id());
                     return match o.session.dispatch(&name, &args) {
                         Ok(v) => Ok(text_result(v, false)),
                         Err(e) => Ok(text_result(e.to_value(), true)),
@@ -889,23 +877,15 @@ impl McpServer {
                 // lease, record frees it. Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
                 if name == "begin_generation" {
                     let c = crate::control::Control::load(&self.project, &self.out);
-                    if self.bridge.build_token.is_none() {
-                        if c.generate == "manual"
-                            && c.released.generate != Store::load(&self.out).status.generation
-                        {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "awaiting-release", "message":
-                                    "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
-                                true,
-                            ));
-                        }
-                        if let Some(l) = crate::control::build_lease(&self.out) {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "build-running", "message": format!(
-                                    "an internal build is running (lease `{}`, expires {}s after its last 30s heartbeat); await_changes returns when it clears", l.worker, crate::control::LEASE_TTL_SECS)}}),
-                                true,
-                            ));
-                        }
+                    if self.bridge.build_token.is_none()
+                        && c.generate == "manual"
+                        && c.released.generate != Store::load(&self.out).status.generation
+                    {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "awaiting-release", "message":
+                                "generation is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                            true,
+                        ));
                     }
                     if let Some(ent) = args["entity"].as_str() {
                         // A generate goal that is not ready (its requirements still owe
@@ -927,7 +907,7 @@ impl McpServer {
                             self.bridge.build_token.is_some() && board.gated.contains(&gid);
                         if board.goals.iter().any(|g| g.id == gid)
                             && !board.is_ready(&gid)
-                            && !board.claimed.contains_key(&gid)
+                            && !board.open_by.contains_key(&gid)
                             && !only_gated
                         {
                             if let Some(r) = board.readiness.get(&gid).and_then(|r| r.reason()) {
@@ -938,15 +918,10 @@ impl McpServer {
                                 ));
                             }
                         }
-                        if let Err(holder) =
-                            crate::control::claim(&self.out, ent, &self.worker_id())
-                        {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another entity or wait for the lease to lapse ({}s after its last activity)", ent, holder, crate::control::LEASE_TTL_SECS)}}),
-                                true,
-                            ));
-                        }
+                        // Opening claims nothing; the first recording wins.
+                        // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
+                        let _ = crate::control::claim(&self.out, ent, &self.worker_id());
+                        self.note_ledger_row(ent);
                     }
                 }
                 // Binding rides the same control plane: it writes test files into the
@@ -955,34 +930,19 @@ impl McpServer {
                 // Mirrors docs/consumers/bind.md#when-binding-runs.
                 if name == "begin_binding" {
                     let c = crate::control::Control::load(&self.project, &self.out);
-                    if self.bridge.build_token.is_none() {
-                        if c.generate == "manual"
-                            && c.released.generate != Store::load(&self.out).status.generation
-                        {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "awaiting-release", "message":
-                                    "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
-                                true,
-                            ));
-                        }
-                        if let Some(l) = crate::control::build_lease(&self.out) {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "build-running", "message": format!(
-                                    "an internal build is running (lease `{}`, expires {}s after its last 30s heartbeat); await_changes returns when it clears", l.worker, crate::control::LEASE_TTL_SECS)}}),
-                                true,
-                            ));
-                        }
+                    if self.bridge.build_token.is_none()
+                        && c.generate == "manual"
+                        && c.released.generate != Store::load(&self.out).status.generation
+                    {
+                        return Ok(text_result(
+                            json!({"error": {"rule": "awaiting-release", "message":
+                                "binding is gated: the workflow is manual and the graph's changes are not released yet; `jazyk release generate` or the GUI's generate action approves them"}}),
+                            true,
+                        ));
                     }
                     if let Some(rid) = args["requirement"].as_str() {
-                        if let Err(holder) =
-                            crate::control::claim(&self.out, rid, &self.worker_id())
-                        {
-                            return Ok(text_result(
-                                json!({"error": {"rule": "claimed", "message": format!(
-                                    "`{}` is claimed by worker `{}`; pick another requirement or wait for the lease to lapse ({}s after its last activity)", rid, holder, crate::control::LEASE_TTL_SECS)}}),
-                                true,
-                            ));
-                        }
+                        let _ = crate::control::claim(&self.out, rid, &self.worker_id());
+                        self.note_ledger_row(rid);
                     }
                 }
 
@@ -994,13 +954,11 @@ impl McpServer {
                     }]
                     .as_str()
                     {
-                        if let Some(lease) = crate::control::leases(&self.out).get(target) {
-                            if lease.worker != self.worker_id() {
-                                return Ok(text_result(
-                                    json!({"error":{"rule":"claimed","message":format!("{target} is claimed by worker {}; wait for that claim to finish.", lease.worker)}}),
-                                    true,
-                                ));
-                            }
+                        // First recording wins: a row another worker recorded after this
+                        // serving began it is a commit conflict.
+                        // Mirrors docs/compiler/graph.md#commit-conflicts.
+                        if let Some(conflict) = self.ledger_row_conflict(target) {
+                            return Ok(text_result(conflict, true));
                         }
                     }
                 }
@@ -1010,7 +968,7 @@ impl McpServer {
                     // A worker holding a binding or generation claim is a ledger session
                     // whatever its serving (the default `all` includes chat).
                     let claimed = crate::control::leases(&self.out)
-                        .values()
+                        .iter()
                         .any(|l| l.worker == self.worker_id());
                     let owner = (name == "update_tasks")
                         .then(|| {
@@ -1088,14 +1046,7 @@ impl McpServer {
                         name.as_str(),
                         "write_text_file" | "link_asset" | "remove_asset_link"
                     ) {
-                        if let Err(holder) =
-                            crate::control::claim(&self.out, &target, &self.worker_id())
-                        {
-                            return Ok(text_result(
-                                json!({"error":{"rule":"claimed","message":format!("{target} is claimed by worker {holder}; wait or begin another entity.")}}),
-                                true,
-                            ));
-                        }
+                        let _ = crate::control::claim(&self.out, &target, &self.worker_id());
                     }
                     scope.target = target;
                 }
@@ -1145,6 +1096,7 @@ impl McpServer {
                             .as_str()
                             {
                                 self.release_own_ledger_claim(target);
+                                self.note_ledger_row(target);
                                 let mut current = self.ledger_target.lock().unwrap();
                                 if current.as_deref() == Some(target) {
                                     *current = None;

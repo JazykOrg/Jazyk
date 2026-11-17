@@ -245,6 +245,17 @@ impl AcpRunner {
         &self.default_agent
     }
 
+    // The sessions of one profile a build runs at once. A run that names one agent
+    // (the flag or JAZYK_ACP_AGENT) runs every kind on it.
+    fn max_sessions_of(&self, name: &str) -> usize {
+        config::max_sessions(
+            name,
+            &self.project.acp,
+            &crate::project::load_global_acp(),
+            &self.llm.base_url,
+        )
+    }
+
     // The executor for one batch: the kind override, then the class override, then
     // the [acp] agent. Mirrors docs/compiler/control-plane.md#executors.
     fn executor_for(&self, batch: &BatchRun) -> Result<ResolvedAgent, String> {
@@ -848,6 +859,33 @@ impl SessionRunner for AcpRunner {
     }
     fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
         AcpRunner::run_item(self, batch, trace)
+    }
+    fn session_slots(&self, batch: &BatchRun) -> (String, usize) {
+        match self.executor_for(batch) {
+            Ok(agent) => {
+                let n = self.max_sessions_of(&agent.name);
+                (agent.name, n)
+            }
+            // The session itself reports the executor error.
+            Err(_) => (String::new(), 1),
+        }
+    }
+    fn max_sessions_any(&self) -> usize {
+        let mut names = vec![self.default_agent.name.clone()];
+        names.extend(self.project.executors.by_kind.values().cloned());
+        names.extend(
+            crate::project::load_global_executors()
+                .by_kind
+                .into_values(),
+        );
+        names
+            .iter()
+            .map(|name| self.max_sessions_of(name))
+            .max()
+            .unwrap_or(1)
+    }
+    fn concurrent(&self) -> Option<&(dyn SessionRunner + Sync)> {
+        Some(self)
     }
     fn ask(&self, system: &str, user: &str, label: &str, step: &str) -> Result<String, String> {
         AcpRunner::ask(self, system, user, label, step)

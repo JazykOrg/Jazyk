@@ -56,9 +56,20 @@ pub fn build_file(out: &Path) -> PathBuf {
     local_dir(out).join("build.yaml")
 }
 
-/// An interrupted build's progress, present only while a build runs.
+/// What this machine's commits and ended builds leave: open change records, parked
+/// goals, pending anchor moves, the resolved roots.
 pub fn run_file(out: &Path) -> PathBuf {
     local_dir(out).join("run.yaml")
+}
+
+/// `runs/`: one file per running build.
+pub fn runs_dir(out: &Path) -> PathBuf {
+    local_dir(out).join("runs")
+}
+
+/// One running build's progress, `runs/<run>.yaml`.
+pub fn run_progress_file(out: &Path, run: &str) -> PathBuf {
+    runs_dir(out).join(format!("{}.yaml", run))
 }
 
 pub fn control_file(out: &Path) -> PathBuf {
@@ -77,17 +88,14 @@ pub fn workers_dir(out: &Path) -> PathBuf {
     local_dir(out).join("workers")
 }
 
-pub fn leases_dir(out: &Path) -> PathBuf {
-    local_dir(out).join("leases")
+/// What each worker has open: information, never a claim.
+pub fn open_dir(out: &Path) -> PathBuf {
+    local_dir(out).join("open")
 }
 
 /// The commit lock.
 pub fn lock_file(out: &Path) -> PathBuf {
     local_dir(out).join(".lock")
-}
-
-pub fn leases_lock_file(out: &Path) -> PathBuf {
-    local_dir(out).join(".leases.lock")
 }
 
 /// The ledger's writer lock.

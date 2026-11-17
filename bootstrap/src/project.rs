@@ -33,6 +33,9 @@ pub struct AcpAgentProfile {
     // Serve file and command tools into this agent's sessions (agents with no editor
     // of their own; the embedded agent sets it).
     pub serve_files: bool,
+    // How many sessions of this profile one build runs at once, when the table says.
+    // Mirrors docs/compiler/project-settings.md#acp.
+    pub max_sessions: Option<i64>,
 }
 
 // The [acp] table: which agent performs AI work. `embedded` is built in and needs no
@@ -43,6 +46,8 @@ pub struct AcpSettings {
     pub runtime_agent: Option<String>,
     pub agent: Option<String>,
     pub agents: BTreeMap<String, AcpAgentProfile>,
+    // The default `max_sessions` of every profile without its own.
+    pub max_sessions: Option<i64>,
 }
 
 // Parse the [acp] table out of a jazyk.toml (or the global config).
@@ -51,6 +56,7 @@ fn parse_acp(t: &Toml) -> AcpSettings {
         runtime_agent: None,
         agent: t.string("acp.agent"),
         agents: BTreeMap::new(),
+        max_sessions: t.string("acp.max_sessions").and_then(|v| v.parse().ok()),
     };
     // Profile names are whatever appears as [acp.agents.<name>]; enumerate the keys.
     let mut names: Vec<String> = Vec::new();
@@ -85,10 +91,18 @@ fn parse_acp(t: &Toml) -> AcpSettings {
                     .string(&format!("{}.serve_files", p))
                     .map(|v| v == "true")
                     .unwrap_or(false),
+                max_sessions: t
+                    .string(&format!("{}.max_sessions", p))
+                    .and_then(|v| v.parse().ok()),
             },
         );
     }
     s
+}
+
+#[cfg(test)]
+pub(crate) fn parse_acp_text(text: &str) -> AcpSettings {
+    parse_acp(&Toml::parse(text))
 }
 
 // Read the global [acp] config if present (same file as the global LLM config).

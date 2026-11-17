@@ -1253,3 +1253,115 @@ fn the_build_cap_grows_with_the_goals_derived_during_the_build() {
     assert!(run.parked.is_empty(), "{:?}", reasons);
     crate::vfs::remove_dir_all(&out).ok();
 }
+
+// In a concurrent build, a session that ends on a commit conflict it did not repair is
+// a failed attempt like any other: its open goal gets four sessions, then parks.
+// Mirrors docs/compiler/reconciler.md#scheduling.
+#[test]
+fn a_session_ending_on_a_commit_conflict_spends_an_attempt_in_a_concurrent_build() {
+    use crate::board::tests::{control_auto, project_for};
+    use crate::runner::{BatchRun, SessionReport, SessionRunner};
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    };
+
+    struct Conflicted(AtomicUsize);
+    impl SessionRunner for Conflicted {
+        fn agent_name(&self) -> String {
+            "conflicted-stub".into()
+        }
+        fn set_build_token(&self, _: Option<String>) {}
+        fn session_slots(&self, _: &BatchRun) -> (String, usize) {
+            ("stub".into(), 2)
+        }
+        fn max_sessions_any(&self) -> usize {
+            2
+        }
+        fn concurrent(&self) -> Option<&(dyn SessionRunner + Sync)> {
+            Some(self)
+        }
+        fn run_item(&self, _: &BatchRun, _: &Trace) -> SessionReport {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            SessionReport {
+                applied: 0,
+                rounds: 3,
+                tokens: 10,
+                cached: 0,
+                failed: Some("commit-conflict: node req:main-1 changed at g7 by b7-1".into()),
+                resolved: Vec::new(),
+                stopped: None,
+            }
+        }
+        fn ask(&self, _: &str, _: &str, _: &str, _: &str) -> Result<String, String> {
+            Err("stub".into())
+        }
+        fn ask_traced(
+            &self,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: &str,
+            _: Option<&Trace>,
+        ) -> Result<String, String> {
+            Err("stub".into())
+        }
+    }
+    let out = std::env::temp_dir().join(format!(
+        "jazyk-conflict-attempts-{}",
+        crate::sys::process_id()
+    ));
+    crate::vfs::remove_dir_all(&out).ok();
+    crate::vfs::create_dir_all(&out).unwrap();
+    let text = "# Main\n\nThe system accepts an order.\n";
+    let parsed: ParsedDocs = [(
+        "docs/main.md".into(),
+        (hash_hex(text), crate::md::parse_sections(text)),
+    )]
+    .into();
+    let mut store = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    store.sync_docs(&parsed);
+    let mut project = project_for(&store);
+    project.root = out.join("project");
+    crate::vfs::create_dir_all(project.root.join("docs")).unwrap();
+    crate::vfs::write(project.root.join("docs/main.md"), text).unwrap();
+    project.explicit_files = Some(vec![project.root.join("docs/main.md")]);
+    let control = control_auto();
+    let events: Arc<Mutex<Vec<TraceEvent>>> = Default::default();
+    let sink = events.clone();
+    let trace = Trace::to_sink(
+        crate::session::TraceLevel::Normal,
+        Arc::new(move |ev: &TraceEvent| sink.lock().unwrap().push(ev.clone())),
+        Default::default(),
+    );
+    let runner = Conflicted(AtomicUsize::new(0));
+    let run = run_sessions(
+        &project, &out, &trace, None, &runner, &mut store, &parsed, &control,
+    );
+    assert_eq!(runner.0.load(Ordering::SeqCst), 4);
+    assert_eq!(run.sessions, 4);
+    assert_eq!(run.parked.len(), 1);
+    assert!(run.parked[0]
+        .reason
+        .as_deref()
+        .unwrap()
+        .contains("after 4 attempts"));
+    let attempts: Vec<u32> = events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::SessionFailed { attempt, error, .. }
+                if error.contains("commit-conflict") =>
+            {
+                Some(*attempt)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(attempts, vec![1, 2, 3, 4]);
+    crate::vfs::remove_dir_all(&out).ok();
+}

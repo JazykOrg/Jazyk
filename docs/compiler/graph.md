@@ -426,9 +426,38 @@ the goals the mutation will open, and the tool reply says so
 ([bubbling](./reconciler.md#bubbling)). At commit the previews become goals with causes.
 
 Commits serialize on `.lock`. At commit time the store reconciles staged creates against
-nodes committed since the session's snapshot (a dual write, a decree): a staged create
-whose natural key matches an existing node becomes an update on that node, with mentions
-unioned.
+nodes committed since the session's snapshot (a dual write, a decree, another session):
+a staged create whose natural key matches an existing node becomes an update on that
+node, with mentions unioned.
+
+### Commit conflicts
+
+A changeset staged against generation `g` may meet the store at a later generation
+`g'`: other sessions, builds, agents, or people committed meanwhile. The first commit
+wins. The later one rebases:
+
+- The store reads the journal entries `g+1` to `g'`: the nodes their mutations changed,
+  the goals they resolved.
+- Additive mutations commute and never conflict: creates (reconciled by natural key),
+  an entity update that only adds aliases, a mention, attributes, or word-match
+  verdicts, a view update that only adds or removes members or exclusions, and a
+  reported diagnostic (its id is its natural key).
+- Any other mutation of a node a mutation since `g` changed, other than an additive
+  one, is a node conflict. So is a mutation of a node deleted since `g`. A node merged
+  since `g` is followed through its redirect.
+- A section mutation (coverage, an anchor placement) on a section a mutation since `g`
+  covered or placed is a section conflict.
+- A goal the changeset resolves that a commit since `g` resolved, or that is no longer
+  open with the same `change` on the current board, is a goal conflict.
+
+Without conflicts the changeset applies on `g'` and commits as usual; its journal entry
+records `rebased_from: g`. With conflicts nothing commits. The reply lists each
+conflict: the node, section, or goal, the generation that changed it, and that
+commit's kind and batch. The session stays open on the current generation: its reads
+now see `g'`, its conflicting mutations and resolutions are dropped, and the rest stay
+staged. The agent rereads what changed, restages what still applies, and finishes
+again. A conflict is a tool result, never a crash, and costs one of the session's
+attempts.
 
 ## Validation gates
 
@@ -687,16 +716,34 @@ diagnostic until a person answers or resolves it.
 
 ### A build's progress
 
-What a build is doing (its batch, the goals it parked when a budget ran out, its spend,
-its reopen counts) is not graph state. A local build keeps it in memory and in the
-machine-local `local/run.yaml`:
+What a build is doing (its batches, the goals it parked when a budget ran out, its
+spend, its reopen counts) is not graph state. A local build keeps it in memory and in
+two machine-local kinds of file.
+
+`local/run.yaml` holds what this machine's commits and ended builds leave:
 
 - the change records this machine's commits opened, each with its cause (generation and
   mutation), so `jazyk explain` and `ripple` can name it;
-- the goals it parked;
+- the goals ended builds parked;
 - the anchor moves [alignment](./alignment.md) proposed and a person has not placed yet;
 - the requirements a `place_anchor` marked for re-evaluation;
 - the document set's resolved roots.
+
+`local/runs/<run>.yaml` holds one running graph build's own progress (a `jazyk
+compile`, a GUI build job), so two builds on one set never overwrite each other's
+([concurrent work](./control-plane.md#concurrent-work)). `<run>` is the build's worker
+id, the one its open `build` entry names. The file carries:
+
+- `run`, `command` (e.g. `compile`), `pid`, `startedAt`, and `updatedAt`;
+- `sessions` (the sessions the build started) and `tokens` (their spend);
+- `inFlight`: each batch the build has a session open on, with its id, goals, executor,
+  class, tier, and `startedAt`;
+- `parked`: the goals this build parked so far, each with its `reason`.
+
+The build rewrites its file whenever a session starts or ends and deletes it when it
+ends; its parked goals then join `run.yaml`. A file whose build has no live open `build`
+entry is stale and swept by the next reader. `jazyk status` and `GET /api/status` list
+every running build from these files.
 
 A record stays until its work resolves, so an interrupted `jazyk compile` resumes where
 it stopped. A finding computed from the committed files is never written there: the
@@ -733,6 +780,9 @@ cachedTokens: 6100
 
 `mutations` is how a node finds the commits that created and changed it, and how a goal
 finds its cause: both lookups read entries newest first and stop at the first hit.
+
+A changeset that [rebased](#commit-conflicts) onto commits it did not stage against
+carries `rebased_from`: the generation it loaded.
 
 The entry kinds:
 
@@ -964,6 +1014,17 @@ The reopen cycle count is one too: `REOPEN_CYCLES` is 2, the times a goal may be
 resolved and re-opened with the same `change` in one build before it parks
 ([parked and failed](./reconciler.md#parked-and-failed)).
 
+The commit lock bounds are registry constants too: `STORE_LOCK_WAIT` is 30 seconds, the
+longest a writer waits for `.lock` before failing `store-busy`, and `STORE_LOCK_HOLD` is
+60 seconds, past which a commit holding the lock is reported
+([concurrency](#concurrency)).
+
+The sub-agent limits are registry constants too: `AGENT_MAX_DEPTH` is 3,
+`AGENT_MAX_CHILDREN` is 4 running sub-agents per conversation, `AGENT_MAX_RUNNING` is
+8 running sub-agents per agent process or engine, and `AGENT_WAIT_DEFAULT_MS` (60000)
+and `AGENT_WAIT_MAX_MS` (300000) bound a wait for sub-agents
+([limits](../frontends/subagents.md#limits)).
+
 The pair degree cap is a registry constant of the same kind: `pairs-per-requirement`
 is 8, the most open `rejudge-pair` goals one requirement takes part in at once, the
 rest waiting by score ([pairs](./reconciler.md#pairs)). It has no soft and hard
@@ -973,17 +1034,23 @@ thresholds and no goal resolves it, so it is not a row of the table above.
 
 - Writers take `.lock`, an advisory lock the operating system releases when its holder
   exits, so a crashed writer never leaves a stale lock and a waiter never overrides a
-  live one (a wait past ten seconds is reported, then continues). One changeset commits
-  at a time.
-- A store in an in-memory workspace (the [browser engine](../frontends/wasm.md)) belongs
-  to one thread, so its `.lock` is a marker file that thread owns. A nested acquire on
+  live one. One changeset commits at a time. The lock is held only while one commit
+  applies. A waiter waits at most `STORE_LOCK_WAIT` (30 seconds), then the write fails
+  with `store-busy`, which is retryable and changes nothing. A commit holding the lock
+  past `STORE_LOCK_HOLD` (60 seconds) is reported on stderr.
+- A store in an in-memory workspace (the [browser engine](../frontends/wasm.md), a
+  hosted workspace) belongs to one thread, so its `.lock` is an in-memory marker that
+  thread owns. Concurrent work there interleaves on that thread, and its commits are
+  serial by construction. A nested acquire on
   that thread proceeds and leaves the marker to its holder; a marker no holder on the
   thread owns (a snapshot carried it in) is taken over at once. Releasing removes only
   the marker the releaser owns.
 - A writer commits against the generation it loaded. Under the lock it re-reads the
-  generation ([the generation](#the-generation)) and refuses with `store-moved` when another writer landed
-  first, so a store held in memory (a GUI, an MCP serving, a session) never overwrites
-  commits it has not seen. The caller reloads and restages.
+  generation ([the generation](#the-generation)). A store-level write (a verdict, a
+  status write, a sweep) refuses with `store-moved` when another writer landed first,
+  so a store held in memory never overwrites commits it has not seen; the caller
+  reloads and retries. A changeset instead rebases onto the newer generation, or
+  reports a [commit conflict](#commit-conflicts).
 - A write outside a changeset (a build's opening, the verdict, a build's run file) is a
   writer too: it takes the lock and is refused the same way (`store-unreadable`,
   `store-version`, `store-moved`). A refused write is reported on stderr with what it
@@ -994,11 +1061,12 @@ thresholds and no goal resolves it, so it is not a row of the table above.
 - A writer puts down the commit marker `.committing` before its first file and removes
   it after `build.yaml`. A marker present while no writer holds `.lock` was left by a
   writer that stopped mid-commit; the next commit replaces it.
-- Compilation is sequential: one build at a time (the build lease enforces it), one
-  session at a time within it. See [workers and leases](./control-plane.md#workers-and-leases).
-- Human paths (chat dual writes, decrees, triage, answers) commit between sessions under
-  the same lock. A running session's staged creates are reconciled against them at
-  commit by natural key ([changesets](#changesets)).
+- Work is concurrent and claims nothing: any number of sessions, builds, and agents
+  stage changesets against the same store, and the commit lock orders their commits.
+  See [workers and open work](./control-plane.md#workers-and-open-work).
+- Human paths (chat dual writes, decrees, triage, answers) commit under the same lock,
+  between or during sessions. A session that staged against an older generation
+  rebases onto them at commit ([commit conflicts](#commit-conflicts)).
 - Readers (e.g. the [MCP server](../frontends/mcp.md)) do not lock. A read counts when
   no commit is in progress at its start and at its end (the marker is present and a
   writer holds `.lock`) and the generation counter held still across it. Otherwise the

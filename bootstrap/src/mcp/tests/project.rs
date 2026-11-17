@@ -258,17 +258,6 @@ fn project_settings_need_a_hash_the_lock_and_no_build() {
             "project-busy"
         );
     }
-    let out = crate::document_sets::Workspace::load(&dir)
-        .unwrap()
-        .resolve(Some("ds_main"))
-        .unwrap()
-        .out;
-    crate::control::claim(&out, crate::control::BUILD_LEASE, "internal-test").unwrap();
-    assert_eq!(
-        call(json!({"settings":{"workflow.worker":"agent"},"baseHash":hash}))["error"]["rule"],
-        "build-running"
-    );
-    crate::control::release_lease(&out, crate::control::BUILD_LEASE);
     assert_eq!(
         crate::vfs::read_to_string(&config).unwrap(),
         original,

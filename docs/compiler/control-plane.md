@@ -102,51 +102,46 @@ with the release that would lift it, `begin_goals` refuses a blocked goal with a
 [verdict](./compilation.md#convergence) as `blocked` and never hold a
 [cone](./reconciler.md#cones).
 
-## Workers and leases
+## Workers and open work
 
-Two directories under the set's `local/` make the actors and their claims visible:
+Nothing claims work. Any number of workers (the internal loop, an MCP agent, a chat
+conversation, a sub-agent, a second `jazyk compile`) may open the same goals at once.
+Commits are the only synchronization: the first commit lands, and a later commit that
+collides gets a [commit conflict](./graph.md#commit-conflicts) and repairs its work.
 
 - `workers/<id>.yaml`: one file per attached worker session. `kind` (`internal`,
   `gui`, `agent`), `client` (the MCP client name when there is one), `pid`,
-  `startedAt`, `heartbeatAt`, and the batch currently held. A worker refreshes its
-  heartbeat while alive; a file whose heartbeat is older than 90 seconds is stale
-  and swept on the next board derivation. Registration happens at MCP `initialize`
-  for the lifecycle servings, at job start in the GUI, and for the lifetime of a
-  `jazyk compile`/`gen`/`test` run.
-- `leases/<batch>.yaml`: an exclusive claim on one goal batch, naming the goals it
-  holds. `begin_goals` takes the lease for the batch it claims (create-new semantics,
-  so exactly one claimant wins); `done` and `abandon_goals` release it. A lease names
-  its worker and expires (default 120 seconds, refreshed by any tool call on the open
-  batch), so a dead agent's claim evaporates instead of wedging the board. The board
-  shows `claimedBy` on leased goals and consumers skip them; a goal leased to the
-  reading serving itself shows `claimedBy: you`.
-- Taking over an expired lease keeps the one-winner rule. Claims and sweeps that may
-  take a lease over run one at a time under `.leases.lock`, an advisory lock beside
-  `leases/` that the operating system releases with its holder. The claimant (or a
-  reader sweeping expired leases) first moves the file aside under a name of its own
-  and checks that it moved the lease it read; a file that changed meanwhile goes back.
-  A refresh replaces the file whole (a temporary file, then a rename), so a reader
-  never sees half a lease. A lease file that does not parse counts as held until it is
-  older than the lease lifetime, then it is swept like an expired one.
+  `startedAt`, and `heartbeatAt`. A worker refreshes its heartbeat while alive; a file
+  whose heartbeat is older than 90 seconds is stale and swept on the next board
+  derivation. Registration happens at MCP
+  `initialize` for the lifecycle servings, at job start in the GUI, and for the
+  lifetime of a `jazyk compile`/`gen`/`test` run.
+- `open/<task>~<worker>.yaml`: one file per task a worker has open (a goal batch with
+  its goals, a ledger row, or a build run named `build`). Several workers may have the
+  same task open, each with its own file. Activity on the task refreshes it; a file
+  not refreshed for 120 seconds is swept.
+- The registry is information, never a lock. The board reports `openBy` per goal (the
+  workers with it open) so an agent can choose other work and avoid paying twice for
+  the same goal. Nothing filters or refuses on it.
+- Opening work (`begin_goals`, `begin_binding`, `begin_generation`, an internal
+  session) builds a scoped package: the goals, the prompt, the loaded context, and
+  write tools limited to those goals. It takes nothing from anyone. Releases still
+  gate it ([modes and releases](#modes-and-releases)): a release is an approval, not
+  a lock.
+- The store's commit lock (`.lock`) is the one mutual exclusion. It is held only while
+  one changeset applies ([concurrency](./graph.md#concurrency)).
 
-The internal loop holds one coarse `build` lease for a whole run instead of per-batch
-leases. Each build attempt has a unique owner token, including consecutive builds
-in the same process. A token from an ended attempt cannot authorize a later build.
-The two granularities exclude each other: `begin_goals` refuses while a live
-build lease exists (`build-running`), and a build refuses to start while any live batch
-lease exists, naming the holder. The store's commit lock stays underneath as the
-correctness backstop; leases exist so work is not duplicated, not to make commits safe
-(they already are).
+## Concurrent work
 
-## Sequential builds
-
-Compilation is sequential. One build runs at a time: the build lease enforces it. Within
-a build one session runs at a time, each with one batch, and the board re-derives after
-every commit before the next batch is chosen ([scheduling](./reconciler.md#scheduling)).
-An external consumer over MCP is the same one-at-a-time actor: `begin_goals` claims one
-batch, `done` finishes it and may claim the next
-([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)). Nothing in the
-design depends on parallel sessions.
+Work runs concurrently. A build keeps up to `max_sessions` sessions of one
+[executor](#executors) running at once (default 1 for a local endpoint, so a laptop
+model still works one batch at a time by resource choice). Readiness keeps its order:
+a build opens a higher [tier](./reconciler.md#readiness) only after every lower-tier
+batch it opened has committed or ended ([scheduling](./reconciler.md#scheduling)).
+Two builds may run at once on one set: they share the board, race on commits, and
+each keeps its own run file. An external consumer over MCP works the same way:
+`begin_goals` opens a batch, `done` commits it
+([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 
 ## Executors
 
@@ -181,7 +176,7 @@ who acts on a release from the GUI:
 - `agent`: the GUI records the release and stops; the attached agent's watcher does
   the work. No agent registered means the GUI says so and offers the internal run.
 - `internal`: the GUI runs its own job.
-- `any`: prefer a live registered agent, fall back to internal. Leases make the race
+- `any`: prefer a live registered agent, fall back to internal. Commits make the race
   harmless either way.
 
 ## Deployment suspension

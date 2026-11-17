@@ -378,3 +378,59 @@ fn a_fan_out_goal_on_the_root_waits_for_the_compile_goal_in_its_scope() {
         b.dropped_parked
     );
 }
+
+// A compile goal a build has in flight forms no other batch and keeps holding the GC
+// goal in its cone: the hold changes only the held goals, and the batch ids formed
+// beside it skip the held id. Mirrors docs/compiler/reconciler.md#scheduling.
+#[test]
+fn a_gc_goal_waits_for_the_compile_goal_a_build_has_in_flight() {
+    let mut s = settled_store();
+    record(
+        &mut s,
+        9,
+        store::CHANGE_THRESHOLD_CROSSED,
+        "ent:order",
+        "limits",
+        json!({"limit": "requirements-per-entity", "count": 54, "soft": 50, "hard": 80, "level": "soft", "goal": "abstract-entity"}),
+    );
+    record(
+        &mut s,
+        10,
+        store::CHANGE_SECTION_DIRTY,
+        "shop.md#/shop/orders",
+        "section",
+        json!({"added": 1}),
+    );
+    let mut b = derive(&s);
+    let compile = "g:reconcile-section:shop.md#/shop/orders".to_string();
+    let gc = "g:abstract-entity:ent:order";
+    let formed = b
+        .batches
+        .iter()
+        .find(|batch| batch.goals.contains(&compile))
+        .expect("the compile goal forms a batch")
+        .id
+        .clone();
+    b.hold_in_flight(
+        &BTreeMap::from([(formed.clone(), vec![compile.clone()])]),
+        &s,
+        &project_for(&s),
+    );
+    assert!(b
+        .batches
+        .iter()
+        .all(|batch| !batch.goals.contains(&compile)));
+    assert!(b
+        .batches
+        .iter()
+        .all(|batch| !batch.goals.iter().any(|g| g == gc)));
+    assert!(b.batches.iter().all(|batch| batch.id != formed));
+    assert!(!b.is_ready(gc));
+    assert!(b.cone_blockers(gc).contains(&compile));
+    assert!(b.open(&compile), "a goal in flight stays open on the board");
+    assert!(
+        matches!(b.readiness.get(&compile), Some(Ready::Blocked(why)) if why.contains(&formed)),
+        "{:?}",
+        b.readiness.get(&compile)
+    );
+}

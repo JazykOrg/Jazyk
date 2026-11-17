@@ -989,10 +989,10 @@ A session-owned task is used while a ledger names it:
   that copies a supplied asset into the deliverable.
 
 Every set's ledger counts, and a build with `--out` counts its own ledger too. Every
-task owned by another set with a session at work (a goal or entity claim, or a build
-lease) counts as used, since that session may be about to bind it.
+task owned by another set with a session at work (an open batch or ledger row, or a
+running build) counts as used, since that session may be about to bind it.
 
-The sweep runs once at the end of a build, under the build's lease: when a standalone
+The sweep runs once at the end of a build: when a standalone
 compile closes, or when a workflow job ends done or failed. A cancelled build does not
 sweep. A workflow's `compile`
 action does not sweep, so a later `task` action in the same workflow still finds its

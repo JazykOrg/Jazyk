@@ -15,7 +15,7 @@ impl McpServer {
             .unwrap()
             .as_ref()
             .map(|h| h.id().to_string())
-            .unwrap_or_else(|| format!("agent-{}", crate::sys::process_id()))
+            .unwrap_or_else(|| format!("agent-{}-{}", crate::sys::process_id(), self.serving_seq))
     }
 
     // The `goals` tool: the board with readiness sentences, gated and claimedBy, the
@@ -107,16 +107,6 @@ impl McpServer {
                     "this session is complete: batch `{}` committed. Goals reopened since belong to the next session; finish without claiming more", fin)}});
             }
         }
-        let project_lock = if self.bridge.build_token.is_none() && self.project.set_id.is_some() {
-            match crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock") {
-                Ok(lock) => Some(lock),
-                Err((_, message)) => {
-                    return json!({"error":{"rule":"project-busy","message":message}})
-                }
-            }
-        } else {
-            None
-        };
         // The snapshot and the board derive from the same synced store.
         let mut store = Store::load(&self.out);
         let project = self.current_project();
@@ -134,7 +124,37 @@ impl McpServer {
                     .collect()
             })
             .unwrap_or_default();
-        let selected = if let Some(bid) = wanted_batch {
+        // A scoped serving of a concurrent build's session takes the batch the build
+        // opened under its id, with the goals the build registered that are still
+        // open: a board re-derived since another session's commit numbers its
+        // batches anew. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+        let registered: Option<crate::board::Batch> = self.bridge.only.as_ref().and_then(|only| {
+            if wanted_batch.is_some_and(|b| b != only) {
+                return None;
+            }
+            let entry = crate::control::leases(&self.out)
+                .into_iter()
+                .find(|l| &l.task == only && !l.goals.is_empty())?;
+            if !wanted_goals.iter().all(|g| entry.goals.contains(g)) {
+                return None;
+            }
+            let goals: Vec<String> = entry.goals.into_iter().filter(|g| board.open(g)).collect();
+            let first = board.goal(goals.first()?)?;
+            Some(crate::board::Batch {
+                id: only.clone(),
+                class: crate::goals::Class::parse(&first.class),
+                tier: crate::goals::tier(&first.kind),
+                executor: project
+                    .executors
+                    .resolve(&first.kind, &first.class)
+                    .map(String::from),
+                locality: String::new(),
+                goals,
+            })
+        });
+        let selected = if let Some(b) = registered.as_ref() {
+            Some(b)
+        } else if let Some(bid) = wanted_batch {
             board.batches.iter().find(|b| b.id == bid)
         } else if !wanted_goals.is_empty() {
             // Named goals form one batch only when one scheduled batch already holds
@@ -183,25 +203,20 @@ impl McpServer {
                     "this serving is scoped to `{}`; batch `{}` belongs to another session", only, batch.id)}});
             }
         }
-        // The control plane's claims, in order: a gated batch awaits its release, a
-        // running internal build owns the board, a leased batch belongs to its
-        // holder. A serving carrying the build's own token skips the first two.
-        // Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
-        if self.bridge.build_token.is_none() {
-            if batch.goals.iter().any(|id| board.gated.contains(id)) {
-                return json!({"error": {"rule": "awaiting-release", "message": format!(
-                    "batch `{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", batch.id)}});
-            }
-            if let Some(l) = crate::control::build_lease(&self.out) {
-                return json!({"error": {"rule": "build-running", "message": format!(
-                    include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/an-internal-build-is-running-lease-heartbeated-1110f.md")), l.worker, crate::control::LEASE_TTL_SECS)}});
-            }
+        // A gated batch awaits its release; a serving carrying the build's own token is
+        // approved by the build's command. Nothing else refuses: another worker's open
+        // batch or a running build never blocks opening work, and commits synchronize
+        // them. Mirrors docs/compiler/control-plane.md#workers-and-open-work.
+        if self.bridge.build_token.is_none()
+            && batch.goals.iter().any(|id| board.gated.contains(id))
+        {
+            return json!({"error": {"rule": "awaiting-release", "message": format!(
+                "batch `{}` is awaiting release: `jazyk release compile` (or the GUI) approves it", batch.id)}});
         }
-        if let Err(holder) =
+        if let Err(why) =
             crate::control::claim_goals(&self.out, &batch.id, &self.worker_id(), &batch.goals)
         {
-            return json!({"error": {"rule": "claimed", "message": format!(
-                "batch `{}` is claimed by worker `{}`; pick another batch or wait for the lease to lapse ({}s after its last activity; a killed worker's lease lapses on its own)", batch.id, holder, crate::control::LEASE_TTL_SECS)}});
+            return json!({"error": {"rule": "store-newer", "message": why}});
         }
         // The graph as this batch sees it, for replays (docs/compiler/sessions.md#snapshots).
         crate::store::snapshot_graph(&self.out, &batch.id);
@@ -339,14 +354,13 @@ impl McpServer {
             })
         };
         *self.open.lock().unwrap() = Some(OpenBatch {
-            _project_lock: project_lock,
+            config_hash: project.config_hash.clone(),
             id: batch.id,
             goals,
             records,
             known_open,
             session,
             rounds: 0,
-            invalidated: false,
         });
         reply
     }
@@ -362,18 +376,11 @@ impl McpServer {
         let Some(mut o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open; begin_goals first"}});
         };
-        if o.invalidated
-            || crate::store::read_generation(&self.out) != o.session.snapshot.status.generation
-        {
-            o.invalidated = true;
-            *open = Some(o);
-            return Self::stale_chat_batch();
-        }
         // The same batch gates an in-process session faces: every goal resolved or
         // failed, coverage contract, stale anchors, undecided proposals.
         if let Err(e) = o.session.dispatch("done", &params["arguments"]) {
             let v = e.to_value();
-            crate::control::refresh_lease(&self.out, &o.id);
+            crate::control::refresh_lease(&self.out, &o.id, &self.worker_id());
             *open = Some(o); // the changeset stays open; repair and finish again
             return v;
         }
@@ -516,36 +523,129 @@ impl McpServer {
         reply
     }
 
+    // The node, section, and goal conflicts of this batch's changeset against the
+    // commits after it opened, plus its resolutions whose goal is no longer open with
+    // the same change on the current board.
+    fn commit_conflicts(
+        &self,
+        s: &Store,
+        since: u64,
+        o: &OpenBatch,
+        staged: &[crate::store::Op],
+        resolved: &[String],
+    ) -> Vec<crate::store::Conflict> {
+        let mut conflicts = s.conflicts_since(since, staged, resolved);
+        let settled: BTreeSet<String> = conflicts
+            .iter()
+            .filter(|c| c.kind == "goal")
+            .map(|c| c.id.clone())
+            .collect();
+        let pending: Vec<&String> = resolved.iter().filter(|g| !settled.contains(*g)).collect();
+        if pending.is_empty() {
+            return conflicts;
+        }
+        let board = crate::board::Board::compute(&self.current_project(), &self.out);
+        let open = board.open_goals();
+        for goal in pending {
+            let mine = o.goals.iter().find(|g| &g.id == goal);
+            let current = open.iter().find(|g| &g.id == goal);
+            let same = match (mine, current) {
+                (Some(m), Some(c)) => m.change == c.change,
+                (None, Some(_)) => true,
+                _ => false,
+            };
+            if !same {
+                conflicts.push(crate::store::Conflict {
+                    kind: "goal".into(),
+                    id: goal.clone(),
+                    generation: s.status.generation,
+                    by_kind: "board".into(),
+                    by_batch: Vec::new(),
+                    detail: if current.is_some() {
+                        "the goal's change moved; reread it before resolving".into()
+                    } else {
+                        "the goal is no longer open".into()
+                    },
+                    staged: None,
+                });
+            }
+        }
+        conflicts
+    }
+
     // Land a batch whose gates passed: release the lease, apply the staged work with
     // the resolutions on the journal entry, clear the resolved goals' records,
     // persist the failed goals, un-park, and record the goals the commit opened.
     // Shared by `done` and the ephemeral end-of-input finish.
     fn commit_open(&self, o: &mut OpenBatch) -> Value {
-        let mut s = Store::load(&self.out);
-        if o.invalidated || s.status.generation != o.session.snapshot.status.generation {
-            o.invalidated = true;
-            return Self::stale_chat_batch();
+        // A configuration write since the batch opened: refuse once, so the agent checks
+        // its work against the new document sets; the next finish commits.
+        let config = self.current_project().config_hash;
+        if !o.config_hash.is_empty() && o.config_hash != config {
+            o.config_hash = config;
+            return json!({"error": {"rule": "config-moved", "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/config-moved-4b2d9.md"))}});
         }
         let staged = o.session.staged.clone();
-        let commit = o.session.commit(o.rounds, None);
+        let mut commit = o.session.commit(o.rounds, None);
         let resolved_ids: Vec<String> = commit.resolved.iter().map(|r| r.goal.clone()).collect();
+        let since = o.session.snapshot.status.generation;
         let (parsed, _) = crate::reconcile::parse_all(&self.current_project());
         let mut reply = json!({"committed": true, "batch": o.id, "applied": 0});
         let mut generation = None;
-        // A zero-mutation batch with resolutions still commits: the journal is where
-        // a resolution's justification lives (docs/compiler/graph.md#journal).
-        if !staged.is_empty() || !commit.resolved.is_empty() {
-            let report = s.apply_with_docs(staged, &commit, &parsed);
+        // Commits are the only synchronization: a changeset staged against an older
+        // generation rebases onto what landed since, or reports the conflicts and
+        // stays open on the current generation. A writer landing between the check
+        // and the commit makes the store refuse `store-moved`, and the check runs
+        // again. Mirrors docs/compiler/graph.md#commit-conflicts.
+        let mut s = Store::load(&self.out);
+        for attempt in 0.. {
+            if s.status.generation != since {
+                let conflicts = self.commit_conflicts(&s, since, o, &staged, &resolved_ids);
+                if !conflicts.is_empty() {
+                    let drop_ops: BTreeSet<usize> =
+                        conflicts.iter().filter_map(|c| c.staged).collect();
+                    let drop_goals: BTreeSet<String> = conflicts
+                        .iter()
+                        .filter(|c| c.kind == "goal")
+                        .map(|c| c.id.clone())
+                        .collect();
+                    o.session.rebase_onto(s, &drop_ops, &drop_goals);
+                    return json!({"error": {
+                        "rule": "commit-conflict",
+                        "message": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/commit-conflict-7c1e4.md")),
+                        "conflicts": conflicts,
+                        "generation": o.session.snapshot.status.generation,
+                        "stillStaged": o.session.staged.len(),
+                    }});
+                }
+                commit.rebased_from = Some(since);
+            }
+            // A zero-mutation batch with resolutions still commits: the journal is where
+            // a resolution's justification lives (docs/compiler/graph.md#journal).
+            if staged.is_empty() && commit.resolved.is_empty() {
+                break;
+            }
+            let report = s.apply_with_docs(staged.clone(), &commit, &parsed);
+            if report.skipped.len() == 1
+                && report.skipped[0].starts_with("store-moved")
+                && attempt < 4
+            {
+                s = Store::load(&self.out);
+                continue;
+            }
             if !report.skipped.is_empty() {
-                o.invalidated = true;
                 return json!({"error":{"rule":"commit-skipped","message":report.skipped.join("; ")}});
             }
             generation = Some(report.generation);
             reply["applied"] = json!(report.applied);
             reply["generation"] = json!(report.generation);
+            if let Some(from) = commit.rebased_from {
+                reply["rebasedFrom"] = json!(from);
+            }
+            break;
         }
         o.session.staged.clear();
-        crate::control::release_lease(&self.out, &o.id);
+        crate::control::release_lease(&self.out, &o.id, &self.worker_id());
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(""));
         }
@@ -633,28 +733,34 @@ impl McpServer {
         reply
     }
 
-    pub(super) fn stale_chat_batch() -> Value {
-        json!({"error":{"rule":"batch-stale","message":include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/chat-batch-stale.md"))}})
-    }
-
     // End of input with an open batch: the agent's session ended without the
     // finishing call. Valid staged work still lands, under the same gates the budget
     // path uses. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     pub(super) fn eof_finish(&self) {
+        // Every open batch finishes, the parked ones first.
+        let parked: Vec<String> = self.parked.lock().unwrap().keys().cloned().collect();
+        for id in parked {
+            let batch = self.parked.lock().unwrap().remove(&id);
+            if let Some(batch) = batch {
+                let previous = self.open.lock().unwrap().replace(batch);
+                self.eof_finish_active();
+                if let Some(previous) = previous {
+                    *self.open.lock().unwrap() = Some(previous);
+                }
+            }
+        }
+        self.eof_finish_active();
+    }
+
+    fn eof_finish_active(&self) {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else { return };
-        if o.invalidated
-            || crate::store::read_generation(&self.out) != o.session.snapshot.status.generation
-        {
-            crate::control::release_lease(&self.out, &o.id);
-            return;
-        }
         if o.session
             .finish_implicit("(implicit: the agent session ended)")
         {
             let reply = self.commit_open(&mut o);
             if !reply["error"].is_null() {
-                crate::control::release_lease(&self.out, &o.id);
+                crate::control::release_lease(&self.out, &o.id, &self.worker_id());
                 return;
             }
             self.trace.event(crate::session::TraceEvent::SessionDone {
@@ -666,7 +772,7 @@ impl McpServer {
                 summary: String::new(),
             });
         } else {
-            crate::control::release_lease(&self.out, &o.id);
+            crate::control::release_lease(&self.out, &o.id, &self.worker_id());
         }
     }
 
@@ -678,7 +784,7 @@ impl McpServer {
         let Some(o) = open.take() else {
             return json!({"error": {"rule": "no-open-batch", "message": "no batch is open"}});
         };
-        crate::control::release_lease(&self.out, &o.id);
+        crate::control::release_lease(&self.out, &o.id, &self.worker_id());
         if let Some(h) = self.worker.lock().unwrap().as_mut() {
             h.refresh(Some(""));
         }

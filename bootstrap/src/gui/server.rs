@@ -3,8 +3,8 @@
 // jazyk.dev (docs/frontends/gui.md#serving).
 use super::state::SharedState;
 use super::{
-    agents, api, board_api, card_api, chat, deliverable, diff, docs, events, facts, jobs, lsp_ws,
-    outfiles, product, projfiles, views_api,
+    agent_tree, agents, api, board_api, card_api, chat, deliverable, diff, docs, events, facts,
+    jobs, lsp_ws, outfiles, product, projfiles, views_api,
 };
 use axum::extract::{Request, State};
 use axum::http::{header, HeaderName, HeaderValue, Method, StatusCode};
@@ -154,6 +154,7 @@ fn api_router(st: SharedState) -> Router {
 
 fn api_routes() -> Router<SharedState> {
     let api = Router::new()
+        .route("/agent-tree", get(agent_tree::agent_tree))
         .route("/agents", get(agents::list))
         .route("/agents/selections", post(agents::select))
         .route("/agents/setup", post(agents::setup))

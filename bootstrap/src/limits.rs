@@ -136,6 +136,20 @@ fn agent_rounds_from(value: Option<&str>) -> u32 {
         .max(1)
 }
 
+// The store's commit lock: the longest a writer waits before refusing `store-busy`,
+// and the hold past which a commit is reported. Mirrors docs/compiler/graph.md#concurrency.
+pub const STORE_LOCK_WAIT_SECS: u64 = 30;
+pub const STORE_LOCK_HOLD_SECS: u64 = 60;
+
+// Sub-agents of Jazyk's own agents (docs/frontends/subagents.md#limits): the deepest
+// tree, the running children of one conversation, the running sub-agents of one
+// agent process or engine, and the bounds of a wait for them.
+pub const AGENT_MAX_DEPTH: u32 = 3;
+pub const AGENT_MAX_CHILDREN: usize = 4;
+pub const AGENT_MAX_RUNNING: usize = 8;
+pub const AGENT_WAIT_DEFAULT_MS: u64 = 60_000;
+pub const AGENT_WAIT_MAX_MS: u64 = 300_000;
+
 // Also bounds a single reply containing many invalid calls outside a graph batch.
 pub const AGENT_TOOL_ERROR_LIMIT: u32 = 20;
 pub const SESSION_MUTATIONS: usize = 1024;
@@ -159,6 +173,11 @@ pub const BUILD_SESSION_FLOOR: usize = 64;
 // Consecutive zero-token session failures that stop a build early: an endpoint
 // answering only errors must not grind the session cap into futile attempts.
 pub const ENDPOINT_BREAKER: usize = 5;
+// Sessions of one executor profile a build runs at once when no setting names a count:
+// a hosted endpoint serves several, a model on this machine one well.
+// Mirrors docs/compiler/project-settings.md#acp.
+pub const MAX_SESSIONS_DEFAULT: usize = 4;
+pub const MAX_SESSIONS_LOOPBACK: usize = 1;
 // The times one goal may be resolved and re-opened with the same change in one build
 // before it parks: a record the commit recomputes while its condition holds would
 // otherwise re-open the identical goal after every session until the build cap.

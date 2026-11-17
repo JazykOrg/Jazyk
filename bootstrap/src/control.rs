@@ -1,5 +1,5 @@
 // The control plane: workflow modes and releases (control.yaml), the worker registry
-// (workers/), and task leases (leases/), all in the out directory so every consumer
+// (workers/), and open work (open/), all in the out directory so every consumer
 // reads the same intent the same way the queue is the same everywhere.
 // Mirrors docs/compiler/control-plane.md.
 use crate::project::Project;
@@ -13,9 +13,9 @@ fn now() -> u64 {
 
 // A worker file older than this (seconds since its heartbeat) is stale and swept.
 const WORKER_STALE_SECS: u64 = 90;
-// A lease lives this long unless refreshed by activity on the open task.
+// An open entry lives this long unless refreshed by activity on the open task.
 pub const LEASE_TTL_SECS: u64 = 120;
-// The internal loop's coarse claim: one lease for a whole run.
+// The task name of an internal build run's entry.
 pub const BUILD_LEASE: &str = "build";
 
 // ---------------------------------------------------------------------------
@@ -293,9 +293,13 @@ pub fn workers(out: &Path) -> Vec<Worker> {
 }
 
 // ---------------------------------------------------------------------------
-// leases/: exclusive claims on tasks.
+// open/: what each worker has open. Information only: nothing claims work and
+// nothing refuses on these entries; commits are the only synchronization.
+// Mirrors docs/compiler/control-plane.md#workers-and-open-work.
 
-#[derive(Serialize, Deserialize, Clone)]
+// One worker's open task: a goal batch, a ledger row, or a build run. Several workers
+// may have the same task open at once; each has its own entry.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Lease {
     pub task: String,
     pub worker: String,
@@ -303,19 +307,18 @@ pub struct Lease {
     pub claim_id: String,
     pub claimed_at: u64,
     pub expires_at: u64,
-    // The goal ids a batch lease holds, so the board renders claimedBy per goal.
-    // Mirrors docs/compiler/control-plane.md#workers-and-leases.
+    // The goal ids an open batch holds, so the board renders openBy per goal.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub goals: Vec<String>,
 }
 
-fn leases_dir(out: &Path) -> PathBuf {
-    crate::layout::leases_dir(out)
+fn open_dir(out: &Path) -> PathBuf {
+    crate::layout::open_dir(out)
 }
 
-// Injective file-name encoding for lease ids: alphanumerics, `-`, and `.` stand as
-// they are; everything else (`:`, `/`, `%` included) percent-encodes, so two distinct
-// ids never share a file.
+// Injective file-name encoding: alphanumerics, `-`, and `.` stand as they are;
+// everything else (`:`, `/`, `%`, `~` included) percent-encodes, so two distinct ids
+// never share a file and `~` can join the task and the worker.
 pub(crate) fn encode_lease_id(task: &str) -> String {
     let mut s = String::with_capacity(task.len());
     for b in task.bytes() {
@@ -345,11 +348,15 @@ pub(crate) fn decode_lease_id(safe: &str) -> Option<String> {
     String::from_utf8(out).ok()
 }
 
-fn lease_file(out: &Path, task: &str) -> PathBuf {
-    leases_dir(out).join(format!("{}.yaml", encode_lease_id(task)))
+fn entry_file(out: &Path, task: &str, worker: &str) -> PathBuf {
+    open_dir(out).join(format!(
+        "{}~{}.yaml",
+        encode_lease_id(task),
+        encode_lease_id(worker)
+    ))
 }
 
-/// A protected receipt for one execution's claim. Expiry may be refreshed.
+/// A protected receipt for one execution's own entry. Expiry may be refreshed.
 #[derive(Serialize, Deserialize, Clone)]
 pub(crate) struct OwnedLease {
     pub out: PathBuf,
@@ -361,31 +368,26 @@ pub(crate) fn owned_lease(out: &Path, task: &str, worker: &str) -> Option<OwnedL
         return crate::session_recovery::owned_claim(out, task)
             .filter(|claim| claim.lease.worker == worker);
     }
-    let lease = read_lease(&lease_file(out, task))?;
+    let lease = read_lease(&entry_file(out, task, worker))?;
     (lease.task == task && lease.worker == worker).then(|| OwnedLease {
         out: out.into(),
         lease,
     })
 }
 
-/// A restored session may claim only a slot released by its protected receipts.
+/// A restored session opens its task again; another worker's entry never blocks it.
 pub(crate) fn claim_restored(
     out: &Path,
     task: &str,
     worker: &str,
     goals: &[String],
 ) -> Result<(), String> {
-    if crate::vfs::is_scoped() {
-        if let Some(current) = read_lease(&lease_file(out, task)) {
-            return Err(current.worker);
-        }
-    }
     claim_goals(out, task, worker, goals)
 }
 
-/// Stop never sweeps leases or removes a replacement owner's claim.
+/// Removes the execution's own entry, never another's or a replacement's.
 pub(crate) fn release_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
-    let path = lease_file(&saved.out, &saved.lease.task);
+    let path = entry_file(&saved.out, &saved.lease.task, &saved.lease.worker);
     let Some(current) = read_lease(&path) else {
         return Ok(false);
     };
@@ -408,7 +410,7 @@ fn same_claim(saved: &Lease, current: &Lease) -> bool {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn refresh_owned_lease(saved: &OwnedLease) -> Result<bool, String> {
-    let path = lease_file(&saved.out, &saved.lease.task);
+    let path = entry_file(&saved.out, &saved.lease.task, &saved.lease.worker);
     let Some(mut current) = read_lease(&path) else {
         return Ok(false);
     };
@@ -431,8 +433,8 @@ fn nonce() -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-// Replace a lease file whole: a temporary file beside it, then a rename, so a reader
-// never sees half a lease. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+// Replace an entry whole: a temporary file beside it, then a rename, so a reader never
+// sees half an entry.
 fn write_lease_whole(path: &Path, text: &str) -> Result<(), String> {
     let tmp = path.with_extension(format!("{}.tmp", nonce()));
     crate::vfs::write(&tmp, text).map_err(|e| e.to_string())?;
@@ -442,82 +444,15 @@ fn write_lease_whole(path: &Path, text: &str) -> Result<(), String> {
     })
 }
 
-// Remove a lease file only if it still holds the text the caller read: the file
-// moves aside under a name of its own first, and a file that changed meanwhile (a
-// claimant's fresh lease) goes back. Ok(true) when the observed lease is gone.
-// Mirrors docs/compiler/control-plane.md#workers-and-leases.
-fn take_aside(path: &Path, observed: &str) -> bool {
-    let aside = path.with_extension(format!("{}.stale", nonce()));
-    if crate::vfs::rename(path, &aside).is_err() {
-        return false;
-    }
-    let moved = crate::vfs::read_to_string(&aside).unwrap_or_default();
-    if moved != observed {
-        // Someone else's lease: put it back unless a newer one took the slot.
-        crate::vfs::create_new(path, &moved).ok();
-        crate::vfs::remove_file(&aside).ok();
-        return false;
-    }
-    crate::vfs::remove_file(&aside).ok();
-    true
-}
-
-// A lease file whose text does not parse: a claim mid-write on a host without atomic
-// rename, or damage. It counts as held until it is older than the lease lifetime.
-fn unreadable_lease_lapsed(path: &Path) -> bool {
-    let Ok(meta) = crate::vfs::entry_metadata(path) else {
-        return true;
-    };
-    let modified = meta
-        .modified()
-        .ok()
-        .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    now().saturating_sub(modified) > LEASE_TTL_SECS
-}
-
-// Claims and sweeps that may take a lease over run one at a time: `.leases.lock`
-// beside `leases/`, an advisory lock the operating system releases with its holder.
-// Without it a claimant that found the slot empty while another moved a fresh lease
-// aside could win beside the lease's owner. An in-memory tree belongs to one thread
-// and takes no lock. Mirrors docs/compiler/control-plane.md#workers-and-leases.
-struct TakeoverLock {
-    #[cfg(not(target_arch = "wasm32"))]
-    _file: Option<std::fs::File>,
-}
-
-fn takeover_lock(out: &Path) -> TakeoverLock {
-    #[cfg(not(target_arch = "wasm32"))]
-    if !crate::vfs::is_scoped() && crate::store::newer_version(out).is_none() {
-        crate::vfs::create_dir_all(crate::layout::local_dir(out)).ok();
-        let file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(crate::layout::leases_lock_file(out))
-            .ok()
-            .filter(|f| fs2::FileExt::lock_exclusive(f).is_ok());
-        return TakeoverLock { _file: file };
-    }
-    let _ = out;
-    TakeoverLock {
-        #[cfg(not(target_arch = "wasm32"))]
-        _file: None,
-    }
-}
-
-// Claim a task. Create-new semantics decide the winner; an expired lease is
-// reclaimable. Err carries the live holder.
+// Open a task for this worker. Never refused for another worker's sake.
 pub fn claim(out: &Path, task: &str, worker: &str) -> Result<(), String> {
     claim_goals(out, task, worker, &[])
 }
 
-// Claim a goal batch: the lease names the goals it holds, so the board shows
-// claimedBy on each. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+// Open a goal batch: the entry names the goals, so the board shows openBy on each.
+// Mirrors docs/compiler/control-plane.md#workers-and-open-work.
 pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Result<(), String> {
-    // A newer store takes no lease (docs/compiler/graph.md#store-version).
+    // A newer store records nothing (docs/compiler/graph.md#store-version).
     if let Some(why) = crate::store::newer_store(out) {
         return Err(why);
     }
@@ -525,25 +460,7 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
     getrandom::fill(&mut nonce)
         .map_err(|error| format!("Cannot mint control claim identity: {error}"))?;
     let claim_id = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
-    crate::vfs::create_dir_all(leases_dir(out)).ok();
-    let path = lease_file(out, task);
-    let _takeover = takeover_lock(out);
-    if let Ok(text) = crate::vfs::read_to_string(&path) {
-        match serde_norway::from_str::<Lease>(&text) {
-            // Re-entrant for the same worker: a retry after its own failed attempt
-            // refreshes the claim instead of waiting out its own lease.
-            Ok(l) if l.expires_at > now() && l.worker != worker => return Err(l.worker),
-            Err(_) if !unreadable_lease_lapsed(&path) => return Err("another worker".into()),
-            _ => {}
-        }
-        // Take over only the lease that was read: a claimant that won the slot
-        // meanwhile keeps it.
-        if !take_aside(&path, &text) {
-            return Err(read_lease(&path)
-                .map(|l| l.worker)
-                .unwrap_or_else(|| "another worker".into()));
-        }
-    }
+    crate::vfs::create_dir_all(open_dir(out)).ok();
     let lease = Lease {
         task: task.to_string(),
         worker: worker.to_string(),
@@ -553,23 +470,16 @@ pub fn claim_goals(out: &Path, task: &str, worker: &str, goals: &[String]) -> Re
         goals: goals.to_vec(),
     };
     let text = serde_norway::to_string(&lease).map_err(|e| e.to_string())?;
-    match crate::vfs::create_new(&path, &text) {
-        Ok(()) => {
-            crate::session_recovery::claimed(OwnedLease {
-                out: out.into(),
-                lease,
-            });
-            Ok(())
-        }
-        // Lost the race to another claimant between the check and the create.
-        Err(_) => Err(read_lease(&path)
-            .map(|l| l.worker)
-            .unwrap_or_else(|| "another worker".into())),
-    }
+    write_lease_whole(&entry_file(out, task, worker), &text)?;
+    crate::session_recovery::claimed(OwnedLease {
+        out: out.into(),
+        lease,
+    });
+    Ok(())
 }
 
-pub fn refresh_lease(out: &Path, task: &str) {
-    let path = lease_file(out, task);
+pub fn refresh_lease(out: &Path, task: &str, worker: &str) {
+    let path = entry_file(out, task, worker);
     if let Some(mut l) = read_lease(&path) {
         l.expires_at = now() + LEASE_TTL_SECS;
         if let Ok(text) = serde_norway::to_string(&l) {
@@ -578,14 +488,14 @@ pub fn refresh_lease(out: &Path, task: &str) {
     }
 }
 
-pub fn release_lease(out: &Path, task: &str) {
+pub fn release_lease(out: &Path, task: &str, worker: &str) {
     if crate::vfs::is_scoped() && crate::session_recovery::active() {
         if let Some(claim) = crate::session_recovery::owned_claim(out, task) {
             let _ = release_owned_lease(&claim);
         }
         return;
     }
-    if crate::vfs::remove_file(lease_file(out, task)).is_ok() {
+    if crate::vfs::remove_file(entry_file(out, task, worker)).is_ok() {
         crate::session_recovery::released(out, task);
     }
 }
@@ -594,56 +504,62 @@ fn read_lease(path: &Path) -> Option<Lease> {
     serde_norway::from_str(&crate::vfs::read_to_string(path).ok()?).ok()
 }
 
-// The live leases by task. Expired files are swept.
-pub fn leases(out: &Path) -> BTreeMap<String, Lease> {
-    let mut m = BTreeMap::new();
-    let Ok(entries) = crate::vfs::read_dir(leases_dir(out)) else {
-        return m;
+// Every live open entry, oldest first. Expired and unreadable files are swept: an
+// entry is information, so a dead worker's simply disappears.
+pub fn leases(out: &Path) -> Vec<Lease> {
+    let mut v = Vec::new();
+    let Ok(entries) = crate::vfs::read_dir(open_dir(out)) else {
+        return v;
     };
     for e in entries.flatten() {
         let path = e.path();
-        // Temporary and moved-aside files are a writer's, never leases.
+        // Temporary files are a writer's, never entries.
         if path.extension().is_none_or(|x| x != "yaml") {
             continue;
         }
-        let Ok(text) = crate::vfs::read_to_string(&path) else {
-            continue;
-        };
-        let Ok(l) = serde_norway::from_str::<Lease>(&text) else {
-            if unreadable_lease_lapsed(&path) {
-                let _takeover = takeover_lock(out);
-                take_aside(&path, &text);
+        match read_lease(&path) {
+            Some(l) if l.expires_at > now() => v.push(l),
+            Some(_) => {
+                crate::vfs::remove_file(&path).ok();
             }
-            continue;
-        };
-        if l.expires_at <= now() {
-            let _takeover = takeover_lock(out);
-            take_aside(&path, &text);
-            continue;
+            None => {}
         }
-        m.insert(l.task.clone(), l);
     }
-    m
+    v.sort_by(|a, b| a.claimed_at.cmp(&b.claimed_at).then(a.task.cmp(&b.task)));
+    v
 }
 
-// The live build lease, when the internal loop holds one.
-pub fn build_lease(out: &Path) -> Option<Lease> {
-    leases(out).remove(BUILD_LEASE)
+// The build runs open right now.
+pub fn builds(out: &Path) -> Vec<Lease> {
+    leases(out)
+        .into_iter()
+        .filter(|l| l.task == BUILD_LEASE)
+        .collect()
 }
 
-// The internal loop's entry contract: refuse while an agent is mid-task, then hold
-// the coarse build lease for the run and record the implicit release (a typed command
-// or a clicked button is an approval). A background thread heartbeats the lease so a
-// long build never loses it; drop frees it. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+// Whether the build run with this token is open.
+pub fn owns_build(out: &Path, token: &str) -> bool {
+    builds(out).iter().any(|l| l.worker == token)
+}
+
+// The internal loop's run: registered as an open `build` entry while it lives, with a
+// heartbeat, and with the implicit release recorded (a typed command or a clicked
+// button is an approval). It claims nothing: agents, other builds, and people work
+// beside it. Mirrors docs/compiler/control-plane.md#concurrent-work.
 pub struct BuildGuard {
-    _project_lock: Option<crate::document_sets::ProjectLock>,
     claim: OwnedLease,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stage: String,
 }
 
 impl BuildGuard {
     pub fn token(&self) -> &str {
         &self.claim.lease.worker
+    }
+
+    // The command the build runs for (`compile`, `generate`).
+    pub fn stage(&self) -> &str {
+        &self.stage
     }
 }
 
@@ -652,7 +568,7 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
         return Err(error.clone());
     }
     // A build, a generation, a verification, or a decompile on a newer store stops
-    // here, before any lock, lease, or session (docs/compiler/graph.md#store-version).
+    // here, before any session (docs/compiler/graph.md#store-version).
     if let Some(why) = crate::store::newer_store(out) {
         return Err(why);
     }
@@ -662,36 +578,19 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
     if proj.set_id.is_none() && proj.set_docs.is_some() {
         return Err("choose a document set: a build works on one set, never on the project's shared .jazyk/".into());
     }
-    let project_lock = if proj.set_id.is_some() {
-        Some(
-            crate::document_sets::ProjectLock::acquire(&proj.root, "project.lock")
-                .map_err(|e| e.1)?,
-        )
-    } else {
-        None
-    };
-    let held = task_leases(out);
-    if let Some((task, l)) = held.iter().next() {
-        return Err(format!(
-            "worker `{}` holds task `{}`; wait for it to finish or abandon",
-            l.worker, task
-        ));
-    }
     let token = format!(
         "internal-{}-{}",
         crate::sys::process_id(),
         crate::document_sets::mint_id()
     );
-    claim(out, BUILD_LEASE, &token)
-        .map_err(|holder| format!("a build is already running (lease held by `{}`)", holder))?;
-    let claim = owned_lease(out, BUILD_LEASE, &token)
-        .ok_or("the build lease lost its ownership receipt")?;
+    claim(out, BUILD_LEASE, &token)?;
+    let claim =
+        owned_lease(out, BUILD_LEASE, &token).ok_or("the build run lost its ownership receipt")?;
     release(proj, out, Some(stage));
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let (heartbeat_claim, stop2) = (claim.clone(), stop.clone());
-    // The heartbeat keeps a long build's lease fresh so a watchdog does not reclaim
-    // it. A browser tab runs one backend on one thread, with nothing to reclaim it
-    // and no thread to spare (docs/frontends/wasm.md#the-seams).
+    // The heartbeat keeps a long build's entry fresh. A browser tab runs one backend on
+    // one thread, with no thread to spare (docs/frontends/wasm.md#the-seams).
     #[cfg(target_arch = "wasm32")]
     let _ = (&heartbeat_claim, &stop2);
     #[cfg(not(target_arch = "wasm32"))]
@@ -709,9 +608,9 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
         });
     }
     Ok(BuildGuard {
-        _project_lock: project_lock,
         claim,
         stop,
+        stage: stage.to_string(),
     })
 }
 
@@ -722,15 +621,175 @@ impl Drop for BuildGuard {
     }
 }
 
-// Any live per-task lease (not the build lease): an agent is mid-task.
-pub fn task_leases(out: &Path) -> BTreeMap<String, Lease> {
-    let mut m = leases(out);
-    m.remove(BUILD_LEASE);
-    m
+// The open entries other than build runs: agents mid-task.
+pub fn task_leases(out: &Path) -> Vec<Lease> {
+    leases(out)
+        .into_iter()
+        .filter(|l| l.task != BUILD_LEASE)
+        .collect()
 }
 
-#[cfg(test)]
-mod lease_race_tests;
+// ---------------------------------------------------------------------------
+// runs/: one running build's progress per file, so two builds on one set never
+// overwrite each other's. Mirrors docs/compiler/graph.md#a-builds-progress.
+
+// One batch a build has a session open on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InFlightBatch {
+    pub id: String,
+    pub goals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    pub class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<u8>,
+    pub started_at: u64,
+}
+
+impl InFlightBatch {
+    pub fn new(
+        id: &str,
+        goals: Vec<String>,
+        executor: Option<String>,
+        class: &str,
+        tier: Option<u8>,
+    ) -> InFlightBatch {
+        InFlightBatch {
+            id: id.to_string(),
+            goals,
+            executor,
+            class: class.to_string(),
+            tier,
+            started_at: now(),
+        }
+    }
+}
+
+// One goal the build parked so far, with the road that ran out.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ParkedLine {
+    pub goal: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProgress {
+    pub run: String,
+    pub command: String,
+    pub pid: u32,
+    pub started_at: u64,
+    pub updated_at: u64,
+    #[serde(default)]
+    pub sessions: u32,
+    #[serde(default)]
+    pub tokens: u64,
+    #[serde(default)]
+    pub in_flight: Vec<InFlightBatch>,
+    #[serde(default)]
+    pub parked: Vec<ParkedLine>,
+}
+
+// A running build's file: written at the start and whenever a session starts or ends,
+// deleted when the handle drops.
+pub struct RunRecord {
+    out: PathBuf,
+    progress: RunProgress,
+}
+
+impl RunRecord {
+    pub fn start(out: &Path, run: &str, command: &str) -> RunRecord {
+        let r = RunRecord {
+            out: out.to_path_buf(),
+            progress: RunProgress {
+                run: run.to_string(),
+                command: command.to_string(),
+                pid: crate::sys::process_id(),
+                started_at: now(),
+                updated_at: now(),
+                ..Default::default()
+            },
+        };
+        r.write();
+        r
+    }
+
+    // The build's worker id, which names the file.
+    pub fn run(&self) -> &str {
+        &self.progress.run
+    }
+
+    pub fn update(
+        &mut self,
+        sessions: u32,
+        tokens: u64,
+        in_flight: Vec<InFlightBatch>,
+        parked: &[crate::model::ParkedGoal],
+    ) {
+        self.progress.sessions = sessions;
+        self.progress.tokens = tokens;
+        self.progress.in_flight = in_flight;
+        self.progress.parked = parked
+            .iter()
+            .map(|p| ParkedLine {
+                goal: p.goal.id.clone(),
+                reason: p.reason.clone().unwrap_or_default(),
+            })
+            .collect();
+        self.progress.updated_at = now();
+        self.write();
+    }
+
+    fn write(&self) {
+        // A newer store is never written (docs/compiler/graph.md#store-version).
+        if crate::store::newer_version(&self.out).is_some() {
+            return;
+        }
+        let path = crate::layout::run_progress_file(&self.out, &self.progress.run);
+        crate::store::write_local_yaml(&path, &self.progress).ok();
+    }
+}
+
+impl Drop for RunRecord {
+    fn drop(&mut self) {
+        crate::vfs::remove_file(crate::layout::run_progress_file(
+            &self.out,
+            &self.progress.run,
+        ))
+        .ok();
+    }
+}
+
+// Every running build of the set, oldest first. A file whose build has no live open
+// `build` entry is stale and swept: its process died without deleting it.
+pub fn runs(out: &Path) -> Vec<RunProgress> {
+    let mut v = Vec::new();
+    let Ok(entries) = crate::vfs::read_dir(crate::layout::runs_dir(out)) else {
+        return v;
+    };
+    let live: Vec<String> = builds(out).into_iter().map(|l| l.worker).collect();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "yaml") {
+            continue;
+        }
+        let Some(run) = crate::vfs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_norway::from_str::<RunProgress>(&t).ok())
+        else {
+            continue;
+        };
+        if !live.contains(&run.run) {
+            crate::vfs::remove_file(&path).ok();
+            continue;
+        }
+        v.push(run);
+    }
+    v.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.run.cmp(&b.run)));
+    v
+}
 
 #[cfg(test)]
 mod tests {
@@ -869,7 +928,7 @@ mod tests {
             .err()
             .unwrap();
         assert!(error.starts_with("choose a document set"), "{}", error);
-        assert!(build_lease(out).is_none());
+        assert!(builds(out).is_empty());
     }
 
     #[test]
@@ -882,7 +941,7 @@ mod tests {
         drop(first);
         let replacement = begin_internal_build(&project, out, "generate").unwrap();
         assert_ne!(old.lease.worker, replacement.token());
-        let path = lease_file(out, BUILD_LEASE);
+        let path = entry_file(out, BUILD_LEASE, replacement.token());
         let before = crate::vfs::read(&path).unwrap();
         assert!(!refresh_owned_lease(&old).unwrap());
         assert!(!release_owned_lease(&old).unwrap());
@@ -909,7 +968,7 @@ mod tests {
         claim_goals(out, "batch", "internal-1", &goals).unwrap();
         let saved = owned_lease(out, "batch", "internal-1").unwrap();
         claim_goals(out, "batch", "internal-1", &goals).unwrap();
-        let path = lease_file(out, "batch");
+        let path = entry_file(out, "batch", "internal-1");
         let mut replacement = read_lease(&path).unwrap();
         replacement.claimed_at = saved.lease.claimed_at;
         assert_ne!(replacement.claim_id, saved.lease.claim_id);
@@ -922,7 +981,7 @@ mod tests {
         assert!(!release_owned_lease(&legacy).unwrap());
         assert_eq!(crate::vfs::read(&path).unwrap(), before);
         let current = owned_lease(out, "batch", "internal-1").unwrap();
-        refresh_lease(out, "batch");
+        refresh_lease(out, "batch", "internal-1");
         assert!(
             release_owned_lease(&current).unwrap(),
             "Expiry refresh does not replace ownership"
@@ -932,7 +991,7 @@ mod tests {
         replacement.claim_id.push('f');
         let foreign = serde_norway::to_string(&replacement).unwrap();
         crate::vfs::write(&path, &foreign).unwrap();
-        release_lease(out, "batch");
+        release_lease(out, "batch", "internal-1");
         assert_eq!(
             crate::vfs::read_to_string(&path).unwrap(),
             foreign,
@@ -940,53 +999,37 @@ mod tests {
         );
     }
 
-    // A takeover moves aside only the lease it read: a fresh lease another claimant
-    // wrote meanwhile goes back, and the late claimant loses. An unparseable lease
-    // counts as held until it is older than the lease lifetime, and a refresh leaves
-    // no temporary file behind. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+    // Opening is never exclusive: two workers open the same task, each with its own
+    // entry; an expired entry is swept, and closing removes only the worker's own.
+    // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
     #[test]
-    fn lease_takeover_moves_aside_only_the_lease_it_read() {
+    fn two_workers_open_the_same_task_and_nothing_refuses() {
         let out = tmp();
-        crate::vfs::create_dir_all(leases_dir(&out)).unwrap();
-        let path = lease_file(&out, "batch");
-        let lease = |worker: &str, expires_at: u64| Lease {
-            task: "batch".into(),
-            worker: worker.into(),
-            claim_id: format!("{}-id", worker),
-            claimed_at: 1,
-            expires_at,
-            goals: Vec::new(),
-        };
-        let expired = serde_norway::to_string(&lease("dead", 1)).unwrap();
-        let fresh = serde_norway::to_string(&lease("w1", now() + LEASE_TTL_SECS)).unwrap();
-        // The slot holds w1's fresh lease, but a late claimant read the expired one.
-        crate::vfs::write(&path, &fresh).unwrap();
-        assert!(!take_aside(&path, &expired));
-        assert_eq!(
-            crate::vfs::read_to_string(&path).unwrap(),
-            fresh,
-            "the fresh lease goes back"
-        );
-        assert_eq!(claim(&out, "batch", "w2"), Err("w1".to_string()));
-        // The expired lease itself is taken over.
-        crate::vfs::write(&path, &expired).unwrap();
-        assert!(claim(&out, "batch", "w2").is_ok());
-        assert_eq!(read_lease(&path).map(|l| l.worker), Some("w2".into()));
-        refresh_lease(&out, "batch");
-        let names: Vec<String> = crate::vfs::read_dir(leases_dir(&out))
-            .unwrap()
-            .flatten()
-            .map(|e| e.file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names.len(), 1, "{:?}", names);
-        // A lease that does not parse and was written just now is held, not swept.
-        crate::vfs::write(&path, "task: [half").unwrap();
+        assert!(claim_goals(&out, "b1-1", "w1", &["g:a".into()]).is_ok());
+        assert!(claim_goals(&out, "b1-1", "w2", &["g:a".into()]).is_ok());
+        let open = leases(&out);
+        assert_eq!(open.len(), 2);
+        assert!(open
+            .iter()
+            .all(|l| l.task == "b1-1" && l.goals == vec!["g:a".to_string()]));
+        release_lease(&out, "b1-1", "w1");
+        let open = leases(&out);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].worker, "w2");
+        // An expired entry is information that aged out: swept on read.
+        let path = entry_file(&out, "b1-1", "w2");
+        let mut l = read_lease(&path).unwrap();
+        l.expires_at = 1;
+        crate::vfs::write(&path, serde_norway::to_string(&l).unwrap()).unwrap();
         assert!(leases(&out).is_empty());
-        assert!(crate::vfs::exists(&path), "a fresh unparseable lease stays");
-        assert_eq!(
-            claim(&out, "batch", "w3"),
-            Err("another worker".to_string())
-        );
+        assert!(!crate::vfs::exists(&path));
+        // Builds coexist with each other and with agents.
+        claim(&out, BUILD_LEASE, "internal-a").unwrap();
+        claim(&out, BUILD_LEASE, "internal-b").unwrap();
+        claim(&out, "req:x", "agent-1").unwrap();
+        assert_eq!(builds(&out).len(), 2);
+        assert!(owns_build(&out, "internal-b"));
+        assert_eq!(task_leases(&out).len(), 1);
         crate::vfs::remove_dir_all(&out).ok();
     }
 
@@ -1016,20 +1059,6 @@ mod tests {
         crate::vfs::remove_dir_all(&out).ok();
     }
 
-    #[test]
-    fn lease_claim_is_exclusive_then_reclaimable_after_release() {
-        let out = tmp();
-        assert!(claim(&out, "docs/a.md", "w1").is_ok());
-        assert_eq!(claim(&out, "docs/a.md", "w2"), Err("w1".to_string()));
-        release_lease(&out, "docs/a.md");
-        assert!(claim(&out, "docs/a.md", "w2").is_ok());
-        assert_eq!(
-            task_leases(&out).get("docs/a.md").map(|l| l.worker.clone()),
-            Some("w2".into())
-        );
-        crate::vfs::remove_dir_all(&out).ok();
-    }
-
     // The lease file name is injective: a goal id with `:` and `/` round-trips, and
     // two ids that differ only in those characters never share a file.
     #[test]
@@ -1048,8 +1077,11 @@ mod tests {
         let out = tmp();
         claim_goals(&out, "b3-1", "w1", &[id.to_string()]).unwrap();
         let all = leases(&out);
-        assert_eq!(all["b3-1"].goals, vec![id.to_string()]);
-        release_lease(&out, "b3-1");
+        assert_eq!(
+            all.iter().find(|l| l.task == "b3-1").unwrap().goals,
+            vec![id.to_string()]
+        );
+        release_lease(&out, "b3-1", "w1");
         assert!(leases(&out).is_empty());
         crate::vfs::remove_dir_all(&out).ok();
     }

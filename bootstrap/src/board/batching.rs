@@ -97,6 +97,31 @@ impl Board {
         self.batches = self.form_batches(store, proj);
     }
 
+    // The goals a build has in flight, by batch id, form no other batch, and their
+    // batch ids stay taken. Mirrors docs/compiler/reconciler.md#scheduling.
+    pub fn hold_in_flight(
+        &mut self,
+        in_flight: &BTreeMap<String, Vec<String>>,
+        store: &Store,
+        proj: &Project,
+    ) {
+        if in_flight.is_empty() {
+            return;
+        }
+        for (batch, ids) in in_flight {
+            for id in ids {
+                if self.goal(id).is_some() {
+                    self.readiness.insert(
+                        id.clone(),
+                        Ready::Blocked(format!("in flight in session {}", batch)),
+                    );
+                }
+            }
+        }
+        self.held_batches.extend(in_flight.keys().cloned());
+        self.batches = self.form_batches(store, proj);
+    }
+
     pub(super) fn form_batches(&self, store: &Store, proj: &Project) -> Vec<Batch> {
         let ready: Vec<&Goal> = self.ready_goals();
         // Generation runs leaf first over the relationships and the containment tree:

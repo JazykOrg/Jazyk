@@ -298,6 +298,7 @@ pub(crate) fn status_report(
         "version": s.version,
         "generation": s.generation,
         "verdict": s.verdict.to_string(),
+        "runs": crate::control::runs(&store.out),
         "board": {
             "open": counts.open,
             "compile": open_of("compile"),
@@ -333,6 +334,27 @@ pub(crate) fn render_status(r: &serde_json::Value) -> String {
         "verdict: {}\n",
         r["verdict"].as_str().unwrap_or("")
     ));
+    // One line per running build (docs/frontends/cli.md#jazyk-status).
+    for run in r["runs"].as_array().into_iter().flatten() {
+        let in_flight: Vec<&str> = run["inFlight"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| b["id"].as_str())
+            .collect();
+        s.push_str(&format!(
+            "running: {} {}, {} session(s), in flight: {}, {} parked\n",
+            run["command"].as_str().unwrap_or("build"),
+            run["run"].as_str().unwrap_or(""),
+            run["sessions"],
+            if in_flight.is_empty() {
+                "none".to_string()
+            } else {
+                in_flight.join(", ")
+            },
+            run["parked"].as_array().map_or(0, |p| p.len()),
+        ));
+    }
     let b = &r["board"];
     s.push_str(&format!(
         "board: {} open ({} compile, {} gc), {} blocked, {} parked, {} failed, {} optional{}\n",
@@ -643,8 +665,8 @@ pub(crate) fn preview_text(
         _ if board.gated.contains(&goal.id) => {
             "gated, awaiting release (`jazyk release`, or the GUI)".to_string()
         }
-        _ => match board.claimed.get(&goal.id) {
-            Some(w) => format!("claimed by {}", w),
+        _ => match board.open_by.get(&goal.id) {
+            Some(w) => format!("open by {}", w.join(", ")),
             None => "not scheduled in a ready batch".to_string(),
         },
     };

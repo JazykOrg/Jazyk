@@ -32,6 +32,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 use super::{
+    agents::AgentsOperation,
     provider::{ChannelProvider, DefaultModelHost, HostAction},
     *,
 };
@@ -54,19 +55,20 @@ const COMPACTION_CONTINUATION: &str = include_str!(concat!(
 ));
 
 #[derive(Clone)]
-struct Session {
-    conversation: Conversation,
+pub(super) struct Session {
+    pub(super) id: String,
+    pub(super) conversation: Conversation,
 }
 impl MachineSession for Session {
     fn id(&self) -> &str {
-        "jazyk"
+        &self.id
     }
     fn conversation(&self) -> Option<&Conversation> {
         Some(&self.conversation)
     }
 }
 
-enum Effect {
+pub(super) enum Effect {
     Conversation(ConversationEffect),
     Usage(ProviderUsage),
 }
@@ -303,6 +305,58 @@ pub async fn run_with_hosts(
     run_with_hosts_async(args, instructions, host, tools, recovery).await
 }
 
+/// A conversational run that offers the agent tools and runs its sub-agents
+/// (docs/compiler/agent-runtime.md#sub-agents).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_with_agents(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+    agents: &super::agents::AgentRun,
+) -> Stop {
+    drive_native(run_with_agents_async(
+        args,
+        instructions,
+        host,
+        tools,
+        recovery,
+        agents,
+    ))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub async fn run_with_agents(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+    agents: &super::agents::AgentRun,
+) -> Stop {
+    run_with_agents_async(args, instructions, host, tools, recovery, agents).await
+}
+
+pub async fn run_with_agents_async(
+    args: LoopArgs<'_>,
+    instructions: &str,
+    host: &mut dyn ModelHost,
+    tools: &mut dyn ToolHost,
+    recovery: &mut dyn Recovery,
+    agents: &super::agents::AgentRun,
+) -> Stop {
+    run_inner_async(
+        args,
+        instructions,
+        host,
+        Some(tools),
+        recovery,
+        Some(agents),
+    )
+    .await
+}
+
 #[cfg(target_arch = "wasm32")]
 pub async fn run_with_host(
     args: LoopArgs<'_>,
@@ -319,7 +373,7 @@ pub async fn run_with_host_async(
     host: &mut dyn ModelHost,
     recovery: &mut dyn Recovery,
 ) -> Stop {
-    run_inner_async(args, instructions, host, None, recovery).await
+    run_inner_async(args, instructions, host, None, recovery, None).await
 }
 
 pub async fn run_with_hosts_async(
@@ -329,7 +383,7 @@ pub async fn run_with_hosts_async(
     tools: &mut dyn ToolHost,
     recovery: &mut dyn Recovery,
 ) -> Stop {
-    run_inner_async(args, instructions, host, Some(tools), recovery).await
+    run_inner_async(args, instructions, host, Some(tools), recovery, None).await
 }
 
 async fn run_inner_async(
@@ -338,6 +392,7 @@ async fn run_inner_async(
     host: &mut dyn ModelHost,
     mut tools: Option<&mut dyn ToolHost>,
     recovery: &mut dyn Recovery,
+    agents: Option<&super::agents::AgentRun>,
 ) -> Stop {
     let mut state = match recovery.load().await {
         Ok(Some(state)) if state.version == 1 => state,
@@ -361,15 +416,55 @@ async fn run_inner_async(
         }
         state.pending_tool = None;
     }
-    let result = drive(
-        &mut args,
-        instructions,
-        host,
-        &mut tools,
-        recovery,
-        &mut state,
-    )
-    .await;
+    let operation = agents.map(|run| Arc::new(AgentsOperation::new(run.spec.tree.clone())));
+    let result = {
+        let driven = drive(
+            &mut args,
+            instructions,
+            host,
+            &mut tools,
+            recovery,
+            &mut state,
+            agents.zip(operation.as_ref()),
+        );
+        match agents {
+            // Sub-agent turns are polled beside the run on its owner thread.
+            Some(run) => {
+                let pool = run.pool_run();
+                futures::pin_mut!(driven, pool);
+                match futures::future::select(driven, pool).await {
+                    futures::future::Either::Left((stop, _)) => stop,
+                    futures::future::Either::Right(_) => unreachable!("the pool never ends"),
+                }
+            }
+            None => driven.await,
+        }
+    };
+    if let (Some(run), Some(operation)) = (agents, operation.as_ref()) {
+        // A run that stops for any reason stops its sub-agents; their turns end
+        // before the run reports (docs/frontends/subagents.md#cancellation).
+        if result != Stop::EndTurn {
+            run.spec.cancel.cancel();
+        }
+        run.pool_drain().await;
+        if !matches!(result, Stop::EndTurn | Stop::Suspended)
+            && !super::agents::owed(&state.conversation).is_empty()
+        {
+            preserve_interrupted_turn(&mut state);
+            let (events, _) = mpsc::unbounded_channel();
+            let emitter = Emitter::new(events, run.spec.cancel.clone());
+            let session = Session {
+                id: run.spec.id.clone(),
+                conversation: state.conversation.clone(),
+            };
+            for message in operation.finalize(&session, &emitter).await {
+                if let Some(input) = super::agents::delivered_input(&message) {
+                    (args.emit)(AgentEvent::Input(input));
+                }
+                state.conversation.push(message);
+            }
+        }
+    }
     if result == Stop::Cancelled {
         preserve_interrupted_turn(&mut state);
         if let Err(error) = checkpoint(recovery, &state, CheckpointPhase::Finished, None).await {
@@ -533,6 +628,17 @@ fn flush_deltas(
     Ok(())
 }
 
+// Whether the last message the model reads ends its turn. A result a tool call
+// already returned is recorded hidden from the model and does not count.
+fn turn_ended(conversation: &Conversation) -> bool {
+    conversation
+        .messages()
+        .iter()
+        .rev()
+        .find(|message| message.is_agent_visible())
+        .is_some_and(|last| operation::ends_turn(std::slice::from_ref(last)))
+}
+
 async fn drive(
     args: &mut LoopArgs<'_>,
     instructions: &str,
@@ -540,8 +646,17 @@ async fn drive(
     tools_host: &mut Option<&mut dyn ToolHost>,
     recovery: &mut dyn Recovery,
     state: &mut HarnessState,
+    agents: Option<(&super::agents::AgentRun, &Arc<AgentsOperation>)>,
 ) -> Stop {
     let mut live = LiveDeltas::default();
+    // One token for the whole run, so a sub-agent's token, a child of it, stops
+    // with the run (docs/compiler/agent-runtime.md#sub-agents).
+    let cancellation = agents
+        .map(|(run, _)| run.spec.cancel.clone())
+        .unwrap_or_default();
+    let session_id = agents
+        .map(|(run, _)| run.spec.id.clone())
+        .unwrap_or_else(|| args.label.clone());
     let config = ModelConfig::new(&args.llm.model)
         .with_temperature(args.llm.temperature.map(|t| t as f32))
         .with_max_tokens(Some(
@@ -596,7 +711,10 @@ async fn drive(
                 });
             }
         }
-        if operation::ends_turn(state.conversation.messages()) {
+        // A run whose sub-agents still owe results does not end its turn: the
+        // sub-agent operation waits for the next one (docs/frontends/subagents.md#results).
+        let owed = agents.is_some_and(|_| !super::agents::owed(&state.conversation).is_empty());
+        if turn_ended(&state.conversation) && !owed {
             let ledger_worker = !args.conversation
                 && args.tools.iter().any(|tool| tool.name == "done")
                 && args.tools.iter().any(|tool| {
@@ -633,7 +751,6 @@ async fn drive(
         }
         let (actions, mut requests) = mpsc::unbounded_channel();
         let (events, mut event_rx) = mpsc::unbounded_channel();
-        let cancellation = CancellationToken::new();
         let emitter = Emitter::new(events, cancellation.clone());
         let ordinal = Arc::new(AtomicU64::new(0));
         let provider = Arc::new(ChannelProvider {
@@ -648,7 +765,11 @@ async fn drive(
             },
             None => None,
         };
-        let current_tools = catalog.as_deref().unwrap_or(args.tools);
+        let mut current_tools = catalog.unwrap_or_else(|| args.tools.to_vec());
+        if let Some((run, _)) = agents {
+            run.catalog(&mut current_tools);
+        }
+        let current_tools = current_tools.as_slice();
         let definitions = match definitions(current_tools) {
             Ok(tools) => tools,
             Err(e) => return Stop::Error(e),
@@ -662,15 +783,18 @@ async fn drive(
             system: format!("{SYSTEM}\n\n{instructions}"),
             names: current_tools.iter().map(|t| t.name.clone()).collect(),
         };
-        let machine = StateMachine::new(
-            vec![
-                Step::Operation(Arc::new(policy)),
-                Step::Operation(Arc::new(tools)),
-                Step::Inference(Arc::new(inference)),
-            ],
-            cancellation.clone(),
-        );
+        let mut steps: Vec<Step<'_, Session, Effect>> = vec![
+            Step::Operation(Arc::new(policy)),
+            Step::Operation(Arc::new(tools)),
+            Step::Inference(Arc::new(inference)),
+        ];
+        // Last, so it runs only once the model ended its reply.
+        if let Some((_, operation)) = agents {
+            steps.push(Step::Operation(operation.clone()));
+        }
+        let machine = StateMachine::new(steps, cancellation.clone());
         let session = Session {
+            id: session_id.clone(),
             conversation: state.conversation.clone(),
         };
 
@@ -715,6 +839,7 @@ async fn drive(
                 state,
                 &cancellation,
                 &mut live,
+                agents.map(|(run, _)| run),
             )
             .await
             {
@@ -756,6 +881,7 @@ async fn drive(
                 state,
                 &cancellation,
                 &mut live,
+                agents.map(|(run, _)| run),
             )
             .await
             {
@@ -766,10 +892,16 @@ async fn drive(
         while let Ok(event) = event_rx.try_recv() {
             emit_gdk(args, event, &mut live);
         }
+        let stepped = !outcome.effects.is_empty();
         for effect in outcome.effects {
             match effect {
                 Effect::Usage(usage) => record_usage(args, state, usage),
                 Effect::Conversation(ConversationEffect::AppendMessage(message)) => {
+                    if agents.is_some() {
+                        if let Some(input) = super::agents::delivered_input(&message) {
+                            (args.emit)(AgentEvent::Input(input));
+                        }
+                    }
                     state.conversation.push(message)
                 }
                 Effect::Conversation(ConversationEffect::ReplaceConversation(conversation)) => {
@@ -795,6 +927,13 @@ async fn drive(
         }
         if outcome.status == RunStatus::Cancelled {
             return Stop::Cancelled;
+        }
+        // Nothing applied to an ended turn: no step can move it.
+        if !stepped && outcome.status == RunStatus::Yielded && turn_ended(&state.conversation) {
+            return match checkpoint(recovery, state, CheckpointPhase::Finished, None).await {
+                Ok(()) => Stop::EndTurn,
+                Err(error) => Stop::Error(error),
+            };
         }
     }
 }
@@ -826,6 +965,7 @@ async fn drive_future<F, T>(
     state: &mut HarnessState,
     cancellation: &CancellationToken,
     live: &mut LiveDeltas,
+    agents: Option<&super::agents::AgentRun>,
 ) -> Result<T, Stop>
 where
     F: std::future::Future<Output = Result<T>>,
@@ -840,7 +980,7 @@ where
         futures::select_biased! {
             result = future => return result.map_err(|e| Stop::Error(e.to_string())),
             action = request => if let Some(action) = action {
-                handle_action(action, args, host, tools_host, recovery, state, cancellation, live).await?;
+                handle_action(action, args, host, tools_host, recovery, state, cancellation, live, agents).await?;
             },
             event = event => if let Some(event) = event { emit_gdk(args, event, live); },
             _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
@@ -857,6 +997,7 @@ async fn handle_action(
     state: &mut HarnessState,
     cancellation: &CancellationToken,
     live: &mut LiveDeltas,
+    agents: Option<&super::agents::AgentRun>,
 ) -> Result<(), Stop> {
     if (args.cancelled)() {
         cancellation.cancel();
@@ -1077,6 +1218,19 @@ async fn handle_action(
                     "/payloads/goals/prompts/inline/harness-runtime/skipped-an-earlier-call-in-this-reply-2a110.md"
                 ))
                 .into())
+            } else if let Some(refused) = agents.and_then(|run| run.refuse(&name, &parameters)) {
+                Err(refused)
+            } else if let Some(run) = agents.filter(|_| super::agents::is_agent_tool(&name)) {
+                let call = run.call(&name, &parameters).fuse();
+                futures::pin_mut!(call);
+                loop {
+                    let tick = sleep_tick().fuse();
+                    futures::pin_mut!(tick);
+                    futures::select_biased! {
+                        result = call => break result,
+                        _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
+                    }
+                }
             } else if let Some(tools) = tools_host.as_deref_mut() {
                 let call = tools.call(&name, &parameters).fuse();
                 futures::pin_mut!(call);
@@ -1145,11 +1299,11 @@ async fn handle_action(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn sleep_tick() {
+pub(super) async fn sleep_tick() {
     async_io::Timer::after(std::time::Duration::from_millis(25)).await;
 }
 #[cfg(target_arch = "wasm32")]
-async fn sleep_tick() {
+pub(super) async fn sleep_tick() {
     gloo_timers::future::TimeoutFuture::new(25).await;
 }
 

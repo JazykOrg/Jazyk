@@ -86,6 +86,7 @@ impl Store {
             mutations,
             resolved_goals: commit.resolved.clone(),
             opened_goals: Vec::new(),
+            rebased_from: commit.rebased_from,
             rounds: commit.rounds,
             tokens: commit.tokens,
             cached_tokens: commit.cached,
@@ -100,12 +101,28 @@ impl Store {
     // split the same way; 0 leaves the field absent.
     // Mirrors docs/compiler/graph.md#journal.
     pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64, cached: u64) {
+        Self::stamp_tokens_of(out, from, to, tokens, cached, None)
+    }
+
+    // The same, limited to the session entries of one batch when other sessions
+    // committed in the range (docs/compiler/reconciler.md#scheduling).
+    pub fn stamp_tokens_of(
+        out: &Path,
+        from: u64,
+        to: u64,
+        tokens: u64,
+        cached: u64,
+        batch: Option<&[String]>,
+    ) {
         if tokens == 0 || to <= from || newer_version(out).is_some() {
             return;
         }
         // A journal rewrite is a store write: under the lock, through the atomic
         // write. Mirrors docs/compiler/graph.md#concurrency.
-        let _flock = FileLock::acquire(out);
+        let flock = FileLock::acquire(out);
+        if flock.busy() {
+            return;
+        }
         // Only the session entries the turn wrote take a share, so the parts sum to
         // the spend: a checks or settle entry between them bills nothing.
         let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
@@ -113,7 +130,8 @@ impl Store {
                 let p = crate::layout::journal_file(out, g);
                 let text = crate::vfs::read_to_string(&p).ok()?;
                 let entry = serde_norway::from_str::<JournalEntry>(&text).ok()?;
-                (entry.kind == "session" && entry.tokens.is_none()).then_some((p, entry))
+                let ours = batch.is_none_or(|goals| entry.batch.iter().any(|g| goals.contains(g)));
+                (entry.kind == "session" && entry.tokens.is_none() && ours).then_some((p, entry))
             })
             .collect();
         let n = entries.len() as u64;
@@ -170,7 +188,10 @@ impl Store {
         }
         // The read, the check, and the write hold the lock, so two stamps never both
         // pass the no-figure check. Mirrors docs/compiler/graph.md#concurrency.
-        let _flock = FileLock::acquire(out);
+        let flock = FileLock::acquire(out);
+        if let Some(why) = flock.busy().then(|| busy_refusal(out)).flatten() {
+            return Err(why);
+        }
         let text = crate::vfs::read_to_string(&p)
             .map_err(|_| format!("no journal entry g{} under {}", generation, out.display()))?;
         let mut entry = serde_norway::from_str::<JournalEntry>(&text)

@@ -207,8 +207,8 @@ performs the same goal in-process with file tools served over the deliverable; w
 separates the executors is model quality, never capability. `jazyk gen` develops
 source and tests together and records current bindings as part of generation
 ([command](./gen.md#command)).
-Over MCP, `binding_tasks` lists the open goals and `begin_binding` claims the row under a
-lease ([workers and leases](../compiler/control-plane.md#workers-and-leases)).
+Over MCP, `binding_tasks` lists the open goals and `begin_binding` opens the row; the first recording wins
+([workers and open work](../compiler/control-plane.md#workers-and-open-work)).
 
 ## Generation makes bound tests pass
 

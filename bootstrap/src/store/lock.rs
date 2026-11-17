@@ -11,6 +11,43 @@ pub(super) struct FileLock {
     #[cfg(not(target_arch = "wasm32"))]
     _file: Option<std::fs::File>,
     marker: Option<PathBuf>,
+    // The wait passed STORE_LOCK_WAIT: nothing is held and the writer refuses
+    // `store-busy`. Mirrors docs/compiler/graph.md#concurrency.
+    busy: bool,
+    #[cfg(not(target_arch = "wasm32"))]
+    taken: Option<std::time::Instant>,
+}
+
+thread_local! {
+    // Whether this thread's latest acquire gave up waiting: the writer's refusal check
+    // runs right after its acquire on the same thread.
+    static BUSY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+// The lock wait this thread gave up on, as the refusal every writer reports.
+pub(super) fn busy_refusal(out: &Path) -> Option<String> {
+    BUSY.with(|b| b.get()).then(|| {
+        format!(
+            "store-busy: another writer held {} past {} seconds; nothing changed, retry",
+            crate::layout::lock_file(out).display(),
+            crate::limits::STORE_LOCK_WAIT_SECS
+        )
+    })
+}
+
+#[cfg(test)]
+thread_local! {
+    pub(super) static LOCK_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn lock_wait() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(w) = LOCK_WAIT_OVERRIDE.with(|o| o.get()) {
+        return w;
+    }
+    std::time::Duration::from_secs(crate::limits::STORE_LOCK_WAIT_SECS)
 }
 
 impl FileLock {
@@ -22,6 +59,9 @@ impl FileLock {
                 #[cfg(not(target_arch = "wasm32"))]
                 _file: None,
                 marker: None,
+                busy: false,
+                #[cfg(not(target_arch = "wasm32"))]
+                taken: None,
             };
         }
         let path = crate::layout::lock_file(out);
@@ -48,16 +88,36 @@ impl FileLock {
                     return FileLock {
                         _file: None,
                         marker: None,
+                        busy: false,
+                        taken: None,
                     };
                 }
             };
             let started = std::time::Instant::now();
             let mut warned = false;
+            let wait = lock_wait();
             loop {
                 if fs2::FileExt::try_lock_exclusive(&file).is_ok() {
+                    BUSY.with(|b| b.set(false));
                     return FileLock {
                         _file: Some(file),
                         marker: None,
+                        busy: false,
+                        taken: Some(std::time::Instant::now()),
+                    };
+                }
+                if started.elapsed() >= wait {
+                    eprintln!(
+                        "[jazyk] error: gave up waiting for the writer holding {} after {:?}",
+                        path.display(),
+                        wait
+                    );
+                    BUSY.with(|b| b.set(true));
+                    return FileLock {
+                        _file: None,
+                        marker: None,
+                        busy: true,
+                        taken: None,
                     };
                 }
                 if !warned && started.elapsed() >= std::time::Duration::from_secs(10) {
@@ -77,6 +137,9 @@ impl FileLock {
                 #[cfg(not(target_arch = "wasm32"))]
                 _file: None,
                 marker: None,
+                busy: false,
+                #[cfg(not(target_arch = "wasm32"))]
+                taken: None,
             };
         }
         if let Err(e) = crate::vfs::write(&path, crate::sys::process_id().to_string()) {
@@ -89,13 +152,20 @@ impl FileLock {
                 #[cfg(not(target_arch = "wasm32"))]
                 _file: None,
                 marker: None,
+                busy: false,
+                #[cfg(not(target_arch = "wasm32"))]
+                taken: None,
             };
         }
         SCOPED_LOCKS.with(|held| held.borrow_mut().insert(path.clone()));
+        BUSY.with(|b| b.set(false));
         FileLock {
             #[cfg(not(target_arch = "wasm32"))]
             _file: None,
             marker: Some(path),
+            busy: false,
+            #[cfg(not(target_arch = "wasm32"))]
+            taken: None,
         }
     }
 }
@@ -193,8 +263,28 @@ thread_local! {
         const { std::cell::RefCell::new(BTreeSet::new()) };
 }
 
+impl FileLock {
+    pub(super) fn busy(&self) -> bool {
+        self.busy
+    }
+}
+
 impl Drop for FileLock {
     fn drop(&mut self) {
+        if self.busy {
+            BUSY.with(|b| b.set(false));
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(taken) = self.taken {
+            let held = taken.elapsed();
+            if held >= std::time::Duration::from_secs(crate::limits::STORE_LOCK_HOLD_SECS) {
+                eprintln!(
+                    "[jazyk] warning: a commit held the store lock for {:?} (over {} seconds)",
+                    held,
+                    crate::limits::STORE_LOCK_HOLD_SECS
+                );
+            }
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(f) = &self._file {
             fs2::FileExt::unlock(f).ok();

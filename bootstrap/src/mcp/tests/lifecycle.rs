@@ -286,9 +286,12 @@ fn begin_goals_claims_the_next_batch_and_done_wants_marks() {
         "the protocol line names the batch"
     );
     assert!(v["package"].as_str().unwrap().contains("## Loaded"));
-    // The claim is a per-batch lease naming its goals.
+    // The open batch is recorded, naming its goals, for information.
     let leases = crate::control::leases(&out);
-    let lease = leases.get(&batch).expect("a batch lease");
+    let lease = leases
+        .iter()
+        .find(|l| l.task == batch)
+        .expect("an open batch entry");
     assert!(
         !lease.goals.is_empty() && lease.goals.iter().all(|g| g.starts_with("g:")),
         "{:?}",
@@ -457,4 +460,240 @@ fn per_call_sessions_keep_the_guard_and_the_feedback_cap() {
     let log = crate::vfs::read_to_string(crate::feedback::path(&project.out)).unwrap_or_default();
     assert_eq!(log.lines().count(), crate::tools::FEEDBACK_LIMIT, "{log}");
     crate::vfs::remove_dir_all(dir).ok();
+}
+
+// Nothing claims work: two servings open the same batch, both finish, the first
+// commit wins and the second gets a commit conflict with the batch still open on the
+// current generation. Mirrors docs/compiler/graph.md#commit-conflicts.
+#[test]
+fn two_servings_race_on_one_batch_and_the_second_gets_a_conflict() {
+    let dir = bare_dir("race-same");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let make = || {
+        McpServer::with_bridge(
+            project.clone(),
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        )
+    };
+    let text = |result: Value| {
+        serde_json::from_str::<Value>(result["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let call = |server: &McpServer, name: &str, arguments: Value| {
+        text(
+            server
+                .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+                .unwrap(),
+        )
+    };
+    let (one, two) = (make(), make());
+    let a = call(&one, "begin_goals", json!({}));
+    let b = call(&two, "begin_goals", json!({}));
+    assert!(a["error"].is_null() && b["error"].is_null(), "{a} {b}");
+    // The same goals under two batch ids: a batch id skips the ids already open.
+    assert_eq!(a["goals"], b["goals"], "both opened the same work");
+    // Both are visible as open, and neither refused the other.
+    let goal = a["goals"][0]["id"].as_str().unwrap().to_string();
+    assert_eq!(
+        crate::control::leases(&out)
+            .iter()
+            .filter(|l| l.goals.contains(&goal))
+            .count(),
+        2
+    );
+    let finish = |server: &McpServer| {
+        call(
+            server,
+            "set_coverage",
+            json!({"section":"docs/a.md#/a", "state":"non-normative", "note":"Navigation."}),
+        );
+        let goals = server.open.lock().unwrap().as_ref().unwrap().goals.clone();
+        let claims = goals
+            .iter()
+            .map(|g| json!({"goal":g.id,"justification":"The section is a navigation index and is marked non-normative."}))
+            .collect::<Vec<_>>();
+        call(
+            server,
+            "done",
+            json!({"summary":"Recorded coverage.","goals":claims}),
+        )
+    };
+    let first = finish(&one);
+    assert_eq!(first["committed"], true, "{first}");
+    let second = finish(&two);
+    assert_eq!(second["error"]["rule"], "commit-conflict", "{second}");
+    let conflicts = second["error"]["conflicts"].as_array().unwrap();
+    assert!(conflicts.iter().any(|c| c["kind"] == "goal"), "{second}");
+    assert!(conflicts.iter().any(|c| c["kind"] == "section"), "{second}");
+    assert_eq!(
+        second["error"]["generation"],
+        json!(crate::store::read_generation(&out))
+    );
+    // The losing batch stays open on the current generation, its conflicting work dropped.
+    {
+        let open = two.open.lock().unwrap();
+        let o = open.as_ref().expect("the batch stays open");
+        assert_eq!(
+            o.session.snapshot.status.generation,
+            crate::store::read_generation(&out)
+        );
+        assert!(o.session.staged.is_empty());
+    }
+    call(
+        &two,
+        "abandon_goals",
+        json!({"reason":"Another session resolved it."}),
+    );
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+// Disjoint work rebases: a changeset staged before another commit landed commits on
+// top of it, and its journal entry records `rebased_from`.
+#[test]
+fn a_disjoint_changeset_rebases_onto_a_later_commit() {
+    let dir = bare_dir("race-disjoint");
+    // Both documents are roots, so both reconcile at level 0 and their batches are
+    // ready at once.
+    crate::vfs::write(
+        dir.join(".jazyk/jazyk.toml"),
+        "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = [\"docs/a.md\", \"docs/b.md\"]\nsource = []\n",
+    )
+    .unwrap();
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    crate::vfs::write(dir.join("docs/b.md"), "# B\n\nAnother index.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let make = || {
+        McpServer::with_bridge(
+            project.clone(),
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        )
+    };
+    let call = |server: &McpServer, name: &str, arguments: Value| {
+        let r = server
+            .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+            .unwrap();
+        serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let goals_for = |doc: &str| -> Vec<String> {
+        crate::board::Board::compute(&project, &out)
+            .open_goals()
+            .iter()
+            .filter(|g| g.target.starts_with(doc))
+            .map(|g| g.id.clone())
+            .collect()
+    };
+    let (one, two) = (make(), make());
+    let a_goals = goals_for("docs/a.md");
+    let b_goals = goals_for("docs/b.md");
+    assert!(!a_goals.is_empty() && !b_goals.is_empty());
+    let a = call(&one, "begin_goals", json!({"goals": a_goals}));
+    let b = call(&two, "begin_goals", json!({"goals": b_goals}));
+    assert!(a["error"].is_null() && b["error"].is_null(), "{a} {b}");
+    let finish = |server: &McpServer, doc: &str, section: &str| {
+        call(
+            server,
+            "set_coverage",
+            json!({"section":format!("{doc}#{section}"), "state":"non-normative", "note":"Navigation."}),
+        );
+        let goals = server.open.lock().unwrap().as_ref().unwrap().goals.clone();
+        let claims = goals
+            .iter()
+            .map(|g| json!({"goal":g.id,"justification":"The section is a navigation index and is marked non-normative."}))
+            .collect::<Vec<_>>();
+        call(
+            server,
+            "done",
+            json!({"summary":"Recorded coverage.","goals":claims}),
+        )
+    };
+    let first = finish(&one, "docs/a.md", "/a");
+    assert_eq!(first["committed"], true, "{first}");
+    let second = finish(&two, "docs/b.md", "/b");
+    assert_eq!(second["committed"], true, "{second}");
+    let since = second["rebasedFrom"]
+        .as_u64()
+        .expect("the second commit rebased");
+    let generation = second["generation"].as_u64().unwrap();
+    let entry: crate::model::JournalEntry = serde_norway::from_str(
+        &crate::vfs::read_to_string(crate::layout::journal_file(&out, generation)).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(entry.rebased_from, Some(since));
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+// One serving holds several open batches: a second begin opens another, a call that
+// stages into a batch must name it once several are open, and naming it works on it.
+// Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+#[test]
+fn one_serving_holds_several_open_batches_and_calls_name_theirs() {
+    let dir = bare_dir("several-open");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let server = McpServer::new(project, out.clone(), vec!["compile".into()], false);
+    let call = |name: &str, arguments: Value| {
+        let r = server
+            .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+            .unwrap();
+        serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let first = call("begin_goals", json!({}));
+    let second = call("begin_goals", json!({}));
+    assert!(
+        first["error"].is_null() && second["error"].is_null(),
+        "{first} {second}"
+    );
+    let (one, two) = (first["batch"].clone(), second["batch"].clone());
+    assert_ne!(one, two);
+    let refused = call("abandon_goals", json!({"reason":"which one?"}));
+    assert_eq!(refused["error"]["rule"], "batch-required", "{refused}");
+    assert_eq!(refused["error"]["open"].as_array().unwrap().len(), 2);
+    let a = call("abandon_goals", json!({"reason":"first","batch":one}));
+    assert_eq!(a["abandoned"], one, "{a}");
+    // With one left, calls act on it without naming it.
+    let b = call("abandon_goals", json!({"reason":"second"}));
+    assert_eq!(b["abandoned"], two, "{b}");
+    // The tool list offers `batch` on the calls that act on a batch.
+    let list = server.handle("tools/list", &json!({})).unwrap();
+    let done = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "done")
+        .unwrap();
+    assert!(done["inputSchema"]["properties"]["batch"].is_object());
+    crate::vfs::remove_dir_all(&dir).ok();
 }

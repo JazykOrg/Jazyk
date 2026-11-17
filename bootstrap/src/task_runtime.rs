@@ -582,9 +582,7 @@ pub fn sweep_unused(root: &Path, own: Option<&Path>) -> Result<Vec<String>, Stri
         }
         // A set with a session at work (a goal or entity lease, or another build)
         // may be about to bind the tasks it owns: they all count as used.
-        let busy = Some(out.as_path()) != own
-            && (!crate::control::leases(out).is_empty()
-                || crate::control::build_lease(out).is_some());
+        let busy = Some(out.as_path()) != own && !crate::control::leases(out).is_empty();
         ledgers.push((out, ledger, busy));
     }
     if ledgers.iter().all(|(_, l, _)| l.tasks.is_empty()) {
@@ -1247,7 +1245,7 @@ mod tests {
         assert!(sweep_unused(&root, Some(&root.join("other-build")))
             .unwrap()
             .is_empty());
-        crate::control::release_lease(&out, "req:a-9");
+        crate::control::release_lease(&out, "req:a-9", "worker-b");
         // Only the unused session task goes, and its record ends with it.
         assert_eq!(sweep_unused(&root, None).unwrap(), vec!["old".to_string()]);
         let (text, kept) = load(&root).unwrap();

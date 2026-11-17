@@ -32,10 +32,10 @@ Jazyk takes both protocol roles, depending on the direction:
   tool injection, doc edit translation, build status. See [the IDE proxy](#the-ide-proxy).
 
 One process that runs builds holds one connection per downstream agent it drives, with
-several sessions open on it: one worker session at a time (compilation is
-sequential), chat and follow sessions beside it. The
-[control plane](../compiler/control-plane.md) arbitrates between processes: the build
-lease and the per-batch leases make a CLI run beside a GUI harmless.
+several sessions open on it: worker sessions up to the profile's `max_sessions`,
+chat and follow sessions beside them. Nothing arbitrates between processes: a CLI run
+beside a GUI works the same board, and commits synchronize them
+([concurrent work](../compiler/control-plane.md#concurrent-work)).
 
 ## Agents
 
@@ -238,20 +238,56 @@ For an external agent the options are its own. The proxy forwards
 `configOptions` it returns back up untouched, so an IDE's model picker drives the
 agent behind jazyk exactly as it would without jazyk in the middle.
 
+### Sub-agent updates
+
+A chat session of the embedded agent offers the [agent tools](./subagents.md#agent-tools).
+A worker session does not. Each sub-agent turn runs on its own thread with its own
+connections to the session's MCP servers, so it gets its own serving. The sub-agent
+lives inside the agent process and has no ACP session of its own. Its traffic
+travels on the parent's session:
+
+- Every `session/update` of a sub-agent is sent on the root session with
+  `_meta.jazyk.agent`: `{id, parentId, depth, title, task, write}`. `id` is the
+  sub-agent's id in the agent process. `parentId` is the root session's id or a
+  parent sub-agent's id. A sub-agent's turn always ends inside its parent's turn,
+  so its updates arrive while the root session's prompt is active.
+- A turn starts with a `user_message_chunk` carrying the turn's prompt and
+  `_meta.jazyk.agent.turn: "started"`.
+- A turn ends with a `usage_update` carrying `_meta.jazyk.agent.turnEnd`:
+  `{stop, result: {status, text}}`. `stop` is `end_turn`, `cancelled`,
+  `max_turn_requests`, or `error`.
+- A result delivered to a parent is a `user_message_chunk` with
+  `_meta.jazyk.input` carrying `source: {agentId}`, like any
+  [delivered input](#steering-active-turns).
+
+The client talks to a sub-agent through `_session/steering` on the root session,
+with `_meta.jazyk.agentId` naming the sub-agent:
+
+- Text steers the running sub-agent turn. An idle sub-agent answers
+  `promptRequired`: only its parent starts a new turn.
+- `_meta.jazyk.cancelAgent: true` stops the sub-agent and its descendants.
+
+The [GUI](./gui.md#agents) shows each sub-agent as a chat session with its tree
+fields and routes the session's inputs and stop through these requests.
+
 ## Sessions
 
 Three session kinds, all the same protocol:
 
 - Worker sessions: created by jazyk for one [goal batch](../compiler/reconciler.md#batching).
   One [session](../compiler/sessions.md) per batch, so the session keeps a fresh,
-  focused context and a retry starts clean. Worker sessions run one at a time:
-  [compilation is sequential](../compiler/compilation.md#a-build), and a GC burst is
-  the next session, not a parallel one.
+  focused context and a retry starts clean. Worker sessions run up to the
+  profile's `max_sessions` at once, and commits synchronize them
+  ([concurrent work](../compiler/control-plane.md#concurrent-work)).
 - Chat sessions: created by a user in the [GUI chat pane](./gui.md#chat) or from an
   IDE through the proxy. The agent gets the `chat` toolset: the read tools, the
   compilation, binding, generation, and verification lifecycles, the
   [dual-write tools](#dual-write-tools), `update_diagnostic`, `answer_diagnostic`,
   and the [project tools](#project-tools). Compiler writes require an open goal batch.
+  A chat session of the embedded agent can also start
+  [sub-agents](./subagents.md), which appear as chat sessions with a parent
+  ([sub-agent updates](#sub-agent-updates)). An external agent uses its own
+  sub-agents.
 - Follow sessions: read-only mirrors of worker sessions, so a person can watch
   automated work as it happens. In the GUI they appear in the chat pane beside chat
   sessions. Toward IDEs they are served through [session list mirroring](#mirroring-into-ides).
@@ -307,7 +343,7 @@ The automated path. For each goal batch the runner:
    whose `mcpServers` list one entry: `jazyk mcp` with the batch's toolsets and the
    spawning flags (`--only <batch>`, `--packaged`, `--ephemeral`, `--build-token`;
    see [MCP into sessions](./mcp.md#mcp-into-acp-sessions)). The batch id
-   (`b<generation>-<n>`) names the session, its lease, and its trace label. The
+   (`b<generation>-<n>`) names the session, its registry entry, and its trace label. The
    toolset is the union of what the batch's goal kinds need
    ([toolsets](../compiler/sessions.md#toolsets)).
    The entry's transport follows the agent's `initialize` reply, decided once per
@@ -360,8 +396,8 @@ The automated path. For each goal batch the runner:
 
 A session that goes silent is cancelled after an idle timeout (`JAZYK_ACP_IDLE_TIMEOUT`,
 default 1800 seconds). Cancellation follows the protocol: pending permission requests
-are answered `cancelled`, then `session/cancel` goes out. The lease TTLs bound what a
-dead agent can hold either way. The same timeout bounds the calls the host waits on
+are answered `cancelled`, then `session/cancel` goes out. A dead agent holds nothing: work is
+never claimed. The same timeout bounds the calls the host waits on
 synchronously: an agent that does not answer `initialize`, `session/new`, or
 `session/close` within it fails that call with a message naming the wait, instead of
 holding the build. The session's own task on the host waits for the `session/close`
@@ -724,7 +760,7 @@ documents, open diagnostics, open goals) reaches the IDE's chat surface through 
 proxy instead: on session start and on every
 [control plane](../compiler/control-plane.md) or board change, the proxy refreshes
 the advertised commands and the pending-work plan. The board derives from files (the
-documents, the graph, its decisions and sources) and the leases are files, so the proxy computes
+documents, the graph, its decisions and sources) and the worker registry are files, so the proxy computes
 them the way every other frontend does, no new channel.
 
 ## Registration

@@ -269,7 +269,7 @@ request.
   set, and nothing starts. The reply names the started set and returns at once:
   - Inside the [GUI server](./gui.md) (the editor's `/lsp` WebSocket), the build is a
     GUI [job](./gui.md#jobs), queued, cancellable, and visible like any other.
-  - Over stdio, the server runs it under the build lease with the LLM settings
+  - Over stdio, the server runs it with the LLM settings
     `jazyk lsp` resolved from its flags, the environment, and the configuration. A
     second call while it runs is refused. On `exit` the server cancels it and waits
     for it to stop at a boundary, so no build is cut off mid-commit.

@@ -194,7 +194,7 @@ fn graph_edits_record_model_judgment_and_explicit_human_decisions_separately() {
 }
 
 #[test]
-fn independent_transaction_invalidates_batch_and_survives_its_abandon() {
+fn independent_transaction_leaves_the_batch_open_to_rebase() {
     let (dir, project, server) = fixture("chat-graph-independent");
     cart(&server);
     let mut control = crate::control::Control::load(&project, &project.out);
@@ -220,12 +220,10 @@ fn independent_transaction_invalidates_batch_and_survives_its_abandon() {
         "edit_graph",
         json!({"edits":[{"tool":"update_entity","arguments":{"id":"ent:cart","definition":"An independently edited cart."}}]}),
     );
-    assert_eq!(result["batchStale"], true);
-    assert!(server.open.lock().unwrap().as_ref().unwrap().invalidated);
-    let checkpoint = server.checkpoint().unwrap();
-    assert_eq!(checkpoint["open"]["invalidated"], true);
-    let error = refusal(server.handle("tools/call", &json!({"name":"done","arguments":{}})));
-    assert!(error.contains("batch-stale"), "{error}");
+    // The open batch is not invalidated: its commit rebases onto the edit
+    // (docs/compiler/graph.md#commit-conflicts).
+    assert_eq!(result["batchRebases"], true);
+    assert!(server.open.lock().unwrap().is_some());
     call(
         &server,
         "abandon_goals",
@@ -287,7 +285,7 @@ fn transaction_cannot_escape_read_only_or_scoped_workers_and_shares_mutation_bud
 }
 
 #[test]
-fn a_separate_chat_cannot_be_overwritten_by_a_stale_compiler_worker() {
+fn a_separate_chat_edit_survives_a_compiler_worker_that_finishes_without_work() {
     let (dir, project, chat) = fixture("chat-graph-external");
     cart(&chat);
     let mut control = crate::control::Control::load(&project, &project.out);
@@ -310,8 +308,10 @@ fn a_separate_chat_cannot_be_overwritten_by_a_stale_compiler_worker() {
         json!({"id":"ent:cart","definition":"Edited in another conversation."}),
     );
     let generation = crate::store::read_generation(&project.out);
+    // The other conversation's commit does not invalidate the batch: its own gates
+    // still answer done, and a commit would rebase or conflict.
     let error = refusal(worker.handle("tools/call", &json!({"name":"done","arguments":{}})));
-    assert!(error.contains("batch-stale"), "{error}");
+    assert!(!error.contains("batch-stale"), "{error}");
     worker.eof_finish();
     assert_eq!(crate::store::read_generation(&project.out), generation);
     assert_eq!(

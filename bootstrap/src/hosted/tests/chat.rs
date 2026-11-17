@@ -775,3 +775,102 @@ fn a_host_without_a_record_store_keeps_no_conversations() {
     assert!(crate::feedback::read(&out, 10).is_empty());
     assert_eq!(crate::vfs::scoped_snapshot().unwrap(), files);
 }
+
+// A conversation starts a sub-agent: the sub-agent is a conversation with the tree
+// fields, runs beside its parent on the request's thread, and its result reaches the
+// parent as an input naming it. The agent list and its event follow.
+// Mirrors docs/frontends/subagents.md and docs/frontends/gui.md#agents.
+#[test]
+fn hosted_chat_runs_a_sub_agent_and_delivers_its_result() {
+    let mut w = workspace("Sub-agents");
+    let events = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let seen = events.clone();
+    let e = Execution {
+        model: "fixture".into(),
+        events: Some(Arc::new(move |event| {
+            seen.lock().unwrap().push(event.clone())
+        })),
+        transport: Some(Arc::new(|body| {
+            let request: Value = serde_json::from_str(body).unwrap();
+            let messages = request["messages"].to_string();
+            if messages.contains("You are a sub-agent started by the conversation") {
+                assert!(
+                    !request["tools"].to_string().contains("\"edit_doc_prose\""),
+                    "a read-only sub-agent is not offered write tools"
+                );
+                return Ok(model_reply("The index has one section."));
+            }
+            if messages.contains("Subagent chat-2 completed: The index has one section.") {
+                return Ok(model_reply("The sub-agent counted one section."));
+            }
+            if request["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|m| m["role"] == "tool")
+            {
+                return Ok(model_reply("Waiting for the sub-agent."));
+            }
+            let call = json!({"id":"spawn-1","type":"function","function":{"name":"spawn_agent",
+                "arguments": json!({"task":"Count the sections of docs/main.md","title":"Count sections"}).to_string()}});
+            Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[call]}}],
+                "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}}).to_string())
+        })),
+        ..Default::default()
+    };
+    let chat = value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+    assert_eq!(chat["id"], "chat-1");
+    let reply = value(
+        &mut w,
+        "POST",
+        "/api/chat/sessions/chat-1/prompt",
+        json!({"messageId":"ask","text":"Delegate counting the sections."}),
+        &e,
+    );
+    assert_eq!(reply["stop"], "end_turn");
+
+    let tree = value(&mut w, "GET", "/api/agent-tree", Value::Null, &e);
+    let rows = tree["agents"].as_array().unwrap();
+    let child = rows.iter().find(|r| r["id"] == "chat-2").unwrap();
+    assert_eq!(child["kind"], "subagent");
+    assert_eq!(child["agentId"], "chat-2");
+    assert_eq!(child["parentId"], "chat-1");
+    assert_eq!(child["rootId"], "chat-1");
+    assert_eq!(child["depth"], 1);
+    assert_eq!(child["title"], "Count sections");
+    assert_eq!(child["task"], "Count the sections of docs/main.md");
+    assert_eq!(child["state"], "idle");
+    assert_eq!(child["result"]["status"], "completed");
+    assert_eq!(child["result"]["text"], "The index has one section.");
+    let parent = rows.iter().find(|r| r["id"] == "chat-1").unwrap();
+    assert_eq!(
+        (parent["kind"].as_str(), parent["depth"].as_u64()),
+        (Some("chat"), Some(0))
+    );
+    assert_eq!(parent["rootId"], "chat-1");
+
+    let session = value(&mut w, "GET", "/api/chat/sessions/chat-2", Value::Null, &e);
+    assert_eq!(session["parentId"], "chat-1");
+    assert_eq!(session["write"], "none");
+    let parent = value(&mut w, "GET", "/api/chat/sessions/chat-1", Value::Null, &e);
+    let delivered = parent["updates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| &u["update"])
+        .find(|u| u["sessionUpdate"] == "user_message" && !u["source"].is_null())
+        .expect("the result is a parent input");
+    assert_eq!(delivered["source"]["agentId"], "chat-2");
+    assert!(delivered["text"]
+        .as_str()
+        .unwrap()
+        .starts_with("Subagent chat-2 completed"));
+
+    let events = events.lock().unwrap();
+    assert!(events
+        .iter()
+        .any(|e| e["type"] == "agents" && e["agents"].to_string().contains("\"chat-2\"")));
+    assert!(events
+        .iter()
+        .any(|e| e["type"] == "chat.update" && e["sessionId"] == "chat-2"));
+}

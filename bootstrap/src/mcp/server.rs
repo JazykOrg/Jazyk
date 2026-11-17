@@ -274,6 +274,12 @@ impl McpServer {
             }),
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
+            parked: std::sync::Mutex::new(BTreeMap::new()),
+            ledger_seen: std::sync::Mutex::new(BTreeMap::new()),
+            serving_seq: {
+                static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            },
             interrupts: Default::default(),
             call_memory: Default::default(),
             doc_hashes: Default::default(),
@@ -333,14 +339,6 @@ impl McpServer {
             {
                 return Err("MCP checkpoint belongs to a different batch or workspace.".into());
             }
-            let current = Store::load(&self.out);
-            if current.status.generation != batch.session.snapshot.status.generation {
-                return Err("Workspace generation changed while this batch was suspended.".into());
-            }
-            batch._project_lock = Some(
-                crate::document_sets::ProjectLock::acquire(&self.project.root, "project.lock")
-                    .map_err(|e| e.1)?,
-            );
             let goals = batch
                 .goals
                 .iter()

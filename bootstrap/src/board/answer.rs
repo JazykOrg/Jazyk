@@ -5,14 +5,14 @@ use super::*;
 impl Board {
     // ---- the answer the MCP serving and the GUI render ----
 
-    // The goals leased to the reading serving are its own: the blocking sentence says
-    // so instead of naming the serving's worker id as a stranger's claim.
+    // The goals the reading serving has open are its own: the blocking sentence says
+    // so instead of listing the serving's worker id as a stranger's.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     pub fn mark_own(&mut self, worker: &str) {
         let own: Vec<String> = self
-            .claimed
+            .open_by
             .iter()
-            .filter(|(_, w)| w.as_str() == worker)
+            .filter(|(_, ws)| ws.iter().any(|w| w == worker))
             .map(|(id, _)| id.clone())
             .collect();
         for id in own {
@@ -49,12 +49,13 @@ impl Board {
         if let Some(r) = self.parked_reasons.get(&g.id) {
             v["parkedReason"] = json!(r);
         }
-        if let Some(w) = self.claimed.get(&g.id) {
-            v["claimedBy"] = json!(if self.own.contains(&g.id) {
-                "you"
-            } else {
-                w.as_str()
-            });
+        if let Some(ws) = self.open_by.get(&g.id) {
+            let mine = self.own.contains(&g.id);
+            let mut names: Vec<&str> = ws.iter().map(|w| w.as_str()).filter(|_| !mine).collect();
+            if mine {
+                names.push("you");
+            }
+            v["openBy"] = json!(names);
         }
         if let Some(b) = self.batches.iter().find(|b| b.goals.contains(&g.id)) {
             v["batch"] = json!(b.id);

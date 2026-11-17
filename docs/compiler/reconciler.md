@@ -476,7 +476,45 @@ Decompilation stays outside the board: draft work is released per scope
 
 ## Scheduling
 
-One build runs one loop, sequentially: one session at a time, each with one batch.
+One build runs one loop. It keeps up to `max_sessions` sessions running, each with
+one batch ([concurrent work](./control-plane.md#concurrent-work)); with
+`max_sessions = 1` the loop is the sequential one below.
+
+- Open batches only from the highest ready tier. While a batch the loop opened from a
+  lower tier is in flight, open nothing from a higher tier: the barrier keeps
+  alignment before ingest and ingest before judgment.
+- Prefer ready batches whose cones do not overlap a batch already open by any worker
+  (`openBy`). Overlap is allowed when nothing else is ready: the first commit wins and
+  the other session gets a [commit conflict](./graph.md#commit-conflicts). Avoiding
+  overlap saves spend; commits keep it correct.
+- A batch that overlaps a batch this build has in flight waits for that session to
+  end. Two batches overlap when they share a locality key (one document, one entity
+  neighborhood) or when a goal target of one lies in the [cone](#cones) of a goal
+  target of the other. Overlap with another worker's open work only lowers a batch's
+  rank.
+- A goal this build has in flight forms no other batch. Batch ids skip the ids of the
+  build's batches in flight, so two sessions never share a label.
+- Before a session starts, the build registers its batch as open work under the
+  build's worker id, with the batch's goals
+  ([workers and open work](./control-plane.md#workers-and-open-work)). The session's
+  scoped serving opens exactly those goals under that id
+  ([`--only`](../frontends/mcp.md#mcp-into-acp-sessions)), whatever a board derived
+  after another session's commit numbers them. The build refreshes the entry while
+  the session runs and removes it when the session ends.
+- A GC goal is ready when no compile goal is open or in flight in its cone.
+- Each executor runs at most its `max_sessions` sessions at once. Slots are counted
+  per executor profile, so a cheap extraction profile and a strong GC profile fill
+  their own slots.
+- When a session ends, re-derive the board and fill the free slots.
+- A session that ends without landing its batch, a commit conflict it did not repair
+  included, follows the [retry rule](#parked-and-failed): goals another commit resolved
+  count as resolved, and the rest spend one of their four attempts.
+- The session cap and the dead-endpoint breaker stop the loop from opening sessions.
+  The sessions in flight finish and commit; then the open goals park.
+- A build in a browser tab or in the [hosted runtime](./hosted-runtime.md) runs one
+  session at a time, whatever `max_sessions` says.
+
+Each session follows the same steps:
 
 - Derive the board. Take the highest ready [tier](#readiness) that has an open goal;
   goals an interrupted run of the same build parked resume first.
@@ -676,10 +714,10 @@ GC goal its own commit made ready.
 
 A batch has an id, `b<generation>-<n>`: the generation the board derives from and the
 batch's index within it. A re-derivation of the board renames its batches, so an id
-never outlives the board it came from. Numbering skips the ids of batches a live lease
-holds ([workers and leases](./control-plane.md#workers-and-leases)), so a batch formed
-while another is being worked never takes the working batch's id. It names the session, its lease
-([workers and leases](./control-plane.md#workers-and-leases)), its trace file, and the
+never outlives the board it came from. Numbering skips the ids of batches a worker has open
+([workers and open work](./control-plane.md#workers-and-open-work)), so a batch formed
+while another is being worked never takes the working batch's id. It names the session, its
+registry entry, its trace file, and the
 `{target}` of the worker protocol line. The toolset of the session is the union of the
 batch's kinds' toolsets ([toolsets](./tools.md#toolsets)); the skills are the union of
 their skills ([skills](./sessions.md#skills)). `jazyk preview` renders the next batch's
@@ -758,9 +796,9 @@ attempts no model made, 302 in its last minutes.
 Parked is a build's progress, failed is the graph's. Neither is a stored work queue.
 
 - Parked goals live in the build that parked them
-  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the
-  machine-local `local/run.yaml`, so the next `jazyk compile` on that machine resumes
-  them, or in the host's database for a hosted build paused and resumed. They count as
+  ([a build's progress](./graph.md#a-builds-progress)): in memory and in the build's
+  run file while it runs, then in the machine-local `local/run.yaml` when it ends, so
+  the next `jazyk compile` on that machine resumes them, or in the host's database for a hosted build paused and resumed. They count as
   open in the verdict meanwhile (`incomplete`). Another checkout, which has no
   `run.yaml`, derives the same goals again from the same findings. Unfinished work is
   never silent, and it needs no committed record.

@@ -162,9 +162,7 @@ fn terminal_tools_publish_exact_products_inside_the_current_build_lease_once() {
         LOGO
     );
     assert_eq!(crate::vfs::read(root.join("logo.svg")).unwrap(), LOGO);
-    assert!(
-        crate::control::build_lease(&project.out).is_some_and(|held| held.worker == lease.token())
-    );
+    assert!(crate::control::owns_build(&project.out, lease.token()));
     assert_eq!(
         std::fs::read(root.join("deliverable/logo.svg")).ok(),
         host_file_before

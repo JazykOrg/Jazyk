@@ -424,7 +424,7 @@ fn owned_gdk_worker_repairs_source_matchers_and_uses_them_in_the_same_session() 
     store.save_for_test();
     // This takes the real native project.lock, not a flag that bypasses it.
     let guard = crate::control::begin_internal_build(&project, &out, "generate").unwrap();
-    let token = crate::control::build_lease(&out).unwrap().worker;
+    let token = guard.token().to_string();
     let flags = BridgeFlags {
         ephemeral: true,
         serve_files: true,
@@ -556,7 +556,7 @@ fn owned_gdk_worker_repairs_source_matchers_and_uses_them_in_the_same_session() 
         json!({"baseHash":after.hash,"set":{"id":"ds_main","source":["src/**","generated/**"]}});
     assert!(
         refusal(call(&foreign, "update_document_set", current_edit.clone()))
-            .contains("does not own")
+            .contains("does not belong to a running build")
     );
     for (mode, reader) in [
         ("verify", false),
@@ -1205,7 +1205,12 @@ fn a_ledger_serving_writes_for_its_batch_group() {
         json!({"entity":"ent:receipt","factHash":package["factHash"]}),
     );
     assert_eq!(bad["isError"], true);
-    assert!(crate::control::leases(&out).contains_key("ent:receipt"));
+    let mine = |out: &std::path::Path| {
+        crate::control::leases(out)
+            .iter()
+            .any(|l| l.task == "ent:receipt" && l.worker == server.worker_id())
+    };
+    assert!(mine(&out));
     assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
     let args = json!({"entity":"ent:receipt","factHash":package["factHash"],"manifest":{"files":["handbook/claim.md"],"tests":[]}});
     let recorded = call("record_generation", args.clone());
@@ -1213,20 +1218,30 @@ fn a_ledger_serving_writes_for_its_batch_group() {
         !recorded["isError"].as_bool().unwrap_or(false),
         "{recorded}"
     );
-    assert!(!crate::control::leases(&out).contains_key("ent:receipt"));
+    assert!(!mine(&out));
     assert!(write(&server).to_string().contains("begin_generation"));
     let begun = call("begin_generation", json!({"entity":"ent:receipt"}));
     assert!(!begun["isError"].as_bool().unwrap_or(false), "{begun}");
     assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
-    crate::control::release_lease(&out, "ent:receipt");
+    // Another worker opening the same entity blocks nothing: the first record wins.
+    // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
     crate::control::claim(&out, "ent:receipt", "another-worker").unwrap();
-    assert!(write(&server).to_string().contains("claimed"));
+    assert!(!write(&server)["isError"].as_bool().unwrap_or(false));
+    let again = call("record_generation", args.clone());
+    assert!(!again["isError"].as_bool().unwrap_or(false), "{again}");
+    // A row another worker recorded after this serving began it is a conflict.
+    let begun = call("begin_generation", json!({"entity":"ent:receipt"}));
+    assert!(!begun["isError"].as_bool().unwrap_or(false), "{begun}");
+    let mut ledger = crate::gen::Ledger::load(&out);
+    ledger
+        .entities
+        .get_mut("receipt")
+        .expect("the recorded row")
+        .files
+        .push("handbook/other.md".into());
+    ledger.save(&out).unwrap();
     assert!(call("record_generation", args)
         .to_string()
-        .contains("claimed"));
-    assert_eq!(
-        crate::control::leases(&out)["ent:receipt"].worker,
-        "another-worker"
-    );
+        .contains("commit-conflict"));
     crate::vfs::remove_dir_all(&dir).ok();
 }

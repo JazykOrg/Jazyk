@@ -559,11 +559,8 @@ fn chat_release_unblocks_binding_and_empty_generation_names_prerequisites() {
         call("release_work", json!({"stage":"publish"}))["isError"],
         true
     );
+    // A running build blocks nothing: releases are approvals, not locks.
     crate::control::claim(&out, crate::control::BUILD_LEASE, "another-worker").unwrap();
-    assert!(call("release_work", json!({"stage":"generate"}))
-        .to_string()
-        .contains("work-running"));
-    crate::control::release_lease(&out, crate::control::BUILD_LEASE);
     assert_ne!(
         call("release_work", json!({"stage":"generate"}))["isError"],
         true

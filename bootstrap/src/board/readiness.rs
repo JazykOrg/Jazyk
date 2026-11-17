@@ -98,9 +98,7 @@ impl Board {
     }
 
     pub fn is_ready(&self, goal_id: &str) -> bool {
-        self.readiness.get(goal_id).is_some_and(|r| r.is_ready())
-            && !self.gated.contains(goal_id)
-            && !self.claimed.contains_key(goal_id)
+        self.readiness.get(goal_id).is_some_and(|r| r.is_ready()) && !self.gated.contains(goal_id)
     }
 
     pub fn ready_goals(&self) -> Vec<&Goal> {
@@ -193,7 +191,7 @@ impl Board {
             }
         }
         c.gated = self.gated.len();
-        c.claimed = self.claimed.len();
+        c.claimed = self.open_by.len();
         c
     }
 

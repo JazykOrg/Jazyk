@@ -221,7 +221,7 @@ pub async fn watch_put(State(st): State<SharedState>, Json(body): Json<Value>) -
 }
 
 // The control plane snapshot the workers strip renders: modes, registered workers,
-// live leases, gated counts. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+// live leases, gated counts. Mirrors docs/compiler/control-plane.md#workers-and-open-work.
 
 pub async fn workers(State(st): State<SharedState>) -> Json<Value> {
     let st2 = st.clone();

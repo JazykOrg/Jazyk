@@ -526,6 +526,19 @@ impl JobManager {
         self.wake.notify_all();
     }
 
+    // A job's kind and retained events, read under the lock.
+    pub fn with_job<T>(
+        &self,
+        id: u64,
+        f: impl FnOnce(&Value, &std::collections::VecDeque<Value>) -> T,
+    ) -> Option<T> {
+        let inner = self.inner.lock().unwrap();
+        inner
+            .jobs
+            .get(&id)
+            .map(|j| f(&j.kind.as_value(), &j.events))
+    }
+
     pub fn running_job(&self) -> Option<u64> {
         self.inner.lock().unwrap().running
     }
@@ -628,6 +641,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
         };
         st.events
             .emit("job.started", json!({ "jobId": id, "kind": kind.name() }));
+        super::agent_tree::emit(&st);
 
         // The transcript: one JSON-lines file per job under <out>/trace/, flushed per
         // line so a tail (or the API) always sees a parseable prefix.
@@ -677,7 +691,11 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
                 write_line(&writer, &json!({ "n": n, "event": ev }));
                 let payload = json!({ "jobId": id, "n": n, "event": elide(&json!(ev)) });
                 st.jobs.push_event(id, payload.clone());
+                let moves = super::agent_tree::moves_rows(&payload["event"]);
                 st.events.emit("job.trace", payload);
+                if moves {
+                    super::agent_tree::emit(&st);
+                }
             })
         };
         let trace = Trace::to_sink(TraceLevel::Normal, sink, cancel.clone()).with_run(&stem);
@@ -722,6 +740,7 @@ pub fn spawn_worker(st: SharedState) -> std::thread::JoinHandle<()> {
             job.result = result.clone();
             inner.prune();
         }
+        super::agent_tree::emit(&st);
         write_line(
             &writer,
             &json!({ "outcome": {

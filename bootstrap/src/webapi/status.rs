@@ -31,6 +31,8 @@ pub fn status_value(store: &Store) -> Value {
         "parked": store.status.parked,
         "failed": store.status.failed,
         "costs": store.status.costs,
+        // Every running build of the set (docs/compiler/graph.md#a-builds-progress).
+        "runs": crate::control::runs(&store.out),
         "counts": {
             "entities": store.graph.entities.len(),
             "requirements": store.graph.requirements.len(),

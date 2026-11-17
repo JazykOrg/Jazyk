@@ -63,8 +63,10 @@ Read the relevant specifications before changing behavior:
   `ratify` and `answer` need humans. GC is optional at soft limits, mandatory past
   hard limits, and ready only without open compile goals in the target cone.
   Limits belong in `limits.rs`, never `jazyk.toml`.
-- Builds are sequential under one lease, one session per highest-ready-tier batch,
-  grouped by locality and context budget. Workers use embedded Goose GDK or external
+- Nothing claims work: builds, sessions, and agents open batches freely and commits
+  are the only synchronization (first commit wins; a later one rebases or gets a
+  commit conflict). A build runs up to the executor's `max_sessions` at once, one
+  batch each from the highest ready tier, grouped by locality and context budget. Workers use embedded Goose GDK or external
   ACP executors. Prompts assemble payloads and skills, never per-goal authored text.
   Models explicitly load graph context. Writes stage behind gates, preview new goals,
   and commit atomically. Completion needs a gate-checked justification; failure is
@@ -191,4 +193,5 @@ Use LocalRouter; do not override the endpoint unless asked. `JAZYK_TEMPERATURE`
 
 Always run `jazyk benchmark` before trusting a new model. Local 4B-class models
 fail capability checks; gates protect graph integrity but not judgment quality.
-Local models are slow; start with `bootstrap/example/f1`. Builds stay sequential.
+Local models are slow; start with `bootstrap/example/f1`. A local endpoint runs one
+session at a time by default (`max_sessions`).

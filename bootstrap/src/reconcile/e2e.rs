@@ -2458,3 +2458,304 @@ fn the_selected_board_lists_only_the_selection() {
     let bad = serde_json::json!({"selection": [{"path": "docs/nope.md"}]});
     assert!(crate::webapi::board::selected_board_value(&project, &project.out, &bad).is_err());
 }
+
+// Two root documents at one link level with disjoint vocabulary: their reconcile
+// batches share no locality and no cone, so a build with two slots runs them at once.
+fn two_roots(label: &str) -> (PathBuf, Project) {
+    let dir =
+        std::env::temp_dir().join(format!("jazyk-e2e-{}-{}", label, crate::sys::process_id()));
+    crate::vfs::remove_dir_all(&dir).ok();
+    std::fs::create_dir_all(dir.join(".jazyk")).unwrap();
+    std::fs::create_dir_all(dir.join("docs")).unwrap();
+    std::fs::write(
+        dir.join(".jazyk/jazyk.toml"),
+        "version = 1\n\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = [\"docs/orders.md\", \"docs/catalog.md\"]\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("docs/orders.md"),
+        "# Orders\n\nA Customer places an Order.\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("docs/catalog.md"),
+        "# Catalog\n\nThe Catalog lists every Product.\n",
+    )
+    .unwrap();
+    let project = Project::load(&dir);
+    assert!(project.config_error.is_none(), "{:?}", project.config_error);
+    (dir, project)
+}
+
+// What the concurrent runner saw: the sessions in flight now, the most at once, and
+// the run files a session found while another was in flight.
+#[derive(Default)]
+struct Flight {
+    active: BTreeMap<String, Vec<Goal>>,
+    started: usize,
+    most: usize,
+    reconciles: usize,
+    gc_beside_compile: usize,
+    run_files: Vec<crate::control::RunProgress>,
+    // The first two reconcile sessions, whether the first committed, and the
+    // generation the second started its serving at.
+    first: Option<String>,
+    second: Option<String>,
+    first_committed: bool,
+    second_from: u64,
+}
+
+// The scripted executor behind `slots` concurrent sessions. Every session checks the
+// scheduling rules against the sessions in flight when it starts: overlapping compile
+// sessions share their tier, and a GC session never starts while a compile goal in its
+// cone is in flight. The first two reconcile sessions wait for each other before they
+// work, so a build that runs them at once is seen to.
+struct Concurrent {
+    inner: ScriptedRunner,
+    slots: usize,
+    flight: Mutex<Flight>,
+    met: std::sync::Condvar,
+}
+
+impl Concurrent {
+    fn new(project: &Project, slots: usize) -> Concurrent {
+        Concurrent {
+            inner: ScriptedRunner::new(project),
+            slots,
+            flight: Default::default(),
+            met: Default::default(),
+        }
+    }
+}
+
+impl SessionRunner for Concurrent {
+    fn agent_name(&self) -> String {
+        "scripted-concurrent".into()
+    }
+    fn set_build_token(&self, token: Option<String>) {
+        self.inner.set_build_token(token)
+    }
+    fn session_slots(&self, _batch: &BatchRun) -> (String, usize) {
+        ("scripted".into(), self.slots)
+    }
+    fn max_sessions_any(&self) -> usize {
+        self.slots
+    }
+    fn concurrent(&self) -> Option<&(dyn SessionRunner + Sync)> {
+        Some(self)
+    }
+    fn run_item(&self, batch: &BatchRun, trace: &Trace) -> SessionReport {
+        let tier = |goals: &[Goal]| {
+            goals
+                .iter()
+                .find(|g| g.class == "compile")
+                .and_then(|g| crate::goals::tier(&g.kind))
+        };
+        {
+            let mut f = self.flight.lock().unwrap();
+            let store = Store::load(&self.inner.out);
+            let refs = crate::board::Refs::build(&store);
+            let mut beside = 0;
+            for (other, goals) in &f.active {
+                if let (Some(a), Some(b)) = (tier(&batch.goals), tier(goals)) {
+                    assert_eq!(
+                        a, b,
+                        "{} (tier {}) opened beside {} (tier {})",
+                        batch.id, a, other, b
+                    );
+                }
+                for g in batch.goals.iter().filter(|g| g.class == "gc") {
+                    let cone = crate::board::cone_with(&store, &refs, &g.target);
+                    for c in goals.iter().filter(|c| c.class == "compile") {
+                        assert!(
+                            !cone.holds_target(&c.target),
+                            "{} opened while {} in its cone is in flight in {}",
+                            g.id,
+                            c.id,
+                            other
+                        );
+                    }
+                }
+                if batch.goals.iter().any(|g| g.class == "gc")
+                    && goals.iter().any(|g| g.class == "compile")
+                {
+                    beside += 1;
+                }
+            }
+            f.gc_beside_compile += beside;
+            f.active.insert(batch.id.clone(), batch.goals.clone());
+            f.started += 1;
+            f.most = f.most.max(f.active.len());
+            if self.slots > 1 && batch.kind() == "reconcile-section" && f.reconciles < 2 {
+                f.reconciles += 1;
+                if f.reconciles == 2 {
+                    let runs = crate::control::runs(&self.inner.out);
+                    f.run_files.extend(runs);
+                }
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while f.reconciles < 2 {
+                    let left = deadline.saturating_duration_since(std::time::Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    f = self.met.wait_timeout(f, left).unwrap().0;
+                }
+                self.met.notify_all();
+                // The second session opens its serving only after the first committed,
+                // so its board numbers the batches anew at a later generation.
+                if f.second.is_none() && f.first.is_some() {
+                    f.second = Some(batch.id.clone());
+                } else if f.first.is_none() {
+                    f.first = Some(batch.id.clone());
+                }
+                if f.second.as_ref() == Some(&batch.id) {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                    while !f.first_committed {
+                        let left = deadline.saturating_duration_since(std::time::Instant::now());
+                        if left.is_zero() {
+                            break;
+                        }
+                        f = self.met.wait_timeout(f, left).unwrap().0;
+                    }
+                    f.second_from = crate::store::read_generation(&self.inner.out);
+                }
+            }
+        }
+        let report = self.inner.run_item(batch, trace);
+        let mut f = self.flight.lock().unwrap();
+        f.active.remove(&batch.id);
+        if f.first.as_ref() == Some(&batch.id) {
+            f.first_committed = true;
+            self.met.notify_all();
+        }
+        report
+    }
+    fn ask(&self, s: &str, u: &str, l: &str, st: &str) -> Result<String, String> {
+        self.inner.ask(s, u, l, st)
+    }
+    fn ask_traced(
+        &self,
+        s: &str,
+        u: &str,
+        l: &str,
+        st: &str,
+        t: Option<&Trace>,
+    ) -> Result<String, String> {
+        self.inner.ask_traced(s, u, l, st, t)
+    }
+}
+
+// The session batches of a build in journal order.
+fn session_batches(out: &Path) -> Vec<Vec<String>> {
+    session_entries(out, crate::store::read_generation(out))
+        .into_iter()
+        .map(|e| e.batch)
+        .collect()
+}
+
+// With two slots the two root documents reconcile at once, both sessions commit (the
+// later one opening its batch after the earlier one committed, under the id the build
+// gave it), the build converges as a sequential
+// one does, the tier barrier and GC gating hold for every session it opens, and the
+// build's run file lists its sessions in flight while it runs and is gone after.
+// Mirrors docs/compiler/reconciler.md#scheduling.
+#[test]
+fn two_slots_run_disjoint_batches_at_once_and_converge() {
+    let (_dir, project) = two_roots("two-slots");
+    let runner = Concurrent::new(&project, 2);
+    let (report, events) = build(&project, &runner);
+    assert_clean_build(&report, &events);
+    let f = runner.flight.lock().unwrap();
+    assert_eq!(f.most, 2, "the two reconcile sessions overlapped");
+    // The second session opened its batch on a board one commit later than the one
+    // its id came from, and still worked exactly that batch.
+    let second = f.second.clone().expect("a second reconcile session");
+    assert!(f.first_committed);
+    let from: u64 = second
+        .trim_start_matches('b')
+        .split('-')
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    assert!(
+        f.second_from > from,
+        "{} began at g{}",
+        second,
+        f.second_from
+    );
+    assert!(f.active.is_empty());
+    // Both reconcile sessions committed, one entry each.
+    let out = project.out.clone();
+    let batches = session_batches(&out);
+    for doc in ["docs/orders.md", "docs/catalog.md"] {
+        assert!(
+            batches.iter().any(|b| b
+                .iter()
+                .any(|g| g.starts_with("g:reconcile-section:") && g.contains(doc))),
+            "{} reconciled in its own session: {:?}",
+            doc,
+            batches
+        );
+    }
+    let store = Store::load(&out);
+    let names: BTreeSet<String> = store
+        .graph
+        .entities
+        .values()
+        .map(|e| e.name.clone())
+        .collect();
+    for name in ["Customer", "Order", "Catalog", "Product"] {
+        assert!(names.contains(name), "{:?}", names);
+    }
+    // While the second reconcile session started, the run file listed the first.
+    assert_eq!(f.run_files.len(), 1, "{:?}", f.run_files);
+    let run = &f.run_files[0];
+    assert_eq!(run.command, "compile");
+    assert!(!run.in_flight.is_empty(), "{:?}", run);
+    assert!(run.in_flight.iter().all(|b| b
+        .goals
+        .iter()
+        .all(|g| g.starts_with("g:reconcile-section:"))));
+    // Every batch id is its own session label.
+    let starts: Vec<&String> = events
+        .iter()
+        .filter_map(|e| match e {
+            TraceEvent::BatchStart { label, .. } => Some(label),
+            _ => None,
+        })
+        .collect();
+    let unique: BTreeSet<&&String> = starts.iter().collect();
+    assert_eq!(unique.len(), starts.len(), "{:?}", starts);
+    assert_eq!(report.sessions as usize, starts.len());
+    // The run file goes with the build.
+    assert!(crate::control::runs(&out).is_empty());
+    assert!(
+        !crate::layout::runs_dir(&out).exists()
+            || std::fs::read_dir(crate::layout::runs_dir(&out))
+                .unwrap()
+                .next()
+                .is_none()
+    );
+    eprintln!(
+        "[e2e two-slots] {} sessions, {} GC session(s) beside compile work",
+        report.sessions, f.gc_beside_compile
+    );
+}
+
+// One slot is the sequential loop: the same sessions in the same order as the plain
+// scripted executor, and never two at once.
+#[test]
+fn one_slot_builds_exactly_as_the_sequential_loop() {
+    let (_a, plain) = two_roots("one-slot-plain");
+    let plain_runner = ScriptedRunner::new(&plain);
+    let (plain_report, plain_events) = build(&plain, &plain_runner);
+    assert_clean_build(&plain_report, &plain_events);
+    let (_b, project) = two_roots("one-slot");
+    let runner = Concurrent::new(&project, 1);
+    let (report, events) = build(&project, &runner);
+    assert_clean_build(&report, &events);
+    assert_eq!(runner.flight.lock().unwrap().most, 1);
+    assert_eq!(report.sessions, plain_report.sessions);
+    assert_eq!(session_batches(&project.out), session_batches(&plain.out));
+}

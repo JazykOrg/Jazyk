@@ -101,7 +101,7 @@ Where the provenance sits:
   whatever mentions its requirements add by reference. A mention that names the entity
   removes it: an `upsert_entity` whose `mention` names it, or an accepted ratification
   proposal. That is the flip to `quote`. See [entity fields](./model/entity.md#fields).
-- Requirement: `source: {doc, section, quote}` is the quote form. `provenance` carries the
+- Requirement: non-empty `sources: [{doc, section, quote}]` is the quote form. `provenance` carries the
   other two kinds. A requirement has exactly one of non-empty `sources` or `provenance`.
 - Attribute: each attribute carries its own `provenance`, any of the three kinds.
 - View: `provenance` is `derived` for default views and for views a session curates,

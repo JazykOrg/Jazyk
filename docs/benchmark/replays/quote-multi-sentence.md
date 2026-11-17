@@ -24,10 +24,10 @@ given:
 steps:
   - call: upsert_requirement
     args:
-      statement: The Frontend background uses #1E40AF.
+      statement: "The Frontend background uses #1E40AF."
       entities: [ent:frontend]
       section: docs/warehouse.md#/warehouse/frontend
-      quote: The background is blue. Use #1E40AF for it.
+      quote: "The background is blue. Use #1E40AF for it."
       facets: [{facet: constraint, reasoning: the background color}]
   - call: set_coverage
     args: {section: docs/warehouse.md#/warehouse/frontend, state: covered, note: the background color obligation}

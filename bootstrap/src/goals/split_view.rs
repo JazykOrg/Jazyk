@@ -95,7 +95,8 @@ impl GoalKind for SplitView {
                         continue;
                     };
                     let sec = r
-                        .source
+                        .sources
+                        .first()
                         .as_ref()
                         .map(|s| format!("{}#{}", s.doc, s.section));
                     if last_section.is_some() && sec != last_section {

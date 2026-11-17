@@ -379,7 +379,7 @@ impl McpServer {
                 .is_some_and(|p| !matches!(p, crate::model::Provenance::Quote(_)))
         };
         let is_decree = if let Some(r) = s.graph.requirements.get(&rid) {
-            r.source.is_none() && pending(&r.provenance)
+            r.sources.is_empty() && pending(&r.provenance)
         } else if let Some(e) = s.graph.entities.get(&rid) {
             pending(&e.provenance)
         } else if let Some(v) = s.graph.views.get(&rid) {
@@ -522,7 +522,18 @@ impl McpServer {
         let Some(r) = store.graph.requirements.get(&rid) else {
             return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
         };
-        let Some(src) = r.source.as_ref() else {
+        let selected = r.sources.iter().find(|source| {
+            args["section"]
+                .as_str()
+                .is_some_and(|section| section == format!("{}#{}", source.doc, source.section))
+                && args["quote"]
+                    .as_str()
+                    .is_none_or(|quote| quote == source.quote)
+        });
+        if r.sources.len() > 1 && selected.is_none() {
+            return json!({"error":{"rule":"source-selection-required", "message":"Select a source with section (doc#section) and quote before editing a requirement with multiple locations.", "sources": r.sources}});
+        }
+        let Some(src) = selected.or_else(|| r.sources.first()) else {
             return json!({"error": {"rule": "not-quoted", "message": format!(
                 "{} has no sentence in the documents yet ({}); ratify or retract it instead of revising prose", rid, crate::session::provenance_line(r))}});
         };
@@ -650,7 +661,18 @@ impl McpServer {
         let Some(r) = store.graph.requirements.get(&rid) else {
             return json!({"error": {"rule": "unknown-id", "message": format!("unknown requirement `{}`", rid)}});
         };
-        let Some(src) = r.source.as_ref() else {
+        let selected = r.sources.iter().find(|source| {
+            args["section"]
+                .as_str()
+                .is_some_and(|section| section == format!("{}#{}", source.doc, source.section))
+                && args["quote"]
+                    .as_str()
+                    .is_none_or(|quote| quote == source.quote)
+        });
+        if r.sources.len() > 1 && selected.is_none() {
+            return json!({"error":{"rule":"source-selection-required", "message":"Select a source with section (doc#section) and quote before editing a requirement with multiple locations.", "sources": r.sources}});
+        }
+        let Some(src) = selected.or_else(|| r.sources.first()) else {
             return json!({"error": {"rule": "not-quoted", "message": format!(
                 "{} has no sentence in the documents ({}); retract the decree or derivation instead", rid, crate::session::provenance_line(r))}});
         };
@@ -688,8 +710,8 @@ impl McpServer {
             old_full,
         };
         self.dual_commit(
-            edit,
-            ("delete_requirement", json!({"id": rid, "reason": reason})),
+            edit.clone(),
+            ("remove_requirement_source", json!({"id": rid, "reason": reason, "section": format!("{}#{}", edit.doc, edit.section), "quote": edit.old_text})),
             &rid,
         )
     }

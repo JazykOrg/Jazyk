@@ -110,7 +110,7 @@ pub fn pair_plan(store: &Store) -> PairPlan {
                 mutation: rec.mutation,
                 via: "entities".into(),
             };
-            let same_doc = match (req.source.as_ref(), other.source.as_ref()) {
+            let same_doc = match (req.sources.first(), other.sources.first()) {
                 (Some(a), Some(b)) => a.doc == b.doc,
                 _ => false,
             };
@@ -132,17 +132,7 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             if !sticky.is_empty() {
                 hints.push(format!("sticky: {}", sticky.join(", ")));
             }
-            hints.push(format!(
-                "same document: {}",
-                if same_doc {
-                    "yes (a duplicate verdict would delete the worse-sourced side)"
-                } else {
-                    include_str!(concat!(
-                        env!("OUT_DIR"),
-                        "/payloads/goals/prompts/inline/goals-rejudge_pair/no-a-duplicate-verdict-would-keep-both-2fd37.md"
-                    ))
-                }
-            ));
+            hints.push(format!("same document: {}", same_doc));
             let diags = open_diags_naming(store, &[rid, &nbr]);
             if diags.is_empty() {
                 hints.push("no open diagnostic on either side".into());
@@ -171,7 +161,13 @@ pub fn pair_plan(store: &Store) -> PairPlan {
             }
             hints.push(format!("load {}; load {}", rid, nbr));
             if sticky.is_empty() {
-                hints.push("skill judgment; duplicate: delete_requirement or report_diagnostic duplicate-requirement; contradiction: report_diagnostic with a prompt; consistent: mark_goal_done alone".into());
+                hints.push(
+                    include_str!(concat!(
+                        env!("OUT_DIR"),
+                        "/payloads/goals/prompts/inline/goals-rejudge_pair/verdict-tools.md"
+                    ))
+                    .into(),
+                );
             } else {
                 // The standing finding is the verdict's carrier: no second filing.
                 // Mirrors docs/compiler/goals/rejudge-pair.md#tools.
@@ -389,6 +385,7 @@ impl GoalKind for RejudgePair {
         &[
             "update_requirement",
             "delete_requirement",
+            "merge_requirements",
             "update_entity",
             "report_diagnostic",
             "resolve_diagnostic",

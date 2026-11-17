@@ -80,3 +80,6 @@ If an existing requirement in an incoming referring section quotes only a list l
 Other cross-document writes remain forbidden.
 
 Invalid blob coverage is refused before staging; if provenance cannot be repaired, mark the goal failed and save without a coverage claim.
+Search existing requirements before creating one. Attach a matching source with
+add_requirement_source. One obligation can have quotes spanning consecutive
+sentences and sources in several documents. Remove only obsolete source locations.

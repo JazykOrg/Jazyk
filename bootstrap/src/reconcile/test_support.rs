@@ -27,11 +27,11 @@ pub(super) fn req(
         statement: statement.into(),
         entities: vec![entity.into()],
         edges: Vec::new(),
-        source: Some(SourceRef {
+        sources: vec![SourceRef {
             doc: doc.into(),
             section: section.into(),
             quote: quote.into(),
-        }),
+        }],
         ..Default::default()
     }
 }

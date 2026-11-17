@@ -24,28 +24,31 @@ pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<
         let Some(r) = store.graph.requirements.get(a) else {
             continue;
         };
-        let Some(src) = r.source.as_ref() else {
-            continue;
-        };
-        if store.quote_locates(&src.doc, &src.section, &src.quote)
-            && !store.status.reevaluate.contains(a)
-        {
-            continue;
-        }
-        let addressed = staged.iter().any(|o| match o {
-            Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
-            // A staged create that resolved to the anchor carries its id; the
-            // statement-equality fallback covers pre-resolution stages.
-            Op::CreateRequirement { id, requirement } => {
-                id == a
-                    || (requirement.anchored_at(&src.doc, &src.section)
-                        && store::normalize_statement(&requirement.statement)
-                            == store::normalize_statement(&r.statement))
+        for src in &r.sources {
+            if store.quote_locates(&src.doc, &src.section, &src.quote)
+                && !store.status.reevaluate.contains(a)
+            {
+                continue;
             }
-            _ => false,
-        });
-        if !addressed {
-            untouched.push(a.clone());
+            let addressed = staged.iter().any(|o| match o {
+                Op::RemoveRequirementSource { id, source, .. } => id == a && source == src,
+                Op::AddRequirementSource { id, source } => {
+                    id == a && source.doc == src.doc && source.section == src.section
+                }
+                Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
+                // A staged create that resolved to the anchor carries its id; the
+                // statement-equality fallback covers pre-resolution stages.
+                Op::CreateRequirement { id, requirement } => {
+                    id == a
+                        || (requirement.anchored_at(&src.doc, &src.section)
+                            && store::normalize_statement(&requirement.statement)
+                                == store::normalize_statement(&r.statement))
+                }
+                _ => false,
+            });
+            if !addressed {
+                untouched.push(a.clone());
+            }
         }
     }
     untouched
@@ -159,12 +162,14 @@ impl GoalKind for PlaceAnchors {
     }
     fn gates(&self, store: &Store, staged: &[Op]) -> Vec<Violation> {
         // Every proposal of a document the changeset touches is decided.
-        let decided: BTreeSet<(String, String)> = staged
+        let decided: BTreeSet<(String, String, String)> = staged
             .iter()
             .filter_map(|o| match o {
-                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from } => {
-                    Some((id.clone(), format!("{}#{}", from.doc, from.section)))
-                }
+                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from } => Some((
+                    id.clone(),
+                    format!("{}#{}", from.doc, from.section),
+                    from.quote.clone(),
+                )),
                 _ => None,
             })
             .collect();
@@ -187,7 +192,7 @@ impl GoalKind for PlaceAnchors {
             let undecided: Vec<String> = b
                 .proposals
                 .iter()
-                .filter(|p| !decided.contains(&(p.anchor.clone(), p.from.clone())))
+                .filter(|p| !decided.contains(&(p.anchor.clone(), p.from.clone(), p.quote.clone())))
                 .map(|p| p.anchor.clone())
                 .collect();
             if !undecided.is_empty() {

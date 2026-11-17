@@ -124,7 +124,7 @@ fn referents(store: &Store, id: &str) -> Vec<String> {
         if let Some(t) = &r.transition {
             out.push(store.resolve_id(&t.subject).to_string());
         }
-        if let Some(s) = &r.source {
+        for s in &r.sources {
             out.push(format!("{}#{}", s.doc, s.section));
         }
         out.extend(from_of(&r.provenance));
@@ -224,7 +224,7 @@ impl Refs {
             for f in from_of(&r.provenance) {
                 push_ref(&mut refs.requirement_from, &f, rid);
             }
-            if let Some(s) = &r.source {
+            for s in &r.sources {
                 push_ref(
                     &mut refs.section_requirements,
                     &format!("{}#{}", s.doc, s.section),
@@ -446,7 +446,7 @@ pub fn cone_with(store: &Store, refs: &Refs, target: &str) -> Cone {
             );
         }
         if let Some(r) = store.graph.requirements.get(n) {
-            if let Some(s) = &r.source {
+            for s in &r.sources {
                 sections.insert(format!("{}#{}", s.doc, s.section));
             }
         }

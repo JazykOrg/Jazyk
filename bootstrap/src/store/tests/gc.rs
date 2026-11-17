@@ -166,7 +166,7 @@ fn gc_removes_unanchored_and_spares_derived() {
         Requirement {
             statement: "The X ys.".into(),
             entities: vec!["ent:x".into()],
-            source: Some(mention("gone.md", "/gone", "x")),
+            sources: vec![mention("gone.md", "/gone", "x")],
             ..Default::default()
         },
     );
@@ -193,7 +193,7 @@ fn gc_removes_unanchored_and_spares_derived() {
         Requirement {
             statement: "The invented thing holds.".into(),
             entities: vec!["ent:invented".into()],
-            source: Some(mention("t.md", "/t", "body")),
+            sources: vec![mention("t.md", "/t", "body")],
             ..Default::default()
         },
     );
@@ -253,7 +253,7 @@ fn every_commit_runs_the_sweep_behind_its_own_entry() {
         Requirement {
             statement: "The X ys.".into(),
             entities: vec!["ent:x".into()],
-            source: Some(mention("gone.md", "/gone", "x")),
+            sources: vec![mention("gone.md", "/gone", "x")],
             ..Default::default()
         },
     );

@@ -101,3 +101,9 @@ The [criteria skill](../skills/criteria.md) carries the method.
 - A test artifact: tests are what criteria become, keyed by criterion id.
 - The llm test setup file under `gen/criteria/` is a test artifact of that kind, not a
   criterion ([criteria files for llm tests](../../consumers/gen.md#criteria-files-for-llm-tests)).
+
+## Source-independent obligation hashes
+
+A source location change alone preserves the owning requirement statement hash
+and does not stale its criteria. A merged requirement reparents criteria to the
+survivor and invalidates evidence only when the obligation statement changes.

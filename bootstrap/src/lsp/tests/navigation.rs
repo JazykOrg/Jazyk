@@ -5,11 +5,11 @@ fn requirement() -> Requirement {
         statement: "The Cart shall hold items.".into(),
         entities: vec!["ent:cart".into()],
         edges: vec![],
-        source: Some(SourceRef {
+        sources: vec![SourceRef {
             doc: "shop.md".into(),
             section: "/shop".into(),
             quote: "holds".into(),
-        }),
+        }],
         ..Default::default()
     }
 }

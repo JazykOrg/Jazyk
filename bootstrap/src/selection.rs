@@ -210,7 +210,8 @@ impl Resolved {
         let g = &store.graph;
         let mut nodes: BTreeSet<String> = BTreeSet::new();
         for (id, r) in &g.requirements {
-            if r.source
+            if r.sources
+                .first()
                 .as_ref()
                 .is_some_and(|s| in_sel(&s.doc, &s.section))
             {

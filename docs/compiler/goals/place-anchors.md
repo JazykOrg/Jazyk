@@ -188,3 +188,13 @@ subject; re-evaluate when the wording, the scope, or the surrounding section cha
 the meaning; orphan when the statement is gone. An orphaned anchor loses its id and its
 history once the following session deletes it, so placing wins whenever a candidate
 holds the statement, and re-evaluating costs one re-check, never information.
+
+## Source identity
+
+An anchor names one requirement source, including its document, section, and quote.
+Placement or orphaning changes only that source and preserves the other locations.
+
+`place_anchor` and `orphan_anchor` accept `from: {doc, section, quote}` to
+select one source. A requirement with several proposals requires this selector.
+Completion and proposal retirement identify each source by its quote as well as
+its document and section.

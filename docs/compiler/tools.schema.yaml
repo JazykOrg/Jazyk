@@ -655,7 +655,7 @@ definitions:
     description: >-
       Request payload of upsert_requirement. The store mints the id; a supplied id is
       ignored. Exactly one of section plus quote or a derived provenance. The natural
-      key (section plus punctuation-insensitive statement) makes the call idempotent; a
+      key (entity scopes plus punctuation-insensitive statement) makes the call idempotent; a
       match resolves at stage time and returns the existing id with updated true
     type: object
     required:
@@ -845,6 +845,13 @@ definitions:
       - section
       - reevaluate
     properties:
+      from:
+        type: object
+        required: [doc, section, quote]
+        properties:
+          doc: {type: string}
+          section: {type: string}
+          quote: {type: string}
       id:
         type: string
         description: A requirement or entity id named by the batch's proposals
@@ -864,6 +871,13 @@ definitions:
     required:
       - id
     properties:
+      from:
+        type: object
+        required: [doc, section, quote]
+        properties:
+          doc: {type: string}
+          section: {type: string}
+          quote: {type: string}
       id:
         type: string
     additionalProperties: false
@@ -2480,4 +2494,30 @@ definitions:
     properties:
       path: {type: string}
       expectedTarget: {type: string}
+    additionalProperties: false
+
+  addRequirementSource:
+    type: object
+    required: [id, section, quote]
+    properties:
+      id: {type: string}
+      section: {type: string}
+      quote: {type: string}
+    additionalProperties: false
+  removeRequirementSource:
+    type: object
+    required: [id, section, quote, reason]
+    properties:
+      id: {type: string}
+      section: {type: string}
+      quote: {type: string}
+      reason: {type: string}
+    additionalProperties: false
+  mergeRequirements:
+    type: object
+    required: [keep, absorb, reason]
+    properties:
+      keep: {type: string}
+      absorb: {type: string}
+      reason: {type: string}
     additionalProperties: false

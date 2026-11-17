@@ -447,7 +447,7 @@ impl Store {
             .as_ref()
             .map(|t| (self.resolve_id(&t.subject), norm(&t.from), norm(&t.to)));
         // Whether the subject sits in its document's opening section, or in a later one.
-        let placement = req.source.as_ref().and_then(|s| {
+        let placement = req.sources.first().and_then(|s| {
             let opening = self.opening_section(&s.doc)?;
             let order = self.docs.get(&s.doc)?.sections.get(&s.section)?.order;
             Some((s.doc.as_str(), s.section == opening, order))
@@ -534,7 +534,7 @@ impl Store {
             // section, the other in a later section of the same document. Qualifies
             // with one shared entity and one shared token (typically the verb stem),
             // scores one more.
-            let intro_restatement = match (&placement, &other.source) {
+            let intro_restatement = match (&placement, &other.sources.first()) {
                 (Some((doc, intro, order)), Some(s)) if s.doc == *doc => {
                     let other_order = self
                         .docs

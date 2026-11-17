@@ -2,7 +2,7 @@ $schema: http://json-schema.org/draft-07/schema#
 $id: https://jazyk.org/schemas/graph.json
 title: Jazyk Graph Store
 description: |-
-  Definitions for the files of one set directory (.jazyk/<set-id>/), store version 5.
+  Definitions for the files of one set directory (.jazyk/<set-id>/), store version 6.
   Committed, at the top of the set directory: the current graph, its decisions, its
   sources, and the ledger. No work, history, or generation is committed.
   - store.yaml is one status object (the store version)
@@ -381,7 +381,7 @@ definitions:
         description: Generation marker (g<N>), read from the local journal; never written to the node file
   requirement:
     description: >-
-      One node file under graph/requirements/. Carries exactly one of source (the quote
+      One node file under graph/requirements/. Carries exactly one of sources (the quote
       form) or provenance (derived or decree)
     type: object
     required:
@@ -389,7 +389,7 @@ definitions:
       - entities
     oneOf:
       - required:
-          - source
+          - sources
         not:
           required:
             - provenance
@@ -397,7 +397,7 @@ definitions:
           - provenance
         not:
           required:
-            - source
+            - sources
     properties:
       id:
         type: string
@@ -422,9 +422,13 @@ definitions:
         type: array
         items:
           $ref: '#/definitions/facet'
-      source:
-        description: The quote form of provenance on a requirement
-        $ref: '#/definitions/sourceRef'
+      sources:
+        description: All supporting source locations of one obligation
+        type: array
+        minItems: 1
+        uniqueItems: true
+        items:
+          $ref: '#/definitions/sourceRef'
       provenance:
         description: Derived or decree provenance. Never the quote form on a requirement
         oneOf:
@@ -1263,11 +1267,11 @@ definitions:
     properties:
       version:
         description: >-
-          The store version. A version 4 store loads and the next build opening rewrites
+          The store version. A version 5 store loads and the next build opening rewrites
           it in this layout. A newer version is never archived: the store is read-only.
           An older version, or none, is archived and the store starts empty
         type: integer
-        const: 5
+        const: 6
       reevaluate:
         description: >-
           Anchors a place-anchors session placed with reevaluate, listed as stale
@@ -1521,7 +1525,7 @@ definitions:
     required: [id, verdict, statements]
     properties:
       id: {type: string, description: 'The pair, a~b, smaller id first'}
-      verdict: {type: string, enum: [consistent, diagnosed]}
+      verdict: {type: string, enum: [consistent, diagnosed, distinct]}
       statements: {type: object, description: Requirement id to the hash of its statement when judged}
   reviewDecision:
     description: >-

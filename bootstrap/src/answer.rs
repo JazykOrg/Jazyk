@@ -154,7 +154,7 @@ pub fn answer(
                     continue;
                 }
                 let r = &s.graph.requirements[&qid];
-                let (Some(t), Some(src)) = (r.transition.as_ref(), r.source.as_ref()) else {
+                let (Some(t), Some(src)) = (r.transition.as_ref(), r.sources.first()) else {
                     continue;
                 };
                 match follow_transition(&src.quote, &new_quote, t) {
@@ -622,7 +622,7 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     for sub in &d.subjects {
         let sid = store.resolve_id(sub).to_string();
         if let Some(r) = store.graph.requirements.get(&sid) {
-            match r.source.as_ref() {
+            match r.sources.first() {
                 Some(src) => s.push_str(&line(
                     "subject-quoted",
                     &[
@@ -858,11 +858,11 @@ mod tests {
                     requirement: crate::model::Requirement {
                         statement: quote.into(),
                         entities: vec!["ent:order".into()],
-                        source: Some(SourceRef {
+                        sources: vec![SourceRef {
                             doc: "docs/pay.md".into(),
                             section: "/pay".into(),
                             quote: quote.into(),
-                        }),
+                        }],
                         ..Default::default()
                     },
                 },
@@ -880,7 +880,7 @@ mod tests {
             "req:pay-1",
             sentence,
             &decree,
-            r.source.as_ref(),
+            r.sources.first(),
             &r.entities,
             None,
         );
@@ -1120,7 +1120,7 @@ mod tests {
         assert_eq!(s.status.generation, before + 1, "one changeset");
         let r = &s.graph.requirements["req:pay-1"];
         assert_eq!(
-            r.source.as_ref().unwrap().quote,
+            r.sources.first().unwrap().quote,
             "An Order is paid within 21 days."
         );
         assert!(r.provenance.is_none());
@@ -1155,7 +1155,7 @@ mod tests {
         assert_eq!(v["status"], "handling");
         assert_eq!(crate::vfs::read_to_string(&path).unwrap(), before);
         let s = Store::load(&out);
-        assert!(s.graph.requirements["req:pay-1"].source.is_none());
+        assert!(s.graph.requirements["req:pay-1"].sources.is_empty());
         let d = &s.graph.diagnostics[&did];
         assert_eq!(d.lifecycle, "open");
         assert_eq!(d.answer.as_ref().unwrap().status, "handling");
@@ -1204,7 +1204,7 @@ mod tests {
         let r = &s.graph.requirements["req:pay-1"];
         assert_eq!(r.statement, "An Order is paid within 30 days.");
         assert_eq!(
-            r.source.as_ref().unwrap().quote,
+            r.sources.first().unwrap().quote,
             "An Order is paid within 30 days."
         );
         assert!(r.provenance.is_none());
@@ -1391,11 +1391,11 @@ mod tests {
                     statement: "An Order shall be paid within 30 days.".into(),
                     entities: vec![],
                     edges: vec![],
-                    source: Some(crate::model::SourceRef {
+                    sources: vec![crate::model::SourceRef {
                         doc: "docs/pay.md".into(),
                         section: sec.clone(),
                         quote: "An Order shall be paid within 30 days.".into(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             }],
@@ -1418,9 +1418,9 @@ mod tests {
             .next()
             .expect("requirement survives");
         assert!(
-            r.source.as_ref().unwrap().quote.contains("within 21 days"),
+            r.sources.first().unwrap().quote.contains("within 21 days"),
             "re-anchored: {}",
-            r.source.as_ref().unwrap().quote
+            r.sources.first().unwrap().quote
         );
         assert!(
             r.statement.contains("within 21 days"),
@@ -1573,11 +1573,11 @@ mod tests {
                 requirement: crate::model::Requirement {
                     statement: q.to_string(),
                     entities: vec!["ent:order".into()],
-                    source: Some(SourceRef {
+                    sources: vec![SourceRef {
                         doc: "docs/pay.md".into(),
                         section: sec.clone(),
                         quote: q.to_string(),
-                    }),
+                    }],
                     ..Default::default()
                 },
             });
@@ -1818,11 +1818,11 @@ mod tests {
                             "ally",
                             "Ines confronts Theo about the survey",
                         )),
-                        source: Some(SourceRef {
+                        sources: vec![SourceRef {
                             doc: "docs/arcs.md".into(),
                             section: sec.clone(),
                             quote: quote.into(),
-                        }),
+                        }],
                         ..Default::default()
                     },
                 },
@@ -1928,7 +1928,7 @@ mod tests {
         );
         assert_eq!(r.facets.len(), 1);
         assert_eq!(r.facets[0].facet, "behavior");
-        assert!(r.source.as_ref().unwrap().quote.ends_with("to rival."));
+        assert!(r.sources.first().unwrap().quote.ends_with("to rival."));
         let entry = journal_kind(&out, before + 1);
         assert_eq!(entry.kind, "answer");
         crate::vfs::remove_dir_all(&project.root).ok();

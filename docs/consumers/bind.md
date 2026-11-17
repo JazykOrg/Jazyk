@@ -260,3 +260,8 @@ by no binding are unclaimed: behavior the code carries that no requirement descr
 
 Test candidates use document-relative paths with `/` separators on every native
 platform. Native filesystem separators do not enter their serialized file names.
+
+## Requirement locations
+
+Binding reads every requirement source and follows requirement redirects. Adding
+or removing a location alone preserves requirement hashes and current test bindings.

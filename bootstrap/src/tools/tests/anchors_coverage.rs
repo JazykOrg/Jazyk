@@ -258,11 +258,11 @@ fn align_session() -> ToolSession {
             statement: "The Basket shall keep items until checkout.".into(),
             entities: vec!["ent:basket".into()],
             edges: Vec::new(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop/cart".into(),
                 quote: "Items stay until checkout.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -272,11 +272,11 @@ fn align_session() -> ToolSession {
             statement: "The Basket shall hold items a Customer intends to buy.".into(),
             entities: vec!["ent:basket".into()],
             edges: Vec::new(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop/cart".into(),
                 quote: "The Cart holds items a Customer intends to buy.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -401,11 +401,11 @@ fn reconcile_done_holds_a_flagged_anchor_whose_quote_locates() {
             statement: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
             entities: vec!["ent:shopping-cart".into()],
             edges: Vec::new(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop/cart".into(),
                 quote: "The Shopping Cart holds items a Customer intends to buy.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

@@ -2,7 +2,7 @@
 
 A statement is the text of a [requirement](../model/requirement.md): one obligation the
 documents place on the subject, written as a free-form sentence. The requirement stores it
-in its `statement` field and keeps the source sentence verbatim in its `quote` (see
+in its `statement` field and keeps each supporting passage verbatim in its `sources` (see
 [fields](../model/requirement.md#fields)). The wording is the model's: it writes whatever
 sentence carries the obligation most clearly, in the documents' own terms. No template and
 no keyword is prescribed; [wording](#wording) says what a clear statement has. The
@@ -351,3 +351,10 @@ Statements express obligations. Everything else is a separate node or a derivati
 - A contradiction, a duplicate, or an ambiguity in a sentence is a
   [diagnostic](../model/diagnostic.md) filed against the requirement, never a caveat
   written into the statement.
+
+## Obligations and locations
+
+One obligation may be stated across consecutive sentences or repeated in several
+sections and documents. Store one requirement with every supporting source location.
+A sentence may support several independently testable requirements. Search existing
+requirements and attach sources before creating another concept.

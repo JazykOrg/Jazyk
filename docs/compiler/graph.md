@@ -241,25 +241,12 @@ and the sweep would collect the requirements of a document whose record did not 
 
 ### Store version
 
-`store.yaml` carries `version: 5`. Version 5 is the layout above: the set's top level
-holds the current graph, its decisions, its sources, and the ledger; `local/` and
-`derived/` sit beside it, logs outside the project; every file starts with its header
-comments; no work, no generation, no marker, and no cause is committed.
+`store.yaml` carries `version: 6`. The current layout keeps graph, decisions,
+sources, and ledger committed; machine state remains local.
 
-- A version 4 store (`status.yaml` with change records, parked, failed, alignment, and
-  lookalike files beside it, `docs/` for the sources, markers and causes in local
-  files, output and logs inside the set) loads as it is. The opening of the next build
-  rewrites it whole in the version 5 layout, under the lock, before any goal derives:
-  `status.yaml` becomes `store.yaml`; `docs/` becomes `sources/`; lookalike verdicts
-  become `graph/decisions/lookalikes/`; the partners each requirement's records list as
-  judged become `graph/decisions/pairs/`; a failed goal becomes a `goal-failed`
-  diagnostic; the change records, parked goals, and alignment proposals move into the
-  machine-local `local/run.yaml` ([a build's progress](#a-builds-progress)); the journal,
-  `control.yaml`, workers, and leases move into `local/`; output and the old in-project
-  logs are deleted, since a build recreates the output and logs now live outside the
-  project. A set holding a version 4 store counts as dirty, so a bare `jazyk compile`
-  (with `--sessions 0`, too) performs the rewrite. A commit before that writes the
-  version 5 layout too. Ids stay: ids are immutable.
+- Version 5 loads with each requirement `source` converted to `sources: [source]`.
+  The next build opening rewrites the store under the lock, preserving ids.
+  Older versions archive and rebuild. No earlier layout migration is supported.
 - A store whose version is newer than the binary's is never archived and never
   written. Jazyk refuses to work on it:
   - Every command that works on the set (`compile`, `check`, `watch`, `preview`,
@@ -320,7 +307,7 @@ Their semantics:
   `parent` matches when exactly one entity with that name and scope exists, whatever its
   parent; several matches is an error naming the candidates and asking for `parent`. See
   [the natural key under containment](./concepts/identity.md#the-natural-key-under-containment).
-  For requirements the natural key is the source section plus the punctuation-insensitive
+  For requirements the natural key is entity scopes plus the punctuation-insensitive
   `statement`, so a punctuation or spacing edit to a sentence matches its existing
   requirement and refreshes the `statement` and `quote` in place. Punctuation-insensitive
   means case, spacing, and punctuation fall away; a comparison operator, a sign, and a
@@ -508,14 +495,9 @@ The gates:
   provenance, or not at all. A local model minted a Shop «system» twice from "the system
   shall empty the Cart" on a page headed Shop, and 1 of 810 first mentions across the
   collected runs would have been refused, itself a concept the sentence never named.
-- A requirement's `quote` is one sentence: a leading list number set aside, at most one
-  of its sentences runs to four words or more (so a fact line such as `Dot Feeney. Age
-  58. Occupation: ferry office manager.` stands). A quote spanning two sentences is
-  refused as `quote-multi-sentence`, naming them: one requirement per sentence, each
-  quoting its own. A code block or diagram quotes its own line and is exempt. A local
-  model merged "built using React" and "communicates over a REST API" into one statement
-  quoting both sentences, and 6 of 3310 quotes across the collected runs spanned two
-  sentences, each a merge or a statement quoting its neighbour's sentence.
+- Each requirement source quote is a non-empty verbatim contiguous passage within
+  one section, matched whitespace-insensitively. Consecutive sentences are allowed.
+  Granularity concerns obligations, not sentence boundaries.
 - In a [`reconcile-section`](./goals/reconcile-section.md) session, a mention or
   requirement source must cite the section being reconciled or its document. A quote
   from a document the prose merely links to is rejected (`wrong-document`): the fact is
@@ -1102,3 +1084,14 @@ survives byte changes. `sha256` records the bytes at classification and guards t
 write. The input inventory's current byte hash reopens reconciliation when those
 bytes change. The decision's old hash never makes current bytes look reconciled.
 See [asset classification](parsing.md#asset-classification).
+
+## Requirement source mutations
+
+`upsert_requirement` unions source locations under the requirement natural key.
+`add_requirement_source` attaches one validated quote to an existing requirement.
+`remove_requirement_source` removes one exact source and deletes only a last-source
+requirement. `merge_requirements` consolidates obligations and leaves a redirect.
+The quote gate requires a non-empty verbatim contiguous passage within one section;
+it does not count sentences. Every source participates independently in alignment,
+stale-anchor checks, change records, and the sweep. A missing section removes only
+its sources. Statement hashes exclude sources; review fact hashes include them.

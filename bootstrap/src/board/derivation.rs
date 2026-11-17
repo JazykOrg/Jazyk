@@ -467,6 +467,21 @@ impl Board {
                 .held_keys()
                 .flat_map(|k| compile_by_key.get(k).into_iter().flatten().copied())
                 .collect();
+            if g.kind == "consolidate-requirements" {
+                for id in g.change["requirements"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                {
+                    let member_cone = cone_with(store, &refs, id);
+                    hits.extend(
+                        member_cone
+                            .held_keys()
+                            .flat_map(|k| compile_by_key.get(k).into_iter().flatten().copied()),
+                    );
+                }
+            }
             hits.sort_unstable();
             hits.dedup();
             let blockers: Vec<String> = hits.into_iter().map(|i| goals[i].id.clone()).collect();

@@ -846,3 +846,8 @@ The loop checks input before model calls, after complete responses, between tool
 The host enables live steering when `supported` is true and the handshake advertises `idleBehavior: promptRequired`. It also accepts the exact adapter identities `@agentclientprotocol/codex-acp` version `2.4.0` and `@agentclientprotocol/claude-agent-acp` version `0.99.0`. Their pinned contracts support the host-owned fallback. Other versions queue a normal next turn. Names alone do not enable steering.
 
 Pinned references: [Codex steering](https://github.com/agentclientprotocol/codex-acp/blob/v2.4.0/docs/steering.md) and [Claude adapter](https://github.com/agentclientprotocol/claude-agent-acp/blob/v0.99.0/src/acp-agent.ts). A transport timeout records unknown delivery and never automatically resends. The embedded adapter advertises `inputDeliveryEvents: true`. Its acknowledgement accepts the input; its later delivery event confirms history insertion. Pinned external adapters acknowledge insertion with `outcome: injected`.
+
+## Multi-source dual writes
+
+Dual-write tools identify the specific source being edited. Preserve other locations.
+An ambiguous multi-source edit requires a location choice before changing prose.

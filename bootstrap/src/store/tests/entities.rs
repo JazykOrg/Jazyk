@@ -144,7 +144,7 @@ fn merge_rewires_every_reference_and_redirects() {
                         trigger: None,
                         guard: None,
                     }),
-                    source: Some(mention("t.md", "/t", "buyer and customer")),
+                    sources: vec![mention("t.md", "/t", "buyer and customer")],
                     ..Default::default()
                 },
             },
@@ -253,7 +253,7 @@ fn merge_and_resolve_drop_non_adjacent_duplicates() {
                 requirement: Requirement {
                     statement: "The buyer fills the cart for the customer.".into(),
                     entities: vec!["ent:buyer".into(), "ent:cart".into(), "ent:customer".into()],
-                    source: Some(mention("t.md", "/t", "buyer, cart, and customer")),
+                    sources: vec![mention("t.md", "/t", "buyer, cart, and customer")],
                     ..Default::default()
                 },
             },
@@ -747,7 +747,7 @@ fn threshold_crossed_on_children_per_entity_and_cleared_on_dropping_back() {
             requirement: Requirement {
                 statement: "The hub holds.".into(),
                 entities: vec!["ent:hub".into()],
-                source: Some(mention("t.md", "/t", "the hub")),
+                sources: vec![mention("t.md", "/t", "the hub")],
                 ..Default::default()
             },
         }],
@@ -909,11 +909,11 @@ fn create_under_existing_id_folds_in_place_and_reports_change() {
         Requirement {
             statement: "The Cart holds items a Customer intends to buy.".into(),
             entities: vec!["ent:cart".into()],
-            source: Some(mention(
+            sources: vec![mention(
                 "t.md",
                 "/t",
                 "holds items a Customer intends to buy",
-            )),
+            )],
             ..Default::default()
         },
     );
@@ -925,7 +925,7 @@ fn create_under_existing_id_folds_in_place_and_reports_change() {
             requirement: Requirement {
                 statement: "The Cart holds items.".into(),
                 entities: vec!["ent:cart".into()],
-                source: Some(mention("t.md", "/t", "keeps items")),
+                sources: vec![mention("t.md", "/t", "keeps items")],
                 ..Default::default()
             },
         }],
@@ -934,7 +934,8 @@ fn create_under_existing_id_folds_in_place_and_reports_change() {
     assert_eq!(s.graph.requirements.len(), 1);
     let r = &s.graph.requirements["req:t-1"];
     assert_eq!(r.statement, "The Cart holds items.");
-    assert_eq!(r.source.as_ref().unwrap().quote, "keeps items");
+    assert!(r.sources.iter().any(|s| s.quote == "keeps items"));
+    assert_eq!(r.sources.len(), 2);
     assert!(
         report.changed_requirements.contains("req:t-1"),
         "{:?}",

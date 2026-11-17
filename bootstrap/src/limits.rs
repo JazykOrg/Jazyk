@@ -210,6 +210,10 @@ pub fn command_timeout() -> std::time::Duration {
     std::time::Duration::from_secs(secs)
 }
 
+// Near-identical obligation clusters trigger optional and mandatory consolidation.
+pub const REQUIREMENT_CLUSTER_SOFT: usize = 2;
+pub const REQUIREMENT_CLUSTER_HARD: usize = 10;
+
 #[cfg(test)]
 mod tests {
     use super::*;

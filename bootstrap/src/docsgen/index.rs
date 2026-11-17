@@ -309,8 +309,8 @@ pub(super) fn write_reports(store: &Store, dir: &std::path::Path) -> usize {
         let rs = store.resolve_id(subject);
         if let Some(r) = store.graph.requirements.get(rs) {
             return r
-                .source
-                .as_ref()
+                .sources
+                .first()
                 .map(|src| (src.doc.clone(), src.section.clone()));
         }
         store.graph.entities.get(rs).and_then(|e| {

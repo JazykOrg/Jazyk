@@ -287,7 +287,7 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
         requirement: Requirement {
             statement: "The backend serves the shop.".into(),
             entities: vec!["ent:backend".into()],
-            source: Some(src("arch.md", "The backend serves the shop")),
+            sources: vec![src("arch.md", "The backend serves the shop")],
             ..Default::default()
         },
     });
@@ -307,7 +307,7 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
                 } else {
                     Vec::new()
                 },
-                source: Some(src(doc, statement.trim_end_matches('.'))),
+                sources: vec![src(doc, statement.trim_end_matches('.'))],
                 ..Default::default()
             },
         });

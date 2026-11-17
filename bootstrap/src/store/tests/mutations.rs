@@ -29,11 +29,11 @@ fn criteria_key_on_their_requirement_and_follow_it() {
             requirement: Requirement {
                 statement: "The sort utility outputs its lines in ascending order.".into(),
                 entities: vec!["prov:1".into()],
-                source: Some(mention(
+                sources: vec![mention(
                     "t.md",
                     "/t",
                     "outputs its lines in ascending order",
-                )),
+                )],
                 ..Default::default()
             },
         },
@@ -138,7 +138,7 @@ fn commit_writes_change_records_and_clear_changes_removes_them() {
             requirement: Requirement {
                 statement: "The Cart holds items.".into(),
                 entities: vec!["ent:cart".into()],
-                source: Some(mention("t.md", "/t", "The Cart holds items.")),
+                sources: vec![mention("t.md", "/t", "The Cart holds items.")],
                 ..Default::default()
             },
         },
@@ -238,11 +238,11 @@ fn same_sentence_subsumed_statement_refreshes_in_place() {
     let base = Requirement {
         statement: "The user management system creates a new user account.".into(),
         entities: vec!["ent:um".into()],
-        source: Some(mention(
+        sources: vec![mention(
             "t.md",
             "/t",
             "- `createUser` - creates a new user account",
-        )),
+        )],
         ..Default::default()
     };
     s.apply(
@@ -330,7 +330,7 @@ fn requirement_remaps_provisional_ids_and_derives_edges() {
                     rel_type: Some("composition".into()),
                     cardinality: Some("1..*".into()),
                 }],
-                source: Some(mention("t.md", "/t", "the system empties the Cart")),
+                sources: vec![mention("t.md", "/t", "the system empties the Cart")],
                 ..Default::default()
             },
         },
@@ -386,11 +386,11 @@ fn a_requirement_delete_names_its_own_mutation() {
                 requirement: Requirement {
                     statement: "The sort utility outputs its lines in ascending order.".into(),
                     entities: vec!["ent:sort".into()],
-                    source: Some(mention(
+                    sources: vec![mention(
                         "t.md",
                         "/t",
                         "outputs its lines in ascending order",
-                    )),
+                    )],
                     ..Default::default()
                 },
             },
@@ -487,7 +487,7 @@ fn via_names_the_view_list_and_a_types_change_reaches_instances_as_attributes() 
                         rel_type: Some("instantiation".into()),
                         cardinality: None,
                     }],
-                    source: Some(mention("t.md", "/t", "Ana is a customer")),
+                    sources: vec![mention("t.md", "/t", "Ana is a customer")],
                     ..Default::default()
                 },
             },
@@ -565,7 +565,7 @@ fn views_curate_delete_and_bump() {
                 reasoning: "a step".into(),
                 measure: None,
             }],
-            source: Some(mention("t.md", "/t", "cart and order")),
+            sources: vec![mention("t.md", "/t", "cart and order")],
             ..Default::default()
         },
     };
@@ -735,7 +735,7 @@ fn threshold_crossed_on_the_fifty_first_requirement_and_cleared_by_a_bump() {
             requirement: Requirement {
                 statement: format!("The order does thing number {}.", i),
                 entities: vec!["ent:order".into()],
-                source: Some(mention("t.md", "/t", "the order")),
+                sources: vec![mention("t.md", "/t", "the order")],
                 ..Default::default()
             },
         });
@@ -748,7 +748,7 @@ fn threshold_crossed_on_the_fifty_first_requirement_and_cleared_by_a_bump() {
             requirement: Requirement {
                 statement: "The order does one thing more.".into(),
                 entities: vec!["ent:order".into()],
-                source: Some(mention("t.md", "/t", "the order")),
+                sources: vec![mention("t.md", "/t", "the order")],
                 ..Default::default()
             },
         }],
@@ -773,7 +773,7 @@ fn threshold_crossed_on_the_fifty_first_requirement_and_cleared_by_a_bump() {
             requirement: Requirement {
                 statement: "The order ships by courier.".into(),
                 entities: vec!["ent:order".into()],
-                source: Some(mention("t.md", "/t", "the order")),
+                sources: vec![mention("t.md", "/t", "the order")],
                 ..Default::default()
             },
         }],

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://jazyk.org/schemas/graph.json",
   "title": "Jazyk Graph Store",
-  "description": "Definitions for the files of one set directory (.jazyk/<set-id>/), store version 5.\nCommitted, at the top of the set directory: the current graph, its decisions, its\nsources, and the ledger. No work, history, or generation is committed.\n- store.yaml is one status object (the store version)\n- graph/entities/<file id>.yaml is one entity\n- graph/requirements/<file id>.yaml is one requirement\n- graph/criteria/<file id>.yaml is one criterion\n- graph/views/<file id>.yaml is one curated view\n- graph/diagnostics/<file id>.yaml is one diagnostic\n- graph/redirects/<file id>.yaml is one redirect\n- graph/decisions/lookalikes/<pair>.yaml is one lookalikeVerdict\n- graph/decisions/pairs/<pair>.yaml is one pairDecision\n- graph/decisions/reviews/<file id>.yaml is one reviewDecision\n- graph/decisions/conformance/<file id>.yaml is one conformanceDecision\n- graph/decisions/structure/<file id>.yaml is one structureDecision\n- sources/<mirrored doc path>.yaml is one docRecord per source document\nLocal, under local/ (never committed):\n- local/build.yaml is one buildState object\n- local/journal/g<generation>.yaml is one journalEntry per generation\nDerived, under derived/ (never committed, rebuilt from the committed files):\n- derived/graph/default-views/<file id>.yaml is one default view\n- derived/graph/relationships/<file id>.yaml is one relationship\n- derived/graph/state-machines/<file id>.yaml is one stateMachine\nEvery file starts with two comment lines naming its kind and its schema. Every node\nfile then starts with the node's `id`. No committed file holds a generation, a\ngeneration marker, or a record cause: those are read from the local journal. An\nentity file omits the mentions requirements add by reference.\nA file id is the node id, `:` written as `~` and `/` as `+`, every byte outside\nlowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.\nA file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the\nload then reads the full id from the file's `id`.\nGoals and the change records behind them are computed from these files and the\ndocuments by every derivation and never stored; goal ids appear only in journal\nentries.",
+  "description": "Definitions for the files of one set directory (.jazyk/<set-id>/), store version 6.\nCommitted, at the top of the set directory: the current graph, its decisions, its\nsources, and the ledger. No work, history, or generation is committed.\n- store.yaml is one status object (the store version)\n- graph/entities/<file id>.yaml is one entity\n- graph/requirements/<file id>.yaml is one requirement\n- graph/criteria/<file id>.yaml is one criterion\n- graph/views/<file id>.yaml is one curated view\n- graph/diagnostics/<file id>.yaml is one diagnostic\n- graph/redirects/<file id>.yaml is one redirect\n- graph/decisions/lookalikes/<pair>.yaml is one lookalikeVerdict\n- graph/decisions/pairs/<pair>.yaml is one pairDecision\n- graph/decisions/reviews/<file id>.yaml is one reviewDecision\n- graph/decisions/conformance/<file id>.yaml is one conformanceDecision\n- graph/decisions/structure/<file id>.yaml is one structureDecision\n- sources/<mirrored doc path>.yaml is one docRecord per source document\nLocal, under local/ (never committed):\n- local/build.yaml is one buildState object\n- local/journal/g<generation>.yaml is one journalEntry per generation\nDerived, under derived/ (never committed, rebuilt from the committed files):\n- derived/graph/default-views/<file id>.yaml is one default view\n- derived/graph/relationships/<file id>.yaml is one relationship\n- derived/graph/state-machines/<file id>.yaml is one stateMachine\nEvery file starts with two comment lines naming its kind and its schema. Every node\nfile then starts with the node's `id`. No committed file holds a generation, a\ngeneration marker, or a record cause: those are read from the local journal. An\nentity file omits the mentions requirements add by reference.\nA file id is the node id, `:` written as `~` and `/` as `+`, every byte outside\nlowercase ASCII letters, digits, `-`, `_`, and `.` (and a leading `.`) as `%XX`.\nA file id over 180 bytes is shortened to 160 bytes, `%~`, and a 16-digit hash; the\nload then reads the full id from the file's `id`.\nGoals and the change records behind them are computed from these files and the\ndocuments by every derivation and never stored; goal ids appear only in journal\nentries.",
   "x-files": {
     "store": "status",
     "lookalike": "lookalikeVerdict",
@@ -429,7 +429,7 @@
       }
     },
     "requirement": {
-      "description": "One node file under graph/requirements/. Carries exactly one of source (the quote form) or provenance (derived or decree)",
+      "description": "One node file under graph/requirements/. Carries exactly one of sources (the quote form) or provenance (derived or decree)",
       "type": "object",
       "required": [
         "statement",
@@ -438,7 +438,7 @@
       "oneOf": [
         {
           "required": [
-            "source"
+            "sources"
           ],
           "not": {
             "required": [
@@ -452,7 +452,7 @@
           ],
           "not": {
             "required": [
-              "source"
+              "sources"
             ]
           }
         }
@@ -490,9 +490,14 @@
             "$ref": "#/definitions/facet"
           }
         },
-        "source": {
-          "description": "The quote form of provenance on a requirement",
-          "$ref": "#/definitions/sourceRef"
+        "sources": {
+          "description": "All supporting source locations of one obligation",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/sourceRef"
+          }
         },
         "provenance": {
           "description": "Derived or decree provenance. Never the quote form on a requirement",
@@ -1594,9 +1599,9 @@
       ],
       "properties": {
         "version": {
-          "description": "The store version. A version 4 store loads and the next build opening rewrites it in this layout. A newer version is never archived: the store is read-only. An older version, or none, is archived and the store starts empty",
+          "description": "The store version. A version 5 store loads and the next build opening rewrites it in this layout. A newer version is never archived: the store is read-only. An older version, or none, is archived and the store starts empty",
           "type": "integer",
-          "const": 5
+          "const": 6
         },
         "reevaluate": {
           "description": "Anchors a place-anchors session placed with reevaluate, listed as stale anchors until addressed",
@@ -1937,7 +1942,8 @@
           "type": "string",
           "enum": [
             "consistent",
-            "diagnosed"
+            "diagnosed",
+            "distinct"
           ]
         },
         "statements": {

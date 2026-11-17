@@ -565,3 +565,5 @@ variant, both gated at staging ([write tools](../tools.md#write-tools)):
 `update_entity` `parent` stays the single-move path. The read tools, the goal tools, the
 view tools, and `report_feedback` apply as in [tools](#tools). No `delete_entity` and no
 `merge_entities`.
+
+Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.

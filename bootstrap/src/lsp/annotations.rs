@@ -20,28 +20,27 @@ impl Lsp {
         let statuses = self.requirement_statuses();
         let mut lenses: Vec<(usize, usize, Value)> = Vec::new();
         for (rid, r) in &self.store.graph.requirements {
-            let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) else {
-                continue;
-            };
-            let Some((sl, sc, _, _)) = md::locate(&text, &src.quote) else {
-                continue;
-            };
-            let mut title = rid.clone();
-            if let Some(st) = statuses.get(rid.as_str()) {
-                title.push_str(&format!(" · {}", st.word));
+            for src in r.sources.iter().filter(|s| s.doc == doc) {
+                let Some((sl, sc, _, _)) = md::locate(&text, &src.quote) else {
+                    continue;
+                };
+                let mut title = rid.clone();
+                if let Some(st) = statuses.get(rid.as_str()) {
+                    title.push_str(&format!(" · {}", st.word));
+                }
+                lenses.push((
+                    sl,
+                    sc,
+                    json!({
+                        "range": self.range((sl, sc, sl, sc)),
+                        "command": {
+                            "title": title,
+                            "command": "jazyk.openRequirement",
+                            "arguments": [rid]
+                        }
+                    }),
+                ));
             }
-            lenses.push((
-                sl,
-                sc,
-                json!({
-                    "range": self.range((sl, sc, sl, sc)),
-                    "command": {
-                        "title": title,
-                        "command": "jazyk.openRequirement",
-                        "arguments": [rid]
-                    }
-                }),
-            ));
         }
         for (rid, line) in self.code_requirements(&doc) {
             let title = match statuses.get(&rid) {
@@ -197,9 +196,13 @@ impl Lsp {
             .graph
             .requirements
             .iter()
-            .filter_map(|(rid, r)| {
-                let src = r.source.as_ref().filter(|s| s.doc == doc)?;
-                md::locate(text, &src.quote).map(|range| (rid.clone(), range))
+            .flat_map(|(rid, r)| {
+                r.sources
+                    .iter()
+                    .filter(move |s| s.doc == doc)
+                    .filter_map(move |src| {
+                        md::locate(text, &src.quote).map(|range| (rid.clone(), range))
+                    })
             })
             .collect();
         found.sort_by_key(|f| f.1);
@@ -319,7 +322,7 @@ impl Lsp {
             return json!([]);
         };
         let text = self.doc_text(&doc);
-        let mut quotes: Vec<&str> = r.source.iter().map(|s| s.quote.as_str()).collect();
+        let mut quotes: Vec<&str> = r.sources.iter().map(|s| s.quote.as_str()).collect();
         let criteria = self.store.criteria_of(&rid);
         for cid in &criteria {
             if let Some(src) = self
@@ -358,7 +361,7 @@ impl Lsp {
         let current = md::parse_document(Path::new(&doc), &text);
         let mut counts: HashMap<&str, usize> = HashMap::new();
         for r in self.store.graph.requirements.values() {
-            if let Some(src) = r.source.as_ref().filter(|s| s.doc == doc) {
+            if let Some(src) = r.sources.iter().find(|s| s.doc == doc) {
                 *counts.entry(src.section.as_str()).or_default() += 1;
             }
         }
@@ -468,14 +471,13 @@ impl Lsp {
             if !(hit(&r.statement) || hit(rid)) {
                 continue;
             }
-            let Some(src) = &r.source else {
-                continue;
-            };
-            let range = self.anchor(&src.doc, &src.quote, "", Some(&src.section));
-            symbols.push(json!({
-                "name": r.statement, "kind": 15, "containerName": rid,
-                "location": { "uri": self.doc_to_uri(&src.doc), "range": self.range(range) }
-            }));
+            for src in &r.sources {
+                let range = self.anchor(&src.doc, &src.quote, "", Some(&src.section));
+                symbols.push(json!({
+                    "name": r.statement, "kind": 15, "containerName": rid,
+                    "location": { "uri": self.doc_to_uri(&src.doc), "range": self.range(range) }
+                }));
+            }
         }
         json!(symbols)
     }

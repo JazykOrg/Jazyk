@@ -248,7 +248,7 @@ fn escaped_quote_locates_and_stores_source_form() {
     {
         Op::CreateRequirement { requirement, .. } => {
             assert_eq!(
-                requirement.source.as_ref().unwrap().quote,
+                requirement.sources.first().unwrap().quote,
                 "a Customer intends to buy."
             )
         }
@@ -341,7 +341,7 @@ fn sentence_count_ignores_dots_in_names_and_abbreviations() {
 // A requirement quotes one sentence; a fact line of short fragments and a numbered
 // item stand. Mirrors docs/compiler/graph.md#validation-gates.
 #[test]
-fn a_requirement_quote_spanning_two_sentences_is_refused() {
+fn a_requirement_quote_spanning_two_sentences_locates() {
     let mut s = Store::default();
     let text = "# Warehouse\n\n## Frontend\n\nThe frontend is a web application built using React. It communicates with the\nbackend over a REST API.\n\n## People\n\nDot Feeney. Age 58. Occupation: ferry office manager.\n\n1. The employee submits the claim to their manager.\n";
     s.docs.insert(
@@ -365,10 +365,10 @@ fn a_requirement_quote_spanning_two_sentences_is_refused() {
         json!({"statement": "The Frontend is a React web application.", "entities": ["ent:frontend"],
         "section": format!("w.md#{}", sec), "quote": q, "facets": [{"facet": "constraint", "reasoning": "its form"}]})
     };
-    let err = t
+    let result = t
         .dispatch("upsert_requirement", &req("The frontend is a web application built using React. It communicates with the backend over a REST API.", "/warehouse/frontend"))
-        .unwrap_err();
-    assert_eq!(err.rule, "quote-multi-sentence", "{}", err.message);
+        .unwrap();
+    assert!(result["id"].is_string());
     assert!(t
         .dispatch(
             "upsert_requirement",
@@ -428,12 +428,31 @@ fn displayed_page_copy_uses_one_source_sentence_per_requirement() {
             "facets": [{"facet":"constraint","reasoning":"the required display text"}],
         })
     };
-    assert_eq!(
-        t.dispatch("upsert_requirement", &req(&format!("{first} {second}")))
-            .unwrap_err()
-            .rule,
-        "quote-multi-sentence"
-    );
+    assert!(t
+        .dispatch("upsert_requirement", &req(&format!("{first} {second}")))
+        .is_ok());
     assert!(t.dispatch("upsert_requirement", &req(first)).is_ok());
     assert!(t.dispatch("upsert_requirement", &req(second)).is_ok());
+}
+
+#[test]
+fn matching_obligation_attaches_another_location_instead_of_minting() {
+    let mut t = session();
+    let args = json!({"statement":"The Customer keeps items.", "entities":["ent:customer"], "section":"/shop/cart", "quote":"holds items", "facets":[{"facet":"constraint","reasoning":"fixture obligation"}]});
+    let first = t.dispatch("upsert_requirement", &args).unwrap();
+    let mut second = args;
+    second["section"] = json!("/shop");
+    second["quote"] = json!("intro text");
+    let next = t.dispatch("upsert_requirement", &second).unwrap();
+    assert_eq!(first["id"], next["id"]);
+    let creates: Vec<_> = t
+        .staged
+        .iter()
+        .filter_map(|op| match op {
+            Op::CreateRequirement { requirement, .. } => Some(requirement),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(creates.len(), 1);
+    assert_eq!(creates[0].sources.len(), 2);
 }

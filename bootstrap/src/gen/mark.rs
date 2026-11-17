@@ -3,7 +3,7 @@ use super::*;
 // One anchored implementing site: the file, the 1-based line in the stripped file,
 // and the verbatim next significant line the marker sat above. Language-agnostic:
 // relocation is a whitespace-insensitive line match, never a parse of the medium.
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
 pub struct Site {
     pub file: String,
     pub line: usize,
@@ -1030,7 +1030,7 @@ pub fn choice_ops(
                     .graph
                     .requirements
                     .get(rid)
-                    .and_then(|r| r.source.as_ref())
+                    .and_then(|r| r.sources.first())
                     .map(|s| (s.doc.clone(), s.section.clone()))
             })
             .or_else(|| {

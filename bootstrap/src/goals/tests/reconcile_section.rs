@@ -116,11 +116,11 @@ fn linked_subjects_match_the_per_document_scan() {
         Requirement {
             statement: "The ledger records every order.".into(),
             entities: vec!["ent:ledger".into(), "ent:order".into()],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "a.md".into(),
                 section: "/a".into(),
                 quote: "The Ledger records every [Order](orders.md).".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -129,11 +129,11 @@ fn linked_subjects_match_the_per_document_scan() {
         Requirement {
             statement: "Stock is reserved.".into(),
             entities: vec!["ent:stock".into()],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "orders.md".into(),
                 section: "/o".into(),
                 quote: "[Stock](stock.md) is reserved.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

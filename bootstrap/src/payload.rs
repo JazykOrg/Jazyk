@@ -151,6 +151,7 @@ mod tests {
                 ("split-view", &[]),
                 ("abstract-entity", &[]),
                 ("unknown", &[]),
+                ("consolidate-requirements", &[]),
             ],
         ),
         (

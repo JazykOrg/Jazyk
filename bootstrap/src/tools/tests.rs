@@ -78,11 +78,11 @@ fn quoted_req(statement: &str, entities: &[&str], quote: &str) -> Requirement {
     Requirement {
         statement: statement.into(),
         entities: entities.iter().map(|e| e.to_string()).collect(),
-        source: Some(SourceRef {
+        sources: vec![SourceRef {
             doc: "shop.md".into(),
             section: "/shop/cart".into(),
             quote: quote.into(),
-        }),
+        }],
         ..Default::default()
     }
 }
@@ -114,11 +114,11 @@ fn session_with_stale_anchor() -> ToolSession {
             statement: "The Shopping Cart shall hold items a Customer intends to buy.".into(),
             entities: vec!["ent:shopping-cart".into()],
             edges: Vec::new(),
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop/cart".into(),
                 quote: "The Shopping Cart holds items a Customer intends to buy.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

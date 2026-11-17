@@ -93,7 +93,7 @@ fn a_flow_among_groupings_alone_derives_no_view() {
                 entities: vec![a.to_string(), b.to_string()],
                 edges: vec![edge(a, b, "dependency", None)],
                 facets: vec![behavior()],
-                source: Some(src("plot.md", "/plot", "step")),
+                sources: vec![src("plot.md", "/plot", "step")],
                 ..Default::default()
             },
         );
@@ -404,7 +404,7 @@ fn root_level_view_keeps_the_per_scope_id_and_lists_parentless_entities_plus_int
             statement: "The order posts to the ledger.".into(),
             entities: vec!["ent:order".into(), "ent:ledger".into()],
             edges: vec![edge("ent:order", "ent:ledger", "dependency", None)],
-            source: Some(src("shop.md", "/shop/orders", "posts")),
+            sources: vec![src("shop.md", "/shop/orders", "posts")],
             ..Default::default()
         },
     );
@@ -497,7 +497,7 @@ fn lifted_flow_clustering_at_a_non_root_level_uses_prefixed_ids() {
                     None,
                 )],
                 facets: vec![behavior()],
-                source: Some(src("shop.md", "/shop/orders", text)),
+                sources: vec![src("shop.md", "/shop/orders", text)],
                 ..Default::default()
             },
         );

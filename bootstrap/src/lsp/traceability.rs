@@ -84,14 +84,17 @@ impl Lsp {
     pub(super) fn code_definition(&self, doc: &str, line: usize) -> Option<Value> {
         let targets: Vec<Value> = self.code_requirements(doc).into_iter()
             .filter(|(_, l)| *l == line)
-            .filter_map(|(rid, _)| {
-                let r = self.store.graph.requirements.get(&rid)?;
-                if let Some(source) = r.source.as_ref() {
-                    if let Some(range) = crate::md::locate(&self.doc_text(&source.doc), &source.quote) {
-                        return Some(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}));
+            .flat_map(|(rid, _)| {
+                let mut locations = Vec::new();
+                if let Some(r) = self.store.graph.requirements.get(&rid) {
+                    for source in &r.sources {
+                        if let Some(range) = crate::md::locate(&self.doc_text(&source.doc), &source.quote) {
+                            locations.push(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}));
+                        }
                     }
                 }
-                self.requirement_document_location(&rid)
+                if locations.is_empty() { locations.extend(self.requirement_document_location(&rid)); }
+                locations
             }).collect();
         (!targets.is_empty()).then(|| json!(targets))
     }

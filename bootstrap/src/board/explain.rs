@@ -212,7 +212,7 @@ pub fn staged_opens(store: &Store, staged: &[crate::store::Op]) -> Vec<String> {
                 .graph
                 .requirements
                 .iter()
-                .filter(|(_, r)| r.source.is_none() && names(&r.provenance))
+                .filter(|(_, r)| r.sources.is_empty() && names(&r.provenance))
                 .map(|(rid, _)| rid.clone()),
         );
         v

@@ -239,6 +239,35 @@ impl Store {
     // whose target is no pair, marks nothing.
     pub(super) fn mark_pairs_judged(&mut self, resolved: &[Resolved]) {
         for r in resolved {
+            if r.goal.starts_with("g:consolidate-requirements:") {
+                for pair in r.evidence["distinct"].as_array().into_iter().flatten() {
+                    let (Some(a), Some(b)) = (pair["a"].as_str(), pair["b"].as_str()) else {
+                        continue;
+                    };
+                    let (a, b) = (
+                        self.resolve_id(a).to_string(),
+                        self.resolve_id(b).to_string(),
+                    );
+                    let (Some(ra), Some(rb)) = (
+                        self.graph.requirements.get(&a),
+                        self.graph.requirements.get(&b),
+                    ) else {
+                        continue;
+                    };
+                    if a != b {
+                        self.decisions.pairs.insert(
+                            super::v5::pair_key(&a, &b),
+                            PairDecision {
+                                verdict: "distinct".into(),
+                                statements: BTreeMap::from([
+                                    (a, super::v5::statement_hash(&ra.statement)),
+                                    (b, super::v5::statement_hash(&rb.statement)),
+                                ]),
+                            },
+                        );
+                    }
+                }
+            }
             let Some(target) = r.goal.strip_prefix("g:rejudge-pair:") else {
                 continue;
             };
@@ -371,7 +400,7 @@ impl Store {
                 .requirements
                 .get(&c.subject)
                 .map(|r| {
-                    r.provenance.as_ref().is_some_and(provenance_is_pending) && r.source.is_none()
+                    r.provenance.as_ref().is_some_and(provenance_is_pending) && r.sources.is_empty()
                 })
                 .or_else(|| {
                     self.graph
@@ -580,25 +609,41 @@ impl Store {
         let generation = self.status.generation + 1;
         let mut batch = RecordBatch::new(generation);
         let proposed = self.proposed_anchors();
-        let dead_reqs: Vec<String> = self
-            .graph
-            .requirements
+        let proposed_sources: BTreeSet<(String, String, String)> = self
+            .status
+            .alignment
             .iter()
-            .filter(|(id, _)| !proposed.contains(*id))
-            .filter(|(_, r)| {
-                r.source
-                    .as_ref()
-                    .map(|s| {
-                        !self
-                            .docs
-                            .get(&s.doc)
-                            .map(|d| d.sections.contains_key(&s.section))
-                            .unwrap_or(false)
-                    })
-                    .unwrap_or(false)
-            })
-            .map(|(id, _)| id.clone())
+            .flat_map(|block| block.proposals.iter())
+            .map(|p| (p.anchor.clone(), p.from.clone(), p.quote.clone()))
             .collect();
+        let docs = &self.docs;
+        let mut dead_reqs = Vec::new();
+        for (id, r) in &mut self.graph.requirements {
+            let before = r.sources.len();
+            let was_quoted = before > 0;
+            r.sources.retain(|s| {
+                proposed_sources.contains(&(
+                    id.clone(),
+                    format!("{}#{}", s.doc, s.section),
+                    s.quote.clone(),
+                )) || docs
+                    .get(&s.doc)
+                    .is_some_and(|d| d.sections.contains_key(&s.section))
+            });
+            if r.sources.len() != before {
+                actions.push(format!(
+                    "removed {} vanished source location(s) from {}",
+                    before - r.sources.len(),
+                    id
+                ));
+                for entity in &r.entities {
+                    batch.push(0, CHANGE_ENTITY, entity, "sources", serde_json::Value::Null);
+                }
+            }
+            if was_quoted && r.sources.is_empty() && r.provenance.is_none() {
+                dead_reqs.push(id.clone());
+            }
+        }
         let mut deleted: BTreeMap<String, usize> = BTreeMap::new();
         for id in dead_reqs {
             self.graph.requirements.remove(&id);
@@ -631,13 +676,18 @@ impl Store {
             deleted.insert(cid, 0);
         }
         // Mentions derived from a proposed requirement's source follow it when placed.
-        let protected: Vec<SourceRef> = self
-            .graph
-            .requirements
-            .iter()
-            .filter(|(id, _)| proposed.contains(*id))
-            .filter_map(|(_, r)| r.source.clone())
-            .collect();
+        let mut protected: Vec<SourceRef> = Vec::new();
+        for (id, r) in &self.graph.requirements {
+            for source in &r.sources {
+                if proposed_sources.contains(&(
+                    id.clone(),
+                    format!("{}#{}", source.doc, source.section),
+                    source.quote.clone(),
+                )) {
+                    protected.push(source.clone());
+                }
+            }
+        }
         for (id, e) in self.graph.entities.iter_mut() {
             if proposed.contains(id) {
                 continue;

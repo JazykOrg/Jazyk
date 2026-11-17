@@ -165,7 +165,7 @@ pub(crate) fn showcase_store() -> Store {
         edges,
         transition,
         facets,
-        source: Some(src("shop.md", section, statement)),
+        sources: vec![src("shop.md", section, statement)],
         ..Default::default()
     };
     let reqs = [
@@ -471,7 +471,7 @@ pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
                 },
                 transition,
                 facets: if j % 2 == 0 { vec![behavior()] } else { vec![] },
-                source: Some(src(&doc, &section, &statement)),
+                sources: vec![src(&doc, &section, &statement)],
                 ..Default::default()
             },
         );

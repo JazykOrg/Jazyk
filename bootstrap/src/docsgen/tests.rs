@@ -119,11 +119,11 @@ fn renders_and_prunes() {
             statement: "The Cart shall hold items.".into(),
             entities: vec!["ent:cart".into()],
             edges: vec![],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "holds\nitems".into(),
-            }),
+            }],
             ..Default::default()
         },
     );
@@ -135,11 +135,11 @@ fn renders_and_prunes() {
             statement: "The Cart notifies the Customer when it empties.".into(),
             entities: vec!["ent:cart".into()],
             edges: vec![],
-            source: Some(SourceRef {
+            sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),
                 quote: "The Cart shall notify the Customer when it empties.".into(),
-            }),
+            }],
             ..Default::default()
         },
     );

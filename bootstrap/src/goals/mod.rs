@@ -19,6 +19,7 @@ mod abstract_entity;
 mod answer;
 mod bind;
 mod conform_instance;
+mod consolidate_requirements;
 mod curate_view;
 mod declare_edges;
 mod dedupe_candidates;
@@ -39,6 +40,7 @@ pub use abstract_entity::*;
 pub use answer::*;
 pub use bind::*;
 pub use conform_instance::*;
+pub use consolidate_requirements::*;
 pub use curate_view::*;
 pub use declare_edges::*;
 pub use dedupe_candidates::*;
@@ -169,7 +171,7 @@ pub trait GoalKind: Sync + Send {
     fn prompt(&self) -> &'static str;
 }
 
-pub static REGISTRY: [&dyn GoalKind; 17] = [
+pub static REGISTRY: [&dyn GoalKind; 18] = [
     &PlaceAnchors,
     &ReconcileSection,
     &RejudgePair,
@@ -184,6 +186,7 @@ pub static REGISTRY: [&dyn GoalKind; 17] = [
     &Answer,
     &DeclareEdges,
     &DedupeCandidates,
+    &ConsolidateRequirements,
     &CurateView,
     &SplitView,
     &AbstractEntity,
@@ -302,7 +305,7 @@ fn is_derived(store: &Store, id: &str) -> bool {
                 .graph
                 .requirements
                 .get(id)
-                .map(|r| r.source.is_none() && pending(&r.provenance))
+                .map(|r| r.sources.is_empty() && pending(&r.provenance))
         })
         .unwrap_or(false)
 }

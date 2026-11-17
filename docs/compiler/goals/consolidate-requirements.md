@@ -13,7 +13,7 @@
 - Completion requires each candidate to be merged or explicitly distinguished.
 
 Completion evidence lists `distinct: [{a, b, reason}]` for each surviving pair.
-The store remembers distinct pair verdicts with statement hashes.
+The store remembers `distinct` pair verdicts with statement hashes.
 
 Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.
 

@@ -1075,11 +1075,12 @@ mod tests {
     fn a_refused_compile_cannot_advance_a_ready_board_to_generation() {
         let files = pending_workspace(1, 1, false);
         let files = {
+            // Another worker's open work never refuses a build; a store newer than this
+            // engine does.
             let fs = crate::vfs::Scope::enter(&files);
-            crate::control::claim(
-                Path::new("/project/.jazyk/ds_main"),
-                "external-batch",
-                "another-worker",
+            crate::vfs::write(
+                Path::new("/project/.jazyk/ds_main/store.yaml"),
+                "version: 99\n",
             )
             .unwrap();
             fs.snapshot()
@@ -1098,9 +1099,7 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("could not start"));
-        assert!(files
-            .keys()
-            .any(|path| path.contains("/leases/external-batch")));
+        assert!(!files.keys().any(|path| path.contains("/open/build~")));
     }
 
     #[cfg(not(target_arch = "wasm32"))]

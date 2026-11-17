@@ -73,11 +73,13 @@ pub struct Board {
     pub goals: Vec<Goal>,
     pub readiness: BTreeMap<String, Ready>,
     pub gated: BTreeSet<String>,
-    pub claimed: BTreeMap<String, String>,
-    // Batch ids live leases hold: form_batches numbers past them.
+    // The workers with each goal open: information, never a block.
+    // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
+    pub open_by: BTreeMap<String, Vec<String>>,
+    // Batch ids workers have open: form_batches numbers past them.
     // Mirrors docs/compiler/reconciler.md#batching.
     pub held_batches: BTreeSet<String>,
-    // Goals leased to the serving reading the board: rendered as `claimedBy: you`.
+    // Goals the serving reading the board has open: rendered as `openBy: you`.
     // Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     pub own: BTreeSet<String>,
     pub batches: Vec<Batch>,

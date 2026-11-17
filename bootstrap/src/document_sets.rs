@@ -1057,8 +1057,6 @@ pub fn mint_set_id(name: &str, taken: impl Fn(&str) -> bool) -> String {
 /// A short filesystem lock protects optimistic config replacement. Hosted callers
 /// already hold their project lease; WASM requests are serialized by their worker.
 pub struct ProjectLock {
-    root: PathBuf,
-    name: String,
     #[cfg(not(target_arch = "wasm32"))]
     _file: Option<std::fs::File>,
 }
@@ -1088,24 +1086,14 @@ impl ProjectLock {
                     .map_err(|e| (500, e.to_string()))?;
                 fs2::FileExt::try_lock_exclusive(&file)
                     .map_err(|_| (409, "another project operation is in progress".into()))?;
-                return Ok(Self {
-                    root: root.into(),
-                    name: name.into(),
-                    _file: Some(file),
-                });
+                return Ok(Self { _file: Some(file) });
             }
-            Ok(Self {
-                root: root.into(),
-                name: name.into(),
-                _file: None,
-            })
+            Ok(Self { _file: None })
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Ok(Self {
-                root: root.into(),
-                name: name.into(),
-            })
+            let _ = (root, name);
+            Ok(Self {})
         }
     }
 }
@@ -1146,24 +1134,8 @@ pub(crate) fn edit_current_set(
     edit_locked(root, body, preview, false, Some(id))
 }
 
-pub(crate) fn edit_current_set_with_lock(
-    root: &Path,
-    body: &Value,
-    preview: bool,
-    id: &str,
-    lock: &ProjectLock,
-) -> Result<Value> {
-    if lock.root != root || lock.name != "project.lock" {
-        return Err((
-            409,
-            "the matcher edit does not hold this project's lock".into(),
-        ));
-    }
-    edit_locked(root, body, preview, true, Some(id))
-}
-
-/// An internal build already holds project.lock. Only its current lease owner
-/// can reuse it; optimistic replacement still takes config.lock.
+/// A build's own matcher repair: only the open run with this token may make it. The
+/// edit takes project.lock for the write like any other configuration edit.
 pub(crate) fn edit_in_build(
     root: &Path,
     out: &Path,
@@ -1172,13 +1144,13 @@ pub(crate) fn edit_in_build(
     preview: bool,
     id: &str,
 ) -> Result<Value> {
-    if !crate::control::build_lease(out).is_some_and(|lease| lease.worker == token) {
+    if !crate::control::owns_build(out, token) {
         return Err((
             409,
-            "the document-set edit does not own the running build lease".into(),
+            "the document-set edit does not belong to a running build".into(),
         ));
     }
-    edit_locked(root, body, preview, true, Some(id))
+    edit_locked(root, body, preview, false, Some(id))
 }
 
 fn edit_locked(

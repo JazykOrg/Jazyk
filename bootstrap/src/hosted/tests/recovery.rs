@@ -70,7 +70,7 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
         !workspace
             .snapshot()
             .keys()
-            .any(|path| path.contains("/leases/")),
+            .any(|path| path.contains("/open/")),
         "active cancellation retained a claim"
     );
     let (capsule, files) = saved
@@ -84,10 +84,8 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
             .is_some_and(|v| !v.is_empty()),
         "{capsule}"
     );
-    assert!(files
-        .keys()
-        .any(|path| path.ends_with("/leases/build.yaml")));
-    assert!(files.keys().any(|path| path.contains("/leases/b")));
+    assert!(files.keys().any(|path| path.contains("/open/build~")));
+    assert!(files.keys().any(|path| path.contains("/open/b")));
     assert!(capsule["claims"].as_array().unwrap().len() >= 2);
     let mut recovered = Workspace::new(files.clone()).unwrap();
     recovered.stop_recovery(&capsule, &[]).unwrap();
@@ -96,13 +94,13 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
         "a compile job keeps no conversation records"
     );
     let stopped = recovered.snapshot();
-    assert!(!stopped.keys().any(|path| path.contains("/leases/")));
+    assert!(!stopped.keys().any(|path| path.contains("/open/")));
     assert_eq!(
         stopped["docs/committed.txt"],
         b"An earlier accepted edit.\n"
     );
     for (path, bytes) in &files {
-        if !path.contains("/leases/") {
+        if !path.contains("/open/") {
             assert_eq!(
                 stopped.get(path),
                 Some(bytes),
@@ -122,7 +120,7 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
 }
 
 #[test]
-fn actual_compiler_resume_hands_over_saved_claims_and_refuses_foreign_replacements() {
+fn actual_compiler_resume_hands_over_saved_open_work() {
     let mut workspace = workspace("Alpha");
     let calls = Arc::new(AtomicUsize::new(0));
     let mut execution = navigation_model("Alpha", calls.clone(), None);
@@ -170,44 +168,30 @@ fn actual_compiler_resume_hands_over_saved_claims_and_refuses_foreign_replacemen
     for claim in capsule["claims"].as_array_mut().unwrap() {
         claim["lease"]["worker"] = json!("previous-process");
     }
-    for (path, bytes) in files
-        .iter_mut()
-        .filter(|(path, _)| path.contains("/leases/"))
-    {
-        let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
+    // Open entries are named by task and worker: move each to the previous worker.
+    let entries: Vec<String> = files
+        .keys()
+        .filter(|path| path.contains("/open/"))
+        .cloned()
+        .collect();
+    assert!(!entries.is_empty());
+    for path in entries {
+        let bytes = files.remove(&path).unwrap();
+        let mut lease: crate::control::Lease = serde_norway::from_slice(&bytes).unwrap();
         lease.worker = "previous-process".into();
-        *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
-        assert!(!path.is_empty());
+        let dir = &path[..path.rfind('/').unwrap()];
+        let moved = format!(
+            "{dir}/{}~{}.yaml",
+            crate::control::encode_lease_id(&lease.task),
+            crate::control::encode_lease_id(&lease.worker)
+        );
+        files.insert(moved, serde_norway::to_string(&lease).unwrap().into_bytes());
     }
-    let mut foreign_files = files.clone();
-    let (foreign_path, bytes) = foreign_files
-        .iter_mut()
-        .find(|(path, _)| path.contains("/leases/") && !path.ends_with("/build.yaml"))
-        .unwrap();
-    let foreign_path = foreign_path.clone();
-    let mut lease: crate::control::Lease = serde_norway::from_slice(bytes).unwrap();
-    lease.worker = "another-execution".into();
-    *bytes = serde_norway::to_string(&lease).unwrap().into_bytes();
-    let foreign_bytes = bytes.clone();
+    // Another execution's open work never refuses a resume: nothing claims work.
     let resume = Execution {
         resume: Some(capsule.clone()),
         ..navigation_model("Alpha", calls.clone(), None)
     };
-    let mut foreign = Workspace::new(foreign_files).unwrap();
-    let refused = value(
-        &mut foreign,
-        "POST",
-        "/api/jobs",
-        json!({"kind":"compile","setIds":["ds_main"]}),
-        &resume,
-    );
-    assert!(refused.to_string().contains("incomplete"), "{refused}");
-    assert_eq!(foreign.snapshot()[&foreign_path], foreign_bytes);
-    assert_eq!(
-        calls.load(Ordering::SeqCst),
-        1,
-        "Foreign claim dispatched inference"
-    );
     let observed = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
     let observe = observed.clone();
     let checkpoint: CheckpointSink = Arc::new(move |capsule, _| {
@@ -239,7 +223,7 @@ fn actual_compiler_resume_hands_over_saved_claims_and_refuses_foreign_replacemen
     assert!(!restored
         .snapshot()
         .keys()
-        .any(|path| path.contains("/leases/")));
+        .any(|path| path.contains("/open/")));
     assert!(
         observed
             .lock()

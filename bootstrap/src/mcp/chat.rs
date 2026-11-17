@@ -5,6 +5,49 @@ use super::*;
 // one atomic commit. Mirrors docs/compiler/tools.md#chat-tools and
 // docs/frontends/acp.md#dual-write-tools.
 impl McpServer {
+    // The ledger row for an entity or requirement id, as recorded now.
+    fn ledger_row(&self, target: &str) -> Value {
+        let ledger = crate::gen::Ledger::load(&self.out);
+        // Entity rows are keyed by the entity's slug, without `ent:`.
+        ledger
+            .entities
+            .get(target.strip_prefix("ent:").unwrap_or(target))
+            .map(|row| serde_json::to_value(row).unwrap_or_default())
+            .or_else(|| {
+                ledger
+                    .requirements
+                    .get(target)
+                    .map(|row| serde_json::to_value(row).unwrap_or_default())
+            })
+            .unwrap_or(Value::Null)
+    }
+
+    // Remember the row as this serving sees it now: at begin, and after its own record.
+    pub(super) fn note_ledger_row(&self, target: &str) {
+        let row = self.ledger_row(target);
+        self.ledger_seen
+            .lock()
+            .unwrap()
+            .insert(target.to_string(), row);
+    }
+
+    // First recording wins: the refusal when another worker recorded the row after
+    // this serving began it. Mirrors docs/compiler/graph.md#commit-conflicts.
+    pub(super) fn ledger_row_conflict(&self, target: &str) -> Option<Value> {
+        let seen = self.ledger_seen.lock().unwrap().get(target).cloned()?;
+        if self.ledger_row(target) == seen {
+            return None;
+        }
+        self.ledger_seen.lock().unwrap().remove(target);
+        Some(
+            json!({"error": {"rule": "commit-conflict", "message": include_str!(concat!(
+            env!("OUT_DIR"),
+            "/payloads/goals/prompts/inline/mcp-lifecycle/ledger-row-conflict-2e8a1.md"
+        ))
+        .replacen("{}", target, 1)}}),
+        )
+    }
+
     pub(super) fn release_own_ledger_claim(&self, target: &str) {
         if let Some(claim) = crate::control::owned_lease(&self.out, target, &self.worker_id()) {
             let _ = crate::control::release_owned_lease(&claim);
@@ -722,24 +765,12 @@ impl McpServer {
         let root = &self.project.root;
         let Ok(_project) = crate::document_sets::ProjectLock::acquire(root, "project.lock") else {
             return json!({"error": {"rule": "project-busy", "message":
-                "a build or another project operation holds the project; retry when it finishes"}});
+                "another project configuration write is in progress; retry"}});
         };
         let before = match crate::document_sets::Workspace::load(root) {
             Ok(w) => w,
             Err((_, e)) => return json!({"error": {"rule": "bad-config", "message": e}}),
         };
-        let running = std::iter::once(self.out.clone())
-            .chain(
-                before
-                    .sets
-                    .iter()
-                    .filter_map(|s| before.resolve(Some(&s.id)).ok().map(|p| p.out)),
-            )
-            .find_map(|out| crate::control::build_lease(&out));
-        if let Some(lease) = running {
-            return json!({"error": {"rule": "build-running", "message": format!(
-                "a build is running (lease `{}`); settings change after it finishes", lease.worker)}});
-        }
         let path = root.join(crate::document_sets::CONFIG);
         let Ok(_config) = crate::document_sets::ProjectLock::acquire(root, "config.lock") else {
             return json!({"error": {"rule": "project-busy", "message": "another configuration edit is in progress; retry"}});

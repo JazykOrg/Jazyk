@@ -498,7 +498,7 @@ impl Board {
             goals,
             readiness: BTreeMap::new(),
             gated: BTreeSet::new(),
-            claimed: BTreeMap::new(),
+            open_by: BTreeMap::new(),
             held_batches: BTreeSet::new(),
             own: BTreeSet::new(),
             batches: Vec::new(),
@@ -568,9 +568,12 @@ impl Board {
                 .readiness
                 .insert(id.clone(), Ready::Blocked("outside the selection".into()));
         }
-        let leases = crate::control::task_leases(&store.out);
-        if !leases.is_empty() {
-            let mut claimed = BTreeMap::new();
+        // Who has each goal open, for information: an open goal stays ready, since
+        // nothing claims work and the first commit wins.
+        // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
+        let open = crate::control::task_leases(&store.out);
+        if !open.is_empty() {
+            let mut open_by: BTreeMap<String, Vec<String>> = BTreeMap::new();
             for g in &board.goals {
                 let mut keys: Vec<String> = vec![g.id.clone(), g.target.clone()];
                 if let Some((a, b)) = goals::pair_members(&g.target) {
@@ -580,26 +583,22 @@ impl Board {
                 if let Some(d) = target_doc(&g.target) {
                     keys.push(d);
                 }
-                let hit = keys
+                let mut workers: Vec<String> = open
                     .iter()
-                    .find_map(|k| leases.get(k))
-                    .or_else(|| leases.values().find(|l| l.goals.iter().any(|x| x == &g.id)));
-                if let Some(l) = hit {
-                    claimed.insert(g.id.clone(), l.worker.clone());
+                    .filter(|l| keys.contains(&l.task) || l.goals.iter().any(|x| x == &g.id))
+                    .map(|l| l.worker.clone())
+                    .collect();
+                workers.dedup();
+                if !workers.is_empty() {
+                    open_by.insert(g.id.clone(), workers);
                 }
             }
-            for (id, worker) in &claimed {
-                board.readiness.insert(
-                    id.clone(),
-                    Ready::Blocked(format!(
-                        "claimed by worker `{}` (the lease lapses {}s after its last heartbeat)",
-                        worker,
-                        crate::control::LEASE_TTL_SECS
-                    )),
-                );
-            }
-            board.claimed = claimed;
-            board.held_batches = leases.keys().filter(|k| is_batch_id(k)).cloned().collect();
+            board.open_by = open_by;
+            board.held_batches = open
+                .iter()
+                .filter(|l| is_batch_id(&l.task))
+                .map(|l| l.task.clone())
+                .collect();
         }
         board.batches = board.form_batches(store, proj);
         board
@@ -638,7 +637,7 @@ impl Board {
             LAST.with(|l| {
                 let mut l = l.borrow_mut();
                 l.retain(|_, (g, _)| *g == now);
-                if board.claimed.is_empty() && board.held_batches.is_empty() {
+                if board.open_by.is_empty() && board.held_batches.is_empty() {
                     l.insert(key, (now, board.clone()));
                 }
             });

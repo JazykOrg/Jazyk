@@ -643,8 +643,8 @@ pub(crate) fn preview_text(
         _ if board.gated.contains(&goal.id) => {
             "gated, awaiting release (`jazyk release`, or the GUI)".to_string()
         }
-        _ => match board.claimed.get(&goal.id) {
-            Some(w) => format!("claimed by {}", w),
+        _ => match board.open_by.get(&goal.id) {
+            Some(w) => format!("open by {}", w.join(", ")),
             None => "not scheduled in a ready batch".to_string(),
         },
     };

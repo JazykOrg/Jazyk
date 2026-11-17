@@ -136,6 +136,11 @@ fn agent_rounds_from(value: Option<&str>) -> u32 {
         .max(1)
 }
 
+// The store's commit lock: the longest a writer waits before refusing `store-busy`,
+// and the hold past which a commit is reported. Mirrors docs/compiler/graph.md#concurrency.
+pub const STORE_LOCK_WAIT_SECS: u64 = 30;
+pub const STORE_LOCK_HOLD_SECS: u64 = 60;
+
 // Also bounds a single reply containing many invalid calls outside a graph batch.
 pub const AGENT_TOOL_ERROR_LIMIT: u32 = 20;
 pub const SESSION_MUTATIONS: usize = 1024;

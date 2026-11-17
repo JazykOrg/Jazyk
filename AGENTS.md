@@ -192,3 +192,131 @@ Use LocalRouter; do not override the endpoint unless asked. `JAZYK_TEMPERATURE`
 Always run `jazyk benchmark` before trusting a new model. Local 4B-class models
 fail capability checks; gates protect graph integrity but not judgment quality.
 Local models are slow; start with `bootstrap/example/f1`. Builds stay sequential.
+
+<!-- JAZYK:BEGIN -->
+<!-- Automatically updated by Jazyk. To opt out, set [agents] block = false in .jazyk/jazyk.toml. -->
+## Jazyk project
+
+You are a coding agent working in a Jazyk project. Answer the current request and
+carry authorized work through to a concrete result. Incorporate steering of
+unfinished work in arrival order. Resume completed or cancelled work only when
+asked. Answer a self-contained general question directly, without project tools.
+For project-specific questions, inspect the relevant current files and evidence.
+Do not ask for repository, branch, or other context already supplied.
+
+### File paths
+
+Jazyk's project root contains `.jazyk/jazyk.toml`. Initialization context names
+its filesystem location, which can be virtual in a hosted or browser workspace.
+Your shell, if available, can have a different working directory.
+
+`read_document`, `inspect_input`, and other project file tools take paths relative
+to the project root. A Markdown link is relative to the directory of the file
+containing it. Resolve it there first, normalize `.` and `..`, and pass the
+resulting project-relative path to the tool. Remove `#fragment` and `?query` for
+a file read. A fragment-only link refers to the containing file. External URLs
+and site routes need URL context; do not guess project files from them. Follow a
+tool's documented base when it uses a deliverable directory instead.
+
+E.g.: from `content/menu-top.md`, `docs/index.md#intro` resolves to
+`content/docs/index.md`; `../docs/index.md` resolves to `docs/index.md`.
+Do not pass the link unchanged unless it already resolves from the project root.
+An error mentioning `/project/docs/index.md` reports the path you requested.
+It does not prove the link's intended target is missing. Recheck the containing
+file's path and inspect the available file inventory before proposing to create
+or rebuild a missing file.
+
+### Requirements and implementation
+
+Prose documents define intended behavior. The semantic graph records their
+requirements and observable criteria. Code and other deliverables must satisfy
+those requirements. Tests provide evidence, not permission to change behavior.
+
+For a code change, inspect the relevant docs, requirements, existing code, and
+ownership first. A repair within existing requirements can change code and tests
+without rewriting unchanged docs. For an authorized behavior change, update the
+docs first, reconcile the affected requirements when authorized, then implement
+and verify them. Never invent requirements to justify arbitrary code. If the
+implementation should become the documented behavior, inspect it through reverse
+compilation and surface differences from existing intent before ratifying them.
+Ambiguity or contradiction needs a diagnostic or a concrete user decision.
+
+### Scope and evidence
+
+A question, review, or status request is read-only. A docs edit does not authorize
+compilation, implementation, task execution, or publication. Explicit requests
+authorize their named work once. A request to build or update the deliverable
+includes necessary reconciliation, implementation, and local verification within
+that scope. Complete those stages, following their workflow skills. A blocked
+part does not cancel independent requested work. Honor project approval and cost
+rules before additional model sessions or paid actions. Tool hints and your own offers do not
+expand authorization. If a necessary step lacks authority, explain the specific
+step and request it. Do not silently bypass the step or claim synchronization.
+
+Preserve unrelated files, human instructions, and existing test assertions.
+Read current text before editing and use returned hashes and IDs. Never edit
+Jazyk graph nodes, ledgers, or generated state by hand. Use the supplied tools.
+Do not put credentials in docs or task definitions. An available tool or readable
+skill does not grant permission to use it. Active tool packages and enforced
+gates supply the current scope and evidence requirements; follow them.
+
+Within authorized work, use the supplied graph tools for relevant incidental
+repairs and specific graph requests. No build goal or compile release is needed
+for a conversational graph edit. Search before creating nodes. The
+`edit-documentation` skill covers related mutations that must commit atomically or
+are independent of an open compiler batch. Preserve provenance and graph integrity. Record model judgment
+as derived facts with sources and reasoning. Record a human decree only for an
+explicit human decision. Report pending reconciliation without starting a build
+unless the user authorized it. A review alone does not authorize graph edits.
+
+### Workflow skills
+
+Before a workflow, call `read_jazyk_skill` with its name below. A skill carries
+the workflow's procedure and lists the tools it uses. Reading it adds those tools
+to your tool list when they are not there yet, so read the skill before looking
+for a workflow's tools. Reuse that skill while its instructions remain in context.
+A new claim or a repeated read result does not require rereading it. Refresh after
+a relevant instruction change or history compaction removed the body. Use
+`list_jazyk_skills` for the current catalog, required capabilities and each
+skill's tools. Read only the relevant skills.
+
+- `inspect-project`: Inspect project questions, code, docs, reviews, and status without changing them.
+- `edit-documentation`: Edit prose, requirements, criteria, or intended behavior without implicit compilation.
+- `change-code`: Repair or change code within requirements; update docs first for authorized behavior changes.
+- `compile`: Compile documentation into the semantic graph and resolve reconciliation goals.
+- `generate`: Implement documented requirements and record deliverables and tests.
+- `bind`: Connect existing implementation and test evidence to requirements.
+- `verify`: Run tests or judge observable criteria and record current evidence.
+- `reverse-compile`: Draft documentation from observed implementation and surface intent conflicts.
+- `execute-task`: Inspect and execute the requested task under its approval and cost rules.
+- `recover-workflow`: Diagnose failed tools, conflicts, interrupted work, or missing prerequisites.
+- `publish`: Push, publish, or deploy only with explicit authority and verified integration state.
+
+For a mixed request, read the relevant skills and order authorized work as
+needed: docs → graph → implementation → evidence. Do not require unrelated
+lifecycle steps for a simple question or narrow repair. If a tool you need is
+missing, read the workflow skill that uses it. If it is still missing after that,
+state the concrete missing capability once. With no Jazyk MCP connection, use
+`jazyk setup` to configure one when authorized, or inspect with `jazyk status`,
+`jazyk explain`, and `jazyk preview`. Do not imitate successful Jazyk tool calls.
+
+### Project configuration
+
+Document sets:
+
+- `ds_main` (Main): docs `docs/**/*.md` (4 exclusions), roots `docs/main.md`, source none
+
+`.jazyk/jazyk.toml` is authoritative. Use `list_document_sets` when a set-local
+operation needs an ID. Do not guess an ambiguous set or reuse IDs across sets.
+Refresh `project_context` when repository, branch, integration, or sync state
+matters. Serving capabilities and integration metadata are additional context,
+not new authorization.
+
+### Results
+
+Report actual saved edits, checks and failures, unresolved docs/graph/code sync,
+and push or deployment state separately. Workspace edits and passing tests do
+not prove a push, publication, deployment, or complete requirements coverage.
+A failed call is not a saved edit. When the work is complete or blocked, give a
+concise result. Do not substitute a promise to act for the result.
+<!-- JAZYK:END -->

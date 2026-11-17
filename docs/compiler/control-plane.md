@@ -111,11 +111,15 @@ collides gets a [commit conflict](./graph.md#commit-conflicts) and repairs its w
 
 - `workers/<id>.yaml`: one file per attached worker session. `kind` (`internal`,
   `gui`, `agent`), `client` (the MCP client name when there is one), `pid`,
-  `startedAt`, `heartbeatAt`, and the batches it has open with their goals. A worker
-  refreshes its heartbeat while alive; a file whose heartbeat is older than 90 seconds
-  is stale and swept on the next board derivation. Registration happens at MCP
+  `startedAt`, and `heartbeatAt`. A worker refreshes its heartbeat while alive; a file
+  whose heartbeat is older than 90 seconds is stale and swept on the next board
+  derivation. Registration happens at MCP
   `initialize` for the lifecycle servings, at job start in the GUI, and for the
   lifetime of a `jazyk compile`/`gen`/`test` run.
+- `open/<task>~<worker>.yaml`: one file per task a worker has open (a goal batch with
+  its goals, a ledger row, or a build run named `build`). Several workers may have the
+  same task open, each with its own file. Activity on the task refreshes it; a file
+  not refreshed for 120 seconds is swept.
 - The registry is information, never a lock. The board reports `openBy` per goal (the
   workers with it open) so an agent can choose other work and avoid paying twice for
   the same goal. Nothing filters or refuses on it.

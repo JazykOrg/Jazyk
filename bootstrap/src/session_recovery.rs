@@ -578,35 +578,34 @@ mod tests {
             crate::control::claim(out, "batch:replaced", "worker-one").unwrap();
             crate::control::claim(out, "batch:renewed", "worker-one").unwrap();
             let saved = capsule().unwrap();
-            crate::control::release_lease(out, "batch:replaced");
+            crate::control::release_lease(out, "batch:replaced", "worker-one");
             crate::control::claim(out, "batch:replaced", "worker-two").unwrap();
-            let path = crate::layout::leases_dir(out).join("batch%3Arenewed.yaml");
+            let path = crate::layout::open_dir(out).join("batch%3Arenewed~worker-one.yaml");
             let mut renewed: crate::control::Lease =
                 serde_norway::from_str(&crate::vfs::read_to_string(&path).unwrap()).unwrap();
             renewed.claimed_at += 1;
             crate::vfs::write(&path, serde_norway::to_string(&renewed).unwrap()).unwrap();
             crate::control::claim(out, "ledger:foreign", "worker-two").unwrap();
-            let foreign =
-                crate::vfs::read(crate::layout::leases_dir(out).join("ledger%3Aforeign.yaml"))
-                    .unwrap();
+            let foreign = crate::vfs::read(
+                crate::layout::open_dir(out).join("ledger%3Aforeign~worker-two.yaml"),
+            )
+            .unwrap();
             stop_owned(&saved).unwrap();
             assert!(!crate::vfs::exists(
-                &crate::layout::leases_dir(out).join("ledger%3Aowned.yaml")
+                &crate::layout::open_dir(out).join("ledger%3Aowned~worker-one.yaml")
             ));
             assert_eq!(crate::control::leases(out).len(), 3);
             assert_eq!(
-                crate::vfs::read(crate::layout::leases_dir(out).join("ledger%3Aforeign.yaml"))
-                    .unwrap(),
+                crate::vfs::read(
+                    crate::layout::open_dir(out).join("ledger%3Aforeign~worker-two.yaml")
+                )
+                .unwrap(),
                 foreign
             );
-            assert_eq!(
-                crate::control::leases(out)["batch:replaced"].worker,
-                "worker-two"
-            );
-            assert_eq!(
-                crate::control::leases(out)["batch:renewed"].claimed_at,
-                renewed.claimed_at
-            );
+            let open = crate::control::leases(out);
+            let find = |task: &str| open.iter().find(|l| l.task == task).unwrap().clone();
+            assert_eq!(find("batch:replaced").worker, "worker-two");
+            assert_eq!(find("batch:renewed").claimed_at, renewed.claimed_at);
             saved
         };
         assert!(stop_owned(&saved).unwrap_err().contains("scoped workspace"));

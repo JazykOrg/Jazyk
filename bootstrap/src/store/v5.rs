@@ -915,7 +915,7 @@ pub(super) fn retire_v4_layout(out: &Path) {
         (out.join("journal"), layout::journal_dir(out)),
         (out.join("control.yaml"), layout::control_file(out)),
         (out.join("workers"), layout::workers_dir(out)),
-        (out.join("leases"), layout::leases_dir(out)),
+        (out.join("leases"), layout::open_dir(out)),
         (out.join("decompile"), layout::decompile_dir(out)),
         (
             out.join("deliverable-baseline"),

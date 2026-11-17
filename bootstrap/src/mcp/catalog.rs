@@ -375,27 +375,16 @@ impl McpServer {
                 id,
             )
         } else {
-            if crate::control::build_lease(&self.out).is_some() {
-                return Err((-32602, "a running build owns this document set".into()));
-            }
-            let open = self.open.lock().unwrap();
-            if let Some(lock) = open.as_ref().and_then(|batch| batch._project_lock.as_ref()) {
-                crate::document_sets::edit_current_set_with_lock(
-                    &workspace.root,
-                    args,
-                    preview,
-                    id,
-                    lock,
-                )
-            } else {
-                crate::document_sets::edit_current_set(&workspace.root, args, preview, id)
-            }
+            crate::document_sets::edit_current_set(&workspace.root, args, preview, id)
         }
         .map_err(|e| (-32602, e.1))?;
         if !preview {
-            *self.config_revision.lock().unwrap() = self.current_project().config_hash;
+            let config = self.current_project().config_hash;
+            *self.config_revision.lock().unwrap() = config.clone();
             if let Some(open) = self.open.lock().unwrap().as_mut() {
                 open.session.gen = self.current_gen_settings();
+                // The batch's own repair moves the configuration it commits against.
+                open.config_hash = config;
             }
         }
         Ok(result_value(result))

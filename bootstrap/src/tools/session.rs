@@ -231,7 +231,29 @@ impl ToolSession {
             cached,
             tokens_source,
             all_or_nothing: false,
+            rebased_from: None,
         }
+    }
+
+    // Move the open session onto a newer store after a commit conflict: reads see the
+    // current generation, the conflicting staged mutations (by index) and the goal
+    // outcomes another commit settled are dropped, the rest stay staged.
+    // Mirrors docs/compiler/graph.md#commit-conflicts.
+    pub fn rebase_onto(
+        &mut self,
+        store: crate::store::Store,
+        drop_ops: &BTreeSet<usize>,
+        drop_goals: &BTreeSet<String>,
+    ) {
+        self.snapshot = store;
+        let mut index = 0;
+        self.staged.retain(|_| {
+            let keep = !drop_ops.contains(&index);
+            index += 1;
+            keep
+        });
+        self.outcomes.retain(|goal, _| !drop_goals.contains(goal));
+        self.done = None;
     }
 
     // The goals the session failed, with their reasons, for the serving to record.

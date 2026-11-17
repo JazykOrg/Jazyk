@@ -18,6 +18,7 @@ mod minting;
 mod neighbors;
 mod prose;
 mod read_scope;
+mod rebase;
 mod status;
 mod sync;
 mod v5;
@@ -28,6 +29,7 @@ pub use self::journal::*;
 pub use self::lock::*;
 pub use self::neighbors::*;
 pub use self::read_scope::*;
+pub use self::rebase::*;
 pub use self::status::*;
 
 // One staged mutation. Serialized into the journal as written.
@@ -459,6 +461,9 @@ pub struct Commit {
     // A changeset that lands whole or not at all: one skipped op rolls the graph
     // back and nothing is journaled (a retract, docs/compiler/goals/ratify.md#retract).
     pub all_or_nothing: bool,
+    // The generation the changeset was staged against, when commits landed since and it
+    // rebased onto them (docs/compiler/graph.md#commit-conflicts).
+    pub rebased_from: Option<u64>,
 }
 
 impl Commit {
@@ -466,6 +471,7 @@ impl Commit {
     // dual-write, ratify, triage, answer.
     pub fn store(kind: &str) -> Commit {
         Commit {
+            rebased_from: None,
             kind: kind.to_string(),
             ..Default::default()
         }
@@ -481,6 +487,7 @@ impl Commit {
             cached: None,
             tokens_source: None,
             all_or_nothing: false,
+            rebased_from: None,
         }
     }
 }

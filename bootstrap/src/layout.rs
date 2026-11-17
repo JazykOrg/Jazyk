@@ -77,17 +77,14 @@ pub fn workers_dir(out: &Path) -> PathBuf {
     local_dir(out).join("workers")
 }
 
-pub fn leases_dir(out: &Path) -> PathBuf {
-    local_dir(out).join("leases")
+/// What each worker has open: information, never a claim.
+pub fn open_dir(out: &Path) -> PathBuf {
+    local_dir(out).join("open")
 }
 
 /// The commit lock.
 pub fn lock_file(out: &Path) -> PathBuf {
     local_dir(out).join(".lock")
-}
-
-pub fn leases_lock_file(out: &Path) -> PathBuf {
-    local_dir(out).join(".leases.lock")
 }
 
 /// The ledger's writer lock.

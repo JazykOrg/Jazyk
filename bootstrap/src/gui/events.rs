@@ -373,7 +373,7 @@ pub fn spawn_control_watcher(st: SharedState) {
                     .unwrap_or_default()
             };
             s.push_str(&meta(&crate::control::Control::path(out)));
-            for dir in ["workers", "leases"] {
+            for dir in ["workers", "open"] {
                 if let Ok(entries) = crate::vfs::read_dir(out.join(dir)) {
                     let mut names: Vec<String> = entries
                         .flatten()

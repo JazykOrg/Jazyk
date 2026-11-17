@@ -36,7 +36,7 @@ pub struct McpServer {
     // scores. Mirrors docs/benchmark/benchmark.md#agent-run-benchmarks.
     bench: std::sync::Mutex<BenchRun>,
     // The serving's registration in the worker registry, heartbeated while the
-    // process lives. Mirrors docs/compiler/control-plane.md#workers-and-leases.
+    // process lives. Mirrors docs/compiler/control-plane.md#workers-and-open-work.
     worker: std::sync::Arc<std::sync::Mutex<Option<crate::control::WorkerHandle>>>,
     // Bridge-spawned serving flags: this serving belongs to one ACP session.
     // Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
@@ -51,6 +51,12 @@ pub struct McpServer {
     finished: std::sync::Mutex<Option<String>>,
     // Ownership for optional file tools between a ledger begin and successful record.
     ledger_target: std::sync::Mutex<Option<String>>,
+    // Each ledger row as this serving last saw it (at begin or its own record), so a
+    // record can tell another worker recorded it meanwhile.
+    ledger_seen: std::sync::Mutex<BTreeMap<String, Value>>,
+    // Distinguishes servings in one process that never registered, so each has its own
+    // open entries.
+    serving_seq: u64,
     // What the transport saw while a call runs: cancelled request ids and end of
     // input, so a long poll stops waiting. Mirrors docs/frontends/mcp.md#the-work-loop.
     interrupts: std::sync::Arc<Interrupts>,
@@ -172,8 +178,10 @@ struct OpenCase {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct OpenBatch {
-    #[serde(skip)]
-    _project_lock: Option<crate::document_sets::ProjectLock>,
+    // The project configuration the batch opened against; a commit after another
+    // configuration write refuses `config-moved` (docs/compiler/control-plane.md#workers-and-open-work).
+    #[serde(default)]
+    config_hash: String,
     id: String,
     goals: Vec<Goal>,
     // Change record ids each goal stood on when claimed; a resolution clears them.
@@ -182,8 +190,6 @@ struct OpenBatch {
     known_open: BTreeSet<String>,
     session: ToolSession,
     rounds: u32,
-    #[serde(default)]
-    invalidated: bool,
 }
 
 // The compilation lifecycle: served beside the catalog, implemented on the server

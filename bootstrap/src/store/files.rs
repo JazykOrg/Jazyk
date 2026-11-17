@@ -855,7 +855,10 @@ impl Store {
         // progress, and nothing of the old layout stays. Mirrors
         // docs/compiler/graph.md#store-version.
         if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
-            let _flock = FileLock::acquire(out);
+            let flock = FileLock::acquire(out);
+            if flock.busy() {
+                return store;
+            }
             store.status.version = STORE_VERSION;
             store.persist();
             let _ledger_lock = crate::gen::Ledger::lock(out);
@@ -1037,6 +1040,9 @@ impl Store {
     // store of another version, or another writer landed a generation since it loaded.
     // Called under the lock. Mirrors docs/compiler/graph.md#concurrency.
     fn refusal(&self) -> Option<String> {
+        if let Some(why) = busy_refusal(&self.out) {
+            return Some(why);
+        }
         if let Some(why) = self.unreadable() {
             return Some(why);
         }

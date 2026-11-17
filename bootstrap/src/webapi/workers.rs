@@ -15,7 +15,7 @@ pub fn workers_snapshot(proj: &Project, out: &Path, gs: &GenSettings, c: &Contro
     json!({
         "workflow": {"compile": c.compile, "generate": c.generate, "worker": c.worker},
         "workers": crate::control::workers(out),
-        "leases": crate::control::leases(out).values().collect::<Vec<_>>(),
+        "open": crate::control::leases(out),
         "gated": {
             "compile": board.gated_of(&graph_kinds),
             // Bind goals gate under the generate release beside generation.

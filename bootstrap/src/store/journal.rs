@@ -86,6 +86,7 @@ impl Store {
             mutations,
             resolved_goals: commit.resolved.clone(),
             opened_goals: Vec::new(),
+            rebased_from: commit.rebased_from,
             rounds: commit.rounds,
             tokens: commit.tokens,
             cached_tokens: commit.cached,
@@ -105,7 +106,10 @@ impl Store {
         }
         // A journal rewrite is a store write: under the lock, through the atomic
         // write. Mirrors docs/compiler/graph.md#concurrency.
-        let _flock = FileLock::acquire(out);
+        let flock = FileLock::acquire(out);
+        if flock.busy() {
+            return;
+        }
         // Only the session entries the turn wrote take a share, so the parts sum to
         // the spend: a checks or settle entry between them bills nothing.
         let entries: Vec<(PathBuf, JournalEntry)> = (from + 1..=to)
@@ -170,7 +174,10 @@ impl Store {
         }
         // The read, the check, and the write hold the lock, so two stamps never both
         // pass the no-figure check. Mirrors docs/compiler/graph.md#concurrency.
-        let _flock = FileLock::acquire(out);
+        let flock = FileLock::acquire(out);
+        if let Some(why) = flock.busy().then(|| busy_refusal(out)).flatten() {
+            return Err(why);
+        }
         let text = crate::vfs::read_to_string(&p)
             .map_err(|_| format!("no journal entry g{} under {}", generation, out.display()))?;
         let mut entry = serde_norway::from_str::<JournalEntry>(&text)

@@ -399,7 +399,7 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | `run.yaml` | The open work this machine's commits recorded, with causes, the goals it parked, pending anchor moves, and the resolved roots ([a build's progress](./graph.md#a-builds-progress)). A record leaves when its work resolves. Hosted builds keep the same in the host's database. | YAML |
 | `control.yaml` | Workflow modes and the releases this operator approved ([control plane](./control-plane.md#modes-and-releases)). | YAML |
 | `journal/g<N>.yaml` | One entry per commit on this machine: its mutations, the goals it resolved, its cost ([journal](./graph.md#journal)). What `jazyk explain`, `ripple`, and the cost report read. | YAML |
-| `workers/<id>.yaml` | Who is attached and which goal batches each has open, for information only ([workers and open work](./control-plane.md#workers-and-open-work)). | YAML |
+| `workers/<id>.yaml`, `open/<task>~<worker>.yaml` | Who is attached, and what each has open (goal batches, ledger rows, build runs), for information only ([workers and open work](./control-plane.md#workers-and-open-work)). | YAML |
 | `decompile/drafts.yaml` | Draft documents awaiting the owner ([decompile](../consumers/decompile.md)). | YAML |
 | `deliverable-baseline/` | Deliverable files as they were before a generation run touched them ([gen](../consumers/gen.md)). | files |
 | `merged.yaml` | Source sections a git merge left for the next build to reconcile, written by the [merge driver](#merging-through-git); the next load drops their hashes in `sources/` and deletes the file. | YAML |

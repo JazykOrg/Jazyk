@@ -778,6 +778,7 @@ impl WorkItem {
     pub fn commit(&self, rounds: u32, tokens: Option<u64>) -> crate::store::Commit {
         let kind = self.journal_kind();
         crate::store::Commit {
+            rebased_from: None,
             kind: kind.to_string(),
             batch: if kind == "session" {
                 vec![self.goal_id()]
@@ -1174,6 +1175,10 @@ pub struct JournalEntry {
     pub resolved_goals: Vec<Resolved>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub opened_goals: Vec<OpenedGoal>,
+    // The generation a rebased changeset was staged against
+    // (docs/compiler/graph.md#commit-conflicts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebased_from: Option<u64>,
     #[serde(default)]
     pub rounds: u32,
     // Absent when an external agent drove the session: its spend is unknowable from

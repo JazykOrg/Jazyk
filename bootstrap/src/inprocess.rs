@@ -19,6 +19,18 @@ use serde_json::{json, Value};
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 
+fn claim_opening(claim: &Value) -> Result<String, String> {
+    let text = claim["content"][0]["text"]
+        .as_str()
+        .ok_or_else(|| format!("begin_goals: invalid reply: {claim}"))?;
+    let body: Value = serde_json::from_str(text)
+        .map_err(|error| format!("begin_goals: invalid reply: {error}"))?;
+    if claim["isError"] == true || !body["error"].is_null() {
+        return Err(format!("begin_goals: {}", body["error"]));
+    }
+    Ok(text.to_owned())
+}
+
 fn ledger_failure(stop: &Stop, rounds: u32) -> Option<String> {
     match stop {
         Stop::Error(error) if !crate::session_recovery::is_interruption(error) => {
@@ -130,10 +142,6 @@ impl SessionRunner for InProcessRunner {
         ) {
             return failed(format!("serving: {}", e.1), 0, 0);
         }
-        let tools = match Self::tools_of(&server) {
-            Ok(t) => t,
-            Err(e) => return failed(format!("serving: {}", e), 0, 0),
-        };
 
         let recovery_key = crate::session_recovery::batch_key(&self.out, &batch.id);
         let mut recovery =
@@ -151,10 +159,15 @@ impl SessionRunner for InProcessRunner {
                 Ok(v) => v,
                 Err(e) => return failed(format!("begin_goals: {}", e.1), 0, 0),
             };
-            claim["content"][0]["text"]
-                .as_str()
-                .map(str::to_owned)
-                .unwrap_or_else(|| claim.to_string())
+            match claim_opening(&claim) {
+                Ok(opening) => opening,
+                Err(error) => return failed(error, 0, 0),
+            }
+        };
+
+        let tools = match Self::tools_of(&server) {
+            Ok(t) => t,
+            Err(e) => return failed(format!("serving: {}", e), 0, 0),
         };
 
         let opening = if batch.is_ledger() {
@@ -502,6 +515,19 @@ async fn run_answer(
 #[cfg(test)]
 mod ledger_failure_tests {
     use super::*;
+
+    #[test]
+    fn rejected_claim_is_not_a_model_task() {
+        let body = json!({"error":{"rule":"wrong-target","message":"stale batch"},"batches":[{"id":"b252-1"}]});
+        let reply = json!({"isError":true,"content":[{"type":"text","text":body.to_string()}]});
+        let error = claim_opening(&reply).unwrap_err();
+        assert!(error.contains("wrong-target") && error.contains("stale batch"));
+        assert!(!error.contains("b252-1"));
+        let reply = json!({"content":[{"type":"text","text":body.to_string()}]});
+        assert!(claim_opening(&reply).is_err());
+        let reply = json!({"content":[{"type":"text","text":"{\"batch\":\"b1-1\",\"instructions\":\"work\"}"}]});
+        assert!(claim_opening(&reply).is_ok());
+    }
 
     #[test]
     fn verification_runner_can_read_implementing_files_without_file_or_matcher_writes() {

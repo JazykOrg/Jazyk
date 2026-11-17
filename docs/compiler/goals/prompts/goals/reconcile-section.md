@@ -19,6 +19,10 @@ Requirements about it quote those documents, never the envelope or invented imag
 
 Mark it covered with a note naming the requirement IDs whose quoted references select this input.
 
+An existing requirement in a referring document is sufficient. Do not create a duplicate requirement in the blob or move that requirement into it. Call `set_coverage` with the exact IDs in the note, then finish the goal through `done`. A prose reply alone saves nothing.
+
+An opaque file already has whole-file processing. Use `classify_input` only to change processing mode, not merely to acknowledge an existing blob.
+
 Supplied assets retain their original bytes.
 
 Generation uses referencedAssets and the existing delivery ledger to preserve or copy them into the required destination; an already correct copy is retained.

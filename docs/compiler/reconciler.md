@@ -487,6 +487,9 @@ One build runs one loop, sequentially: one session at a time, each with one batc
 - Commit the changeset: derived data recomputes, the decisions the resolved goals asked
   for land, the journal entry records `resolved_goals` with their justifications and
   `opened_goals` with their causes ([commit](./sessions.md#commit)).
+- Scan inputs using the current persisted processing decisions. A classification
+  can replace document sections with a blob or change its envelope. Never restore
+  the build opening's parsed snapshot over committed state.
 - Re-derive the board. GC goals whose cone the commit quieted are ready; they run next,
   in a burst, before the loop returns to the compile tiers, unless the build budget is
   tight, in which case compile outranks GC.

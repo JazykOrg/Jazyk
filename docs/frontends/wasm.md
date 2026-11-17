@@ -499,3 +499,5 @@ A browser folder connection retains a symlink write as a pending change when its
 folder API cannot create native links. It must not replace the link with a copy.
 Native connections write actual filesystem symlinks. Standalone delivery and task
 exports resolve allowed asset links into regular file bytes.
+
+An in-process runner validates the `begin_goals` reply before model execution. A refused claim returns its actual error without a model call. The tool catalog is read after a successful claim or recovery restore, so it matches the active batch.

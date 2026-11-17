@@ -28,6 +28,9 @@ pub struct McpServer {
     // The open goal batch: a ToolSession holding the staged changeset across calls.
     // Single-flight per serving. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     open: std::sync::Mutex<Option<OpenBatch>>,
+    // The serving's other open batches, by id. A tool call naming `batch` swaps that
+    // batch in as `open`. Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+    parked: std::sync::Mutex<BTreeMap<String, OpenBatch>>,
     // The session transcript: one event per call under <out>/trace, reviewable beside
     // a build. Mirrors docs/frontends/mcp.md#transcripts.
     trace: crate::session::Trace,

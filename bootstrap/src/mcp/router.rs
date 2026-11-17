@@ -45,7 +45,26 @@ impl McpServer {
     // JSON-RPC error stays for an unknown method or tool, a call without a name, and a
     // stopped or suspended run. Mirrors docs/frontends/mcp.md#toolsets.
     pub fn handle(&self, method: &str, params: &Value) -> Result<Value, (i64, String)> {
-        let reply = self.route(method, params);
+        if method == "tools/call" {
+            if let Some(refused) = self.select_batch(params) {
+                return Ok(refused);
+            }
+        }
+        let parked_for_begin =
+            method == "tools/call" && params["name"] == "begin_goals" && self.park_active();
+        let mut reply = self.route(method, params);
+        // A begin that opened nothing leaves the batch it parked active again.
+        if parked_for_begin && self.open.lock().unwrap().is_none() {
+            self.unpark_latest();
+        }
+        // A serving scoped to one batch never holds several.
+        let several =
+            self.bridge.only.is_none() && self.modes.iter().any(|m| m == "compile" || m == "chat");
+        if method == "tools/list" && several {
+            if let Ok(list) = reply.as_mut() {
+                Self::add_batch_argument(list);
+            }
+        }
         if method != "tools/call" || !params["name"].is_string() {
             return reply;
         }
@@ -69,6 +88,97 @@ impl McpServer {
             return reply;
         }
         reply.map(|value| self.hint_locked_tools(value))
+    }
+
+    // Several open batches: a call naming `batch` swaps that batch in as the active
+    // one; with one open (active or parked) calls act on it; with several, a call that
+    // stages into a batch must name it. Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+    fn select_batch(&self, params: &Value) -> Option<Value> {
+        let name = params["name"].as_str().unwrap_or_default();
+        if name == "begin_goals" {
+            return None;
+        }
+        let wanted = params["arguments"]["batch"].as_str();
+        let mut open = self.open.lock().unwrap();
+        let mut parked = self.parked.lock().unwrap();
+        if let Some(id) = wanted {
+            if open.as_ref().is_some_and(|o| o.id == id) {
+                return None;
+            }
+            if let Some(batch) = parked.remove(id) {
+                if let Some(active) = open.take() {
+                    parked.insert(active.id.clone(), active);
+                }
+                *open = Some(batch);
+            }
+            return None;
+        }
+        if open.is_none() && parked.len() == 1 {
+            let id = parked.keys().next().cloned().unwrap();
+            *open = parked.remove(&id);
+            return None;
+        }
+        let several = parked.len() + usize::from(open.is_some()) > 1;
+        if several && Self::stages_into_batch(name) {
+            let mut ids: Vec<String> = parked.keys().cloned().collect();
+            ids.extend(open.as_ref().map(|o| o.id.clone()));
+            ids.sort();
+            return Some(text_result(
+                json!({"error": {"rule": "batch-required", "message": format!(
+                    "{} batches are open: {}; pass `batch` with the one this call works on",
+                    ids.len(),
+                    ids.join(", ")
+                ), "open": ids}}),
+                true,
+            ));
+        }
+        None
+    }
+
+    // Calls that act on one open batch.
+    fn stages_into_batch(name: &str) -> bool {
+        crate::tools::GRAPH_WRITE_TOOLS.contains(&name)
+            || crate::tools::GOAL_TOOLS.contains(&name)
+            || name == crate::tools::PAIR_SETTLE_TOOL
+            || matches!(name, "abandon_goals" | "done")
+    }
+
+    // Move the active batch aside before another opens. True when one was moved.
+    fn park_active(&self) -> bool {
+        let Some(active) = self.open.lock().unwrap().take() else {
+            return false;
+        };
+        self.parked
+            .lock()
+            .unwrap()
+            .insert(active.id.clone(), active);
+        true
+    }
+
+    fn unpark_latest(&self) {
+        let mut parked = self.parked.lock().unwrap();
+        if let Some(id) = parked.keys().last().cloned() {
+            *self.open.lock().unwrap() = parked.remove(&id);
+        }
+    }
+
+    // Every call that acts on an open batch takes an optional `batch`.
+    fn add_batch_argument(list: &mut Value) {
+        let Some(tools) = list["tools"].as_array_mut() else {
+            return;
+        };
+        for tool in tools {
+            let name = tool["name"].as_str().unwrap_or_default().to_string();
+            if !Self::stages_into_batch(&name) {
+                continue;
+            }
+            if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
+                props.entry("batch").or_insert(json!({
+                    "type": "string",
+                    "description": "the open batch this call works on; required when several are open"
+                }));
+            }
+        }
     }
 
     // A result that names tools a skill-gated catalog does not list yet carries

@@ -707,6 +707,22 @@ impl McpServer {
     // finishing call. Valid staged work still lands, under the same gates the budget
     // path uses. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
     pub(super) fn eof_finish(&self) {
+        // Every open batch finishes, the parked ones first.
+        let parked: Vec<String> = self.parked.lock().unwrap().keys().cloned().collect();
+        for id in parked {
+            let batch = self.parked.lock().unwrap().remove(&id);
+            if let Some(batch) = batch {
+                let previous = self.open.lock().unwrap().replace(batch);
+                self.eof_finish_active();
+                if let Some(previous) = previous {
+                    *self.open.lock().unwrap() = Some(previous);
+                }
+            }
+        }
+        self.eof_finish_active();
+    }
+
+    fn eof_finish_active(&self) {
         let mut open = self.open.lock().unwrap();
         let Some(mut o) = open.take() else { return };
         if o.session

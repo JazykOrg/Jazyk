@@ -647,3 +647,53 @@ fn a_disjoint_changeset_rebases_onto_a_later_commit() {
     assert_eq!(entry.rebased_from, Some(since));
     crate::vfs::remove_dir_all(dir).unwrap();
 }
+
+// One serving holds several open batches: a second begin opens another, a call that
+// stages into a batch must name it once several are open, and naming it works on it.
+// Mirrors docs/frontends/mcp.md#the-control-plane-over-mcp.
+#[test]
+fn one_serving_holds_several_open_batches_and_calls_name_theirs() {
+    let dir = bare_dir("several-open");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let server = McpServer::new(project, out.clone(), vec!["compile".into()], false);
+    let call = |name: &str, arguments: Value| {
+        let r = server
+            .handle("tools/call", &json!({"name":name,"arguments":arguments}))
+            .unwrap();
+        serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let first = call("begin_goals", json!({}));
+    let second = call("begin_goals", json!({}));
+    assert!(
+        first["error"].is_null() && second["error"].is_null(),
+        "{first} {second}"
+    );
+    let (one, two) = (first["batch"].clone(), second["batch"].clone());
+    assert_ne!(one, two);
+    let refused = call("abandon_goals", json!({"reason":"which one?"}));
+    assert_eq!(refused["error"]["rule"], "batch-required", "{refused}");
+    assert_eq!(refused["error"]["open"].as_array().unwrap().len(), 2);
+    let a = call("abandon_goals", json!({"reason":"first","batch":one}));
+    assert_eq!(a["abandoned"], one, "{a}");
+    // With one left, calls act on it without naming it.
+    let b = call("abandon_goals", json!({"reason":"second"}));
+    assert_eq!(b["abandoned"], two, "{b}");
+    // The tool list offers `batch` on the calls that act on a batch.
+    let list = server.handle("tools/list", &json!({})).unwrap();
+    let done = list["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "done")
+        .unwrap();
+    assert!(done["inputSchema"]["properties"]["batch"].is_object());
+    crate::vfs::remove_dir_all(&dir).ok();
+}

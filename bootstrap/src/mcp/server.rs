@@ -274,6 +274,7 @@ impl McpServer {
             }),
             finished: std::sync::Mutex::new(None),
             ledger_target: std::sync::Mutex::new(None),
+            parked: std::sync::Mutex::new(BTreeMap::new()),
             ledger_seen: std::sync::Mutex::new(BTreeMap::new()),
             serving_seq: {
                 static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

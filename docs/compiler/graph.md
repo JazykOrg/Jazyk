@@ -747,12 +747,12 @@ two machine-local kinds of file.
 - the requirements a `place_anchor` marked for re-evaluation;
 - the document set's resolved roots.
 
-`local/runs/<run>.yaml` holds one running build's own progress, so two builds on one set
-never overwrite each other's ([concurrent work](./control-plane.md#concurrent-work)).
-`<run>` is the build's worker id, the one its open `build` entry names. The file
-carries:
+`local/runs/<run>.yaml` holds one running graph build's own progress (a `jazyk
+compile`, a GUI build job), so two builds on one set never overwrite each other's
+([concurrent work](./control-plane.md#concurrent-work)). `<run>` is the build's worker
+id, the one its open `build` entry names. The file carries:
 
-- `run`, `command` (`compile`, `generate`), `pid`, `startedAt`, and `updatedAt`;
+- `run`, `command` (e.g. `compile`), `pid`, `startedAt`, and `updatedAt`;
 - `sessions` (the sessions the build started) and `tokens` (their spend);
 - `inFlight`: each batch the build has a session open on, with its id, goals, executor,
   class, tier, and `startedAt`;

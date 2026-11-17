@@ -494,6 +494,13 @@ one batch ([concurrent work](./control-plane.md#concurrent-work)); with
   rank.
 - A goal this build has in flight forms no other batch. Batch ids skip the ids of the
   build's batches in flight, so two sessions never share a label.
+- Before a session starts, the build registers its batch as open work under the
+  build's worker id, with the batch's goals
+  ([workers and open work](./control-plane.md#workers-and-open-work)). The session's
+  scoped serving opens exactly those goals under that id
+  ([`--only`](../frontends/mcp.md#mcp-into-acp-sessions)), whatever a board derived
+  after another session's commit numbers them. The build refreshes the entry while
+  the session runs and removes it when the session ends.
 - A GC goal is ready when no compile goal is open or in flight in its cone.
 - Each executor runs at most its `max_sessions` sessions at once. Slots are counted
   per executor profile, so a cheap extraction profile and a strong GC profile fill

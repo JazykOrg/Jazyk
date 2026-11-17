@@ -1019,6 +1019,12 @@ longest a writer waits for `.lock` before failing `store-busy`, and `STORE_LOCK_
 60 seconds, past which a commit holding the lock is reported
 ([concurrency](#concurrency)).
 
+The sub-agent limits are registry constants too: `AGENT_MAX_DEPTH` is 3,
+`AGENT_MAX_CHILDREN` is 4 running sub-agents per conversation, `AGENT_MAX_RUNNING` is
+8 running sub-agents per agent process or engine, and `AGENT_WAIT_DEFAULT_MS` (60000)
+and `AGENT_WAIT_MAX_MS` (300000) bound a wait for sub-agents
+([limits](../frontends/subagents.md#limits)).
+
 The pair degree cap is a registry constant of the same kind: `pairs-per-requirement`
 is 8, the most open `rejudge-pair` goals one requirement takes part in at once, the
 rest waiting by score ([pairs](./reconciler.md#pairs)). It has no soft and hard

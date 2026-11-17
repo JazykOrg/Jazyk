@@ -152,6 +152,7 @@ Frontends embed the compiler and expose the graph to different consumers.
 - [Viewer](./frontends/viewer.md)
 - [GUI](./frontends/gui.md)
 - [Browser Backend](./frontends/wasm.md)
+- [Sub-agents](./frontends/subagents.md)
 
 ## Consumers
 

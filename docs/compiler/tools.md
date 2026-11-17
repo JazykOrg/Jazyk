@@ -558,6 +558,16 @@ Project tools (see [ACP](../frontends/acp.md#project-tools)):
   `workflow.generate` is refused (`needs-human`): only a human switches a mode to
   `auto` ([control plane](./control-plane.md#modes-and-releases)).
 
+## Agent tools
+
+A Jazyk agent's conversational run carries five agent tools beside its serving's
+tools: `spawn_agent`, `wait_agents`, `agent_status`, `message_agent`, and
+`cancel_agent`. They start and manage [sub-agents](../frontends/subagents.md#agent-tools).
+The [agent runtime](./agent-runtime.md#sub-agents) answers them; no serving lists
+them, so an external agent never sees them. `agent_status` and `wait_agents` are
+read-only. A sub-agent's [write scope](../frontends/subagents.md#write-scope) is
+checked before any of its tool calls dispatch.
+
 ## Feedback tool
 
 `report_feedback({kind, subject?, message})` is the model's channel back to jazyk's own

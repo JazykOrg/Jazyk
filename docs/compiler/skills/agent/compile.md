@@ -22,6 +22,9 @@ tools:
   - merge_entities
   - group_entities
   - dissolve_entity
+  - add_requirement_source
+  - remove_requirement_source
+  - merge_requirements
   - upsert_requirement
   - update_requirement
   - delete_requirement

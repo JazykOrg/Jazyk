@@ -85,9 +85,9 @@ Add these fields to `View`, graph schema, read models, and mutation schemas:
 | `labels` | Ordered `{target, text}` entries for member entities, requirements, or relationship selectors. Overrides display text only. Canonical names and source IDs remain in read data and captions. |
 | `notes` | Ordered `{id, targets, text, sources}` entries. Targets resolve to drawn elements or relationship selectors; a diagram-wide note has no targets. Sources cite graph facts or document sections. |
 | `groups` | Ordered `{id, title, members, parent?}` entries. Local presentation groups have no semantic containment effect. Groups form an acyclic forest; an element belongs to at most one group. |
-| `layout` | `{direction?: left-to-right | top-to-bottom, together?: [[entity id]]}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
+| `layout` | `{direction?: left-to-right \| top-to-bottom, together?: [[entity id]]}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
 | `fragments` | Sequence-only ordered tree of `{id, operator, operands}`. Operators are `alt`, `opt`, `loop`, `par`, `break`, `critical`, `ref`. Operands carry sourced guard text and ordered requirement IDs or nested fragments; `ref` names an existing sequence view. |
-| `links` | Ordered `{view, relation: detail | phase, member?}`. Explicit sub-view and overview links, independent of title matching. |
+| `links` | Ordered `{view, relation: detail \| phase, member?}`. Explicit sub-view and overview links, independent of title matching. |
 
 Example authored definition, omitting generation markers and optional fields:
 

@@ -141,6 +141,15 @@ fn agent_rounds_from(value: Option<&str>) -> u32 {
 pub const STORE_LOCK_WAIT_SECS: u64 = 30;
 pub const STORE_LOCK_HOLD_SECS: u64 = 60;
 
+// Sub-agents of Jazyk's own agents (docs/frontends/subagents.md#limits): the deepest
+// tree, the running children of one conversation, the running sub-agents of one
+// agent process or engine, and the bounds of a wait for them.
+pub const AGENT_MAX_DEPTH: u32 = 3;
+pub const AGENT_MAX_CHILDREN: usize = 4;
+pub const AGENT_MAX_RUNNING: usize = 8;
+pub const AGENT_WAIT_DEFAULT_MS: u64 = 60_000;
+pub const AGENT_WAIT_MAX_MS: u64 = 300_000;
+
 // Also bounds a single reply containing many invalid calls outside a graph batch.
 pub const AGENT_TOOL_ERROR_LIMIT: u32 = 20;
 pub const SESSION_MUTATIONS: usize = 1024;

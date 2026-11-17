@@ -38,6 +38,12 @@ pub struct ChatSession {
     inputs: Vec<Value>,
     turn_id: Option<String>,
     stopped: bool,
+    // A sub-agent's tree fields (parentId, rootId, depth, task, write), its root
+    // conversation and its id in the agent process, and its last result.
+    // Mirrors docs/frontends/acp.md#sub-agent-updates.
+    tree: Option<Value>,
+    agent: Option<(String, String)>,
+    result: Option<Value>,
 }
 
 pub struct ChatManager {
@@ -152,8 +158,8 @@ impl ChatManager {
             .values()
             .map(|s| {
                 let s = s.lock().unwrap();
-                json!({"id": s.id, "title": s.title, "state": s.state, "updates": s.next_n,
-                       "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "inputs":s.inputs,"turnId":s.turn_id})
+                s.with_tree(json!({"id": s.id, "title": s.title, "state": s.state, "updates": s.next_n,
+                       "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "inputs":s.inputs,"turnId":s.turn_id}))
             })
             .collect()
     }
@@ -243,6 +249,7 @@ impl ChatManager {
                 })
                 .unwrap_or("idle");
             let next_n = ring.iter().map(|(n, _)| n + 1).max().unwrap_or(0);
+            let (tree, agent, result) = subagents::restored(&ring);
             // A number a later append cannot collide with, whatever was trimmed.
             let seq = self.seq.load(Ordering::Relaxed);
             let n = meta
@@ -270,6 +277,9 @@ impl ChatManager {
                     inputs,
                     turn_id: None,
                     stopped: false,
+                    tree,
+                    agent,
+                    result,
                 },
             ));
         }
@@ -339,8 +349,7 @@ fn set_state(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, state: &str) {
         s.state = state.to_string();
     }
     append(st, sess, json!({"sessionUpdate":"state","state":state}));
-    st.events
-        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    super::agent_tree::sessions_changed(st);
 }
 
 // ---- handlers ----
@@ -371,6 +380,9 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         inputs: Vec::new(),
         turn_id: None,
         stopped: false,
+        tree: None,
+        agent: None,
+        result: None,
     };
     crate::acp::sessions::open(&st.out, &id, &st.proj().root, "gui");
     if let Some(selected) = &st.agent_selection {
@@ -385,8 +397,7 @@ pub async fn post_session(State(st): State<SharedState>) -> Response {
         .lock()
         .unwrap()
         .insert(id.clone(), Arc::new(Mutex::new(session)));
-    st.events
-        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    super::agent_tree::sessions_changed(&st);
     Json(json!({"id": id})).into_response()
 }
 
@@ -412,8 +423,8 @@ pub async fn get_session(State(st): State<SharedState>, Path(id): Path<String>) 
                 .iter()
                 .map(|(n, u)| json!({"n": n, "update": super::jobs::elide(u)}))
                 .collect();
-            Json(json!({"id": s.id, "title": s.title, "state": s.state,
-                        "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "updates": updates,"inputs":s.inputs,"turnId":s.turn_id}))
+            Json(s.with_tree(json!({"id": s.id, "title": s.title, "state": s.state,
+                        "agentSelection":s.agent_selection.as_ref().map(|s|s.summary()), "pending": s.pending, "updates": updates,"inputs":s.inputs,"turnId":s.turn_id})))
             .into_response()
         }
         None => super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id)),
@@ -433,6 +444,9 @@ pub async fn post_prompt(
     let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
         return super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id));
     };
+    if sess.lock().unwrap().agent.is_some() {
+        return subagents::child_input(&st, &sess, &body).await;
+    }
     let text = body["text"].as_str().unwrap_or("").trim().to_string();
     if text.is_empty() {
         return super::api::err(
@@ -580,8 +594,13 @@ pub async fn post_prompt(
                 HostEvent::Update(u) => {
                     update_input(&cb_st,&cb_sess,&json!(initial_id),"delivered",None);
                     if let Ok(v) = serde_json::to_value(u) {
-                        if let Some(delivered) = v["_meta"]["jazyk"]["input"].as_object() {
+                        if v["_meta"]["jazyk"]["agent"].is_object() {
+                            let root = cb_sess.lock().unwrap().id.clone();
+                            subagents::child_update(&cb_st, &root, v);
+                        } else if let Some(delivered) = v["_meta"]["jazyk"]["input"].as_object() {
                             let message_id = delivered.get("messageId").cloned().unwrap_or_default();
+                            // A sub-agent's result delivered to this conversation.
+                            subagents::delivered_result(&cb_st, &cb_sess, &v["_meta"]["jazyk"]["input"]);
                             update_input(&cb_st, &cb_sess, &message_id, "delivered", None);
                         } else { append(&cb_st, &cb_sess, v); }
                     }
@@ -663,8 +682,7 @@ pub async fn post_prompt(
                 session.turn_id = None;
                 break None;
             };
-            st2.events
-                .emit("chat.sessions", json!({"sessions":st2.chat.snapshot()}));
+            super::agent_tree::sessions_changed(&st2);
             match next {
                 Some(input) => {
                     append(&st2, &sess2, json!({"sessionUpdate":"input","input":input}));
@@ -728,6 +746,9 @@ pub async fn post_input(
     let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
         return super::api::err(StatusCode::NOT_FOUND, "unknown conversation");
     };
+    if sess.lock().unwrap().agent.is_some() {
+        return subagents::child_input(&st, &sess, &body).await;
+    }
     let text = body["text"].as_str().unwrap_or_default().trim().to_string();
     let message_id = body["messageId"].as_str().unwrap_or_default().to_string();
     if text.is_empty() || message_id.is_empty() {
@@ -857,6 +878,7 @@ pub async fn post_input(
 pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
     let sess = st.chat.sessions.lock().unwrap().get(&id).cloned();
     match sess {
+        Some(s) if s.lock().unwrap().agent.is_some() => subagents::child_cancel(&st, &s).await,
         Some(s) => {
             let cancelled = {
                 let mut session = s.lock().unwrap();
@@ -905,8 +927,7 @@ pub async fn delete_session(State(st): State<SharedState>, Path(id): Path<String
         });
     }
     crate::acp::sessions::remove(&st.out, &id);
-    st.events
-        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+    super::agent_tree::sessions_changed(&st);
     Json(json!({"ok": true})).into_response()
 }
 
@@ -927,8 +948,7 @@ pub async fn answer_permission(State(st): State<SharedState>, Json(body): Json<V
             match handle {
                 Some(h) => {
                     h.answer_permission(ask, option);
-                    st.events
-                        .emit("chat.sessions", json!({"sessions": st.chat.snapshot()}));
+                    super::agent_tree::sessions_changed(&st);
                     (StatusCode::ACCEPTED, Json(json!({"ok": true}))).into_response()
                 }
                 None => super::api::err(
@@ -1159,6 +1179,9 @@ mod steering_tests {
             inputs: vec![],
             turn_id: Some("turn-1".into()),
             stopped: false,
+            tree: None,
+            agent: None,
+            result: None,
         }));
         append(
             &st,
@@ -1183,5 +1206,6 @@ mod steering_tests {
     }
 }
 
+mod subagents;
 #[cfg(test)]
 mod tests;

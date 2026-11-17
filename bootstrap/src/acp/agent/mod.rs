@@ -4,6 +4,7 @@
 // the same session against an external agent carries the same prompt and tools.
 // Mirrors docs/frontends/acp.md#the-embedded-agent.
 pub mod mcp_client;
+mod subagents;
 
 use agent_client_protocol::schema::v1::{
     AgentCapabilities, CancelNotification, CloseSessionRequest, CloseSessionResponse, ContentBlock,
@@ -30,12 +31,14 @@ struct SessionState {
     tools: Vec<GenericTool>,
     // The running conversation, kept across prompts so a chat session has memory.
     history: Vec<Value>,
-    #[allow(dead_code)]
     cwd: std::path::PathBuf,
     // The model this session prompts, which the client may change between turns.
     // Mirrors docs/frontends/acp.md#choosing-a-model.
     model: String,
     conversation: bool,
+    // The servers the client supplied, which each sub-agent connects to again
+    // (docs/frontends/acp.md#sub-agent-updates).
+    servers: Vec<McpServer>,
 }
 
 // The id the model selector carries. A client persists a user's default under this
@@ -67,6 +70,7 @@ struct SessionEntry {
     state: Arc<Mutex<SessionState>>,
     cancelled: Arc<AtomicBool>,
     inbox: Arc<Mutex<(bool, Vec<Value>)>>,
+    children: subagents::Children,
 }
 
 type Sessions = Arc<Mutex<HashMap<String, SessionEntry>>>;
@@ -96,6 +100,60 @@ fn session_tools<'a>(
         }
     }
     Ok(tools)
+}
+
+// One loop event as the ACP session update it streams, for a session and for each
+// of its sub-agents (docs/frontends/acp.md#sub-agent-updates).
+fn event_update(ev: AgentEvent, total_tokens: &mut u64) -> SessionUpdate {
+    let meta = |value: Value| {
+        serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(value).ok()
+    };
+    match ev {
+        AgentEvent::Input(input) => SessionUpdate::UserMessageChunk(
+            ContentChunk::new(ContentBlock::from(String::new()))
+                .meta(meta(json!({"jazyk":{"input":input,"state":"delivered"}}))),
+        ),
+        AgentEvent::Timing(timing) => SessionUpdate::UsageUpdate(
+            UsageUpdate::new(0, 0).meta(meta(json!({"jazyk":{"timing":timing}}))),
+        ),
+        AgentEvent::ReasoningSummary(s) => SessionUpdate::AgentThoughtChunk(
+            ContentChunk::new(ContentBlock::from(s))
+                .meta(meta(json!({"jazyk":{"reasoningSummary":true}}))),
+        ),
+        AgentEvent::Thought(s) => {
+            SessionUpdate::AgentThoughtChunk(ContentChunk::new(ContentBlock::from(s)))
+        }
+        AgentEvent::Message(s) => {
+            SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(s)))
+        }
+        AgentEvent::ToolCallStart { id, name, args } => SessionUpdate::ToolCall(
+            ToolCall::new(id, name)
+                .status(ToolCallStatus::InProgress)
+                .raw_input(args),
+        ),
+        AgentEvent::ToolCallEnd { id, result, ok } => {
+            let fields = ToolCallUpdateFields::new()
+                .status(if ok {
+                    ToolCallStatus::Completed
+                } else {
+                    ToolCallStatus::Failed
+                })
+                .raw_output(json!(result));
+            let mut update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields));
+            crate::acp::decorate_effects(&mut update);
+            update
+        }
+        AgentEvent::Usage { tokens, cached } => {
+            *total_tokens += tokens;
+            // `used`/`size` describe the context window, which an OpenAI-compatible
+            // endpoint does not report; the meta carries what it does: the tokens the
+            // round billed, input and output, and the input it served from its prompt
+            // cache (docs/compiler/sessions.md#budgets).
+            SessionUpdate::UsageUpdate(UsageUpdate::new(0, 0).meta(meta(
+                json!({"jazyk": {"tokens": tokens, "cachedTokens": cached, "totalTokens": *total_tokens}}),
+            )))
+        }
+    }
 }
 
 struct ConnectedTools<'a>(&'a mut [McpServerConn], &'a [crate::agent_context::Skill]);
@@ -297,6 +355,10 @@ pub fn run() -> i32 {
     let (_proj, llm, _out) = crate::cli::resolve(&[], &crate::cli::Options::default());
     let sessions: Sessions = Arc::new(Mutex::new(HashMap::new()));
     let counter = Arc::new(AtomicU64::new(0));
+    // Every sub-agent of this agent process (docs/frontends/subagents.md#limits).
+    let tree = crate::harness::agents::Tree::default();
+    let prompt_tree = tree.clone();
+    let steering_tree = tree;
 
     let init_sessions = sessions.clone();
     let new_sessions = sessions.clone();
@@ -357,9 +419,11 @@ pub fn run() -> i32 {
                                 cwd,
                                 model: model.clone(),
                                 conversation: req.meta.as_ref().and_then(|m| m.get("jazyk")).is_some_and(|m| m["purpose"] == "chat"),
+                                servers: req.mcp_servers.clone(),
                             })),
                             cancelled: Arc::new(AtomicBool::new(false)),
                             inbox: Arc::new(Mutex::new((false, Vec::new()))),
+                            children: Default::default(),
                         },
                     );
                     let options = model_options(&new_llm, &model);
@@ -397,6 +461,7 @@ pub fn run() -> i32 {
                         .collect::<Vec<_>>()
                         .join("\n");
                     let llm = llm.clone();
+                    let tree = prompt_tree.clone();
                     // The blocking loop (HTTP calls, subprocess dispatch) runs on its
                     // own thread; updates are queued straight onto the connection.
                     std::thread::spawn(move || {
@@ -422,52 +487,7 @@ pub fn run() -> i32 {
                         let mut model = harness::provider::DefaultModelHost::new(&llm);
                         let mut recovery = harness::MemoryRecovery;
                         let mut dispatch = |_: &str, _: &Value| Err("tool host unavailable".into());
-                        let mut emit = |ev: AgentEvent| match ev {
-                            AgentEvent::Input(input) => {
-                                notify(SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(String::new())).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"input":input,"state":"delivered"}})).ok())));
-                            }
-                            AgentEvent::Timing(timing) => {
-                                notify(SessionUpdate::UsageUpdate(UsageUpdate::new(0,0).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"timing":timing}})).ok())));
-                            }
-                            AgentEvent::ReasoningSummary(s) => notify(SessionUpdate::AgentThoughtChunk(
-                                ContentChunk::new(ContentBlock::from(s)).meta(serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({"jazyk":{"reasoningSummary":true}})).ok()),
-                            )),
-                            AgentEvent::Thought(s) => notify(SessionUpdate::AgentThoughtChunk(
-                                ContentChunk::new(ContentBlock::from(s)),
-                            )),
-                            AgentEvent::Message(s) => notify(SessionUpdate::AgentMessageChunk(
-                                ContentChunk::new(ContentBlock::from(s)),
-                            )),
-                            AgentEvent::ToolCallStart { id, name, args } => {
-                                let call = ToolCall::new(id, name.clone())
-                                    .status(ToolCallStatus::InProgress)
-                                    .raw_input(args);
-                                notify(SessionUpdate::ToolCall(call));
-                            }
-                            AgentEvent::ToolCallEnd { id, result, ok } => {
-                                let fields = ToolCallUpdateFields::new()
-                                    .status(if ok { ToolCallStatus::Completed } else { ToolCallStatus::Failed })
-                                    .raw_output(json!(result));
-                                let mut update = SessionUpdate::ToolCallUpdate(ToolCallUpdate::new(id, fields));
-                                crate::acp::decorate_effects(&mut update);
-                                notify(update);
-                            }
-                            AgentEvent::Usage { tokens, cached } => {
-                                total_tokens += tokens;
-                                // `used`/`size` describe the context window, which an
-                                // OpenAI-compatible endpoint does not report; the meta
-                                // carries what it does: the tokens the round billed,
-                                // input and output, and the input it served from its
-                                // prompt cache (docs/compiler/sessions.md#budgets).
-                                let usage = UsageUpdate::new(0, 0).meta(
-                                    serde_json::from_value::<agent_client_protocol::schema::v1::Meta>(json!({
-                                        "jazyk": {"tokens": tokens, "cachedTokens": cached, "totalTokens": total_tokens}
-                                    }))
-                                    .ok(),
-                                );
-                                notify(SessionUpdate::UsageUpdate(usage));
-                            }
-                        };
+                        let mut emit = |ev: AgentEvent| notify(event_update(ev, &mut total_tokens));
                         let mut inputs = || {
                             let mut inbox = entry.inbox.lock().unwrap();
                             if cancelled.load(Ordering::Relaxed) { inbox.1.clear(); }
@@ -479,7 +499,24 @@ pub fn run() -> i32 {
                             inbox.0 = false;
                             true
                         };
-                        harness::run_with_hosts(LoopArgs {
+                        // A chat session can start sub-agents; a worker session cannot
+                        // (docs/frontends/acp.md#sub-agent-updates).
+                        let children = state.conversation.then(|| {
+                            let cx = cx.clone();
+                            let root = sid.clone();
+                            subagents::AcpChildren {
+                                root: sid.0.to_string(),
+                                servers: state.servers.clone(),
+                                cwd: state.cwd.clone(),
+                                llm: llm.clone(),
+                                notify: Arc::new(move |update| {
+                                    let _ = cx.send_notification(SessionNotification::new(root.clone(), update));
+                                }),
+                                children: entry.children.clone(),
+                                tree: tree.clone(),
+                            }
+                        });
+                        let args = LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
                             tools: &state.tools,
@@ -491,7 +528,17 @@ pub fn run() -> i32 {
                             conversation: state.conversation,
                             inputs: Some(&mut inputs),
                             input_close: Some(&mut input_close),
-                        }, "", &mut model, &mut tools, &mut recovery)
+                        };
+                        match children {
+                            Some(children) => {
+                                let run = crate::harness::agents::AgentRun::new(
+                                    crate::harness::agents::RunSpec::root(&sid.0, tree.clone()),
+                                    std::rc::Rc::new(children),
+                                );
+                                harness::run_with_agents(args, "", &mut model, &mut tools, &mut recovery, &run)
+                            }
+                            None => harness::run_with_hosts(args, "", &mut model, &mut tools, &mut recovery),
+                        }
                         }));
                         let stop = match outcome {
                             Ok(stop) => stop,
@@ -535,6 +582,15 @@ pub fn run() -> i32 {
                     let Some(entry) = steering_sessions.lock().unwrap().get(&req.session_id).cloned() else {
                         return responder.respond_with_internal_error("unknown session");
                     };
+                    // A sub-agent of this session, named by `agentId`
+                    // (docs/frontends/acp.md#sub-agent-updates).
+                    if let Some(jazyk) = req.meta.as_ref().and_then(|m| m.get("jazyk")).filter(|j| j["agentId"].is_string()) {
+                        let text = req.prompt.iter().filter_map(|b| match b { ContentBlock::Text(t) => Some(t.text.as_str()), _ => None }).collect::<Vec<_>>().join("\n");
+                        return match subagents::steer(&steering_tree, &req.session_id, jazyk, text) {
+                            Ok(reply) => responder.respond(reply),
+                            Err(error) => responder.respond_with_internal_error(error),
+                        };
+                    }
                     if req.meta.as_ref().and_then(|m|m.get("steering")).and_then(|m|m.get("idleBehavior")).is_some_and(|value|value != "promptRequired") {
                         return responder.respond_with_internal_error("unsupported idleBehavior; use promptRequired");
                     }

@@ -490,3 +490,120 @@ async fn slash_commands_with_zero_one_and_several_document_sets() {
     assert!(help.contains("/compile"), "{help}");
     std::fs::remove_dir_all(&st.root).ok();
 }
+
+// A sub-agent of the embedded agent arrives on its root conversation's session with
+// `_meta.jazyk.agent`: it becomes a chat session with its tree fields, its turn and
+// result follow, its delivered result names it in the parent, the agent list and
+// its event carry it, and a restart restores its tree.
+// Mirrors docs/frontends/acp.md#sub-agent-updates and docs/frontends/gui.md#agents.
+#[tokio::test]
+async fn sub_agent_updates_become_a_child_conversation_in_the_agent_tree() {
+    let st = state("subagents");
+    configure(&st, &[("ds_main", "Main")]);
+    let root = open(&st).await;
+    let mut events = st.events.subscribe();
+    let agent = json!({"id":"sess-9/a1","parentId":"sess-9","depth":1,"title":"Links",
+        "task":"Check the links","write":"none"});
+    let with = |mut update: Value, extra: Value| {
+        let mut meta = agent.clone();
+        meta.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        update["_meta"] = json!({"jazyk":{"agent": meta}});
+        update
+    };
+    subagents::child_update(
+        &st,
+        &root,
+        with(
+            json!({"sessionUpdate":"user_message_chunk","content":{"type":"text","text":"Check the links"}}),
+            json!({"turn":"started"}),
+        ),
+    );
+    subagents::child_update(
+        &st,
+        &root,
+        with(
+            json!({"sessionUpdate":"tool_call","toolCallId":"t1","title":"read_document","rawInput":{"path":"docs/a.md"}}),
+            json!({}),
+        ),
+    );
+    let rows = super::super::agent_tree::rows(&st);
+    let child = rows
+        .iter()
+        .find(|r| r["kind"] == "subagent")
+        .unwrap()
+        .clone();
+    let id = child["id"].as_str().unwrap().to_string();
+    assert_ne!(id, root);
+    assert_eq!(child["agentId"], id);
+    assert_eq!(child["parentId"], root);
+    assert_eq!(child["rootId"], root);
+    assert_eq!(child["depth"], 1);
+    assert_eq!(child["task"], "Check the links");
+    assert_eq!(child["state"], "running");
+    assert_eq!(child["location"]["path"], "docs/a.md");
+    assert_eq!(rows[0]["id"], id, "running rows come first");
+
+    subagents::child_update(
+        &st,
+        &root,
+        with(
+            json!({"sessionUpdate":"usage_update","used":0,"size":0}),
+            json!({"turnEnd":{"stop":"end_turn","result":{"status":"completed","text":"All links resolve."}}}),
+        ),
+    );
+    let (_, snapshot) = get(&st, &id).await;
+    assert_eq!(snapshot["state"], "idle");
+    assert_eq!(snapshot["parentId"], root);
+    assert_eq!(snapshot["write"], "none");
+    let kinds: Vec<&str> = snapshot["updates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|u| u["update"]["sessionUpdate"].as_str())
+        .collect();
+    assert!(
+        kinds.contains(&"user_message")
+            && kinds.contains(&"tool_call")
+            && kinds.contains(&"turn_end")
+    );
+
+    subagents::delivered_result(
+        &st,
+        &session(&st, &root),
+        &json!({"messageId":"r1","text":"Subagent sess-9/a1 completed: All links resolve.","source":{"agentId":"sess-9/a1"}}),
+    );
+    let (_, parent) = get(&st, &root).await;
+    assert_eq!(parent["parentId"], Value::Null);
+    assert_eq!(parent["rootId"], root);
+    let delivered = parent["updates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|u| &u["update"])
+        .find(|u| u["sessionUpdate"] == "user_message")
+        .unwrap();
+    assert_eq!(delivered["source"]["agentId"], id);
+
+    let rows = super::super::agent_tree::rows(&st);
+    let child = rows.iter().find(|r| r["id"] == id).unwrap();
+    assert_eq!(child["state"], "idle");
+    assert_eq!(child["result"]["text"], "All links resolve.");
+    let mut announced = false;
+    while let Ok(event) = events.try_recv() {
+        announced |= event["type"] == "agents" && event["agents"].to_string().contains(&id);
+    }
+    assert!(announced, "the agents event carries the sub-agent");
+
+    // An idle sub-agent takes no prompt of its own.
+    let (status, _) = prompt(&st, &id, json!({"text":"more"})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let restarted = ChatManager::default();
+    restarted.restore(&st.out);
+    let restored: Vec<Value> = restarted.snapshot();
+    let child = restored.iter().find(|s| s["id"] == id).unwrap();
+    assert_eq!(child["parentId"], root);
+    assert_eq!(child["depth"], 1);
+}

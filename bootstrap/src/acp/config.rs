@@ -204,6 +204,41 @@ pub fn embedded_profile() -> ResolvedAgent {
     }
 }
 
+// How many sessions of the named profile one build runs at once. The first value
+// found wins: the profile's own table, the project [acp], the global [acp], then the
+// default (one for the embedded agent on a loopback endpoint). A value below 1 counts
+// as 1. Mirrors docs/compiler/project-settings.md#acp.
+pub fn max_sessions(name: &str, proj: &AcpSettings, global: &AcpSettings, base_url: &str) -> usize {
+    let own = proj
+        .agents
+        .get(name)
+        .or_else(|| global.agents.get(name))
+        .and_then(|p| p.max_sessions);
+    match own.or(proj.max_sessions).or(global.max_sessions) {
+        Some(n) => n.max(1) as usize,
+        None if name == EMBEDDED && is_loopback_url(base_url) => {
+            crate::limits::MAX_SESSIONS_LOOPBACK
+        }
+        None => crate::limits::MAX_SESSIONS_DEFAULT,
+    }
+}
+
+// Whether a URL's host is this machine: `localhost` or a loopback address.
+pub fn is_loopback_url(url: &str) -> bool {
+    let rest = url.split_once("://").map_or(url, |(_, r)| r);
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+    let host_port = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
+    let host = if let Some(v6) = host_port.strip_prefix('[') {
+        v6.split(']').next().unwrap_or_default()
+    } else {
+        host_port.split(':').next().unwrap_or_default()
+    };
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|a| a.is_loopback())
+}
+
 // The transport of the serving injected into a session.
 // Mirrors docs/frontends/acp.md#worker-sessions and docs/frontends/mcp.md#mcp-over-http.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -274,6 +309,65 @@ mod tests {
     use crate::project::AcpAgentProfile;
     use std::collections::BTreeMap;
 
+    // The profile's own count outranks [acp], the project outranks the global config,
+    // and the default is one for the embedded agent on this machine's endpoint.
+    #[test]
+    fn max_sessions_resolves_per_profile() {
+        let none = AcpSettings::default();
+        let local = "http://127.0.0.1:3625/v1";
+        let hosted = "https://api.example.com/v1";
+        assert_eq!(max_sessions(EMBEDDED, &none, &none, local), 1);
+        assert_eq!(
+            max_sessions(EMBEDDED, &none, &none, "http://localhost:11434"),
+            1
+        );
+        assert_eq!(
+            max_sessions(EMBEDDED, &none, &none, "http://[::1]:8080/v1"),
+            1
+        );
+        assert_eq!(max_sessions(EMBEDDED, &none, &none, hosted), 4);
+        assert_eq!(max_sessions("claude", &none, &none, local), 4);
+        let mut global = AcpSettings {
+            max_sessions: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(max_sessions(EMBEDDED, &none, &global, local), 3);
+        let mut proj = AcpSettings {
+            max_sessions: Some(2),
+            ..Default::default()
+        };
+        assert_eq!(max_sessions("claude", &proj, &global, hosted), 2);
+        global.agents.insert(
+            "claude".into(),
+            AcpAgentProfile {
+                command: "npx".into(),
+                max_sessions: Some(6),
+                ..Default::default()
+            },
+        );
+        assert_eq!(max_sessions("claude", &proj, &global, hosted), 6);
+        proj.agents.insert(
+            "claude".into(),
+            AcpAgentProfile {
+                command: "npx".into(),
+                max_sessions: Some(0),
+                ..Default::default()
+            },
+        );
+        assert_eq!(max_sessions("claude", &proj, &global, hosted), 1);
+    }
+
+    #[test]
+    fn max_sessions_parses_from_the_acp_table() {
+        let s = crate::project::parse_acp_text(
+            "[acp]\nmax_sessions = 3\n[acp.agents.mine]\ncommand = 'x'\nmax_sessions = 5\n",
+        );
+        assert_eq!(s.max_sessions, Some(3));
+        assert_eq!(s.agents["mine"].max_sessions, Some(5));
+        assert_eq!(max_sessions("mine", &s, &AcpSettings::default(), ""), 5);
+        assert_eq!(max_sessions("other", &s, &AcpSettings::default(), ""), 3);
+    }
+
     fn settings(agent: Option<&str>, profiles: &[(&str, &str)]) -> AcpSettings {
         let mut agents = BTreeMap::new();
         for (name, cmd) in profiles {
@@ -289,6 +383,7 @@ mod tests {
             runtime_agent: None,
             agent: agent.map(|s| s.to_string()),
             agents,
+            max_sessions: None,
         }
     }
 

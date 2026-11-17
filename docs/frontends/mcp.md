@@ -145,7 +145,11 @@ this spawning path and are not for standalone servings:
   the session exists for one batch, and a long poll is a stall wearing a tool's name
   (a weak model was observed idling a build on it instead of calling `done`).
 - `--only <batch|goal>`: `begin_goals` accepts only the named batch
-  (`b<generation>-<n>`), or the batch the named goal (`g:...`) belongs to. A
+  (`b<generation>-<n>`), or the batch the named goal (`g:...`) belongs to. When a
+  live open entry names that batch with its goals (a concurrent build registers each
+  batch it opens), `begin_goals` opens exactly those goals, the ones still open, under
+  that id: a board re-derived after another session's commit numbers its batches
+  anew, and the session must work the batch its build opened. A
   session's serving cannot claim work beyond its batch, so a session that finishes
   early never wanders onto the rest of the board. Once its batch commits, the serving
   answers every write, goal tool, `done`, and `abandon_goals` with `session-complete`,

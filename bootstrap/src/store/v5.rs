@@ -35,6 +35,11 @@ pub(super) fn header_for(path: &Path) -> Option<String> {
             LOCAL,
             None,
         ),
+        ("local", "runs", _) => (
+            "Jazyk build run: one running build's sessions in flight, spend, and parked goals.",
+            LOCAL,
+            None,
+        ),
         (_, "journal", _) if grand == "local" => (
             "Jazyk journal entry: one commit to the graph and why it happened.",
             LOCAL,

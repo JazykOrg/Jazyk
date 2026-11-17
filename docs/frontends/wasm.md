@@ -226,7 +226,9 @@ the journal, never inferred from the model's final text.
 Session execution is asynchronous. The worker serializes project operations while
 model replies, Stop and accepted steering remain deliverable independently. A
 model-driven request returns through an async WASM entry point. Deterministic reads
-retain their existing API values and routes.
+retain their existing API values and routes. A build in a tab runs one session at a
+time, whatever the profile's `max_sessions` says
+([scheduling](../compiler/reconciler.md#scheduling)).
 
 ## The model
 

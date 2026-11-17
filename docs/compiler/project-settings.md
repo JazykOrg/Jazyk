@@ -184,7 +184,10 @@ args = ["--yes", "@agentclientprotocol/codex-acp@2.4.0"]
 - `max_sessions`: how many sessions of this profile one build runs at once
   ([concurrent work](./control-plane.md#concurrent-work)). On `[acp]` it sets the
   default for every profile. Default 4, and 1 for `embedded` when the LLM base URL is
-  a loopback address (a local model serves one request well at a time). E.g.:
+  a loopback address (a local model serves one request well at a time). The first
+  value found wins: the profile's own table, the project `[acp]`, the global `[acp]`,
+  the default. A value below 1 counts as 1. A build in a browser tab or the hosted
+  runtime runs one session at a time ([scheduling](./reconciler.md#scheduling)). E.g.:
 
   ```toml
   [acp]

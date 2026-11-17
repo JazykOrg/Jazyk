@@ -101,6 +101,19 @@ impl Store {
     // split the same way; 0 leaves the field absent.
     // Mirrors docs/compiler/graph.md#journal.
     pub fn stamp_tokens(out: &Path, from: u64, to: u64, tokens: u64, cached: u64) {
+        Self::stamp_tokens_of(out, from, to, tokens, cached, None)
+    }
+
+    // The same, limited to the session entries of one batch when other sessions
+    // committed in the range (docs/compiler/reconciler.md#scheduling).
+    pub fn stamp_tokens_of(
+        out: &Path,
+        from: u64,
+        to: u64,
+        tokens: u64,
+        cached: u64,
+        batch: Option<&[String]>,
+    ) {
         if tokens == 0 || to <= from || newer_version(out).is_some() {
             return;
         }
@@ -117,7 +130,8 @@ impl Store {
                 let p = crate::layout::journal_file(out, g);
                 let text = crate::vfs::read_to_string(&p).ok()?;
                 let entry = serde_norway::from_str::<JournalEntry>(&text).ok()?;
-                (entry.kind == "session" && entry.tokens.is_none()).then_some((p, entry))
+                let ours = batch.is_none_or(|goals| entry.batch.iter().any(|g| goals.contains(g)));
+                (entry.kind == "session" && entry.tokens.is_none() && ours).then_some((p, entry))
             })
             .collect();
         let n = entries.len() as u64;

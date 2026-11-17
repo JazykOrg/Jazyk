@@ -109,6 +109,11 @@ impl AppState {
                 proj.acp.agent = Some(selection.agent.name.clone());
                 proj.acp.runtime_agent = Some(selection.agent.name.clone());
                 if !selection.agent.command.is_empty() {
+                    let max_sessions = proj
+                        .acp
+                        .agents
+                        .get(&selection.agent.name)
+                        .and_then(|p| p.max_sessions);
                     proj.acp.agents.insert(
                         selection.agent.name.clone(),
                         crate::project::AcpAgentProfile {
@@ -116,6 +121,7 @@ impl AppState {
                             args: selection.agent.args.clone(),
                             env: selection.agent.env.clone(),
                             serve_files: selection.agent.serve_files,
+                            max_sessions,
                         },
                     );
                 }

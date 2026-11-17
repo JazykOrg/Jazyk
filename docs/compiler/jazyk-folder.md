@@ -396,7 +396,8 @@ What this machine's runs leave behind. A fresh clone has none of it and works wi
 | File | What it is | Format |
 |---|---|---|
 | `build.yaml` | The commit counter, the last build's verdict, costs, spend, open diagnostic counts, and each document's content hash at last reconcile (a fast check before comparing sections). Its counter is the commit point readers check. | YAML |
-| `run.yaml` | The open work this machine's commits recorded, with causes, the goals it parked, pending anchor moves, and the resolved roots ([a build's progress](./graph.md#a-builds-progress)). A record leaves when its work resolves. Hosted builds keep the same in the host's database. | YAML |
+| `run.yaml` | The open work this machine's commits recorded, with causes, the goals ended builds parked, pending anchor moves, and the resolved roots ([a build's progress](./graph.md#a-builds-progress)). A record leaves when its work resolves. Hosted builds keep the same in the host's database. | YAML |
+| `runs/<run>.yaml` | One running build's progress: its sessions in flight, its session count and spend, and the goals it parked so far ([a build's progress](./graph.md#a-builds-progress)). Deleted when the build ends; swept when its build has no live open entry. | YAML |
 | `control.yaml` | Workflow modes and the releases this operator approved ([control plane](./control-plane.md#modes-and-releases)). | YAML |
 | `journal/g<N>.yaml` | One entry per commit on this machine: its mutations, the goals it resolved, its cost ([journal](./graph.md#journal)). What `jazyk explain`, `ripple`, and the cost report read. | YAML |
 | `workers/<id>.yaml`, `open/<task>~<worker>.yaml` | Who is attached, and what each has open (goal batches, ledger rows, build runs), for information only ([workers and open work](./control-plane.md#workers-and-open-work)). | YAML |

@@ -124,7 +124,37 @@ impl McpServer {
                     .collect()
             })
             .unwrap_or_default();
-        let selected = if let Some(bid) = wanted_batch {
+        // A scoped serving of a concurrent build's session takes the batch the build
+        // opened under its id, with the goals the build registered that are still
+        // open: a board re-derived since another session's commit numbers its
+        // batches anew. Mirrors docs/frontends/mcp.md#mcp-into-acp-sessions.
+        let registered: Option<crate::board::Batch> = self.bridge.only.as_ref().and_then(|only| {
+            if wanted_batch.is_some_and(|b| b != only) {
+                return None;
+            }
+            let entry = crate::control::leases(&self.out)
+                .into_iter()
+                .find(|l| &l.task == only && !l.goals.is_empty())?;
+            if !wanted_goals.iter().all(|g| entry.goals.contains(g)) {
+                return None;
+            }
+            let goals: Vec<String> = entry.goals.into_iter().filter(|g| board.open(g)).collect();
+            let first = board.goal(goals.first()?)?;
+            Some(crate::board::Batch {
+                id: only.clone(),
+                class: crate::goals::Class::parse(&first.class),
+                tier: crate::goals::tier(&first.kind),
+                executor: project
+                    .executors
+                    .resolve(&first.kind, &first.class)
+                    .map(String::from),
+                locality: String::new(),
+                goals,
+            })
+        });
+        let selected = if let Some(b) = registered.as_ref() {
+            Some(b)
+        } else if let Some(bid) = wanted_batch {
             board.batches.iter().find(|b| b.id == bid)
         } else if !wanted_goals.is_empty() {
             // Named goals form one batch only when one scheduled batch already holds

@@ -164,6 +164,11 @@ pub const BUILD_SESSION_FLOOR: usize = 64;
 // Consecutive zero-token session failures that stop a build early: an endpoint
 // answering only errors must not grind the session cap into futile attempts.
 pub const ENDPOINT_BREAKER: usize = 5;
+// Sessions of one executor profile a build runs at once when no setting names a count:
+// a hosted endpoint serves several, a model on this machine one well.
+// Mirrors docs/compiler/project-settings.md#acp.
+pub const MAX_SESSIONS_DEFAULT: usize = 4;
+pub const MAX_SESSIONS_LOOPBACK: usize = 1;
 // The times one goal may be resolved and re-opened with the same change in one build
 // before it parks: a record the commit recomputes while its condition holds would
 // otherwise re-open the identical goal after every session until the build cap.

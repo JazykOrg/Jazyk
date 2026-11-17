@@ -549,11 +549,17 @@ pub fn owns_build(out: &Path, token: &str) -> bool {
 pub struct BuildGuard {
     claim: OwnedLease,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    stage: String,
 }
 
 impl BuildGuard {
     pub fn token(&self) -> &str {
         &self.claim.lease.worker
+    }
+
+    // The command the build runs for (`compile`, `generate`).
+    pub fn stage(&self) -> &str {
+        &self.stage
     }
 }
 
@@ -601,7 +607,11 @@ pub fn begin_internal_build(proj: &Project, out: &Path, stage: &str) -> Result<B
             }
         });
     }
-    Ok(BuildGuard { claim, stop })
+    Ok(BuildGuard {
+        claim,
+        stop,
+        stage: stage.to_string(),
+    })
 }
 
 impl Drop for BuildGuard {
@@ -617,6 +627,168 @@ pub fn task_leases(out: &Path) -> Vec<Lease> {
         .into_iter()
         .filter(|l| l.task != BUILD_LEASE)
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// runs/: one running build's progress per file, so two builds on one set never
+// overwrite each other's. Mirrors docs/compiler/graph.md#a-builds-progress.
+
+// One batch a build has a session open on.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct InFlightBatch {
+    pub id: String,
+    pub goals: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    pub class: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier: Option<u8>,
+    pub started_at: u64,
+}
+
+impl InFlightBatch {
+    pub fn new(
+        id: &str,
+        goals: Vec<String>,
+        executor: Option<String>,
+        class: &str,
+        tier: Option<u8>,
+    ) -> InFlightBatch {
+        InFlightBatch {
+            id: id.to_string(),
+            goals,
+            executor,
+            class: class.to_string(),
+            tier,
+            started_at: now(),
+        }
+    }
+}
+
+// One goal the build parked so far, with the road that ran out.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ParkedLine {
+    pub goal: String,
+    #[serde(default)]
+    pub reason: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct RunProgress {
+    pub run: String,
+    pub command: String,
+    pub pid: u32,
+    pub started_at: u64,
+    pub updated_at: u64,
+    #[serde(default)]
+    pub sessions: u32,
+    #[serde(default)]
+    pub tokens: u64,
+    #[serde(default)]
+    pub in_flight: Vec<InFlightBatch>,
+    #[serde(default)]
+    pub parked: Vec<ParkedLine>,
+}
+
+// A running build's file: written at the start and whenever a session starts or ends,
+// deleted when the handle drops.
+pub struct RunRecord {
+    out: PathBuf,
+    progress: RunProgress,
+}
+
+impl RunRecord {
+    pub fn start(out: &Path, run: &str, command: &str) -> RunRecord {
+        let r = RunRecord {
+            out: out.to_path_buf(),
+            progress: RunProgress {
+                run: run.to_string(),
+                command: command.to_string(),
+                pid: crate::sys::process_id(),
+                started_at: now(),
+                updated_at: now(),
+                ..Default::default()
+            },
+        };
+        r.write();
+        r
+    }
+
+    // The build's worker id, which names the file.
+    pub fn run(&self) -> &str {
+        &self.progress.run
+    }
+
+    pub fn update(
+        &mut self,
+        sessions: u32,
+        tokens: u64,
+        in_flight: Vec<InFlightBatch>,
+        parked: &[crate::model::ParkedGoal],
+    ) {
+        self.progress.sessions = sessions;
+        self.progress.tokens = tokens;
+        self.progress.in_flight = in_flight;
+        self.progress.parked = parked
+            .iter()
+            .map(|p| ParkedLine {
+                goal: p.goal.id.clone(),
+                reason: p.reason.clone().unwrap_or_default(),
+            })
+            .collect();
+        self.progress.updated_at = now();
+        self.write();
+    }
+
+    fn write(&self) {
+        // A newer store is never written (docs/compiler/graph.md#store-version).
+        if crate::store::newer_version(&self.out).is_some() {
+            return;
+        }
+        let path = crate::layout::run_progress_file(&self.out, &self.progress.run);
+        crate::store::write_local_yaml(&path, &self.progress).ok();
+    }
+}
+
+impl Drop for RunRecord {
+    fn drop(&mut self) {
+        crate::vfs::remove_file(crate::layout::run_progress_file(
+            &self.out,
+            &self.progress.run,
+        ))
+        .ok();
+    }
+}
+
+// Every running build of the set, oldest first. A file whose build has no live open
+// `build` entry is stale and swept: its process died without deleting it.
+pub fn runs(out: &Path) -> Vec<RunProgress> {
+    let mut v = Vec::new();
+    let Ok(entries) = crate::vfs::read_dir(crate::layout::runs_dir(out)) else {
+        return v;
+    };
+    let live: Vec<String> = builds(out).into_iter().map(|l| l.worker).collect();
+    for e in entries.flatten() {
+        let path = e.path();
+        if path.extension().is_none_or(|x| x != "yaml") {
+            continue;
+        }
+        let Some(run) = crate::vfs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_norway::from_str::<RunProgress>(&t).ok())
+        else {
+            continue;
+        };
+        if !live.contains(&run.run) {
+            crate::vfs::remove_file(&path).ok();
+            continue;
+        }
+        v.push(run);
+    }
+    v.sort_by(|a, b| a.started_at.cmp(&b.started_at).then(a.run.cmp(&b.run)));
+    v
 }
 
 #[cfg(test)]

@@ -734,16 +734,34 @@ diagnostic until a person answers or resolves it.
 
 ### A build's progress
 
-What a build is doing (its batch, the goals it parked when a budget ran out, its spend,
-its reopen counts) is not graph state. A local build keeps it in memory and in the
-machine-local `local/run.yaml`:
+What a build is doing (its batches, the goals it parked when a budget ran out, its
+spend, its reopen counts) is not graph state. A local build keeps it in memory and in
+two machine-local kinds of file.
+
+`local/run.yaml` holds what this machine's commits and ended builds leave:
 
 - the change records this machine's commits opened, each with its cause (generation and
   mutation), so `jazyk explain` and `ripple` can name it;
-- the goals it parked;
+- the goals ended builds parked;
 - the anchor moves [alignment](./alignment.md) proposed and a person has not placed yet;
 - the requirements a `place_anchor` marked for re-evaluation;
 - the document set's resolved roots.
+
+`local/runs/<run>.yaml` holds one running graph build's own progress (a `jazyk
+compile`, a GUI build job), so two builds on one set never overwrite each other's
+([concurrent work](./control-plane.md#concurrent-work)). `<run>` is the build's worker
+id, the one its open `build` entry names. The file carries:
+
+- `run`, `command` (e.g. `compile`), `pid`, `startedAt`, and `updatedAt`;
+- `sessions` (the sessions the build started) and `tokens` (their spend);
+- `inFlight`: each batch the build has a session open on, with its id, goals, executor,
+  class, tier, and `startedAt`;
+- `parked`: the goals this build parked so far, each with its `reason`.
+
+The build rewrites its file whenever a session starts or ends and deletes it when it
+ends; its parked goals then join `run.yaml`. A file whose build has no live open `build`
+entry is stale and swept by the next reader. `jazyk status` and `GET /api/status` list
+every running build from these files.
 
 A record stays until its work resolves, so an interrupted `jazyk compile` resumes where
 it stopped. A finding computed from the committed files is never written there: the

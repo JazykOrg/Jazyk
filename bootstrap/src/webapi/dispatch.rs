@@ -931,6 +931,8 @@ pub(crate) async fn request_scoped(
         // The chat pane: conversations run in the worker on the page's model, and
         // their progress is posted to the page as events while the prompt request
         // is still running. See docs/frontends/wasm.md#chat.
+        // The agent list: conversations and sub-agents (docs/frontends/gui.md#agents).
+        ("GET", "/agent-tree") => ok(crate::conversation::agent_tree()),
         ("GET", "/chat/history") => ok(crate::conversation::export_history()),
         ("PUT", "/chat/history") => match crate::conversation::import_history(body) {
             Ok(value) => ok(value),

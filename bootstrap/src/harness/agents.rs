@@ -236,6 +236,15 @@ impl Tree {
         self.0.lock().unwrap().values().cloned().collect()
     }
 
+    /// Add a sub-agent a host restored, unless the tree already holds it.
+    pub fn adopt(&self, node: Node) {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(node.id.clone())
+            .or_insert(node);
+    }
+
     fn insert(&self, node: Node) {
         self.0.lock().unwrap().insert(node.id.clone(), node);
     }

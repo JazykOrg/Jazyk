@@ -791,6 +791,28 @@ pub fn install(item: &Item, root: &Path, tty: bool, consented: bool) -> Result<(
     Ok(())
 }
 
+// The launcher configures only the selected agent's own file.
+pub fn install_launcher_agent(name: &str, root: &Path) -> Result<(), String> {
+    let cmd = spawn_command();
+    for spec in own_specs(name, root, &cmd) {
+        match spec {
+            Spec::Json {
+                path,
+                key,
+                name,
+                entry,
+            } => {
+                merge_into(&path, key, name, &entry)?;
+            }
+            Spec::Codex { path, cmd } => crate::start::setup_codex(&path, &cmd)?,
+        }
+    }
+    if name == "claude" {
+        crate::start::approve_claude(root)?;
+    }
+    Ok(())
+}
+
 // Remove one row's setup. Ok(false) when nothing was there.
 // Mirrors docs/frontends/cli.md#jazyk-setup.
 pub fn remove(item: &Item, root: &Path) -> Result<bool, String> {

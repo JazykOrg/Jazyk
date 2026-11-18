@@ -35,6 +35,7 @@ struct SessionState {
     // The model this session prompts, which the client may change between turns.
     // Mirrors docs/frontends/acp.md#choosing-a-model.
     model: String,
+    model_changed: bool,
     conversation: bool,
     // The servers the client supplied, which each sub-agent connects to again
     // (docs/frontends/acp.md#sub-agent-updates).
@@ -413,7 +414,8 @@ pub fn run() -> i32 {
                         Ok(opened) => opened,
                         Err(error) => return responder.respond_with_internal_error(error),
                     };
-                    let model = new_llm.model.clone();
+                    let chat_llm = (purpose.as_deref() != Some("worker")).then(||crate::chat_provider::for_chat(&new_llm,&cwd).ok()).flatten();
+                    let model = chat_llm.as_ref().unwrap_or(&new_llm).model.clone();
                     new_sessions.lock().unwrap().insert(
                         id.clone(),
                         SessionEntry {
@@ -424,6 +426,7 @@ pub fn run() -> i32 {
                                 history,
                                 cwd,
                                 model: model.clone(),
+                                model_changed: false,
                                 conversation: req.meta.as_ref().and_then(|m| m.get("jazyk")).is_some_and(|m| m["purpose"] == "chat"),
                                 servers: req.mcp_servers.clone(),
                             })),
@@ -433,7 +436,7 @@ pub fn run() -> i32 {
                             host: Default::default(),
                         },
                     );
-                    let options = model_options(&new_llm, &model);
+                    let options = if purpose.as_deref()==Some("worker") { Vec::new() } else { chat_llm.as_ref().map(|llm|model_options(llm,&model)).unwrap_or_default() };
                     let mut resp = NewSessionResponse::new(id);
                     if !options.is_empty() {
                         resp = resp.config_options(options);
@@ -484,7 +487,17 @@ pub fn run() -> i32 {
                         let mut state = entry.state.lock().unwrap_or_else(|p| p.into_inner());
                         // The session's model, which the client may have changed since
                         // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
-                        let llm = crate::llm::Llm { model: state.model.clone(), ..llm };
+                        let mut llm = if state.conversation {
+                            match crate::chat_provider::for_chat(&llm,&state.cwd) {
+                                Ok(llm)=>llm,
+                                Err(message)=>{
+                                    notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(message))));
+                                    return Stop::EndTurn;
+                                }
+                            }
+                        } else { llm };
+                        if state.model_changed { llm.model=state.model.clone(); }
+
                         harness::push_user_text(&mut state.history,&text);
                         let cancelled = entry.cancelled.clone();
                         let mut total_tokens = 0u64;
@@ -646,6 +659,7 @@ pub fn run() -> i32 {
                     let current = {
                         let mut state = entry.state.lock().unwrap();
                         state.model = chosen;
+                        state.model_changed = true;
                         state.model.clone()
                     };
                     responder.respond(SetSessionConfigOptionResponse::new(model_options(

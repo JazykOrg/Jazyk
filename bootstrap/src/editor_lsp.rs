@@ -4,21 +4,7 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
 fn executable() -> Result<String, String> {
-    std::env::current_exe()
-        .map(|p| p.to_string_lossy().into_owned())
-        .map_err(|e| e.to_string())
-}
-
-fn artifact(relative: &str) -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    exe.ancestors()
-        .map(|p| p.join("editors").join(relative))
-        .chain(std::iter::once(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("editors")
-                .join(relative),
-        ))
-        .find(|p| p.is_file())
+    Ok(crate::acp::install::spawn_command())
 }
 
 fn read_jsonc(path: &Path) -> Result<Value, String> {
@@ -78,7 +64,12 @@ fn zed_settings(path: &Path, command: &str) -> Result<bool, String> {
     Ok(changed)
 }
 
-fn merge_nested(path: &Path, key: &str, name: &str, entry: &Value) -> Result<bool, String> {
+pub(crate) fn merge_nested(
+    path: &Path,
+    key: &str,
+    name: &str,
+    entry: &Value,
+) -> Result<bool, String> {
     // merge_into supports dotted property names literally, so descend with the
     // JSONC AST and splice each managed leaf into its containing object.
     let text = match std::fs::read_to_string(path) {
@@ -86,7 +77,12 @@ fn merge_nested(path: &Path, key: &str, name: &str, entry: &Value) -> Result<boo
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
         Err(e) => return Err(format!("{}: {e}", path.display())),
     };
-    let updated = nested_splice(&text, &key.split('.').collect::<Vec<_>>(), name, entry)?;
+    let keys = if key.is_empty() {
+        Vec::new()
+    } else {
+        key.split('.').collect::<Vec<_>>()
+    };
+    let updated = nested_splice(&text, &keys, name, entry)?;
     let Some(updated) = updated else {
         return Ok(false);
     };
@@ -183,7 +179,7 @@ fn nested_splice(
     Ok(Some(format!("{text}\n{}\n", json!({target_name: leaf}))))
 }
 
-fn write_atomic(path: &Path, bytes: &[u8]) -> Result<bool, String> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> Result<bool, String> {
     let resolved;
     let path = if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         resolved = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
@@ -208,51 +204,27 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<bool, String> {
     Ok(true)
 }
 
-fn zed_data(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/Zed")
-    } else if cfg!(target_os = "windows") {
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join("AppData/Local"))
-            .join("Zed")
-    } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".local/share"))
-            .join("zed")
-    }
+pub fn vscode_settings(editor: &str) -> PathBuf {
+    crate::acp::install::editor_settings(
+        &dirs::home_dir().unwrap_or_default(),
+        if editor == "cursor" { "Cursor" } else { "Code" },
+    )
 }
-
+pub fn vscode(editor: &str) -> Result<(), String> {
+    let path = vscode_settings(editor);
+    if merge_nested(&path, "", "jazyk.server.path", &json!(executable()?))? {
+        println!("jazyk: configured LSP in {}", path.display());
+    }
+    Ok(())
+}
 pub fn zed(root: &Path) -> Result<(), String> {
     let settings = root.join(".zed/settings.json");
-    if zed_settings(&settings, &executable()?)? {
-        println!("jazyk: configured Zed LSP ({})", settings.display());
-    }
-    let Some(wasm) = artifact("zed/extension.wasm") else {
-        eprintln!("jazyk: Zed LSP needs the built adapter; see bootstrap/editors/zed/README.md (or install the Jazyk dev extension)");
-        return Ok(());
-    };
-    let home = std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .ok_or("cannot locate home directory")?;
-    let install = zed_data(Path::new(&home)).join("extensions/installed/jazyk");
-    let manifest = include_bytes!("../editors/zed/extension.toml");
-    // A dev extension is owned by Zed's dev workflow. Do not write through its link.
-    if std::fs::symlink_metadata(&install).is_ok_and(|m| m.file_type().is_symlink()) {
-        println!(
-            "jazyk: using Zed Jazyk dev extension; rebuild it through Zed after adapter changes"
-        );
-        return Ok(());
-    }
-    let mut changed = write_atomic(
-        &install.join("extension.wasm"),
-        &std::fs::read(wasm).map_err(|e| e.to_string())?,
-    )?;
-    changed |= write_atomic(&install.join("extension.toml"), manifest)?;
-    if changed {
-        println!("jazyk: installed Zed LSP adapter; reload extensions if Zed has not refreshed");
-    }
+    zed_settings(&settings, &executable()?)?;
+    let source = crate::editor_release::zed_source()?;
+    println!(
+        "jazyk: in Zed run `zed: install dev extension` and select {}",
+        source.display()
+    );
     Ok(())
 }
 
@@ -313,16 +285,11 @@ pub fn jetbrains(root: &Path, launch: Option<(PathBuf, Vec<String>)>) -> Result<
     ) {
         println!("jazyk: configured JetBrains LSP ({})", config.display());
     }
-    let Some(jar) = artifact("jetbrains/build/libs/jazyk-jetbrains.jar") else {
-        eprintln!("jazyk: JetBrains LSP needs the built adapter and LSP4IJ; see bootstrap/editors/jetbrains/README.md");
-        return Ok(());
-    };
     let info = launch
         .as_ref()
         .and_then(|(program, args)| product_info(program, args));
     let Some((info_path, info)) = info else {
-        eprintln!("jazyk: cannot identify this IDE's plugin directory; install LSP4IJ and the Jazyk adapter ZIP through Settings > Plugins");
-        return Ok(());
+        return Err("cannot identify this IDE's plugin directory; install LSP4IJ and the Jazyk adapter ZIP through Settings > Plugins".into());
     };
     let profile = info["dataDirectoryName"]
         .as_str()
@@ -334,56 +301,73 @@ pub fn jetbrains(root: &Path, launch: Option<(PathBuf, Vec<String>)>) -> Result<
         .or_else(|| std::env::var_os("USERPROFILE"))
         .ok_or("cannot locate home directory")?;
     let plugins = jetbrains_plugins(Path::new(&home), profile);
-    let installed = plugins.join("jazyk/lib/jazyk-jetbrains.jar");
-    let mut needs_restart =
-        write_atomic(&installed, &std::fs::read(jar).map_err(|e| e.to_string())?)?;
-    let has_client = std::fs::read_dir(&plugins)
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .any(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .eq_ignore_ascii_case("lsp4ij")
-        });
-    if !has_client {
-        // Installation uses the IDE's own marketplace compatibility checks.
-        let current_os = if cfg!(target_os = "macos") {
-            "macOS"
-        } else if cfg!(target_os = "windows") {
-            "Windows"
-        } else {
-            "Linux"
-        };
-        let launcher = info["launch"]
-            .as_array()
-            .and_then(|items| items.iter().find(|v| v["os"] == current_os))
-            .and_then(|v| v["launcherPath"].as_str())
-            .map(|s| info_path.parent().unwrap().join(s));
-        if let Some(launcher) = launcher {
-            println!("jazyk: installing the free LSP4IJ client for {profile}");
-            let (properties, env_name) = installer_properties(root, &plugins, &info)?;
-            match std::process::Command::new(launcher)
-                .env(env_name, &properties)
-                .args(["installPlugins", "com.redhat.devtools.lsp4ij"])
-                .status()
-            {
-                Ok(status) if status.success() => {
-                    needs_restart = true;
-                    let _ = std::fs::remove_dir_all(properties.parent().unwrap());
-                }
-                result => eprintln!("jazyk: LSP4IJ installation did not complete ({result:?}); install it through Settings > Plugins. Installer logs: {}", properties.parent().unwrap().display()),
-            }
-        } else {
-            eprintln!("jazyk: install LSP4IJ through Settings > Plugins");
-        }
+    if jetbrains_current(&plugins) {
+        return Ok(());
     }
-    if needs_restart {
-        println!(
-            "jazyk: installed JetBrains LSP adapter; restart {profile} if it is already running"
-        );
+    // Use the IDE installer for dependency and compatibility checks.
+    let current_os = if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(target_os = "windows") {
+        "Windows"
+    } else {
+        "Linux"
+    };
+    let launcher = info["launch"]
+        .as_array()
+        .and_then(|items| items.iter().find(|v| v["os"] == current_os))
+        .and_then(|v| v["launcherPath"].as_str())
+        .map(|s| info_path.parent().unwrap().join(s))
+        .ok_or("cannot locate the JetBrains plugin installer")?;
+    let (properties, env_name) = installer_properties(root, &plugins, &info)?;
+    let repository = crate::editor_release::jetbrains_repository()?;
+    let status = std::process::Command::new(launcher)
+        .env(env_name, &properties)
+        .args([
+            "installPlugins",
+            "com.redhat.devtools.lsp4ij",
+            "org.jazyk.lsp",
+            &repository,
+        ])
+        .status()
+        .map_err(|e| format!("cannot install JetBrains plugins: {e}"))?;
+    if !status.success() {
+        return Err(format!(
+            "JetBrains plugin installer exited {status}; logs: {}",
+            properties.parent().unwrap().display()
+        ));
     }
+    let _ = std::fs::remove_dir_all(properties.parent().unwrap());
+    println!("jazyk: installed JetBrains LSP adapter; restart {profile} if it is already running");
     Ok(())
+}
+
+fn jetbrains_current(plugins: &Path) -> bool {
+    if !plugins.join("lsp4ij").is_dir() {
+        return false;
+    }
+    #[cfg(feature = "native-documents")]
+    {
+        use std::io::Read;
+        let Ok(file) = std::fs::File::open(plugins.join("jazyk/lib/jazyk-jetbrains.jar")) else {
+            return false;
+        };
+        let Ok(mut zip) = zip::ZipArchive::new(file) else {
+            return false;
+        };
+        let Ok(mut entry) = zip.by_name("META-INF/plugin.xml") else {
+            return false;
+        };
+        let mut xml = String::new();
+        if entry.read_to_string(&mut xml).is_err() {
+            return false;
+        }
+        xml.contains(&format!(
+            "<version>{}</version>",
+            crate::editor_release::VERSION
+        ))
+    }
+    #[cfg(not(feature = "native-documents"))]
+    false
 }
 
 // A separate config/system pair avoids the open IDE's single-instance lock. The

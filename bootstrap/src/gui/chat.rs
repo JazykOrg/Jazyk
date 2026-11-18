@@ -1053,6 +1053,8 @@ async fn run_command(st: &SharedState, text: &str) -> Option<String> {
     let llm = st.llm();
     match cmd {
         "help" => Some(crate::acp::commands::help_text(true)),
+        "login" => Some("Sign in to Jazyk Cloud, then open the agent chooser and choose Cloud.".into()),
+        "setup" => Some("Open the agent chooser and configure an OpenAI-compatible endpoint and model. Keep API keys out of chat.".into()),
         "init" => Some(format!(
             "{} is already a jazyk project.\n\n{}",
             proj.root.display(),

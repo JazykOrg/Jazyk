@@ -236,6 +236,13 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         }
     };
     rt.block_on(async move {
+        if std::env::var_os("JAZYK_CHAT_SETUP").is_some() {
+            let shutdown = st.shutdown.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                shutdown.notify_one();
+            });
+        }
         let listener = match server::bind(gopts.port).await {
             Ok(l) => l,
             Err(e) => {
@@ -243,9 +250,11 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
                 return 1;
             }
         };
-        events::spawn_store_watcher(st.clone());
-        events::spawn_docs_watcher(st.clone());
-        events::spawn_control_watcher(st.clone());
+        if std::env::var_os("JAZYK_CHAT_SETUP").is_none() {
+            events::spawn_store_watcher(st.clone());
+            events::spawn_docs_watcher(st.clone());
+            events::spawn_control_watcher(st.clone());
+        }
         let addr = listener.local_addr().expect("listener addr");
         // Fell back off the busy default port: say who owns it, so a stale tab or
         // bookmark on the default port is explainable at a glance.

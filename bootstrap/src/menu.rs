@@ -26,6 +26,22 @@ enum Line {
 // The picked (group, row), or None when the person quits (q, esc, ctrl-c).
 // `start` is the row the cursor begins on.
 pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
+    pick_impl(groups, start, None)
+}
+
+pub fn pick_preview(
+    groups: &[Group],
+    start: (usize, usize),
+    preview: &dyn Fn(&str) -> String,
+) -> Option<(usize, usize)> {
+    pick_impl(groups, start, Some(preview))
+}
+
+fn pick_impl(
+    groups: &[Group],
+    start: (usize, usize),
+    preview: Option<&dyn Fn(&str) -> String>,
+) -> Option<(usize, usize)> {
     let lines: Vec<Line> = groups
         .iter()
         .enumerate()
@@ -72,7 +88,7 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
             Ok(h) if h >= 4 => h,
             _ => 24,
         };
-        let height = lines.len().min(rows - 2);
+        let height = lines.len().min(rows - 3);
         let cursor_line = items[at];
         let mut top = cursor_line.saturating_sub(height.saturating_sub(1));
         if cursor_line > 0 && matches!(lines[cursor_line - 1], Line::Heading(_)) {
@@ -101,14 +117,18 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
                 Line::Item(g, r) => {
                     let row = &groups[*g].rows[*r];
                     let here = i == cursor_line;
-                    let text = format!(
-                        "{} {:kw$}  {:nw$}",
-                        if here { ">" } else { " " },
-                        row.key,
-                        row.name,
-                        kw = key_width,
-                        nw = name_width
-                    );
+                    let text = if preview.is_some() {
+                        format!("{} {}", if here { ">" } else { " " }, row.name)
+                    } else {
+                        format!(
+                            "{} {:kw$}  {:nw$}",
+                            if here { ">" } else { " " },
+                            row.key,
+                            row.name,
+                            kw = key_width,
+                            nw = name_width
+                        )
+                    };
                     if here {
                         let _ = queue!(
                             out,
@@ -119,7 +139,7 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
                     } else {
                         let _ = queue!(out, Print(&text));
                     }
-                    if !row.note.is_empty() {
+                    if preview.is_none() && !row.note.is_empty() {
                         let _ = queue!(
                             out,
                             Print("  "),
@@ -132,10 +152,23 @@ pub fn pick(groups: &[Group], start: (usize, usize)) -> Option<(usize, usize)> {
                 }
             }
         }
+        let footer = match (&lines[cursor_line], preview) {
+            (Line::Item(g, r), Some(preview)) => preview(&groups[*g].rows[*r].key),
+            _ => "up/down move, enter start, q quit".to_string(),
+        };
+        let width = terminal::size()
+            .map(|(w, _)| w as usize)
+            .unwrap_or(100)
+            .saturating_sub(1);
+        let footer: String = footer
+            .chars()
+            .filter(|c| !c.is_control())
+            .take(width)
+            .collect();
         let _ = queue!(
             out,
             SetAttribute(Attribute::Dim),
-            Print("up/down move, enter start, q quit"),
+            Print(footer),
             SetAttribute(Attribute::Reset)
         );
         let _ = out.flush();

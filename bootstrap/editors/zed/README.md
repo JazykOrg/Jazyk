@@ -11,13 +11,12 @@ PATH="$HOME/.cargo/bin:$PATH" cargo build --locked --release --target wasm32-was
 cp target/wasm32-wasip2/release/jazyk_zed.wasm extension.wasm
 ```
 
-Run the built Jazyk CLI as `jazyk zed` from your project. The launcher installs
-`extension.toml` and `extension.wasm` into Zed's extension directory and writes
-project settings. Zed watches that directory for changes. If it has not refreshed,
-run `zed: reload extensions` or restart Zed.
-
-Alternatively, use `zed: install dev extension` and select this directory. Then
-run `jazyk zed` to configure the project. No public extension listing is required.
+Run `jazyk zed` from your project. It writes `.zed/settings.json`, prepares the
+adapter source, and prints its directory. In Zed, run `zed: install dev extension`
+and select that directory. Zed builds and manages the development extension.
+The launcher does not write into Zed's private installed-extension directory.
+A source checkout uses this directory directly; a packaged Jazyk downloads the
+source ZIP from the versioned GitHub editor release.
 
 Verify by opening a Markdown document with a missing local link. Jazyk should
 appear in the language-server status and report `broken-link`. The Zed log must

@@ -29,10 +29,12 @@ card; Go to Definition still jumps to the defining sentence in the prose.
 
 ## Agent chat
 
-Run `jazyk setup vscode` to register Jazyk with ACP Client. Open the Command Palette
+Run `jazyk vscode` and select Jazyk to register it with ACP Client. Open the Command Palette
 and choose `Jazyk: Open Chat`. Jazyk runs in the ACP Client panel, separately from
-Copilot Chat and the Claude Code extension. `/agent NAME` in this Jazyk chat
-selects the downstream agent for new conversations.
+Copilot Chat and the Claude Code extension. `jazyk --setup` selects another
+launcher target or native IDE agent. An unconfigured Jazyk message offers
+`/login` for Cloud and `/setup` for an OpenAI-compatible endpoint. Provider
+configuration happens in the browser, without API keys in chat.
 
 ## Requirements
 

@@ -32,7 +32,7 @@ const fn c(id: &'static str, kind: Kind, name: &'static str, url: &'static str) 
 
 // Every choice, in menu order. Mirrors docs/frontends/cli.md#jazyk.
 pub const CHOICES: &[Choice] = &[
-    c("gui", Kind::Web, "jazyk.dev web UI", ""),
+    c("gui", Kind::Web, "Jazyk Web", ""),
     c(
         "vscode",
         Kind::Ide,
@@ -95,6 +95,7 @@ pub const CHOICES: &[Choice] = &[
         "RubyMine",
         "https://www.jetbrains.com/ruby",
     ),
+    c("paseo", Kind::Ide, "Paseo", "https://paseo.sh"),
     c(
         "claude",
         Kind::Agent,
@@ -104,7 +105,7 @@ pub const CHOICES: &[Choice] = &[
     c(
         "codex",
         Kind::Agent,
-        "Codex CLI",
+        "Codex",
         "https://github.com/openai/codex",
     ),
     c(
@@ -118,14 +119,7 @@ pub const CHOICES: &[Choice] = &[
     c("droid", Kind::Agent, "Factory Droid", "https://factory.ai"),
 ];
 
-const GROUPS: [(Kind, &str); 3] = [
-    (Kind::Web, "Web"),
-    (
-        Kind::Ide,
-        "IDEs: language server (LSP) and the Jazyk agent (ACP)",
-    ),
-    (Kind::Agent, "Coding agents: jazyk tools over MCP"),
-];
+const GROUPS: [(Kind, &str); 2] = [(Kind::Ide, "IDEs"), (Kind::Agent, "Coding agents")];
 
 // The JetBrains IDEs: Toolbox script name, and the application bundle name prefixes
 // a macOS install may carry.
@@ -147,6 +141,7 @@ pub const MCP_CHOICES: &[&str] = &[
 ];
 
 pub fn choice(id: &str) -> Option<&'static Choice> {
+    let id = if id == "code" { "vscode" } else { id };
     CHOICES.iter().find(|c| c.id == id)
 }
 
@@ -160,122 +155,322 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let found = crate::project::find_root(&cwd);
     let tty = interactive();
+    println!("Choose again: jazyk --setup");
+    let mut prefs = match Preferences::load(found.as_deref().unwrap_or(&cwd)) {
+        Ok(prefs) => prefs,
+        Err(e) => {
+            eprintln!("jazyk: {e}");
+            return 1;
+        }
+    };
     let id = match picked {
         Some(id) => id.to_string(),
         None => {
-            match &found {
-                Some(_) => {
-                    crate::cli::run_status(opts);
-                    println!();
-                }
-                None => println!(
-                    "No jazyk project here; a choice initializes one in {}.\n",
-                    cwd.display()
-                ),
+            if found.is_some() {
+                crate::cli::run_status(opts);
+                println!();
             }
             if !tty {
                 print!("{}", catalog());
-                println!("\n`jazyk <name>` starts one.");
                 return 0;
             }
-            let groups = menu_groups();
-            // The cursor starts on the first installed IDE: the usual pick.
-            let first = groups
-                .iter()
-                .position(|g| {
-                    g.rows
-                        .iter()
-                        .any(|r| choice(&r.key).is_some_and(|c| c.kind == Kind::Ide))
-                })
-                .map(|g| (g, 0))
-                .unwrap_or((0, 0));
-            let Some((g, r)) = crate::menu::pick(&groups, first) else {
-                return 0;
-            };
-            groups[g].rows[r].key.clone()
+            if !opts.launcher_setup && !prefs.target.is_empty() {
+                prefs.target.clone()
+            } else {
+                let groups = menu_groups();
+                let Some((g, r)) = crate::menu::pick_preview(&groups, (0, 0), &target_preview)
+                else {
+                    return 0;
+                };
+                groups[g].rows[r].key.clone()
+            }
         }
     };
     let Some(choice) = choice(&id) else {
-        eprintln!("jazyk: unknown choice `{}`", id);
+        eprintln!("jazyk: unknown choice `{id}`; run jazyk --setup");
         return 2;
     };
-    // A choice outside a project initializes the working directory first; the web UI
-    // works on any folder.
     let root = match (found, choice.kind) {
         (Some(root), _) => root,
         (None, Kind::Web) => cwd.clone(),
         (None, _) => match init_here(&cwd) {
             Ok(()) => cwd.clone(),
             Err(e) => {
-                eprintln!("jazyk: {}", e);
+                eprintln!("jazyk: {e}");
                 return 1;
             }
         },
     };
-    if let Err(e) = setup(choice, &root, opts, tty) {
-        eprintln!("jazyk: {}", e);
-        return 1;
-    }
-    match crate::setup::host_of(choice.id) {
-        Some(host) => ide_flow(choice, host, &root, opts, tty),
-        None => start(choice, &root),
-    }
-}
-
-// An IDE choice: the setup check, the checklist the first time, the driver, then
-// the IDE and a short summary. Mirrors docs/frontends/cli.md#ide-agents.
-fn ide_flow(choice: &Choice, host: &'static str, root: &Path, opts: &Options, tty: bool) -> i32 {
-    use crate::setup::{Item, State};
-    let machine = crate::setup::Machine::scan();
-    let items = crate::setup::items(&machine, Some(host));
-    let states: Vec<State> = items.iter().map(|i| crate::setup::state(i, root)).collect();
-    let mut failed: Vec<(Item, String)> = Vec::new();
-    let set_up: Vec<Item> = if states.iter().any(|s| s.present()) {
-        // Already set up: correct stale entries, ask nothing.
-        let mut kept = Vec::new();
-        for (item, s) in items.iter().zip(&states) {
-            if *s == State::Stale {
-                if let Err(e) = crate::setup::install(item, root, tty, true) {
-                    failed.push((item.clone(), e));
-                    continue;
-                }
-            }
-            if s.present() {
-                kept.push(item.clone());
-            }
-        }
-        kept
-    } else {
-        let heading = format!("Set up jazyk for which agents in {}?", choice.name);
-        let Some(picked) = crate::setup::choose(&items, &heading, tty, true) else {
-            return 0;
-        };
-        crate::setup::warn_if_absolute();
-        let mut kept = Vec::new();
-        for item in picked {
-            match crate::setup::install(&item, root, tty, false) {
-                Ok(()) => kept.push(item),
-                Err(e) => failed.push((item, e)),
-            }
-        }
-        kept
-    };
-    if set_up.iter().any(|i| matches!(i, Item::Jazyk(_))) {
-        match choose_agent(root, opts, tty) {
-            Ok(true) => {}
-            Ok(false) => return 0,
+    let agent = if choice.kind == Kind::Ide {
+        match select_agent(choice, &root, opts, tty, &prefs) {
+            Ok(Some(agent)) => Some(agent),
+            Ok(None) => return 0,
             Err(e) => {
-                eprintln!("jazyk: {}", e);
+                eprintln!("jazyk: {e}");
                 return 1;
             }
         }
+    } else {
+        None
+    };
+    if let Err(e) = setup(choice, &root, opts, tty).and_then(|_| {
+        agent
+            .as_deref()
+            .map_or(Ok(()), |agent| configure_ide(choice, &root, agent))
+    }) {
+        eprintln!("jazyk: {e}");
+        return 1;
     }
-    let code = start(choice, root);
-    if code == 0 {
-        println!("jazyk: started {}", choice.name);
-        crate::setup::print_summary(&set_up, &failed, &format!("jazyk setup {}", choice.id));
+    // Setup succeeds before preferences are saved, including failures in the IDE installer.
+    if program(choice.id, &root).is_some() && root.join(crate::document_sets::CONFIG).is_file() {
+        prefs.target = choice.id.to_string();
+        if let Some(agent) = &agent {
+            prefs.agents.insert(choice.id.to_string(), agent.clone());
+        }
+        if let Err(e) = prefs.save(&root) {
+            eprintln!("jazyk: {e}");
+            return 1;
+        }
     }
-    code
+    start(choice, &root)
+}
+
+#[derive(Default, serde::Deserialize, serde::Serialize)]
+struct Preferences {
+    #[serde(default)]
+    target: String,
+    #[serde(default)]
+    agents: std::collections::BTreeMap<String, String>,
+}
+impl Preferences {
+    fn load(root: &Path) -> Result<Self, String> {
+        let path = root.join(".jazyk/local/launcher.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(text) => toml::from_str(&text).map_err(|e| format!("{}: {e}", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
+            Err(e) => Err(format!("{}: {e}", path.display())),
+        }
+    }
+    fn save(&self, root: &Path) -> Result<(), String> {
+        crate::editor_lsp::write_atomic(
+            &root.join(".jazyk/local/launcher.toml"),
+            toml::to_string(self).map_err(|e| e.to_string())?.as_bytes(),
+        )
+        .map(|_| ())
+    }
+}
+
+fn select_agent(
+    choice: &Choice,
+    root: &Path,
+    opts: &Options,
+    tty: bool,
+    prefs: &Preferences,
+) -> Result<Option<String>, String> {
+    let agents = ide_agents(choice, &crate::setup::Machine::scan());
+    if let Some(agent) = opts.agent.as_deref().or_else(|| {
+        (!opts.launcher_setup)
+            .then(|| prefs.agents.get(choice.id).map(String::as_str))
+            .flatten()
+    }) {
+        let agent = if agent == "jazyk" { "embedded" } else { agent };
+        if agents.iter().any(|(id, _)| *id == agent) {
+            return Ok(Some(agent.into()));
+        }
+        return Err(format!(
+            "agent `{agent}` is unavailable in {}; run jazyk --setup",
+            choice.name
+        ));
+    }
+    if !tty || agents.len() == 1 {
+        return Ok(Some("embedded".into()));
+    }
+    println!("Agent in {}", choice.name);
+    let groups = [crate::menu::Group {
+        heading: "Agents".into(),
+        rows: agents
+            .iter()
+            .map(|(id, name)| crate::menu::Row {
+                key: id.to_string(),
+                name: name.to_string(),
+                note: String::new(),
+            })
+            .collect(),
+    }];
+    Ok(
+        crate::menu::pick_preview(&groups, (0, 0), &|agent| ide_preview(choice, agent, root))
+            .map(|(_, r)| agents[r].0.to_string()),
+    )
+}
+
+fn ide_agents(
+    choice: &Choice,
+    machine: &crate::setup::Machine,
+) -> Vec<(&'static str, &'static str)> {
+    let mut out = vec![("embedded", "Jazyk")];
+    let host = crate::setup::host_of(choice.id);
+    for agent in crate::setup::AGENTS {
+        let supported = if choice.id == "paseo" {
+            matches!(agent.name, "claude" | "codex")
+        } else {
+            let supported_ui = match host {
+                Some("vscode" | "cursor") => !agent.exts.is_empty() || agent.host == host,
+                Some("zed" | "jetbrains") => {
+                    agent.host == host || matches!(agent.name, "claude" | "codex" | "opencode")
+                }
+                _ => false,
+            };
+            supported_ui
+                && agent.method == crate::setup::Method::Project
+                && machine.detects(agent, host)
+        };
+        if supported && (choice.id != "paseo" || agent.bins.iter().any(|b| which(b).is_some())) {
+            out.push((agent.name, agent.label));
+        }
+    }
+    out
+}
+
+fn configure_ide(choice: &Choice, root: &Path, agent: &str) -> Result<(), String> {
+    if agent == "embedded" {
+        if choice.id == "paseo" {
+            return crate::paseo::configure();
+        }
+        let host = crate::setup::host_of(choice.id).ok_or("unsupported IDE")?;
+        crate::setup::install(&crate::setup::Item::Jazyk(host), root, false, true)?;
+        // Pin the built-in agent in this registration; project executor settings stay independent.
+        if let Some(crate::acp::install::Ide {
+            registry:
+                crate::acp::install::Registry::Map {
+                    path,
+                    key,
+                    mut entry,
+                },
+            ..
+        }) = crate::acp::install::ide(host, &crate::acp::install::spawn_command())
+        {
+            entry["args"] = json!(["acp", "--agent", "embedded"]);
+            crate::acp::install::merge_into(&path, key, "Jazyk", &entry)?;
+        }
+    } else {
+        setup_mcp(root, agent)?;
+        if matches!(crate::setup::host_of(choice.id), Some("zed" | "jetbrains"))
+            && matches!(agent, "claude" | "codex" | "opencode")
+        {
+            let proj = crate::project::Project::load(root);
+            let profile = crate::acp::config::resolve_acp(
+                Some(agent),
+                &proj.acp,
+                &crate::project::load_global_acp(),
+                |_| None,
+            )?;
+            if let Some(crate::acp::install::Ide {
+                registry: crate::acp::install::Registry::Map { path, key, .. },
+                ..
+            }) =
+                crate::setup::host_of(choice.id).and_then(|h| crate::acp::install::ide(h, "jazyk"))
+            {
+                let mut entry = json!({"command":profile.command,"args":profile.args,"env":profile.env.into_iter().collect::<std::collections::BTreeMap<_,_>>()});
+                if choice.id == "zed" {
+                    entry["type"] = json!("custom");
+                }
+                crate::acp::install::merge_into(
+                    &path,
+                    key,
+                    crate::setup::agent_by_name(agent).unwrap().label,
+                    &entry,
+                )?;
+            }
+        }
+        if matches!(choice.id, "vscode" | "cursor") {
+            let editor = if choice.id == "vscode" {
+                "code"
+            } else {
+                "cursor"
+            };
+            if let Some(ext) = crate::setup::agent_by_name(agent).and_then(|a| a.exts.first()) {
+                extension(editor, ext, None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn target_preview(id: &str) -> String {
+    match id {
+        "gui" => "Open Jazyk Web".into(),
+        id if choice(id).is_some_and(|c| c.kind == Kind::Ide) => {
+            format!("Choose an agent and open {}", choice(id).unwrap().name)
+        }
+        id => format!(
+            "MCP in {}; run {}",
+            crate::setup::agent_by_name(id)
+                .map(|a| a.file)
+                .unwrap_or("agent configuration"),
+            choice(id).map(|c| c.name).unwrap_or(id)
+        ),
+    }
+}
+
+fn display_path(path: &Path) -> String {
+    dirs::home_dir()
+        .and_then(|home| {
+            path.strip_prefix(home)
+                .ok()
+                .map(|p| format!("~/{}", p.display()))
+        })
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+fn ide_preview(choice: &Choice, agent: &str, root: &Path) -> String {
+    let lsp = match choice.id {
+        "paseo" => {
+            return if agent == "embedded" {
+                format!(
+                    "Register Jazyk ACP in {} and open Paseo",
+                    display_path(&crate::paseo::config_path())
+                )
+            } else {
+                format!(
+                    "Configure MCP in {} and open Paseo",
+                    crate::setup::agent_by_name(agent)
+                        .map(|a| a.file)
+                        .unwrap_or("agent configuration")
+                )
+            }
+        }
+        "vscode" | "cursor" => display_path(&crate::editor_lsp::vscode_settings(choice.id)),
+        "zed" => ".zed/settings.json".into(),
+        _ => ".jazyk/local/ide.json".into(),
+    };
+    if agent == "embedded" {
+        let acp = crate::setup::host_of(choice.id)
+            .and_then(|h| crate::acp::install::ide(h, "jazyk"))
+            .and_then(|i| match i.registry {
+                crate::acp::install::Registry::Map { path, .. } => Some(display_path(&path)),
+                _ => None,
+            })
+            .unwrap_or_default();
+        if acp == lsp {
+            format!("LSP + ACP in {lsp}; install Jazyk")
+        } else {
+            format!("LSP in {lsp}; ACP in {acp}; install Jazyk")
+        }
+    } else {
+        let file = crate::setup::agent_by_name(agent)
+            .map(|a| {
+                if a.name == "opencode"
+                    && root.join("opencode.jsonc").is_file()
+                    && !root.join("opencode.json").is_file()
+                {
+                    "opencode.jsonc"
+                } else {
+                    a.file
+                }
+            })
+            .unwrap_or("agent configuration");
+        format!("MCP in {file}; LSP in {lsp}; open {}", choice.name)
+    }
 }
 
 // The menu: one group per kind, a row per choice, `not installed` beside a program
@@ -287,7 +482,10 @@ fn menu_groups() -> Vec<crate::menu::Group> {
             heading: heading.to_string(),
             rows: CHOICES
                 .iter()
-                .filter(|c| c.kind == *kind && program(c.id, Path::new(".")).is_some())
+                .filter(|c| {
+                    (c.kind == *kind || (*kind == Kind::Ide && c.kind == Kind::Web))
+                        && program(c.id, Path::new(".")).is_some()
+                })
                 .map(|c| crate::menu::Row {
                     key: c.id.to_string(),
                     name: c.name.to_string(),
@@ -304,22 +502,14 @@ pub fn catalog() -> String {
     let mut s = String::new();
     for (kind, heading) in GROUPS {
         s.push_str(&format!("{}:\n", heading));
-        for c in CHOICES.iter().filter(|c| c.kind == kind) {
-            s.push_str(&format!("  {:<10} {:<20} {}\n", c.id, c.name, runs(c.id)));
+        for c in CHOICES
+            .iter()
+            .filter(|c| c.kind == kind || (kind == Kind::Ide && c.kind == Kind::Web))
+        {
+            s.push_str(&format!("  {} (jazyk {})\n", c.name, c.id));
         }
     }
     s
-}
-
-fn runs(id: &str) -> String {
-    match id {
-        "gui" => "jazyk gui".into(),
-        "vscode" => "code <root>".into(),
-        "cursor" => "cursor <root>".into(),
-        "zed" => "zed <root>".into(),
-        id if is_jetbrains(id) => format!("{} <root>", id),
-        id => id.into(),
-    }
 }
 
 pub fn is_jetbrains(id: &str) -> bool {
@@ -376,9 +566,9 @@ fn init_here(cwd: &Path) -> Result<(), String> {
 // Set one choice up: idempotent, correcting stale entries in place.
 pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Result<(), String> {
     match choice.id {
-        "gui" => Ok(()),
-        "vscode" => jazyk_extension("code"),
-        "cursor" => jazyk_extension("cursor"),
+        "gui" | "paseo" => Ok(()),
+        "vscode" => jazyk_extension("code").and_then(|_| crate::editor_lsp::vscode("vscode")),
+        "cursor" => jazyk_extension("cursor").and_then(|_| crate::editor_lsp::vscode("cursor")),
         "zed" => crate::editor_lsp::zed(root),
         id if is_jetbrains(id) => crate::editor_lsp::jetbrains(root, program(id, root)),
         id => setup_mcp(root, id),
@@ -393,7 +583,7 @@ pub fn setup_mcp(root: &Path, id: &str) -> Result<(), String> {
     if crate::setup::state(&item, root) == crate::setup::State::Installed {
         return Ok(());
     }
-    crate::setup::install(&item, root, interactive(), false)?;
+    crate::setup::install_launcher_agent(a.name, root)?;
     println!("jazyk: set up jazyk tools for {} ({})", a.label, a.file);
     Ok(())
 }
@@ -599,20 +789,14 @@ fn version_tuple(v: &str) -> Vec<u64> {
 // The Jazyk extension, from the newest `.vsix` in the checkout this binary was built
 // in. Without one, the editor starts without the language server.
 fn jazyk_extension(editor: &str) -> Result<(), String> {
-    match newest_vsix() {
-        Some((path, version)) => extension(editor, "jazyk.jazyk", Some((&path, &version))),
-        None => {
-            if editor_runs(editor) && installed_version(editor, "jazyk.jazyk").is_none() {
-                eprintln!(
-                    "jazyk: no Jazyk extension to install (no checkout beside this binary); build it with \
-                     `npm install && npx @vscode/vsce package` in bootstrap/editors/vscode, then \
-                     `{} --install-extension jazyk-<version>.vsix`",
-                    editor
-                );
-            }
-            Ok(())
-        }
-    }
+    let (path, version) = match newest_vsix() {
+        Some(artifact) => artifact,
+        None => (
+            crate::editor_release::asset("jazyk.vsix")?,
+            crate::editor_release::VERSION.to_string(),
+        ),
+    };
+    extension(editor, "jazyk.jazyk", Some((&path, &version)))
 }
 
 fn newest_vsix() -> Option<(PathBuf, String)> {
@@ -620,6 +804,9 @@ fn newest_vsix() -> Option<(PathBuf, String)> {
     let dir = exe
         .ancestors()
         .map(|a| a.join("editors/vscode"))
+        .chain(std::iter::once(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("editors/vscode"),
+        ))
         .find(|d| d.vis_dir())?;
     std::fs::read_dir(&dir)
         .ok()?
@@ -635,130 +822,6 @@ fn newest_vsix() -> Option<(PathBuf, String)> {
         .max_by_key(|(_, v)| version_tuple(v))
 }
 
-// Which coding agent the Jazyk agent drives in an IDE: `--agent` records one, a
-// project without one asks on a terminal. Ok(false) when the person quits.
-// Mirrors docs/frontends/cli.md#jazyk.
-fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> {
-    let proj = crate::project::Project::load(root);
-    for note in crate::acp::config::shadow_notes(
-        &proj.acp,
-        Some(&root.join(crate::document_sets::CONFIG)),
-        &crate::project::load_global_acp(),
-    ) {
-        eprintln!("jazyk: {}", note);
-    }
-    let name = match opts.agent.as_deref() {
-        Some(name) => name.to_string(),
-        None if proj.acp.agent.is_some() || !tty => return Ok(true),
-        None => {
-            // Only agents that can run: a built-in whose program is missing is left out.
-            let agents: Vec<(String, String)> = launcher_agents(&proj, opts)
-                .into_iter()
-                .filter(|(name, _)| agent_note(name).is_empty())
-                .collect();
-            if agents.len() == 1 {
-                println!(
-                    "jazyk: the Jazyk agent drives {}, the only agent found",
-                    agents[0].1
-                );
-                return record_agent(root, &proj, &agents[0].0).map(|_| true);
-            }
-            println!("\nWhich agent should run Jazyk conversations? Change it later with `jazyk <ide> --agent NAME`, then reconnect Jazyk in the IDE.");
-            println!("Cloud inference: run `jazyk gui` and choose Cloud there; browser sign-in is not an IDE credential.");
-            let group = crate::menu::Group {
-                heading: "Agents".into(),
-                rows: agents
-                    .iter()
-                    .map(|(name, label)| crate::menu::Row {
-                        key: name.clone(),
-                        name: label.clone(),
-                        note: agent_note(name),
-                    })
-                    .collect(),
-            };
-            let Some((_, r)) = crate::menu::pick(std::slice::from_ref(&group), (0, 0)) else {
-                return Ok(false);
-            };
-            agents[r].0.clone()
-        }
-    };
-    record_agent(root, &proj, &name).map(|_| true)
-}
-
-// Resolve provider information without probing the endpoint or exposing its key.
-fn launcher_agents(proj: &crate::project::Project, opts: &Options) -> Vec<(String, String)> {
-    let mut agents = crate::acp::commands::known_agents(proj);
-    if !proj.acp.agents.contains_key(crate::acp::config::EMBEDDED)
-        && !crate::project::load_global_acp()
-            .agents
-            .contains_key(crate::acp::config::EMBEDDED)
-    {
-        let llm =
-            crate::cli::resolve_llm(opts, &proj.llm, &crate::project::load_global_llm(), |n| {
-                std::env::var(n).ok()
-            });
-        if let Some((_, label)) = agents
-            .iter_mut()
-            .find(|(n, _)| n == crate::acp::config::EMBEDDED)
-        {
-            *label = embedded_label(&llm);
-        }
-    }
-    agents
-}
-
-fn embedded_label(llm: &crate::llm::Llm) -> String {
-    // Display only the host: endpoint URLs can contain credentials and query keys.
-    let host = reqwest::Url::parse(&llm.base_url)
-        .ok()
-        .and_then(|u| u.host_str().map(str::to_string))
-        .unwrap_or_else(|| "invalid endpoint URL".into());
-    let credential = if llm.api_key.is_empty() {
-        "no key set"
-    } else {
-        "key set, unverified"
-    };
-    format!("Embedded ({}; {}; {})", host, llm.model, credential)
-}
-
-// Record the driver in `[acp] agent`, after checking it resolves.
-fn record_agent(root: &Path, proj: &crate::project::Project, name: &str) -> Result<(), String> {
-    let name = name.to_string();
-    crate::acp::config::resolve_acp(
-        Some(&name),
-        &proj.acp,
-        &crate::project::load_global_acp(),
-        |_| None,
-    )?;
-    let path = root.join(crate::document_sets::CONFIG);
-    let old = crate::vfs::read_to_string(&path).unwrap_or_default();
-    let full = crate::mcp::toml_set(&old, "acp", "agent", &name);
-    if full != old {
-        crate::document_sets::atomic_config(root, &full, &crate::model::hash_hex(&old))
-            .map_err(|(_, e)| format!("cannot write {}: {}", path.display(), e))?;
-        println!(
-            "jazyk: the Jazyk agent drives {} ([acp] agent in {})",
-            name,
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-// `not installed` beside a built-in agent whose program is missing.
-fn agent_note(name: &str) -> String {
-    let needs = crate::acp::config::BUILTIN_AGENTS
-        .iter()
-        .find(|a| a.0 == name)
-        .map(|a| a.2)
-        .unwrap_or("");
-    if needs.is_empty() || which(needs).is_some() {
-        String::new()
-    } else {
-        format!("needs {}", needs)
-    }
-}
-
 use crate::setup::which;
 
 // How to start a choice: the program and its arguments. None when it cannot be found.
@@ -769,7 +832,7 @@ fn program(id: &str, root: &Path) -> Option<(PathBuf, Vec<String>)> {
             .ok()
             .map(|e| (e, vec!["gui".to_string()])),
         "vscode" => which("code").map(|p| (p, vec![here])),
-        "cursor" | "zed" => which(id).map(|p| (p, vec![here])),
+        "cursor" | "zed" | "paseo" => which(id).map(|p| (p, vec![here])),
         id if is_jetbrains(id) => jetbrains(id, &here),
         id => which(id).map(|p| (p, vec![])),
     }
@@ -820,6 +883,22 @@ fn jetbrains(id: &str, root: &str) -> Option<(PathBuf, Vec<String>)> {
 // Start the choice in the project root. The program inherits the terminal and its
 // exit code is ours.
 fn start(choice: &Choice, root: &Path) -> i32 {
+    if choice.id == "paseo" {
+        let prefs = Preferences::load(root).unwrap_or_default();
+        let id = prefs
+            .agents
+            .get("paseo")
+            .map(String::as_str)
+            .unwrap_or("embedded");
+        let label = if id == "embedded" {
+            "Jazyk"
+        } else {
+            crate::setup::agent_by_name(id)
+                .map(|a| a.label)
+                .unwrap_or(id)
+        };
+        println!("jazyk: in Paseo's project chat, choose {label}");
+    }
     let Some((prog, args)) = program(choice.id, root) else {
         eprintln!(
             "jazyk: {} is not installed{}; its setup is written, so it starts once installed",
@@ -864,27 +943,6 @@ mod tests {
             &Default::default(),
         )
         .unwrap()
-    }
-
-    #[test]
-    fn embedded_provider_display_redacts_url_credentials() {
-        let mut llm = crate::cli::resolve_llm(
-            &Options::default(),
-            &Default::default(),
-            &Default::default(),
-            |_| None,
-        );
-        llm.base_url = "https://user:secret@example.test/v1?key=private".into();
-        llm.model = "chosen-model".into();
-        llm.api_key = "hidden-key".into();
-        let label = embedded_label(&llm);
-        assert!(label.contains("example.test; chosen-model"));
-        assert!(label.contains("key set, unverified"));
-        for secret in ["secret", "private", "hidden-key", "user:"] {
-            assert!(!label.contains(secret));
-        }
-        llm.api_key.clear();
-        assert!(embedded_label(&llm).contains("no key set"));
     }
 
     // Every file-based MCP choice writes the entry its agent reads, and a second run
@@ -1000,7 +1058,11 @@ mod tests {
     #[test]
     fn choices_are_grouped_and_never_shadow_a_command() {
         for c in CHOICES {
-            assert!(GROUPS.iter().any(|(k, _)| *k == c.kind), "{}", c.id);
+            assert!(
+                c.kind == Kind::Web || GROUPS.iter().any(|(k, _)| *k == c.kind),
+                "{}",
+                c.id
+            );
             if c.id != "gui" {
                 assert!(
                     crate::launcher::command_shape(c.id)
@@ -1017,6 +1079,44 @@ mod tests {
         for c in CHOICES {
             assert!(list.contains(c.name), "{}", c.id);
         }
+    }
+
+    #[test]
+    fn launcher_preferences_are_local_and_keep_each_ide_agent() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".jazyk")).unwrap();
+        std::fs::write(dir.path().join(".jazyk/jazyk.toml"), "version = 1\n").unwrap();
+        let mut prefs = Preferences::load(dir.path()).unwrap();
+        prefs.target = "paseo".into();
+        prefs.agents.insert("vscode".into(), "claude".into());
+        prefs.agents.insert("paseo".into(), "embedded".into());
+        prefs.save(dir.path()).unwrap();
+        let restored = Preferences::load(dir.path()).unwrap();
+        assert_eq!(restored.target, "paseo");
+        assert_eq!(restored.agents["vscode"], "claude");
+        assert_eq!(restored.agents["paseo"], "embedded");
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join(".jazyk/jazyk.toml")).unwrap(),
+            "version = 1\n"
+        );
+        std::fs::write(dir.path().join(".jazyk/local/launcher.toml"), "broken = [").unwrap();
+        assert!(Preferences::load(dir.path()).is_err());
+        assert_eq!(choice("code").unwrap().id, "vscode");
+    }
+    #[test]
+    fn launcher_mcp_writes_only_the_selected_agents_file() {
+        let dir = tempfile::tempdir().unwrap();
+        setup_mcp(dir.path(), "codex").unwrap();
+        assert!(dir.path().join(".codex/config.toml").is_file());
+        assert!(!dir.path().join(".mcp.json").exists());
+        assert!(!dir.path().join(".claude/settings.local.json").exists());
+        let before = std::fs::read(dir.path().join(".codex/config.toml")).unwrap();
+        setup_mcp(dir.path(), "codex").unwrap();
+        assert_eq!(
+            before,
+            std::fs::read(dir.path().join(".codex/config.toml")).unwrap()
+        );
+        assert!(target_preview("codex").contains(".codex/config.toml"));
     }
 
     // Home is never initialized as a project: `.jazyk/` there is the global config.

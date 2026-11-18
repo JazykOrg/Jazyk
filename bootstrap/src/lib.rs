@@ -84,9 +84,13 @@ pub mod acp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod benchmark;
 #[cfg(not(target_arch = "wasm32"))]
+pub mod chat_provider;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod cli;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod editor_lsp;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod editor_release;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod gui;
 #[cfg(not(target_arch = "wasm32"))]
@@ -97,6 +101,8 @@ pub mod launcher;
 pub mod lsp;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod menu;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod paseo;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod replay;
 #[cfg(not(target_arch = "wasm32"))]

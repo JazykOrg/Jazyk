@@ -12,7 +12,19 @@ pub struct Command {
     pub needs_project: bool,
 }
 
-pub const COMMANDS: [Command; 15] = [
+pub const COMMANDS: [Command; 17] = [
+    Command {
+        name: "login",
+        description: "sign in to Jazyk Cloud in your browser",
+        hint: None,
+        needs_project: false,
+    },
+    Command {
+        name: "setup",
+        description: "configure an OpenAI-compatible endpoint in your browser",
+        hint: None,
+        needs_project: false,
+    },
     Command {
         name: "help",
         description: "what jazyk is, and what these commands do",
@@ -105,7 +117,7 @@ pub const COMMANDS: [Command; 15] = [
     },
 ];
 
-// What this session offers. Outside a project only the two commands that can act
+// What this session offers. Outside a project only the commands that can act
 // there. Mirrors docs/frontends/acp.md#slash-commands.
 pub fn available(in_project: bool) -> impl Iterator<Item = &'static Command> {
     COMMANDS
@@ -658,7 +670,7 @@ mod tests {
     #[test]
     fn the_catalog_follows_the_directory() {
         let bare: Vec<&str> = available(false).map(|c| c.name).collect();
-        assert_eq!(bare, vec!["help", "init"]);
+        assert_eq!(bare, vec!["login", "setup", "help", "init"]);
         assert_eq!(available(true).count(), COMMANDS.len());
 
         assert_eq!(

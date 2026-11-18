@@ -7,9 +7,12 @@ through ACP. No adapter compiles documents or calls a model.
 - [Zed](zed/README.md).
 - [JetBrains IDEs](jetbrains/README.md), through LSP4IJ.
 
-Build the relevant artifacts before running the launcher from a source checkout.
-Missing artifacts produce installation instructions while the IDE still opens.
-The artifacts remain local and are not committed.
+Adapters require an installed Jazyk binary. The launcher downloads versioned,
+checksum-verified GitHub release assets when local builds are unavailable. A
+manual `Release editor adapters` workflow builds and optionally publishes them.
+No marketplace listing is required. The packages contain no Jazyk runtime.
+`JAZYK_EDITOR_ARTIFACT_DIR` selects a local release directory with `SHA256SUMS`
+for offline setup and launcher smoke checks.
 
 After building the native binary and both new adapters, verify setup for every
 launcher on macOS or Linux:

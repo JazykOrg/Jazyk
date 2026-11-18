@@ -228,6 +228,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
     let st_mode = state.clone();
     let st_cancel = state.clone();
     let st_steer = state.clone();
+    let st_close = state.clone();
     if state.in_project() {
         watch_runs(&state);
         watch_board(&state);
@@ -549,6 +550,23 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                 },
                 agent_client_protocol::on_receive_request!(),
             )
+            .on_receive_request(
+                async move |mut req: agent_client_protocol::schema::v1::CloseSessionRequest, responder, _cx| {
+                    let sid=req.session_id.to_string();
+                    let down=st_close.down_of(&sid)?;
+                    req.session_id=sid_of(&st_close.route_down(&sid));
+                    let state=st_close.clone();
+                    down.send_request(req).on_receiving_result(async move |result| {
+                        if result.is_ok() {
+                            state.session_agents.lock().unwrap().remove(&sid);
+                            state.routes.lock().unwrap().remove(&sid);
+                            state.runtime_fences.lock().unwrap().remove(&sid);
+                        }
+                        responder.respond_with_result(result)
+                    })
+                },
+                agent_client_protocol::on_receive_request!(),
+            )
             // Session configuration belongs to the agent behind the proxy: the model
             // picker and the mode picker an IDE shows are its options, so both
             // requests pass straight through.
@@ -860,7 +878,16 @@ fn spawn_config(
         config = config.env(k, v);
     }
     if agent.name == crate::acp::config::EMBEDDED {
+        let cwd = std::env::current_dir().unwrap_or_default();
         config = config
+            .env(
+                "JAZYK_CHAT_CONFIGURED",
+                if crate::chat_provider::configured(&cwd) {
+                    "true"
+                } else {
+                    "false"
+                },
+            )
             .env("JAZYK_LLM_API", &llm.api)
             .env("JAZYK_LLM_BASE_URL", &llm.base_url)
             .env("JAZYK_MODEL", &llm.model);
@@ -1008,11 +1035,27 @@ fn run_command(
     sid: &str,
 ) -> String {
     use crate::acp::commands;
-    // The two commands a directory without a project still answers.
+    // Commands that a directory without a project can answer.
     // Mirrors docs/frontends/acp.md#slash-commands.
     let in_project = st.in_project();
     match cmd {
         "help" => return commands::help_text(in_project),
+        "login" | "setup" => {
+            if st.agent_of(sid) != "embedded" {
+                return "Open a Jazyk conversation to configure Jazyk's model provider. External agents manage their own sign-in.".into();
+            }
+            let root = st
+                .project
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|p| p.root.clone())
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            return crate::chat_provider::begin(
+                &root,
+                if cmd == "login" { "cloud" } else { "endpoint" },
+            );
+        }
         "init" if !in_project => return st.init_here(),
         _ => {}
     }

@@ -15,152 +15,74 @@ Install through npm or a native archive as described in [distribution](distribut
 
 ### jazyk
 
-Bare `jazyk`, no command, is the launcher, not the help. It lists every way to work
-on the project in three groups and starts the one picked:
+Bare `jazyk` opens the remembered launcher target. Without a preference, it asks
+which target to open. `jazyk --setup` repeats the original selection. Every run
+prints `Choose again: jazyk --setup`.
 
-- Web: the jazyk.dev page over the local API.
-- IDEs: the editor with the language server ([LSP](./lsp.md)) where the editor has
-  the Jazyk extension, and the Jazyk agent ([ACP](./acp.md)) where the editor hosts
-  ACP agents.
-- Coding agents: the agent with jazyk's tools over [MCP](./mcp.md).
+The launcher has two sections. IDEs start with Jazyk Web, followed by installed
+editors and Paseo. Coding agents contain installed agent CLIs. Rows show names
+only. One line below the menu describes the highlighted action and the files it
+will configure. Moving the cursor updates that line. Earlier choices remain in
+terminal scrollback; there is no selected-items panel.
 
-Inside a project it prints the [status](#jazyk-status) overview first: one line per
-document set. The list follows: a heading per group, then one row per
-choice with its short name and full name. Only what is installed is listed: an IDE
-or a coding agent whose program jazyk cannot find has no row (its short name still
-works as a command, below). The native terminal menu supports Windows console events.
-The up and down arrows (or `j` and `k`) move, a
-letter jumps to the next row whose name starts with it, enter starts the choice, and
-`q`, escape, or control-C quit with exit `0`. The cursor starts on the first installed
-IDE. A list taller than the terminal scrolls with the cursor.
+Inside a project, the launcher prints the status first. Outside a project, a
+native target initializes the current folder without compilation. Jazyk Web can
+open without initialization. The home directory and filesystem root are refused
+as initialization targets.
 
-Every short name is also a command: `jazyk claude` starts Claude Code without the
-menu. Picking a row and typing its name do the same thing: set the choice up, then
-start it. The setup is idempotent. An entry that is already current is left alone;
-a stale one (another command, other arguments) is corrected in place; every file is
-merged, keeping its comments, formatting, and other entries. Each written or corrected
-file is named on its own line. The `jazyk` command in every entry is the name the user
-runs when it resolves to this binary on `PATH`, the absolute path otherwise (the
-[registration rule](./acp.md#registration)). Every MCP entry serves
-`jazyk mcp all`, every lifecycle toolset in one serving
-([toolsets](./mcp.md#toolsets)).
+Preferences are local to the project and machine. `.jazyk/local/launcher.toml`
+stores the last target and one agent choice per IDE. This file is git ignored.
+It contains no credentials. The launcher does not write personal choices into
+`.jazyk/jazyk.toml`. A missing remembered program produces an installation error
+and the reselection command. A failed setup is not remembered.
 
-| choice | name | sets up | then runs |
-|---|---|---|---|
-| `gui` | jazyk.dev web UI | nothing | [`jazyk gui`](#jazyk-gui) |
-| `vscode` | Visual Studio Code | the Jazyk extension (LSP), then the [agents step](#ide-agents) (the Jazyk agent through the ACP Client extension `formulahendry.acp-client` and [`jazyk acp install vscode`](#jazyk-acp)) | `code <root>` |
-| `cursor` | Cursor | the Jazyk extension (LSP), then the agents step (the Jazyk agent through the ACP Client extension from Open VSX and `jazyk acp install cursor`) | `cursor <root>` |
-| `zed` | Zed | the Zed extension (LSP), then the agents step (the Jazyk agent through `jazyk acp install zed`) | `zed <root>` |
-| `idea` | IntelliJ IDEA | the shared JetBrains plugin with LSP4IJ (LSP), then the agents step (the Jazyk agent through `jazyk acp install jetbrains`) | the IDE on `<root>` |
-| `phpstorm` | PhpStorm | the same | the same |
-| `webstorm` | WebStorm | the same | the same |
-| `pycharm` | PyCharm | the same | the same |
-| `goland` | GoLand | the same | the same |
-| `rustrover` | RustRover | the same | the same |
-| `clion` | CLion | the same | the same |
-| `rider` | Rider | the same | the same |
-| `rubymine` | RubyMine | the same | the same |
-| `claude` | Claude Code | `.mcp.json`, and `jazyk` in `enabledMcpjsonServers` of `.claude/settings.local.json` | `claude` |
-| `codex` | Codex CLI | `.codex/config.toml` (`[mcp_servers.jazyk]`) | `codex` |
-| `gemini` | Gemini CLI | `.gemini/settings.json` | `gemini` |
-| `opencode` | OpenCode | `opencode.json` (`opencode.jsonc` when that is the file the project has) | `opencode` |
-| `pi` | Pi | `.pi/mcp.json` | `pi` |
-| `droid` | Factory Droid | `.factory/mcp.json` | `droid` |
-
-What each choice needs to know about its program:
-
-- Zed and the JetBrains IDEs use the [editor adapters](./lsp.md#editor-setup).
-  The launcher preserves existing project settings, installs a built adapter when
-  available, and names any remaining installation or restart step. Missing local
-  artifacts do not prevent the editor or ACP agent from opening.
-
-- The Jazyk extension is installed from the newest `jazyk-<version>.vsix` in the
-  checkout the binary was built in (`bootstrap/editors/vscode/`), when the editor
-  lists no `jazyk.jazyk` or an older version of it. A binary with no checkout beside
-  it says how to build the extension and goes on: the editor still starts, without
-  the language server.
-- A JetBrains IDE starts through its Toolbox script (`idea`, `phpstorm`, ...) on
-  `PATH` or in the Toolbox scripts folder, else, on macOS, through its application
-  bundle in `/Applications` or `~/Applications`. All JetBrains IDEs share one ACP
-  registration (`~/.jetbrains/acp.json`).
-- Claude Code, Codex, and Pi read project configuration only in a folder the person
-  trusts, and each asks for that trust on its first start in the folder. Claude Code
-  honors the approval in `.claude/settings.local.json` after it, so it asks nothing
-  more. Every entry is project-scoped: no choice writes a coding agent's global MCP
-  configuration.
-
-Outside a project (no `jazyk.toml` above the working directory) the list is the same,
-headed by a line saying that a choice initializes the working directory: the
-`jazyk.toml` and `.jazyk/` that [`jazyk init`](#jazyk-init) writes, without its
-questions. `gui` needs no project and initializes nothing. The home directory and the
-file system root are never initialized: a choice there says to run it from a project
-folder and exits `1`.
-
-The launched program inherits the terminal and its exit code is jazyk's. A program
-that cannot be found is named with where to get it, exit `1`; the setup it would have
-needed is still written, so the next start after installing it works straight away.
-A setup step that fails (an unreadable config file, a command that exits non-zero)
-names the file or the command and exits `1` without starting the program.
-
-When stdin or stdout is not a terminal, bare `jazyk` prints the status (inside a
-project) and the list with the command each choice runs, and exits `0`, so a script
-never lands in a prompt. A choice command off a terminal never asks either: an IDE
-choice takes every row that needs no consent and keeps the default driver.
+Every target also has a command. `jazyk code` aliases `jazyk vscode`.
+`jazyk <target> --agent <name>` selects the agent for that IDE. Agent names are
+`embedded` (Jazyk), or a detected agent supported by the IDE. Selecting an external
+agent configures that agent directly, without wrapping it in Jazyk's ACP proxy.
+Off a terminal, bare `jazyk` prints the catalog without starting a program or
+asking questions; explicit IDE commands use their remembered agent or Jazyk.
 
 ### IDE agents
 
-An IDE choice sets up the agents that work inside that IDE the first time, then
-starts it. Each later start opens the IDE at once.
+After selecting an IDE, the launcher asks for one agent. It remembers the answer
+for that IDE. Jazyk Web uses its own agent chooser inside the web app.
 
-1. Setup check. Each agent's setup has a state: `installed` (the entry is there and
-   current), `stale` (the entry is there with another command or arguments),
-   `missing`, or `unknown` (a [guided step](./mcp.md#agent-setup), which jazyk cannot
-   read back). When any row for this IDE is `installed` or `stale`, the IDE is
-   already set up: stale entries are corrected without asking, the checklist is
-   skipped, and the start follows.
-2. Agents. Only when nothing is set up yet: a checklist of the Jazyk agent
-   ([ACP](./acp.md)) and one row per coding agent jazyk detects for that IDE, each
-   with the file its setup writes ([agent setup](./mcp.md#agent-setup)). A coding
-   agent counts as detected when its program is on `PATH` or its extension or plugin
-   is installed in that IDE. A detected agent jazyk has no setup for is listed dim
-   as `unsupported` and cannot be ticked. Every row starts ticked: space toggles a
-   row, `a` toggles all, enter confirms, and `q`, escape, or control-C start nothing.
-   When only one row can be ticked it is taken without asking.
-3. Driver. The Jazyk agent drives a coding agent of its own ([agents](./acp.md#agents)).
-   When the Jazyk agent is set up and the project's `jazyk.toml` names none
-   (`[acp] agent`), a list asks which: `embedded`, the built-in agents whose program
-   is found, and the profiles the project or the global config defines, the default
-   (`embedded`) under the cursor. With one option it is taken without asking. The
-   answer lands in `[acp] agent`, so the question is asked once per project.
-   `--agent NAME` answers it without the list, and records the name even when one is
-   set. `jazyk vscode --agent NAME` (or the chosen IDE name) changes it later.
-   Reconnect the IDE's Jazyk agent after changing the configuration in a terminal.
-   The `/agent <name>` command belongs to Jazyk's ACP chat only and selects the
-   agent for new conversations ([switching agents](./acp.md#switching-agents)).
-   It is not a command for Claude Code, Codex, or Copilot chat. A built-in profile shadowed by an
-   `[acp.agents.<name>]` table is named with the file that defines it.
-   The embedded row names the resolved endpoint host and model, with a separate
-   credential-configured or no-key-configured status. A configured key does not
-   prove authentication. Discovery makes no model request. Browser Cloud login
-   and temporary GUI provider selections are not CLI credentials. Cloud inference
-   selection currently requires `jazyk gui`; the IDE launcher states this limit.
-4. Start. The IDE starts on the root, and a short summary follows: that it started,
-   where the Jazyk agent is reached in this IDE, the coding agents that have jazyk's
-   tools, the text to paste for any guided step, a line per setup that failed with
-   the reason, and the [`jazyk setup`](#jazyk-setup) command that changes the setup.
-   Files written along the way are not listed one by one.
-   In VS Code and Cursor, `Jazyk: Open Chat` in the Command Palette opens the ACP
-   Client panel connected to Jazyk. `ACP: Connect to Agent` also lists Jazyk. Jazyk is not registered as a
-   Copilot chat participant or a tab beside Claude Code.
+- Jazyk installs the editor's thin LSP adapter and registers
+  `jazyk acp --agent embedded` in the editor's ACP client. VS Code and Cursor also
+  install ACP Client. `Jazyk: Open Chat` opens that panel; Jazyk is not a Copilot
+  chat participant. The launcher does not ask for a model provider.
+- A supported external agent installs the LSP adapter and configures Jazyk MCP in
+  that agent's own project file. VS Code and Cursor install the agent's extension
+  when one is available. The user opens that agent's normal IDE interface.
+- Paseo registers Jazyk under `agents.providers.jazyk` in
+  `$PASEO_HOME/config.json` (default `~/.paseo/config.json`), with `extends: "acp"`
+  and the installed binary's absolute path. It reloads provider configuration and
+  opens the project without submitting a prompt. The user selects the registered
+  provider in Paseo's chat picker; its CLI has no empty-chat provider-selection
+  command.
+  Claude and Codex instead use their existing Paseo providers and project MCP.
+  Paseo does not configure an LSP adapter.
 
-E.g.:
+Editor [LSP settings](./lsp.md#editor-setup) and ACP registration are independent.
+The bottom preview names both files when needed. `jazyk --setup` selects again;
+`/agent` is not advertised as a way to switch a native external agent.
 
-```
-jazyk: started IntelliJ IDEA
-  Jazyk agent: the AI Chat window, the agent selector at the bottom: Jazyk
-  jazyk tools: Claude Code, Codex, JetBrains AI Assistant
-  change with `jazyk setup idea`
-```
+### Coding agents
+
+Choosing a coding agent configures its Jazyk MCP entry and runs its CLI in the
+project. It installs no IDE adapter. The managed files are:
+
+- Claude Code: `.mcp.json`, with approval in `.claude/settings.local.json`.
+- Codex: `.codex/config.toml`.
+- Gemini CLI: `.gemini/settings.json`.
+- OpenCode: `opencode.json`, or existing `opencode.jsonc`.
+- Pi: `.pi/mcp.json`.
+- Factory Droid: `.factory/mcp.json`.
+
+Setup preserves other entries and comments. Repeated setup is idempotent.
+Missing programs and failed configuration writes exit nonzero and name the
+problem. The launched CLI's exit code is the launcher's exit code.
 
 ### jazyk setup
 

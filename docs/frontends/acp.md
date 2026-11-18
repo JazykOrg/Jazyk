@@ -61,11 +61,15 @@ the project or the global config shadows the built-in profile of the same name. 
 table without `command` (e.g. one that sets only `max_sessions`) keeps the built-in
 launch ([ACP settings](../compiler/project-settings.md#acp)). A
 shadowed built-in is easy to forget (an old adapter, a forced model the account no
-longer serves), so the [launcher](./cli.md#jazyk), [`jazyk init`](./cli.md#jazyk-init),
+longer serves), so [`jazyk init`](./cli.md#jazyk-init)
 and `jazyk acp` at startup (on standard error, into the IDE's agent log) name the file
 whose table shadows it.
 
 ### Switching agents
+
+The launcher selects native IDE agents independently through `jazyk --setup`.
+Its built-in Jazyk registration explicitly selects `embedded`. It does not use
+`/agent` as a launcher preference or as an external agent's command.
 
 The IDE proxy holds one downstream connection per agent, spawned the first time a
 conversation needs it. A conversation stays on the agent it opened on for its whole
@@ -645,6 +649,8 @@ what setup remains. The catalog:
 
 | Command | What it does |
 | --- | --- |
+| `/login` | Open browser sign-in and the Cloud provider chooser for native Jazyk chat. |
+| `/setup` | Open browser endpoint setup for native Jazyk chat. |
 | `/help` | What jazyk is, and every command in this session with one line each. |
 | `/init` | Set the project up: scaffold what is missing, then state what is still unanswered (agent, model) and the command that answers it. |
 | `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
@@ -674,8 +680,7 @@ like bare `jazyk compile`, and the other graph commands refuse with a message to
 choose a document set and name the CLI command that takes `--set`. A command never
 runs on the project's shared `.jazyk/` directory.
 
-The list follows the directory. A session outside a project advertises `/help` and
-`/init` and nothing else: no build command has anything to build yet, and offering
+The list follows the directory. A session outside a project advertises `/help`, `/init`, `/login` and `/setup`: no build command has anything to build yet, and offering
 the rest when every one answers "not a jazyk project" reads as breakage.
 
 Jazyk's names win over the downstream agent's. An agent that advertises its own
@@ -729,7 +734,7 @@ the protocol on stdio; downstream it drives the configured agent. In between:
   worker sessions (each on its resolved [executor](#executors)) and streams
   synthetic tool calls and the [plan](#plans) into the open IDE prompt.
 - Outside a jazyk project (no `jazyk.toml` above the session's `cwd`), the proxy is a
-  transparent passthrough plus `/help` and `/init`. `/init` scaffolds a project and
+  transparent passthrough plus `/help`, `/init`, `/login` and `/setup`. `/init` scaffolds a project and
   the proxy adopts it immediately: the commands it runs itself work in the open
   session, and because a session's tools are injected when it is created, the agent's
   own jazyk tools arrive with the next session. The reply says so. The IDE's global
@@ -806,7 +811,7 @@ The clients jazyk writes config for:
 The clients jazyk prints a snippet for, because their config is a program (Neovim's
 Lua, Emacs' Lisp) or another application's private state (the Obsidian plugin's vault
 data), and rewriting either is not jazyk's business: `neovim`, `emacs`, `obsidian`,
-`acpx`, `marimo`.
+`paseo`, `marimo`.
 
 Two rules hold for every written config:
 
@@ -868,3 +873,20 @@ Pinned references: [Codex steering](https://github.com/agentclientprotocol/codex
 
 Dual-write tools identify the specific source being edited. Preserve other locations.
 An ambiguous multi-source edit requires a location choice before changing prose.
+
+## Native chat sign-in
+
+The built-in Jazyk chat can initialize and create a session without a model
+endpoint or Cloud authorization. Discovery does not probe an unconfigured model.
+An unconfigured message replies with `/login` for Jazyk Cloud or `/setup` for an
+OpenAI-compatible endpoint, without sending the message to a model.
+
+These commands open the existing local Jazyk Web connection and its agent chooser
+in a browser. `/login` asks the user to sign in and choose Cloud; `/setup` asks for
+an endpoint and model there. No API key is entered in chat. This setup connection
+saves only the chosen built-in provider in `~/.jazyk/chat-provider.json`, with
+owner-only permissions. It never changes shared project configuration. Cloud
+credentials are inference-only grants with an expiry, not browser session cookies.
+The next message in the existing IDE chat uses the saved provider. Expired Cloud
+grants ask the user to `/login` again. Explicit CLI, environment, project and global
+endpoint configuration continues to work without sign-in.

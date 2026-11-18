@@ -1,0 +1,77 @@
+name: Release editor adapters
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Adapter version, matching all three adapter manifests
+        required: true
+        default: '0.2.4'
+        type: string
+      publish:
+        description: Publish immutable GitHub editor assets
+        default: false
+        type: boolean
+permissions:
+  contents: read
+concurrency:
+  group: jazyk-editor-release
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
+        with:
+          distribution: temurin
+          java-version: 25
+      - name: Validate packaging
+        run: python3 scripts/release/editors.test.py
+      - name: Package VS Code and Cursor adapter
+        working-directory: bootstrap/editors/vscode
+        run: |
+          npm ci
+          npm exec --yes --package=@vscode/vsce@3.6.2 -- vsce package --out ../../../jazyk.vsix
+      - name: Prepare JetBrains compile dependencies
+        run: |
+          mkdir -p .local/idea .local/plugins
+          curl --fail --location https://download.jetbrains.com/idea/idea-2025.3.tar.gz -o .local/idea.tar.gz
+          tar -xzf .local/idea.tar.gz --strip-components=1 -C .local/idea
+          curl --fail --location https://plugins.jetbrains.com/files/23257/1157565/lsp4ij-0.21.0.zip -o .local/lsp4ij.zip
+          unzip -q .local/lsp4ij.zip -d .local/plugins
+      - name: Package JetBrains adapter
+        working-directory: bootstrap/editors/jetbrains
+        run: ./gradlew check buildPlugin -PideHome="$GITHUB_WORKSPACE/.local/idea" -Plsp4ijHome="$GITHUB_WORKSPACE/.local/plugins/lsp4ij"
+      - name: Assemble GitHub assets
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 scripts/release/editors.py "$VERSION" jazyk.vsix "bootstrap/editors/jetbrains/build/distributions/jazyk-jetbrains-$VERSION.zip" dist/editors
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: editor-adapters
+          path: dist/editors
+          if-no-files-found: error
+  publish:
+    if: inputs.publish
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: editor-adapters
+          path: dist/editors
+      - name: Publish GitHub editor release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/master
+          gh release create "editors-v$VERSION" dist/editors/* --target "$GITHUB_SHA" --title "Editor adapters $VERSION" --notes 'Thin editor adapters. Requires an installed Jazyk binary.' --latest=false

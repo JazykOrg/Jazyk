@@ -40,7 +40,6 @@ given:
         statement: The Backend is a REST API that lists the products at `GET /products`.
         entities: [ent:backend]
         source: {section: docs/backend.md#/backend, quote: "The Backend is a REST API that lists the products at `GET /products`."}
-        facets: [{facet: behavior, reasoning: the backend answers a request}]
     criteria:
       crit:backend-1:
         requirement: req:backend-1

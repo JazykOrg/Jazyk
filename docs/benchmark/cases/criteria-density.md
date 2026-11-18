@@ -36,12 +36,10 @@ given:
         statement: The company has four departments.
         entities: [ent:company]
         source: {section: docs/company.md#/company, quote: "The company has four departments."}
-        facets: [{facet: constraint, reasoning: a standing fact about the company}]
       req:company-2:
         statement: A claim over 500 dollars needs the head of department's approval.
         entities: [ent:company, ent:claim]
         source: {section: docs/company.md#/company, quote: "A claim over 500 dollars needs the head of department's approval."}
-        facets: [{facet: behavior, reasoning: an approval on a condition}]
     coverage:
       docs/company.md#/company: covered
 assert:

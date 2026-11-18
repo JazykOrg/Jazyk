@@ -43,8 +43,7 @@ This scratch space is a live document to outline the work for this documentation
 - Benchmark cases per goal kind
   ([deferred cases](./benchmark/benchmark.md#deferred-cases)): the kinds without a case
   (`place-anchors`, `retrace`, `conform-instance`, the caps variant of
-  `abstract-entity`), plus transition facets, attributes, cardinality, and the
-  `flow-unplaced` path of `curate-view`. Verdict quality of the
+  `abstract-entity`), plus transitions, attributes and cardinality. Verdict quality of the
   judgment gates is the first target: a gate checks that a verdict exists, only a
   planted ground truth grades whether it is true. Refresh `known-results.yaml` on the
   new case set hash; remote runs cost money, approve per run.

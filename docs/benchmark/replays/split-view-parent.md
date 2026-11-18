@@ -127,8 +127,6 @@ given:
         entities: [ent:customer, ent:storefront]
         edges:
           - {a: ent:customer, b: ent:storefront, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The customer submits the cart to the storefront.
@@ -137,8 +135,6 @@ given:
         entities: [ent:storefront, ent:cart-service]
         edges:
           - {a: ent:storefront, b: ent:cart-service, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The storefront asks the cart service for the cart contents.
@@ -147,8 +143,6 @@ given:
         entities: [ent:storefront, ent:pricing-service]
         edges:
           - {a: ent:storefront, b: ent:pricing-service, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The storefront asks the pricing service for the total.
@@ -157,8 +151,6 @@ given:
         entities: [ent:storefront, ent:payment-gateway]
         edges:
           - {a: ent:storefront, b: ent:payment-gateway, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The storefront charges the total through the payment gateway.
@@ -167,8 +159,6 @@ given:
         entities: [ent:payment-gateway, ent:storefront]
         edges:
           - {a: ent:payment-gateway, b: ent:storefront, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The payment gateway confirms the charge to the storefront.
@@ -177,8 +167,6 @@ given:
         entities: [ent:storefront, ent:order-service]
         edges:
           - {a: ent:storefront, b: ent:order-service, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the checkout}
         source:
           section: 'docs/purchase.md#/purchase-flow/checkout'
           quote: The storefront places the order with the order service.
@@ -187,8 +175,6 @@ given:
         entities: [ent:order-service, ent:warehouse]
         edges:
           - {a: ent:order-service, b: ent:warehouse, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The order service reserves the items at the warehouse.
@@ -197,8 +183,6 @@ given:
         entities: [ent:warehouse, ent:carrier]
         edges:
           - {a: ent:warehouse, b: ent:carrier, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The warehouse packs the order and requests a pickup from the carrier.
@@ -207,8 +191,6 @@ given:
         entities: [ent:carrier, ent:order-service]
         edges:
           - {a: ent:carrier, b: ent:order-service, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The carrier reports the tracking number to the order service.
@@ -217,8 +199,6 @@ given:
         entities: [ent:order-service, ent:ledger]
         edges:
           - {a: ent:order-service, b: ent:ledger, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The order service records the sale in the ledger.
@@ -227,8 +207,6 @@ given:
         entities: [ent:order-service, ent:notifier]
         edges:
           - {a: ent:order-service, b: ent:notifier, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The order service asks the notifier to email the customer.
@@ -237,8 +215,6 @@ given:
         entities: [ent:notifier, ent:customer]
         edges:
           - {a: ent:notifier, b: ent:customer, type: dependency}
-        facets:
-          - {facet: behavior, reasoning: a step of the fulfillment}
         source:
           section: 'docs/purchase.md#/purchase-flow/fulfillment'
           quote: The notifier sends the shipping confirmation to the customer.

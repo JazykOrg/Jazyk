@@ -83,7 +83,7 @@ anything else is `bad-evidence`), and the harness checks:
 
 The `entities` list is not this goal's to change: whether an entity belongs on the
 requirement is [`review-entity`](./review-entity.md)'s question. A staged
-`update_requirement` that changes `entities`, `statement`, `transition`, or `facets` is
+`update_requirement` that changes `entities`, `statement`, `transition` is
 rejected under this goal, naming the field.
 
 At `done`, the per-mutation gates hold and a clean batch commits
@@ -140,7 +140,7 @@ as the weakest.
 The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
 
 - The requirement in full: `statement`, `source` with the verbatim quote, `entities`,
-  `transition` and `facets` when present
+  `transition` when present
   ([requirement](../model/requirement.md#fields)).
 - Each entity as a stub: name, one definition line, stereotype, parent, edge count. An
   interface-like entity and a containment root are visible as such, and the type follows

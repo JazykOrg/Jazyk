@@ -28,7 +28,6 @@ steps:
       entities: [ent:frontend]
       section: docs/warehouse.md#/warehouse/frontend
       quote: "The background is blue. Use #1E40AF for it."
-      facets: [{facet: constraint, reasoning: the background color}]
   - call: set_coverage
     args: {section: docs/warehouse.md#/warehouse/frontend, state: covered, note: the background color obligation}
   - call: mark_goal_done

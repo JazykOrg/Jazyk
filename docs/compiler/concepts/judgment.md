@@ -7,8 +7,6 @@ idea:
 - On extracted facts (entities, requirements, views, attributes): why the fact is shaped
   this way, drawn from the documents' own explanation. E.g. "email must be unique because
   it is the login identifier."
-- On [facets](../model/requirement.md#facets): why a statement is behavior, a
-  constraint, a failure mode, or a quality.
 - On derived provenance (`{from, reasoning}`): why the synthesized fact follows from its
   upstream nodes. See [provenance](../model.md#provenance).
 - On [diagnostics](../model/diagnostic.md): why this severity was chosen at an ambiguity

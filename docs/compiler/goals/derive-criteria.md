@@ -84,7 +84,7 @@ entry is refused (`criteria-unjudged`), naming it.
 ## Hints
 
 - `requirements: <n> (<m> without criteria, <k> revised)`.
-- For each listed requirement: id, statement, facets, transition, and the criteria it
+- For each listed requirement: id, statement, transition, and the criteria it
   already has (id, kind, one line).
 - `examples nearby: <section refs>`: sections of the requirement's document titled
   Examples, Test cases, or holding a table or a code block with values, which extraction

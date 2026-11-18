@@ -25,7 +25,6 @@ steps:
       entities: [ent:theo-brandt]
       section: docs/plot.md#/plot/chapter-1
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      facets: [{facet: behavior, reasoning: the character acts on the page}]
     expect: {ok: false}
   - call: upsert_entity
     args:
@@ -39,7 +38,6 @@ steps:
       entities: [ent:theo-brandt]
       section: docs/plot.md#/plot/chapter-1
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      facets: [{facet: behavior, reasoning: the character acts on the page}]
     expect: {absent: 'already made this exact call'}
   - call: upsert_requirement
     args:
@@ -47,7 +45,6 @@ steps:
       entities: [ent:theo-brandt]
       section: docs/plot.md#/plot/chapter-1
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      facets: [{facet: behavior, reasoning: the character acts on the page}]
 assert:
   - entityCount: {max: 0}
 ```

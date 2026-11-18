@@ -11,7 +11,7 @@ The change line names the dead node, the reason, and the generation; load the ta
 
 Decide per reference: repair it (point it at the surviving node that states the same thing, found with search or named by the hints as the likely replacement, or at the redirect target of a merge), re-derive it (a derived fact's from set and reasoning rewritten over live upstream; an instance re-linked through the requirement that still states the example; an attribute re-anchored to the sentence that still states it), or drop it (update_view remove_members for a view, update_entity for an attribute, update_requirement for an edge on a derived requirement), and delete the target itself (delete_view, delete_entity, or delete_requirement, with a reason) only when nothing is left for it to describe or justify.
 
-For a flow view, keep the order true: read the surviving members as a flow before deciding, and when a removed step carried a failure-mode branch the branch goes with it and the justification says so; split the view with upsert_view only when the survivors fail to form one flow.
+For a flow view, keep the order true: read the surviving members as a flow before deciding, and when a removed step carried a guarded transition branch the branch goes with it and the justification says so; split the view with upsert_view only when the survivors fail to form one flow.
 
 For an entity, keep only the definition, parent, stereotype, attributes, and edges a surviving statement supports.
 

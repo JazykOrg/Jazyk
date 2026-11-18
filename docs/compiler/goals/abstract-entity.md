@@ -176,8 +176,8 @@ between the classes: two flips of one natural key park the pair as
   `section` and `quote`, `from` the target and the parts, `reasoning` the cohesion the
   split follows, `statement` the whole-part sentence ("The order service consists of the
   cart module, the pricing module, and the fulfillment module."), `entities` the target
-  and the parts, one `composition` edge from the target to each part, `facets`
-  constraint ([write tools](../tools.md#write-tools)). Accepted, it becomes the quoted
+  and the parts, one `composition` edge from the target to each part
+  ([write tools](../tools.md#write-tools)). Accepted, it becomes the quoted
   sentence that states the containment, and `parent` agrees with a stated composition
   from then on ([containment](../model/entity.md#containment)).
 - The proposals stand as `blocked` counts. Until ratified, the sub-entities are
@@ -294,7 +294,7 @@ The initially [loaded set](../context.md#the-loaded-set) holds, per goal:
 
 - The entity in full ([entity](../model/entity.md#fields)): `definition`, `aliases`,
   `scope`, `stereotype`, `parent` with its chain, `attributes`, mentions with one parent
-  chain each, and every requirement referencing it with statement, quote, facets,
+  chain each, and every requirement referencing it with statement, quote,
   transition, and edges, grouped by source section. Over-budget groups become handles
   ([policy](../context.md#policy)), and the hints say which to expand first.
 - The existing children as stubs, with their requirement counts.

@@ -39,7 +39,6 @@ given:
         statement: The Backend is built using Node.js and Express.
         entities: [ent:backend]
         source: {section: docs/backend.md#/backend, quote: "The Backend is built using Node.js and Express."}
-        facets: [{facet: constraint, reasoning: a construction choice the backend holds}]
     criteria:
       crit:backend-1:
         requirement: req:backend-1

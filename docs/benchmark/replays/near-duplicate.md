@@ -44,7 +44,6 @@ steps:
       entities: [ent:payment-report]
       section: docs/ledger.md#/ledger/payments
       quote: and the Payment Report lists what cleared.
-      facets: [{facet: constraint, reasoning: an invariant of the report}]
     expect: {ok: true}
   - call: set_coverage
     args: {section: docs/ledger.md#/ledger/payments, state: covered, note: the report sentence is the section's statement}

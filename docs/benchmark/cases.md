@@ -63,7 +63,7 @@ Cases exist for twelve goal kinds: the four the landing graded first
       `provenance` (`{derived: {from, reasoning}}` for a grouping) where the case
       needs them.
     - `requirements`: map of id → `statement`, `entities`, and `source` (a `section`
-      reference and a `quote`), plus `edges`, `transition`, and `facets` where the
+      reference and a `quote`), plus `edges`, `transition` where the
       case needs them.
     - `views`: map of view id → `kind`, `title`, `members`, `query`, `collapse`,
       `excluded`, and `provenance` ([view fields](../compiler/model/view.md#fields)).
@@ -121,10 +121,6 @@ Graph checks:
 - `relationshipExists {a, b, type?, types?}`: a derived relationship between the two
   entities, optionally carrying the type, or any one of the listed `types` (a
   containment stated in passing passes as `composition` or `aggregation`).
-- `facetCount {facet, statementPattern?, min?, max?}`: the number of requirements
-  carrying the facet, of those whose statement matches the pattern when one is given, is
-  within bounds. `min: 1` on a scene's pattern says the scene carries `behavior`;
-  `max: 0` says a statement does not carry the facet.
 - `transitionSubject {entity, min?, max?}`: the number of requirements whose
   `transition` names the entity as its `subject` is within bounds, `min` 1 when omitted.
   The failure names the subjects the transitions carry instead.
@@ -243,8 +239,7 @@ their goal must be derived, never assembled:
   cone (each section is unprocessed), and readiness is scheduling, not a precondition
   of the session ([snippets](./benchmark.md#snippets-from-a-real-project)).
 - The turn runs as a snippet does, one goal with its derived change, and the checks run
-  over the sandbox after its commit. The `flow-unplaced` record is written only by a
-  build's closing check, so a `curate-view` case grades the `query-match` path.
+  over the sandbox after its commit. A `curate-view` case grades query matches.
 
 ## Index
 

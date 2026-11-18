@@ -234,9 +234,6 @@ id: req:services-4h2c
 statement: The Platform is built from sixteen services.
 entities:
 - ent:platform
-facets:
-- facet: constraint
-  reasoning: the sentence states a fact the subject holds
 sources:
 - doc: docs/services.md
   section: /services
@@ -592,3 +589,9 @@ opening generation, heartbeat and expiry. `events.jsonl` appends accepted staged
 calls and lifecycle events. Runtime snapshots remain local. These records never
 enter Git or source/delivery exports. Expiry unlocks work and never deletes it.
 Explicit discard removes staged payload and retains a small lifecycle audit receipt.
+
+## Obsolete requirement fields
+
+Requirement files may carry an obsolete `facets` field. The loader ignores it.
+The next save omits it. No store version changes for this removal. Store version
+7 still upgrades only version 6; earlier stores retain the archive policy.

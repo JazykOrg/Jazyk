@@ -49,7 +49,7 @@ Read the relevant specifications before changing behavior:
   offsets), `derived` (sources + reasoning), or explicit human `decree`. Derived and
   decreed facts carry ratification proposals; acceptance changes provenance to `quote`.
 - Authored nodes: entity, requirement, criterion, view. Requirements are free-form
-  `statement`s with entities, directional `edges`, optional `transition`, and facets.
+  `statement`s with entities, directional `edges`, optional `transition`.
   Criteria state observable conditions, outcomes, and concrete values; tests bind to
   them. Entities have one containment parent. Views store inclusion, never appearance.
   Sections supply structure; diagnostics retain judgments.

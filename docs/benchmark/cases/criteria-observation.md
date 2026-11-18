@@ -33,12 +33,10 @@ given:
         statement: The Backend is a REST API built using Node.js and Express.
         entities: [ent:backend]
         source: {section: docs/backend.md#/backend, quote: "The backend is a REST API built using Node.js and Express."}
-        facets: [{facet: constraint, reasoning: an invariant of the backend's form}]
       req:backend-2:
         statement: The Frontend lists the products in stock through the Backend's API.
         entities: [ent:backend]
         source: {section: docs/backend.md#/backend, quote: "The frontend lists the products in stock through the backend's API."}
-        facets: [{facet: behavior, reasoning: the frontend acts through the backend}]
     coverage:
       docs/backend.md#/backend: covered
 assert:

@@ -39,12 +39,10 @@ given:
         statement: When the customer checks out, the system shall empty the Cart.
         entities: [ent:cart]
         source: {section: docs/shop.md#/shop/checkout, quote: "When the customer checks out, the system shall empty the Cart."}
-        facets: [{facet: behavior, reasoning: the system acts on checkout}]
       req:shop-2:
         statement: The Customer must cancel the Order.
         entities: [ent:customer]
         source: {section: docs/shop.md#/shop/orders, quote: "The Customer must cancel the Order when asked, and the Customer can cancel the Order otherwise."}
-        facets: [{facet: behavior, reasoning: the customer acts}]
 steps:
   - call: upsert_requirement
     args:
@@ -52,7 +50,6 @@ steps:
       entities: [ent:cart]
       section: docs/shop.md#/shop/checkout
       quote: When the customer checks out, the system shall empty the Cart.
-      facets: [{facet: behavior, reasoning: the system acts on checkout}]
     expect: {contains: '"id":"req:shop-1"'}
   - call: upsert_requirement
     args:
@@ -60,7 +57,6 @@ steps:
       entities: [ent:customer]
       section: docs/shop.md#/shop/orders
       quote: The Customer must cancel the Order when asked, and the Customer can cancel the Order otherwise.
-      facets: [{facet: behavior, reasoning: a permission of the customer}]
     expect: {absent: '"id":"req:shop-2"'}
   - call: set_coverage
     args: {section: docs/shop.md#/shop/checkout, state: covered, note: the one checkout statement}

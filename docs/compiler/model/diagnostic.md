@@ -90,7 +90,7 @@ prompt:
     - `facts`: optional, the fact changes the rewrite implies for the requirements it
       touches, each `{id, field, value}`. `id` is a requirement quoted from the
       edit's section; `field` is one of `statement`, `entities`, `edges`,
-      `transition`, `facets`; `value` is the field's new content in the shape
+      `transition`; `value` is the field's new content in the shape
       [`edit_fact`](../tools.md#chat-tools) and `update_requirement` take. The model
       proposing the option fills it when the rewrite changes a structured fact, e.g.
       a transition's destination. See [answers](#answers).
@@ -134,7 +134,7 @@ Gates: an `edit` option's `old_text` must locate in its section
 `answer` are mutually exclusive per option. Each of an edit's `facts` names a
 requirement quoted from the edit's section and an editable field, and its `value`
 passes the same gates `update_requirement` runs on that field (a transition's subject
-among the requirement's entities, edge ends among them, facets from the catalog,
+among the requirement's entities, edge ends among them,
 entities that exist); facts apply in order, so a `transition` after an `entities`
 change is judged against the new list. A `contradiction` or a
 A [criterion](./criterion.md) is a subject like any node: a test case that contradicts
@@ -279,8 +279,6 @@ answer:
 | checks | `broken-link` | warning | a relative `.md` or `.markdown` link whose target file does not exist; subjects are the source document and normalized target, with current source locations in the message; links that escape the project root are ignored |
 | checks | `pinned-fact-drift` | warning | a literal the docs pin (a path, id, or value in a code span) that the requirement's bound files never mention |
 | checks | `unjustified-fact` | error | a fact or rendered element whose provenance walk ends in neither a verbatim quote in a live section nor a `derived` or `decree` fact with live upstream nodes and an open ratification proposal |
-| checks | `unplaced-behavior` | info | a `behavior` requirement in no flow view and excluded from none |
-| checks | `unrepresented-failure-mode` | info | a `failure-mode` requirement in no flow view and excluded from none, so no branch represents it |
 | checks | `containment-mismatch` | warning | a `composition` edge whose part sits in a different branch of the containment tree than its whole |
 | checks | `unreachable-state` | warning | a state no path from the initial state reaches |
 | checks | `dead-end-state` | info | a state with no outgoing transition: the final state, or a requirements gap |
@@ -288,7 +286,6 @@ answer:
 | checks | `unhandled-event` | info | a state and a trigger the subject's requirements name with no transition out of that state on that trigger; silent under two transitions |
 | checks | `provider-missing` | warning | an interface-like entity something depends on with no `realization` toward it |
 | checks | `provider-ambiguous` | warning | an interface-like entity with more than one realizer |
-| checks | `quality-unmeasured` | warning | a `quality` facet without a `measure` |
 | [sessions](../sessions.md#resolving-failing-parking) | `goal-failed` | warning | a goal a session marked failed, with its reason; no goal of that kind derives on its target until its computed change differs or a person resolves it |
 | the store | `ratification-pending` | warning | a `derived` or `decree` fact with no sentence in the documents; the `prompt` proposes one |
 | [generation](../../consumers/gen.md), [`derive-criteria`](../goals/derive-criteria.md) sessions | `invented-choice` | error, warning, or info | a choice generation made that the documents leave open, graded by the scope of the invention: error when the invention is the product, warning for an unspecified behavior, suppressible info for an unspecified detail |

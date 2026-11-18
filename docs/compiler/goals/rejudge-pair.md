@@ -205,7 +205,7 @@ asymmetry, prompts, findings, severity, verdict quality
 The initially loaded set for the batch holds:
 
 - Both requirements in full: `statement`, quote, section, entities, edges, transition,
-  facets, `confidence` and `reasoning`; the changed side marked with the fields that
+  `confidence` and `reasoning`; the changed side marked with the fields that
   changed.
 - The shared entity as a stub (name, one definition line, stereotype, edge count).
 - The open diagnostics naming either requirement, each with its rule, severity,
@@ -281,7 +281,7 @@ sticky, and the next change on either side re-judges it.
 ## Duplicate consolidation
 
 A `duplicate` verdict calls `merge_requirements`. Union all sources and reconcile
-criteria, edges, facets, and transitions. Keep one immutable id and redirect the
+criteria, edges and transitions. Keep one immutable id and redirect the
 loser. Cross-document repetition supplies another location on the same obligation.
 
 `list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

@@ -22,7 +22,7 @@ One condition, one outcome. A criterion states a single situation and what is ob
 Cover the shape of the requirement. Most requirements imply a limit or a condition, and a criterion set with no failure or edge case leaves the limit untested: sixty criteria of one build carried two negatives and no edge.
 - A bound (`within 21 days`, `at most 3 items`, `under 200 ms`) gets the value at the edge and the value past it: on day 21 still placed, on day 22 cancelled.
 - A conditional gets its negative: the handling when the condition fails, or the absence of the effect ("A Product in stock sends the confirmation email; a Product out of stock sends none").
-- A `quality` facet gets a `quality` criterion carrying the `measure` as stated.
+- A measurable obligation gets a `quality` criterion carrying the concrete `measure` as stated.
 - A `transition` gets the state before, the trigger, and the state after; a guard gets both sides of the guard.
 - A `behavior` gets the trigger and the observable response for one concrete actor and input.
 - Grouping and order get the complete ordered groups as the observed outcome. For three quoted paragraphs, compare the three paragraph texts in order, allowing only irrelevant whitespace differences. Three elements plus separate sentence matches would still accept the wrong grouping. Do not add grouping the documents do not prescribe.

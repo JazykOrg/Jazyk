@@ -1,12 +1,11 @@
-# A requirement without a facet
+# A requirement without classification
 
-A novel's plot document left 40 of its 55 statements facetless, so its story joined no
-flow, gave no branch, and shaped no test, with nothing to say so. A create without a
-facet is refused, naming the four kinds; an empty list is absent, the same case.
+A requirement upserts with its statement, entities and verbatim source. It needs
+no classification. Repeated extraction preserves the obligation identity.
 
 ```yaml
-name: facets-missing
-description: A requirement create with no facet is refused, naming the four kinds
+name: requirement-without-classification
+description: Requirement creation needs no classification.
 goal: {kind: reconcile-section, target: docs/plot.md}
 given:
   docs:
@@ -30,31 +29,23 @@ steps:
       entities: [ent:theo-brandt]
       section: docs/plot.md#/plot/chapter-1
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-    expect: {rule: facets-missing, contains: behavior}
+    expect: {ok: true}
   - call: upsert_requirement
     args:
       statement: Theo Brandt arrives in Port Alder on the afternoon ferry.
       entities: [ent:theo-brandt]
       section: docs/plot.md#/plot/chapter-1
       quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      facets: []
-    expect: {rule: facets-missing}
-  - call: upsert_requirement
-    args:
-      statement: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      entities: [ent:theo-brandt]
-      section: docs/plot.md#/plot/chapter-1
-      quote: Theo Brandt arrives in Port Alder on the afternoon ferry.
-      facets: [{facet: behavior, reasoning: the character acts on the page}]
     expect: {ok: true}
   - call: set_coverage
     args: {section: docs/plot.md#/plot/chapter-1, state: covered, note: the arrival sentence is the chapter's one statement}
   - call: mark_goal_done
     args:
       goal: g:reconcile-section:docs/plot.md
-      justification: The chapter's one sentence is extracted as a behavior of Theo Brandt.
+      justification: The chapter's one sentence is recorded as an obligation about Theo Brandt.
   - call: done
-    args: {summary: the arrival statement, faceted}
+    args: {summary: the arrival statement is saved}
 assert:
+  - requirementCount: {min: 1, max: 1}
   - requirementExists: {statementPattern: 'afternoon ferry', entity: Theo Brandt}
 ```

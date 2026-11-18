@@ -167,7 +167,7 @@ midway stages neither the grouping nor any reparent).
   `members`, `excluded`, `collapse`, diagnostic `subjects`, provenance `from`),
   unions aliases, mentions, and attributes, and leaves a redirect. A merge that would
   make the survivor its own ancestor is rejected. See [mutations](./graph.md#mutations).
-- `upsert_requirement({statement, entities, section?, quote?, provenance?, edges?, transition?, facets?})`:
+- `upsert_requirement({statement, entities, section?, quote?, provenance?, edges?, transition?})`:
   the store mints the id; any id supplied is ignored. Exactly one of `section` plus
   `quote` (the source) or `provenance: {derived: {from, reasoning}}` is required.
   Idempotency comes from the natural key (the source section plus the
@@ -195,11 +195,9 @@ midway stages neither the grouping nor any reparent).
   directional, both ends among `entities`, `cardinality` the multiplicity at `b` (how
   many `b` per `a`) ([edges](./model/requirement.md#edges)).
   `transition` is `{subject, from, to, trigger?, guard?}` with `subject` among
-  `entities` ([transition](./model/requirement.md#transition)). `facets` are
-  `[{facet, reasoning, measure?}]`, `measure` on `quality` only
-  ([facets](./model/requirement.md#facets)). Real revisions go through
+  `entities` ([transition](./model/requirement.md#transition)). Real revisions go through
   `update_requirement`.
-- `update_requirement({id, statement?, entities?, edges?, transition?, facets?, section?, quote?})`:
+- `update_requirement({id, statement?, entities?, edges?, transition?, section?, quote?})`:
   a revision keeps the id. A field given replaces the stored one whole. `section` plus
   `quote` re-anchor the provenance; the quote must locate verbatim in the section.
   This is the path for a stale anchor whose statement changed meaning: new
@@ -207,7 +205,7 @@ midway stages neither the grouping nor any reparent).
   is what a call that only adds an entity reference or declares `edges` wants. Passing
   the `statement` as the `quote` is the common miscall, so every rejection on
   `section` or `quote` names the requirement's existing anchor and says to drop the
-  two fields when only `entities`, `edges`, `transition`, or `facets` were meant to
+  two fields when only `entities`, `edges`, `transition` were meant to
   change. Under an [`abstract-entity`](./goals/abstract-entity.md) goal a re-point is
   a swap: `entities` may replace the goal's target with a sub-entity and never drops
   another entity the statement names (`entities-dropped`); the refusal carries the
@@ -282,7 +280,7 @@ midway stages neither the grouping nor any reparent).
 
 There is no write tool for relationships or state machines. They are
 [derived data](./graph.md#derived-data), recomputed on every commit from requirement
-`edges` and `transition` facets and from the graph's structure.
+`edges` and `transition`. Diagram analysis also reads criteria and containment.
 
 - `upsert_criterion({requirement, statement, kind, measure?, given?, when?, then?, entities?, section?, quote?, provenance?})`
   → `{id, created}`: the observable evidence one requirement is met
@@ -515,7 +513,7 @@ so a chat edit moves the prose and the graph together, or not at all:
   and delete the requirement, one changeset. `retrace` derives where a view or instance
   referenced it.
 - `edit_fact({id, field, value, note?})`: set one authored field on one node
-  (`statement`, `edges`, `transition`, `facets`, `definition`, `stereotype`, `parent`,
+  (`statement`, `edges`, `transition`, `definition`, `stereotype`, `parent`,
   an attribute's `type` or `value` as `attributes.<name>.type` or
   `attributes.<name>.value`, a view's `members`). When the fact is
   quote-provenanced and the person accepted a sentence rewrite in conversation, the

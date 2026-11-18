@@ -8,7 +8,7 @@
 - Ready only when no open compile goal remains in the cluster's cone.
 - Search and compare the obligations. Merge confirmed duplicates with
   `merge_requirements`, preserving all locations and redirecting absorbed ids.
-- Reconcile criteria, edges, facets, and transitions before completion.
+- Reconcile criteria, edges and transitions before completion.
 - Keep genuinely distinct obligations and record why they are distinct.
 - Completion requires each candidate to be merged or explicitly distinguished.
 

@@ -179,10 +179,9 @@ The kinds, with what each reads from the graph:
   then a dependency, then any): the sender is `a`, the receiver is `b`, and a receiver that is an «interface» resolves to its
   provider (the entity with a `realization` toward it). A member with no edges is a
   self-message on its first entity. «actor» participants render as `actor`. A
-  `failure-mode` member is a branch: its message sits in an `alt` fragment labeled by
-  its condition (the transition's trigger and guard when it carries one, `failure`
-  otherwise), so the reader sees the step it departs from. The default is one per flow
-  cluster, over the members that carry a message edge.
+  member with a transition guard or trigger can draw an `alt` fragment labeled by
+  that stated condition. Authored sequence fragments take precedence. No branch
+  condition is invented.
 - `communication`: the same view in its second layout: participants as `actor` or
   `rectangle`, messages numbered `1.`, `2.`, in member order.
 - `timing`: measured criteria of the member requirements or the subject's

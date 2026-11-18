@@ -66,7 +66,7 @@ never compiles.
     own level section when it has one.
 - Requirements: id, the `statement`, the entities it references, the provenance (the
   `source` quote, or the `derived` or `decree` record), its `edges` when declared, and
-  its `transition` and `facets` when present.
+  its `transition` when present.
 - Relationships: id, members, and each contribution group (direction, `type`,
   cardinality, the contributing requirement ids). Derived nodes, shown as stored. See
   [derived data](../compiler/graph.md#derived-data).

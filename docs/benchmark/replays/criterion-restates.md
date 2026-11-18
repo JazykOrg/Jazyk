@@ -29,12 +29,10 @@ given:
         statement: The Shop sends a confirmation email when an Order is submitted.
         entities: [ent:shop]
         source: {section: docs/shop.md#/shop, quote: "The Shop sends a confirmation email when an Order is submitted."}
-        facets: [{facet: behavior, reasoning: the shop acts on an event}]
       req:shop-2:
         statement: When the Stock of a Product reaches zero, the Shop hides the Product.
         entities: [ent:shop]
         source: {section: docs/shop.md#/shop, quote: "When the Stock of a Product reaches zero, the Shop hides the Product."}
-        facets: [{facet: behavior, reasoning: the shop acts on an event}]
     coverage:
       docs/shop.md#/shop: covered
 steps:

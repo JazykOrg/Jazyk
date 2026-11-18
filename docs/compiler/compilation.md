@@ -304,11 +304,6 @@ Every check run journals a `checks` entry under its own generation.
   provenance walk does not end in a verbatim quote in a live section, or in `derived`
   or `decree` provenance with live upstream nodes and an open ratification proposal
   ([provenance](./model.md#provenance)).
-- Flow placement, wherever flow views exist: `unplaced-behavior` for a behavior
-  requirement in no flow view and not excluded from one with a note;
-  `unrepresented-failure-mode` for a failure-mode requirement represented in no branch.
-  Each finding is also a `flow-unplaced` finding at derivation, feeding
-  [`curate-view`](./goals/curate-view.md).
 - Containment consistency: `containment-mismatch` when a `composition` edge and the
   `parent` field disagree ([containment](./model/entity.md#containment)).
 - `level-shape` checks hard fan-out and derived groupings with fewer than two
@@ -317,14 +312,12 @@ Every check run journals a `checks` entry under its own generation.
 - Conformance, the mechanical part: `nonconformant-instance` when an instance carries an
   attribute name its type does not declare. Value and link conformance is
   [`conform-instance`](./goals/conform-instance.md)'s judgment.
-- State machine checks, wherever transition facets exist: `unreachable-state`,
+- State machine checks, wherever transitions exist: `unreachable-state`,
   `dead-end-state`, `nondeterministic-transition`, `unhandled-event`
   ([state machine](./model/state-machine.md#checks)).
 - Provider check, wherever «interface»-like entities exist: `provider-missing` for an
   «interface» some entity depends on with no `realization` toward it,
   `provider-ambiguous` for one with more than one.
-- `quality-unmeasured`: a `quality` facet without a `measure`
-  ([facets](./model/requirement.md#facets)).
 - Cross-class flip detection: `unstable-derivation`, parking the oscillating pair
   ([flip detection](./reconciler.md#flip-detection)).
 - `unratified`: a [decompiled](../consumers/decompile.md#ratification) draft no human

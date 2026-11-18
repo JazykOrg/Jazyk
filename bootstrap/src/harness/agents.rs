@@ -180,6 +180,19 @@ pub fn outcome_value(outcome: &SubagentOutcome) -> Value {
     }
 }
 
+/// The outcome `outcome_value` recorded.
+pub fn outcome_from_value(value: &Value) -> SubagentOutcome {
+    let text = value["text"].as_str().unwrap_or_default().to_string();
+    match value["status"].as_str() {
+        Some("completed") => SubagentOutcome::Completed(text),
+        Some("cancelled") => SubagentOutcome::Cancelled,
+        _ => SubagentOutcome::Failed(text),
+    }
+}
+
+// The failure a turn reports when no host kept it.
+const LOST: &str = "the sub-agent turn did not survive its process";
+
 /// One sub-agent in the tree.
 #[derive(Clone, Debug)]
 pub struct Node {
@@ -480,12 +493,27 @@ pub struct ChildRequest<'a> {
     pub write: &'a WriteScope,
 }
 
+/// A turn's end: its outcome, or None when an interruption stopped it at a durable
+/// checkpoint. An interrupted turn stays owed and resumes with its parent.
+pub type TurnFuture = LocalFuture<'static, Option<SubagentOutcome>>;
+
 /// How a host makes sub-agents. `run_turn` answers the final reply of the turn:
 /// the future runs on the parent's owner thread, interleaved with it, or awaits
 /// work the host moved to its own thread.
 pub trait ChildHost {
     fn create(&self, request: &ChildRequest<'_>) -> Result<String, String>;
     fn run_turn(&self, child: RunSpec, text: String) -> LocalFuture<'static, SubagentOutcome>;
+    /// Start turn `turn` of `child`. A host that checkpoints turns answers None for
+    /// a turn an interruption stopped (docs/frontends/subagents.md#checkpoints).
+    fn start_turn(&self, child: RunSpec, _turn: &str, text: String) -> TurnFuture {
+        let run = self.run_turn(child, text);
+        Box::pin(async move { Some(run.await) })
+    }
+    /// Continue a turn an earlier execution left owed. None when the host kept no
+    /// record of it.
+    fn resume_turn(&self, _child: RunSpec, _turn: &str) -> Option<TurnFuture> {
+        None
+    }
     /// The root a top-level run's sub-agents hang from.
     fn root_of(&self, id: &str) -> String {
         id.to_string()
@@ -689,13 +717,62 @@ impl AgentRun {
 
     fn start_turn(&self, node: &Node, turn: String, text: String) {
         let spec = RunSpec::of(node, self.spec.tree.clone());
+        let run = self.host.start_turn(spec, &turn, text);
+        self.launch(node.id.clone(), turn, run);
+    }
+
+    // An interrupted turn records no outcome: it stays running and owed.
+    fn launch(&self, id: String, turn: String, run: TurnFuture) {
         let tree = self.spec.tree.clone();
-        let id = node.id.clone();
-        let run = self.host.run_turn(spec, text);
         self.pool.spawn(Box::pin(async move {
-            let outcome = run.await;
-            tree.finish(&id, &turn, outcome);
+            if let Some(outcome) = run.await {
+                tree.finish(&id, &turn, outcome);
+            }
         }));
+    }
+
+    /// Continue the turns a restored conversation still waits for that no task of
+    /// this tree runs (docs/frontends/subagents.md#checkpoints). A turn the host kept
+    /// no record of fails; a sub-agent recorded as cancelled reports `cancelled`.
+    pub(super) fn resume_owed(&self, conversation: &Conversation) {
+        for turn in owed(conversation) {
+            let id = turn.split('#').next().unwrap_or(&turn).to_string();
+            let Some(node) = self.spec.tree.get(&id) else {
+                continue;
+            };
+            if node.state == AgentState::Running || node.results.contains_key(&turn) {
+                continue;
+            }
+            if node.state == AgentState::Cancelled {
+                self.spec
+                    .tree
+                    .finish(&id, &turn, SubagentOutcome::Cancelled);
+                continue;
+            }
+            let n = turn
+                .split_once('#')
+                .and_then(|(_, n)| n.parse().ok())
+                .unwrap_or(1);
+            let cancel = self.spec.cancel.child_token();
+            let Some(node) = self.spec.tree.update(&id, |node| {
+                node.state = AgentState::Running;
+                node.turns = n;
+                node.cancel = cancel;
+                node.clone()
+            }) else {
+                continue;
+            };
+            match self
+                .host
+                .resume_turn(RunSpec::of(&node, self.spec.tree.clone()), &turn)
+            {
+                Some(run) => self.launch(id, turn, run),
+                None => self
+                    .spec
+                    .tree
+                    .finish(&id, &turn, SubagentOutcome::Failed(LOST.into())),
+            }
+        }
     }
 
     fn startable(&self) -> Result<(), String> {
@@ -876,7 +953,13 @@ impl AgentRun {
             } else {
                 nodes.iter().all(done)
             };
-            if finished || self.spec.cancelled() || started.elapsed().as_millis() as u64 >= bound {
+            // A suspension answers at once, so the call's receipt is saved and the
+            // turns it waited for stay owed (docs/frontends/subagents.md#checkpoints).
+            if finished
+                || self.spec.cancelled()
+                || crate::session_recovery::suspension_requested()
+                || started.elapsed().as_millis() as u64 >= bound
+            {
                 let returned: Vec<String> = nodes
                     .iter()
                     .filter(|n| done(n))
@@ -941,6 +1024,11 @@ fn delivered_ids(message: &Message) -> Vec<String> {
         .filter_map(Value::as_str)
         .map(str::to_string);
     delivered.into_iter().chain(cancelled).collect()
+}
+
+/// Whether a message records a sub-agent turn as delivered or cancelled.
+pub(crate) fn records_delivery(message: &Message) -> bool {
+    !delivered_ids(message).is_empty()
 }
 
 fn requested(message: &Message, returned: &BTreeSet<String>) -> Vec<String> {
@@ -1010,9 +1098,9 @@ impl SubagentRunner<Session> for Streams {
         requested(message, &returned(&session.conversation))
     }
 
-    // The turn already runs: spawn_agent and message_agent start it. The stream
-    // reports its recorded outcome. A turn this tree never ran (its process is gone)
-    // fails (docs/frontends/subagents.md#where-sub-agents-run).
+    // The turn already runs: spawn_agent and message_agent start it, or the run
+    // resumed it. The stream reports its recorded outcome. A turn this tree never
+    // ran (its process is gone) fails (docs/frontends/subagents.md#checkpoints).
     async fn start(
         &self,
         _: &Session,
@@ -1032,9 +1120,7 @@ impl SubagentRunner<Session> for Streams {
                     }
                     if !tree.known(&turn) {
                         return Some((
-                            SubagentUpdate::Finished(SubagentOutcome::Failed(
-                                "the sub-agent turn did not survive its process".into(),
-                            )),
+                            SubagentUpdate::Finished(SubagentOutcome::Failed(LOST.into())),
                             None,
                         ));
                     }
@@ -1121,6 +1207,69 @@ impl Operation<Session, Effect> for AgentsOperation {
             hidden.append(&mut step.effects);
             if visible {
                 return operation::applied(hidden);
+            }
+        }
+    }
+}
+
+// Answers each owed turn of a stopped run with its recorded outcome, or cancelled.
+struct Settled(BTreeMap<String, SubagentOutcome>);
+
+#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
+#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+impl SubagentRunner<Session> for Settled {
+    fn requested_subagent_session_ids(&self, session: &Session, message: &Message) -> Vec<String> {
+        requested(message, &returned(&session.conversation))
+    }
+
+    async fn start(
+        &self,
+        _: &Session,
+        turn: &str,
+        _: CancellationToken,
+    ) -> OperationStream<'static, SubagentUpdate> {
+        let outcome = self
+            .0
+            .get(turn)
+            .cloned()
+            .unwrap_or(SubagentOutcome::Cancelled);
+        Box::pin(futures::stream::once(async move {
+            SubagentUpdate::Finished(outcome)
+        }))
+    }
+}
+
+/// The messages that close a stopped run's owed turns without running them: each
+/// turn's recorded outcome, or `cancelled` (docs/frontends/subagents.md#checkpoints).
+pub(crate) async fn settle(
+    id: &str,
+    conversation: &Conversation,
+    outcomes: BTreeMap<String, SubagentOutcome>,
+) -> Vec<Message> {
+    let operation = SubagentOperation::new(Arc::new(Settled(outcomes)));
+    let (events, _) = tokio::sync::mpsc::unbounded_channel();
+    let emitter = Emitter::new(events, CancellationToken::new());
+    let mut conversation = conversation.clone();
+    let mut messages = Vec::new();
+    loop {
+        let session = Session {
+            id: id.to_string(),
+            conversation: conversation.clone(),
+        };
+        let Ok(OperationResult::Applied(step)) = <SubagentOperation<Session> as Operation<
+            Session,
+            Effect,
+        >>::run(
+            &operation, &session, &conversation, &emitter
+        )
+        .await
+        else {
+            return messages;
+        };
+        for effect in step.effects {
+            if let Effect::Conversation(ConversationEffect::AppendMessage(message)) = effect {
+                conversation.push(message.clone());
+                messages.push(message);
             }
         }
     }

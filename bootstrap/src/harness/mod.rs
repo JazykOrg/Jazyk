@@ -12,8 +12,10 @@ pub mod provider;
 mod runtime;
 mod tool_arguments;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) use runtime::stopped_history;
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use runtime::stopped_history_settled;
 pub use runtime::{
     run_loop, run_loop_async, run_loop_with_instructions, run_with_agents, run_with_agents_async,
     run_with_host, run_with_host_async, run_with_hosts, run_with_hosts_async, MemoryRecovery,
@@ -232,9 +234,30 @@ pub trait Recovery {
 pub(crate) fn push_user_text(history: &mut Vec<Value>, text: &str) {
     if let Some(last) = history.last_mut().filter(|m| m["role"] == "user") {
         if let Some(previous) = last["content"].as_str() {
-            last["content"] = Value::String(format!("{previous}\n\n{text}"));
+            let merged = format!("{previous}\n\n{text}");
+            // A delivered sub-agent result keeps its GDK message, whose notes record
+            // the delivery (docs/frontends/subagents.md#results).
+            let delivery = last
+                .get("_jazykGdk")
+                .and_then(|gdk| {
+                    serde_json::from_value::<goose_provider_types::conversation::message::Message>(
+                        gdk.clone(),
+                    )
+                    .ok()
+                })
+                .filter(agents::records_delivery);
+            last["content"] = Value::String(merged);
             if let Some(object) = last.as_object_mut() {
-                object.remove("_jazykGdk");
+                match delivery {
+                    Some(message) => {
+                        if let Ok(gdk) = serde_json::to_value(message.with_text(text)) {
+                            object.insert("_jazykGdk".into(), gdk);
+                        }
+                    }
+                    None => {
+                        object.remove("_jazykGdk");
+                    }
+                }
             }
             return;
         }

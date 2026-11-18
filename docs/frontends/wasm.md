@@ -308,7 +308,10 @@ module.
   page as `chat.update` events under their own session ids, beside `chat.sessions`
   and the [`agents`](./gui.md#agents) event. `GET /api/agent-tree` lists the
   conversations. A sub-agent conversation takes a prompt of its own only while no
-  turn runs, like any conversation. Deleting a conversation deletes its sub-agent
+  turn runs, like any conversation. Its result reaches the parent as an input with
+  `source: {agentId}` ([prompting a sub-agent](./subagents.md#prompting-a-sub-agent)).
+  A parent whose turn is running takes it as steering. An idle parent's history
+  records it for its next turn. Deleting a conversation deletes its sub-agent
   conversations and their descendants.
 - `POST /api/chat/sessions/{id}/cancel` is answered by the page, since the worker is
   inside the turn. The page sets a cancel flag in the shared control buffer and fails

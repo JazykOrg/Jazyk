@@ -168,14 +168,18 @@ Project and store reads:
   state machine when one exists, and its verification statuses.
 - `GET /api/requirements/{id}`: the requirement (statement, entities, edges,
   transition, provenance) and its verification status.
-- `GET /api/views`: every [view](../compiler/model/view.md), default and curated, with
+- `GET /api/views`: every authored [view](../compiler/model/view.md), with
   kind, title, member count, edge count, and where it stands against the
   [limits registry](../compiler/graph.md#limits).
 - `GET /api/views/{id}`: one view resolved for drawing: the members in order, the
   excluded members with their notes, the query matches, the collapse set, and every
   relationship among the members with lifting applied (one arrow per direction-and-type
   group, the concrete edges beneath each lifted arrow, each with its requirements). A
-  flow view carries its ordered steps with their participants; a state view carries
+  The response always includes current `puml`. When no SVG can be produced or
+  reused, `renderSource` supplies renderer-adapted PlantUML and element link pairs
+  for a browser renderer. Both use the engine's deterministic emission and shared
+  renderer adaptation.
+  A flow view carries its ordered steps with their participants; a state view carries
   the derived machine. The `children` list names, for every member that has a
   [level view](../compiler/diagrams.md#level-views) of its own, the member id and that
   view's id: the same list `get_view` answers
@@ -186,6 +190,21 @@ Project and store reads:
   code. The reply's `detail` is the number of levels applied (the expansion stops
   where the tree ends) and `deeper` says whether one more level would draw
   anything.
+- `GET /api/diagram-coverage`: current diagram review findings with `id`, `target`,
+  `family`, suggested `kinds`, `count`, soft and hard thresholds, `areaHash`,
+  `covered`, `suppressed`, and `mandatory`. Findings include covered areas so a
+  human can inspect the current analysis. Source-backed findings cannot be suppressed.
+- `GET /api/diagram-suppressions`: active and expired suppression decisions with
+  their reasons, baseline measures, provenance, and document set.
+- `POST /api/diagrams/edit`: one explicit human diagram operation, with `tool`
+  and `arguments`. The allowed tools are `upsert_view`, `update_view`, `delete_view`,
+  `suppress_diagram_coverage`, and `unsuppress_diagram_coverage`.
+  Creates, updates, and suppression require a nonempty human `decision`.
+  Deletes and unsuppression require a reason. The endpoint uses the same tool
+  validators and atomic graph commit as writable chat. It starts no model session.
+  Pass `setId` when no graph reference identifies the document set. Suppression
+  requires the current `expectedAreaHash`; an area that moved is refused.
+  A successful response contains `committed`, the tool result, and `generation`.
 - `GET /api/entities/{id}/card`: the entity's [card](../consumers/docsgen.md#entity-cards)
   as JSON, from the shared model: `id`, `name`, `stereotype`, `definition`,
   `provenance` (`quote`, `derived`, or `decree`), `breadcrumb` (the chain from the

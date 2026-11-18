@@ -173,6 +173,8 @@ fn api_routes() -> Router<SharedState> {
         .route("/explain", get(board_api::explain))
         .route("/ripple", get(board_api::ripple))
         .route("/views", get(views_api::views))
+        .route("/diagram-coverage", get(views_api::diagram_coverage))
+        .route("/diagrams/edit", post(views_api::edit_diagram))
         .route(
             "/diagram-suppressions",
             get(views_api::diagram_suppressions),

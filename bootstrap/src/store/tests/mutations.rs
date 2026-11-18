@@ -631,6 +631,7 @@ fn views_curate_delete_and_bump() {
     s.apply(
         vec![Op::UpdateView {
             clear_query: false,
+            clear_excluded: false,
             authored: BTreeMap::new(),
             id: "view:usecase/t".into(),
             title: Some("Cart flow".into()),

@@ -183,6 +183,8 @@ pub fn aggregate_route(path: &str) -> bool {
         "/graph"
             | "/tree"
             | "/views"
+            | "/diagram-coverage"
+            | "/diagram-suppressions"
             | "/search"
             | "/status"
             | "/docs"

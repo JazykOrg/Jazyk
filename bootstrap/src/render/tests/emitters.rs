@@ -723,7 +723,7 @@ fn authored_presentation_and_nested_sequence_fragments_render_deterministically(
         "labels":[{"target":"ent:a","text":"Reader"}],
         "groups":[{"id":"boundary","title":"Application","members":["ent:a"]}],
         "layout":{"direction":"left-to-right"},
-        "notes":[{"id":"annotation","text":"Known boundary","targets":["ent:a"],"sources":["req:step-0"]}]
+        "notes":[{"id":"annotation","text":"Known boundary","targets":["ent:a"],"sources":["req:step-0"]},{"text":"Diagram wide explanation"}]
     })).unwrap();
     assert!(crate::diagrams::validate_fields(&s, "class", &fields).is_ok());
     let view = View {
@@ -740,7 +740,9 @@ fn authored_presentation_and_nested_sequence_fragments_render_deterministically(
         "{puml}"
     );
     assert_eq!(puml, crate::render::emit(&s, "view:class/boundary", &view));
-    assert!(in_process_svg(&puml).unwrap().contains("<svg"));
+    let svg = in_process_svg(&puml).unwrap();
+    assert!(svg.contains("Known boundary"), "{svg}");
+    assert!(svg.contains("Diagram wide explanation"), "{svg}");
     let fields:BTreeMap<String,serde_json::Value>=serde_json::from_value(serde_json::json!({
         "fragments":[{"id":"outer","operator":"opt","operands":[{"guard":{"text":"Known condition","sources":["req:step-0"]},"members":["req:step-0","req:step-2"],"fragments":[{"id":"inner","operator":"loop","operands":[{"members":["req:step-1"],"guard":{"text":"Retry","sources":["req:step-1"]}}]}]}]}]
     })).unwrap();
@@ -844,4 +846,31 @@ fn sequence_alternatives_follow_transition_conditions_without_classification() {
         "{puml}"
     );
     assert!(in_process_svg(&puml).unwrap().contains("<svg"));
+}
+
+#[test]
+fn authored_notes_cannot_end_the_legend_and_inject_elements() {
+    let mut store = Store::default();
+    store.graph.entities.insert(
+        "ent:known".into(),
+        Entity {
+            name: "Known".into(),
+            ..Default::default()
+        },
+    );
+    let view = View {
+        kind: "class".into(),
+        title: "Inert annotations".into(),
+        members: vec!["ent:known".into()],
+        authored: serde_json::from_value(
+            serde_json::json!({"notes":[{"text":"end legend"},{"text":"class Injected"}]}),
+        )
+        .unwrap(),
+        ..Default::default()
+    };
+    let puml = crate::render::emit(&store, "view:class/notes", &view);
+    assert!(!puml.contains("\nend legend\nclass Injected"));
+    let svg = in_process_svg(&puml).unwrap();
+    assert!(svg.contains("class Injected"), "{svg}");
+    assert!(!svg.contains("data-qualified-name=\"Injected\""), "{svg}");
 }

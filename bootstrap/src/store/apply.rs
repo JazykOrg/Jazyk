@@ -1788,6 +1788,7 @@ impl Store {
                         v.updated = Some(build.clone());
                         applied.push(Op::UpdateView {
                             clear_query: false,
+                            clear_excluded: false,
                             authored: view.authored.clone(),
                             id: existing,
                             title: None,
@@ -1819,6 +1820,7 @@ impl Store {
                 }
                 Op::UpdateView {
                     clear_query,
+                    clear_excluded,
                     mut authored,
                     id,
                     title,
@@ -1916,6 +1918,9 @@ impl Store {
                     if let Some(c) = &collapse {
                         v.collapse = c.clone();
                     }
+                    if clear_excluded {
+                        v.excluded.clear();
+                    }
                     for x in &exclude {
                         v.members.retain(|y| y != &x.id);
                         match v.excluded.iter_mut().find(|y| y.id == x.id) {
@@ -1941,6 +1946,7 @@ impl Store {
                     v.updated = Some(build.clone());
                     applied.push(Op::UpdateView {
                         clear_query,
+                        clear_excluded,
                         authored: authored.clone(),
                         id: rid,
                         title,

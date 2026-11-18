@@ -87,6 +87,15 @@ fn element_links_strip_by_alias_or_name_and_anchor_by_key() {
     assert_eq!(anchor_entities(svg, &[]), svg);
 }
 
+#[test]
+fn grouped_element_links_resolve_their_unique_alias() {
+    let svg =
+        "<svg><g class=\"entity\" data-qualified-name=\"Our selection.account\"><rect/></g></svg>";
+    let linked = anchor_entities(svg, &[("account".into(), "../account.svg".into())]);
+    assert!(linked.contains("<a href=\"../account.svg\""));
+    assert!(linked.contains("Our selection.account"));
+}
+
 // The anchoring as it once was (a linear link search per group, two `insert_str`
 // on the whole document per anchor), kept as the reference the single pass must
 // match byte for byte.

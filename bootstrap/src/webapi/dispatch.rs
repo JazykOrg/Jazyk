@@ -360,11 +360,13 @@ pub(crate) async fn request_scoped(
         ("GET", "/views") => {
             let args: serde_json::Map<String, Value> =
                 q.iter().map(|(k, v)| (k.clone(), json!(v))).collect();
-            ok(crate::diagrams::list(
+            ok(super::views::list_value(
                 &Store::load(&out()),
                 &Value::Object(args),
             ))
         }
+        ("GET", "/diagram-coverage") => ok(super::diagrams::coverage(&Store::load(&out()))),
+        ("POST", "/diagrams/edit") => answer(super::diagrams::edit(&project(), &out(), body)),
         ("GET", "/diagram-suppressions") => ok(crate::diagrams::suppressions(&Store::load(&out()))),
 
         ("GET", "/tree") => ok(super::views::tree_value(&Store::load(&out()))),

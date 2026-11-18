@@ -1000,7 +1000,13 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             value
         }).collect::<Vec<_>>()
     };
-    let mut close_inputs = || crate::portable::close_inputs(id);
+    // A sub-agent result queued for this turn keeps it open until it takes the result
+    // as steering, so no queued result outlives the turn
+    // (docs/frontends/subagents.md#prompting-a-sub-agent).
+    let mut close_inputs = || {
+        BOOK.with(|b| b.borrow().chats.get(id).is_none_or(|c| c.queued.is_empty()))
+            && crate::portable::close_inputs(id)
+    };
     let args = LoopArgs {
         llm: &model_llm,
         history: &mut history,
@@ -1096,6 +1102,17 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     update["effects"] = turn_effects(id, &message_id);
     let stop_reason = update["stop"].clone();
     append(id, update);
+    // A turn that ended without taking a queued result (a stop, an error, a round
+    // limit) leaves it for the next turn, as an idle conversation receives one.
+    for input in take_queued(id) {
+        let text = input["text"].as_str().unwrap_or_default().to_string();
+        BOOK.with(|b| {
+            if let Some(c) = b.borrow_mut().chats.get_mut(id) {
+                harness::push_user_text(&mut c.history, &text);
+            }
+        });
+        input_update(id, input);
+    }
     set_state(id, state);
     // The parent receives the result in the checkpoint that records the turn's end,
     // so a resumed turn delivers it once (docs/frontends/subagents.md#checkpoints).

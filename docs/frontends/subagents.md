@@ -101,6 +101,10 @@ A person can open a sub-agent's conversation and write to it:
   `source: {agentId}`. A running parent receives it as
   [steering](./acp.md#steering-active-turns). An idle parent's conversation records
   it, and the parent's model reads it at its next turn.
+- A running parent's turn does not end while such a result waits for it. A turn
+  that ends anyway (a stop, an error, a round limit) records the waiting result in
+  the conversation like an idle parent, so a result waits outside the conversation's
+  history only while its parent's turn runs.
 - Stopping the sub-agent stops that turn and its descendants. The parent receives
   the `cancelled` result.
 

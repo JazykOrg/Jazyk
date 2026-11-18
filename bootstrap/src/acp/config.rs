@@ -111,7 +111,7 @@ fn profile_named(
 pub const BUILTIN_AGENTS: &[(&str, &str, &str, &[&str], &[(&str, &str)])] = &[
     (
         EMBEDDED,
-        "Embedded (jazyk's own agent, over your LLM endpoint)",
+        "Embedded (configured model endpoint)",
         "",
         &[],
         &[],

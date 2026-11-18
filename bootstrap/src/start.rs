@@ -652,7 +652,7 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
         None if proj.acp.agent.is_some() || !tty => return Ok(true),
         None => {
             // Only agents that can run: a built-in whose program is missing is left out.
-            let agents: Vec<(String, String)> = crate::acp::commands::known_agents(&proj)
+            let agents: Vec<(String, String)> = launcher_agents(&proj, opts)
                 .into_iter()
                 .filter(|(name, _)| agent_note(name).is_empty())
                 .collect();
@@ -663,7 +663,8 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
                 );
                 return record_agent(root, &proj, &agents[0].0).map(|_| true);
             }
-            println!("\nWhich coding agent should the Jazyk agent drive? `/agent` in the IDE's chat switches it later.");
+            println!("\nWhich agent should run Jazyk conversations? Change it later with `jazyk <ide> --agent NAME`, then reconnect Jazyk in the IDE.");
+            println!("Cloud inference: run `jazyk gui` and choose Cloud there; browser sign-in is not an IDE credential.");
             let group = crate::menu::Group {
                 heading: "Agents".into(),
                 rows: agents
@@ -682,6 +683,42 @@ fn choose_agent(root: &Path, opts: &Options, tty: bool) -> Result<bool, String> 
         }
     };
     record_agent(root, &proj, &name).map(|_| true)
+}
+
+// Resolve provider information without probing the endpoint or exposing its key.
+fn launcher_agents(proj: &crate::project::Project, opts: &Options) -> Vec<(String, String)> {
+    let mut agents = crate::acp::commands::known_agents(proj);
+    if !proj.acp.agents.contains_key(crate::acp::config::EMBEDDED)
+        && !crate::project::load_global_acp()
+            .agents
+            .contains_key(crate::acp::config::EMBEDDED)
+    {
+        let llm =
+            crate::cli::resolve_llm(opts, &proj.llm, &crate::project::load_global_llm(), |n| {
+                std::env::var(n).ok()
+            });
+        if let Some((_, label)) = agents
+            .iter_mut()
+            .find(|(n, _)| n == crate::acp::config::EMBEDDED)
+        {
+            *label = embedded_label(&llm);
+        }
+    }
+    agents
+}
+
+fn embedded_label(llm: &crate::llm::Llm) -> String {
+    // Display only the host: endpoint URLs can contain credentials and query keys.
+    let host = reqwest::Url::parse(&llm.base_url)
+        .ok()
+        .and_then(|u| u.host_str().map(str::to_string))
+        .unwrap_or_else(|| "invalid endpoint URL".into());
+    let credential = if llm.api_key.is_empty() {
+        "no key set"
+    } else {
+        "key set, unverified"
+    };
+    format!("Embedded ({}; {}; {})", host, llm.model, credential)
 }
 
 // Record the driver in `[acp] agent`, after checking it resolves.
@@ -827,6 +864,27 @@ mod tests {
             &Default::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn embedded_provider_display_redacts_url_credentials() {
+        let mut llm = crate::cli::resolve_llm(
+            &Options::default(),
+            &Default::default(),
+            &Default::default(),
+            |_| None,
+        );
+        llm.base_url = "https://user:secret@example.test/v1?key=private".into();
+        llm.model = "chosen-model".into();
+        llm.api_key = "hidden-key".into();
+        let label = embedded_label(&llm);
+        assert!(label.contains("example.test; chosen-model"));
+        assert!(label.contains("key set, unverified"));
+        for secret in ["secret", "private", "hidden-key", "user:"] {
+            assert!(!label.contains(secret));
+        }
+        llm.api_key.clear();
+        assert!(embedded_label(&llm).contains("no key set"));
     }
 
     // Every file-based MCP choice writes the entry its agent reads, and a second run

@@ -67,9 +67,11 @@ whose table shadows it.
 
 The IDE proxy holds one downstream connection per agent, spawned the first time a
 conversation needs it. A conversation stays on the agent it opened on for its whole
-life; only new conversations follow a switch. `/agent <name>` in a chat records the
+life; only new conversations follow a switch. `/agent <name>` in Jazyk's ACP chat records the
 name in `[acp] agent` and makes it the agent new conversations open on, at once,
-without restarting the IDE's Jazyk agent. The reply names both agents: the one new
+without restarting the IDE's Jazyk agent. This command is intercepted by Jazyk's
+proxy before it reaches the downstream agent. It does not control the standalone
+Claude Code, Codex, or Copilot chat. The reply names both agents: the one new
 conversations run on and the one the current conversation stays on. The IDE's
 `initialize` request is replayed to each agent spawned after the first; the
 capabilities the IDE saw are the first agent's. A reopened conversation

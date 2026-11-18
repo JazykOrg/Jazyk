@@ -133,14 +133,25 @@ starts it. Each later start opens the IDE at once.
    (`embedded`) under the cursor. With one option it is taken without asking. The
    answer lands in `[acp] agent`, so the question is asked once per project.
    `--agent NAME` answers it without the list, and records the name even when one is
-   set. Later, `/agent <name>` in the IDE's Jazyk chat switches it
-   ([switching agents](./acp.md#switching-agents)). A built-in profile shadowed by an
+   set. `jazyk vscode --agent NAME` (or the chosen IDE name) changes it later.
+   Reconnect the IDE's Jazyk agent after changing the configuration in a terminal.
+   The `/agent <name>` command belongs to Jazyk's ACP chat only and selects the
+   agent for new conversations ([switching agents](./acp.md#switching-agents)).
+   It is not a command for Claude Code, Codex, or Copilot chat. A built-in profile shadowed by an
    `[acp.agents.<name>]` table is named with the file that defines it.
+   The embedded row names the resolved endpoint host and model, with a separate
+   credential-configured or no-key-configured status. A configured key does not
+   prove authentication. Discovery makes no model request. Browser Cloud login
+   and temporary GUI provider selections are not CLI credentials. Cloud inference
+   selection currently requires `jazyk gui`; the IDE launcher states this limit.
 4. Start. The IDE starts on the root, and a short summary follows: that it started,
    where the Jazyk agent is reached in this IDE, the coding agents that have jazyk's
    tools, the text to paste for any guided step, a line per setup that failed with
    the reason, and the [`jazyk setup`](#jazyk-setup) command that changes the setup.
    Files written along the way are not listed one by one.
+   In VS Code and Cursor, `Jazyk: Open Chat` in the Command Palette opens the ACP
+   Client panel connected to Jazyk. `ACP: Connect to Agent` also lists Jazyk. Jazyk is not registered as a
+   Copilot chat participant or a tab beside Claude Code.
 
 E.g.:
 

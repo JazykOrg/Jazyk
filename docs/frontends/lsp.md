@@ -311,3 +311,10 @@ the same additions, updates, deletions, and goal movements the audit trail recor
 
 Diagnostic locations, navigation, and traceability include every source location
 of a requirement. Multi-sentence quotes use their full located range.
+
+### Opening agent chat
+
+The VS Code extension contributes `Jazyk: Open Chat`. It activates ACP Client and
+connects to the registered Jazyk agent and opens its chat panel. If ACP Client is missing, it offers its extension page
+and names `jazyk setup vscode` (or `jazyk setup cursor`) as the setup command.
+This command is available even when the language server cannot start.

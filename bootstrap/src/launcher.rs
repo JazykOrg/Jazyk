@@ -149,6 +149,7 @@ const COMMON_OPTIONS: &[&str] = &[
 
 // Options that take a value; a bare one at the end of the line is a usage error.
 const VALUE_OPTIONS: &[&str] = &[
+    "--paseo-home",
     "--set",
     "--docs",
     "--source",
@@ -190,6 +191,7 @@ pub(crate) fn command_shape(cmd: &str) -> Option<(Option<usize>, &'static [&'sta
     Some(match cmd {
         "init" => (Some(0), &["--mcp", "--acp"]),
         "setup" => (Some(1), &["--list", "--remove"]),
+        "paseo" => (Some(0), &["--paseo-home"]),
         c if c != "gui" && crate::start::choice(c).is_some() => (Some(0), &[]),
         "compile" => (None, &["--sessions", "--select", "--record"]),
         "sets" => (
@@ -257,6 +259,7 @@ const COMMON_OUT: &str =
 pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
     let s = match cmd {
         "sets" => "usage: jazyk sets list|add|update|remove|preview [NAME] [--docs GLOB] [--source GLOB] [--roots GLOB] [--name NAME]\n\nSelections are repeatable. Paths are relative to the project folder. Output is JSON (--json).".to_string(),
+        "paseo" => "usage: jazyk paseo [--paseo-home PATH]\n\nRegister Jazyk ACP and reload an existing Paseo server. Opens no GUI and starts no daemon.\n\n--paseo-home PATH selects and remembers the local server home for this project. Without it, reuse the saved home, PASEO_HOME, or ~/.paseo.\n\nexit: 0 when reloaded, 1 when configuration or reload fails".to_string(),
         c if c != "gui" && crate::start::choice(c).is_some() => {
             let ch = crate::start::choice(c).unwrap();
             format!(
@@ -732,6 +735,13 @@ pub fn run() {
                 "--sessions" => opts.sessions = number(arg, &v, &mut errors),
                 "--select" => opts.select.push(v),
                 "--option" => opts.option = number(arg, &v, &mut errors),
+                "--paseo-home" => {
+                    if v.is_empty() {
+                        errors.push("--paseo-home requires a non-empty path".into());
+                    } else {
+                        opts.paseo_home = Some(std::path::PathBuf::from(v));
+                    }
+                }
                 "--text" => opts.text = Some(v),
                 "--build-token" => opts.build_token = Some(v),
                 "--cancel-file" => opts.cancel_file = Some(v),

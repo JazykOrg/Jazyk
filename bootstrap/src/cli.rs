@@ -32,6 +32,7 @@ pub use ledger::{run_decompile, run_gen, run_test};
 #[derive(Clone, Default)]
 pub struct Options {
     pub launcher_setup: bool,
+    pub paseo_home: Option<PathBuf>,
     pub set: Option<String>,
     pub docs: Vec<String>,
     pub source: Vec<String>,

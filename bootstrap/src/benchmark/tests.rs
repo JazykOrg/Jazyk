@@ -264,7 +264,7 @@ fn parses_all_embedded_cases() {
         for (kind, arg) in &case.checks {
             let pat = match kind.as_str() {
                 "entityAbsent" | "entityNameCount" | "groupingOf" => arg["namePattern"].as_str(),
-                "requirementExists" | "facetCount" => arg["statementPattern"].as_str(),
+                "requirementExists" => arg["statementPattern"].as_str(),
                 "viewExists" => arg["titlePattern"].as_str(),
                 "fileMatches" => arg["pattern"].as_str(),
                 "fileCount" => arg["pathPattern"].as_str(),

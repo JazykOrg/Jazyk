@@ -7,4 +7,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/tools/catalog.rs"
 ---
-Update an existing requirement's statement, entities, edges, transition, or facets; a field given replaces the stored one whole. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section. Omit both when only the other fields change.
+Update an existing requirement's statement, entities, edges, or transition; a field given replaces the stored one whole. section plus quote (together) re-anchor the provenance; the quote must locate verbatim in the section. Omit both when only the other fields change.

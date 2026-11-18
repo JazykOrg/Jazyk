@@ -24,7 +24,7 @@ One requirement per goal, `g:bind:<requirement id>`
 ([the bind goal](../compiler/goals/bind.md)), ready once the requirement carries at
 least one [criterion](../compiler/model/criterion.md)
 ([tiers](../compiler/reconciler.md#tiers)). The goal's loaded set is the requirement in
-full: its `statement`, facets, edges, and transition, the verbatim quote, its criteria
+full: its `statement`, edges, and transition, the verbatim quote, its criteria
 (id, kind, statement, quote or proposal), and its entity as a stub with its definition. The contract rides the `begin_binding` reply as
 `instructions`, with the package: the statement, the quote, the reason, the suggested
 test name, the decided medium and build when they exist, the entity's recorded files,
@@ -114,7 +114,7 @@ previews what the row opens ([bubbling](../compiler/reconciler.md#bubbling)): an
 `unimplemented` row opens `generate` on the owning entity.
 
 The test follows the same contract as generation's tests: the
-[facets and transition suggest the test shape](./gen.md#tests-tie-criteria-to-the-deliverable),
+[criteria supply the test shape](./gen.md#tests-tie-criteria-to-the-deliverable),
 the two kinds are `programmatic` and `llm`, the test must be
 [falsifiable](./gen.md#tests-tie-criteria-to-the-deliverable), and the name embeds
 the requirement id and the hash of its `statement`

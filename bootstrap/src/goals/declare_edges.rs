@@ -110,7 +110,7 @@ impl GoalKind for DeclareEdges {
                 statement,
                 entities,
                 transition,
-                facets,
+
                 source,
                 ..
             } = op
@@ -119,7 +119,6 @@ impl GoalKind for DeclareEdges {
                     ("statement", statement.is_some()),
                     ("entities", entities.is_some()),
                     ("transition", transition.is_some()),
-                    ("facets", facets.is_some()),
                     ("section and quote", source.is_some()),
                 ] {
                     if present {

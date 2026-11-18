@@ -28,7 +28,7 @@ store on every commit and has no write tool.
 - Entity: a domain concept with one living `definition`, a free-form `stereotype`, a
   `parent` in one containment tree, and `attributes`.
 - Requirement: one atomic obligation, a free-form `statement` about one or more entities,
-  carrying the `edges`, the `transition`, and the `facets` the statement states.
+  carrying the `edges` and optional `transition` the statement states.
 - Criterion: the observable evidence one requirement is met, one condition and its
   outcome with concrete values, quoted from a test case or an example or derived with a
   proposal; what a test encodes.

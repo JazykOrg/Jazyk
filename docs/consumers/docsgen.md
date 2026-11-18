@@ -42,7 +42,7 @@ The page, in order:
   and section they quote, in document order, each group opened by a bold line naming
   the document and the section title; derived and decreed requirements group last under
   their provenance. The block carries
-  the `statement`, the facets (with the `measure` of a `quality` facet), the edges as
+  the `statement`, its criteria and concrete bounds, the edges as
   `a → b (type, cardinality)`, the transition when one is declared, and the provenance:
   the verbatim quote with its source section for a quote-provenanced requirement (the
   quote is omitted when it says what the statement says, which is the common case: the

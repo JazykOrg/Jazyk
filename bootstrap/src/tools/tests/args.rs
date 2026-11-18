@@ -29,14 +29,13 @@ fn empty_optional_arguments_count_as_absent() {
                 "statement": "The gadget holds items.",
                 "entities": ["ent:gadget"],
                 "section": "/shop/cart", "quote": "holds items",
-                "edges": [], "facets": [],
+                "edges": [],
                 "provenance": {"derived": {"from": [], "reasoning": ""}}
             }),
         )
-        .unwrap_err();
-    // An empty list is absent, and an absent facet is refused: the two doctrines
-    // meet here (docs/compiler/model/requirement.md#facets).
-    assert_eq!(v.rule, "facets-missing");
+        .unwrap();
+    assert!(v["created"].as_bool().unwrap());
+    let requirement_id = v["id"].clone();
     let v = t
         .dispatch(
             "upsert_requirement",
@@ -45,12 +44,22 @@ fn empty_optional_arguments_count_as_absent() {
                 "entities": ["ent:gadget"],
                 "section": "/shop/cart", "quote": "holds items",
                 "edges": [],
-                "facets": [{"facet": "constraint", "reasoning": "an invariant the gadget holds"}],
+
                 "provenance": {"derived": {"from": [], "reasoning": ""}}
             }),
         )
         .unwrap();
-    assert_eq!(v["created"], true);
+    assert_eq!(
+        v["id"], requirement_id,
+        "A repeated plain requirement keeps its identity"
+    );
+    assert_eq!(
+        t.staged
+            .iter()
+            .filter(|op| matches!(op, Op::CreateRequirement { .. }))
+            .count(),
+        1
+    );
     // The doctrine covers structured optionals too: an all-empty transition
     // object and all-empty items inside lists are filled-in blanks, not data.
     // This is the exact shape a gpt-5.5 run staged, bounced by unknown-id on
@@ -63,7 +72,7 @@ fn empty_optional_arguments_count_as_absent() {
                 "entities": ["ent:customer", "ent:gadget"],
                 "section": "/shop/cart", "quote": "intends to buy",
                 "edges": [{}],
-                "facets": [{}, {"facet": "behavior", "reasoning": "the customer acts"}],
+
                 "transition": {"subject": "", "from": "", "to": "", "trigger": "", "guard": ""}
             }),
         )
@@ -83,10 +92,6 @@ fn empty_optional_arguments_count_as_absent() {
         .expect("the requirement staged");
     assert!(spun.transition.is_none());
     assert!(spun.edges.is_empty());
-    // The blank facet row dropped; the real one stands, as the mandatory facet
-    // requires (docs/compiler/model/requirement.md#facets).
-    assert_eq!(spun.facets.len(), 1);
-    assert_eq!(spun.facets[0].facet, "behavior");
     // Hollow items inside otherwise-real arguments drop the same way: ""
     // aliases, blank attribute rows, a hollow per-attribute provenance
     // (falls back to the call's quote), "" entity ids, and empty edge
@@ -114,7 +119,7 @@ fn empty_optional_arguments_count_as_absent() {
         .dispatch(
             "upsert_requirement",
             &json!({
-                "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
                 "statement": "The sprocket gadget pair holds.",
                 "entities": ["ent:sprocket", "ent:gadget", ""],
                 "section": "/shop/cart", "quote": "a Customer intends",
@@ -191,7 +196,7 @@ fn a_quote_wins_over_a_derivation_and_refusals_name_their_case() {
                 "statement": "The gadget holds items.",
                 "entities": ["ent:gadget"],
                 "section": "/shop/cart", "quote": "holds items",
-                "facets": [{"facet": "constraint", "reasoning": "an invariant the gadget holds"}],
+
                 "transition": {"subject": "ent:gadget", "from": "", "to": ""},
                 "provenance": {"derived": {"from": ["ent:gadget"], "reasoning": "a reading"}}
             }),
@@ -263,7 +268,7 @@ fn prefer_quote_drops_derivation_on_upsert_criterion() {
         .dispatch(
             "upsert_requirement",
             &json!({
-                "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
                 "statement": "The Shopping Cart holds the items a Customer intends to buy.",
                 "entities": ["ent:customer"], "section": "/shop/cart",
                 "quote": "The Shopping Cart holds items a Customer intends to buy."}),

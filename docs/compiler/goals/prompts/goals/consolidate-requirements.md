@@ -4,7 +4,7 @@ used_by:
   - "bootstrap/src/goals/consolidate_requirements.rs"
 ---
 This goal consolidates a cluster of requirements. Compare every requirement in this cluster. Merge confirmed duplicates with
-merge_requirements. Preserve sources, criteria, edges, facets, and redirects.
+merge_requirements. Preserve sources, criteria, edges, and redirects.
 Reconcile conflicting transitions first. Keep distinct obligations and record
 which observable behavior distinguishes them. Complete only when each candidate
 is consolidated or distinguished with evidence.

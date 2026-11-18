@@ -221,7 +221,7 @@ choice about form. Jazyk holds no list of media and no template per format.
 
 Each [entity](../compiler/model/entity.md) is one `generate` goal. The goal's loaded set
 is the entity in full: its `definition`, `stereotype`, `attributes`, its `parent` and
-children, its requirements across all documents with their edges, facets, and
+children, its requirements across all documents with their edges, and
 transitions, its derived relationships, and its state machine when one derives
 ([the loaded set](../compiler/context.md#the-loaded-set)). Nothing outside the loaded
 set leaks in, so each goal is small, repeatable, and auditable.
@@ -514,17 +514,9 @@ the same test (the same test name; two criteria may share one runner command), s
 first criterion's entry never stays at
 its binding-time verdict while the row moves. The criterion's `kind` names the test shape directly: `positive` a scenario on the
 stated input, `negative` the provoked failure path, `boundary` the edge value and the one
-past it, `quality` a measured check against `measure`. The requirement's
-[facets](../compiler/model/requirement.md#facets) and
-[transition](../compiler/model/requirement.md#transition) frame the arrangement:
-
-- `behavior` with a trigger → a scenario: arrange, trigger the event, assert the
-  response.
-- `constraint` → a property or invariant check.
-- `failure-mode` → a negative check: provoke the condition, assert the stated handling.
-- a `transition` → a stateful check: enter `from`, fire `trigger` under `guard`, assert
-  `to`.
-- `quality` with a `measure` → a measured check against the stated bound.
+past it, `quality` a measured check against `measure`. Criteria supply the arrangement, event, expected outcome and concrete bounds.
+A requirement's [transition](../compiler/model/requirement.md#transition) supplies
+its stated `from`, `trigger`, `guard` and `to` when the check concerns a state change.
 
 There are exactly two test kinds. The generator picks the kind per requirement; unit,
 integration, and cucumber are prompting examples of the first kind, not a taxonomy the
@@ -1366,7 +1358,7 @@ Coverage is a query over the graph, not over the deliverable:
 
 - requirements with no [binding](./bind.md): each is a `bind` goal on the board, counted
   in the verdict, never a silent gap,
-- entities with no behavior: no requirement with a `behavior` facet or a `transition`
+- entities with no interaction evidence: no requirement with an edge or transition
   names them. A purely structural entity is not a defect, so this is a report line in
   [`jazyk status`](../frontends/cli.md#jazyk-status) and the whole-build report
   ([`jazyk ripple`](../frontends/cli.md#jazyk-ripple)), not a diagnostic; an entity

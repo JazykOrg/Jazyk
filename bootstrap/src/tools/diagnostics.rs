@@ -81,8 +81,7 @@ impl ToolSession {
                 .entry(rid.clone())
                 .or_insert_with(|| r.entities.clone())
                 .clone();
-            let (mut statement, mut entities, mut edges, mut transition, mut facets) =
-                (None, None, None, None, None);
+            let (mut statement, mut entities, mut edges, mut transition) = (None, None, None, None);
             match f.field.as_str() {
                 "statement" => {
                     let v = f.value.as_str().map(str::trim).unwrap_or_default();
@@ -138,9 +137,7 @@ impl ToolSession {
                             .map_err(|e| fail(&e.rule, e.message))?,
                     );
                 }
-                "facets" => {
-                    facets = Some(parse_facets(&f.value).map_err(|e| fail(&e.rule, e.message))?);
-                }
+
                 other => {
                     return Err(fail(
                         "bad-fact",
@@ -158,7 +155,7 @@ impl ToolSession {
                 entities,
                 edges,
                 transition,
-                facets,
+
                 source: None,
                 provenance: None,
             });
@@ -569,7 +566,7 @@ impl ToolSession {
             let Some(r) = self.snapshot.graph.requirements.get(&rid).cloned() else {
                 return Err(uncommitted(&rid));
             };
-            let (mut statement, mut edges, mut transition, mut facets) = (None, None, None, None);
+            let (mut statement, mut edges, mut transition) = (None, None, None);
             match field.as_str() {
                 "statement" => statement = Some(text_value()?),
                 "edges" => {
@@ -582,13 +579,7 @@ impl ToolSession {
                     edges = Some(parse_edges(self, arr, Some(&r.entities))?);
                 }
                 "transition" => transition = Some(self.parse_transition(value, &r.entities)?),
-                "facets" => facets = Some(parse_facets(value)?),
-                _ => {
-                    return Err(bad_field(
-                        "a requirement",
-                        "statement, edges, transition, facets",
-                    ))
-                }
+                _ => return Err(bad_field("a requirement", "statement, edges, transition")),
             }
             let sentence = statement.clone().unwrap_or_else(|| r.statement.clone());
             return match (r.sources.first(), note.as_deref()) {
@@ -600,7 +591,7 @@ impl ToolSession {
                         entities: None,
                         edges,
                         transition,
-                        facets,
+
                         source: Some(SourceRef {
                             doc: src.doc.clone(),
                             section: src.section.clone(),
@@ -634,7 +625,7 @@ impl ToolSession {
                         entities: None,
                         edges,
                         transition,
-                        facets,
+
                         source: None,
                         provenance: Some(provenance),
                     })?;

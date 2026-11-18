@@ -1,17 +1,11 @@
 # narrative-behavior
 
-Grades the facet a narrated scene carries. A plot line naming who acts and what they do
-is a `behavior` of the acting character: something the subject does, at a point in the
-story. A standing fact about a character ("Theo Brandt is a marine surveyor") is a
-`constraint`. Flow views draw from `behavior` statements, so a scene labeled
-`constraint` never reaches a flow view. A novel compile once labeled 177 statements
-`constraint` against 75 `behavior`, and the plot's scenes drew no flow (see
-[facets](../../compiler/model/requirement.md#facets)). The characters are seeded, so the
-case grades the facets and not the minting.
+A narrated scene and a standing character fact are atomic obligations. The seeded
+characters keep this case focused on extraction completeness and source coverage.
 
 ```yaml
 name: narrative-behavior
-description: A narrated scene carries the behavior facet of its acting character, and a standing character fact the constraint facet.
+description: Narrated scenes and standing facts are recorded without classification.
 goal:
   kind: reconcile-section
   target: docs/plot.md
@@ -73,34 +67,12 @@ given:
       docs/characters.md#/characters/theo-brandt: covered
       docs/characters.md#/characters/dot: covered
 assert:
-  - facetCount:
-      facet: behavior
-      statementPattern: 'works for'
-      min: 1
-  - facetCount:
-      facet: behavior
-      statementPattern: 'asks Dot|ask.*harbor ledger'
-      min: 1
-  - facetCount:
-      facet: behavior
-      statementPattern: 'lease'
-      min: 1
-  - facetCount:
-      facet: behavior
-      statementPattern: 'confront'
-      min: 1
-  - facetCount:
-      facet: behavior
-      statementPattern: 'refus'
-      min: 1
-  - facetCount:
-      facet: constraint
-      statementPattern: 'marine surveyor'
-      min: 1
-  - facetCount:
-      facet: behavior
-      statementPattern: 'marine surveyor'
-      max: 0
+  - requirementExists: {statementPattern: 'works for', entity: Dot}
+  - requirementExists: {statementPattern: 'asks Dot|ask.*harbor ledger', entity: Ines}
+  - requirementExists: {statementPattern: 'lease', entity: Ines}
+  - requirementExists: {statementPattern: 'confront', entity: Ines}
+  - requirementExists: {statementPattern: 'refus', entity: Theo}
+  - requirementExists: {statementPattern: 'marine surveyor', entity: Theo}
   - coverageSet:
       section: 'docs/plot.md#/plot/chapter-3-the-ledger'
       state: covered

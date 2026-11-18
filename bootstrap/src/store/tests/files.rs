@@ -669,11 +669,7 @@ fn by_reference_mentions_follow_link_levels_from_the_roots() {
             statement: quote.into(),
             entities: vec!["ent:customer".into()],
             sources: vec![mention(doc, sec, quote)],
-            facets: vec![Facet {
-                facet: "behavior".into(),
-                reasoning: "stated".into(),
-                measure: None,
-            }],
+
             ..Default::default()
         },
     };
@@ -762,11 +758,7 @@ fn parallel_branches_merge_the_whole_store_through_git() {
             statement: quote.into(),
             entities: vec!["ent:order".into()],
             sources: vec![mention("shop.md", section, quote)],
-            facets: vec![Facet {
-                facet: "behavior".into(),
-                reasoning: "stated".into(),
-                measure: None,
-            }],
+
             ..Default::default()
         },
     };
@@ -1312,4 +1304,56 @@ fn version_six_preserves_authored_diagrams_and_drops_automatic_projections() {
     Store::open_for_build(&out);
     assert_eq!(tree(&out), bytes, "Repeated opening is a no-op");
     crate::vfs::remove_dir_all(&out).ok();
+}
+
+#[test]
+fn obsolete_requirement_classification_loads_and_rewrites_without_a_version_change() {
+    let out = own_dir("obsolete-requirement-classification");
+    let mut s = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    let text = "# Notes\n\nA remains available.\n";
+    s.docs.insert(
+        "notes.md".into(),
+        DocRecord {
+            content_hash: hash_hex(text),
+            sections: crate::md::parse_sections(text),
+            coverage: BTreeMap::new(),
+        },
+    );
+    s.graph.entities.insert("ent:a".into(), entity("A"));
+    s.graph.requirements.insert(
+        "req:notes-1".into(),
+        Requirement {
+            statement: "A remains available.".into(),
+            entities: vec!["ent:a".into()],
+            sources: vec![SourceRef {
+                doc: "notes.md".into(),
+                section: "/notes".into(),
+                quote: "A remains available.".into(),
+            }],
+            ..Default::default()
+        },
+    );
+    s.save_for_test();
+    let path = out.join("graph/requirements/req~notes-1.yaml");
+    let mut bytes = crate::vfs::read_to_string(&path).unwrap();
+    bytes.push_str(
+        "facets:\n- facet: quality\n  reasoning: old classification\n  measure: 2 seconds\n",
+    );
+    crate::vfs::write(&path, bytes).unwrap();
+    let mut loaded = Store::load(&out);
+    assert!(loaded.load_errors.is_empty(), "{:?}", loaded.load_errors);
+    assert_eq!(loaded.status.version, STORE_VERSION);
+    assert_eq!(
+        loaded.graph.requirements["req:notes-1"].statement,
+        "A remains available."
+    );
+    loaded.write_status("rewrite obsolete field").unwrap();
+    assert!(!crate::vfs::read_to_string(&path)
+        .unwrap()
+        .contains("facets"));
+    assert_eq!(Store::load(&out).status.version, STORE_VERSION);
+    crate::vfs::remove_dir_all(out).unwrap();
 }

@@ -31,7 +31,6 @@ given:
         statement: The Gadget shall report its battery level every hour.
         entities: [ent:gadget]
         source: {section: docs/gadget.md#/gadget/overview, quote: "The Gadget shall report its battery level every hour (TODO: confirm the interval)."}
-        facets: [{facet: behavior, reasoning: the device reports}]
   lint:
     warnings:
       - A TODO marker appears in prose.

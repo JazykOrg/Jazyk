@@ -202,18 +202,7 @@ fn entity_and_requirement_gates_name_their_rules() {
     let err = t
         .dispatch(
             "upsert_requirement",
-            &with(json!({"facets": [{"facet": "speed", "reasoning": "x"}]})),
-        )
-        .unwrap_err();
-    assert_eq!(err.rule, "bad-facet");
-    let err = t
-        .dispatch("upsert_requirement", &with(json!({"facets": [{"facet": "behavior", "reasoning": "x", "measure": "2 seconds"}]})))
-        .unwrap_err();
-    assert_eq!(err.rule, "bad-facet");
-    let err = t
-        .dispatch(
-            "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Cart holds items.", "entities": ["ent:cart"]}),
+            &json!({ "statement": "The Cart holds items.", "entities": ["ent:cart"]}),
         )
         .unwrap_err();
     assert_eq!(err.rule, "provenance-required");
@@ -221,13 +210,11 @@ fn entity_and_requirement_gates_name_their_rules() {
         .dispatch("report_diagnostic", &json!({"rule": "decision", "severity": "warning", "subjects": ["ent:cart"], "message": "which bound?"}))
         .unwrap_err();
     assert_eq!(err.rule, "decision-needs-prompt");
-    // The whole shape lands: edges deduplicated on (a, b, type), transition, facets.
+    // The whole shape lands: edges deduplicated on (a, b, type), and transition.
     let v = t
         .dispatch("upsert_requirement", &with(json!({
             "edges": [{"a": "ent:cart", "b": "ent:order", "type": "composition", "cardinality": "1..*"}, {"a": "ent:cart", "b": "ent:order", "type": "composition"}],
-            "transition": {"subject": "ent:cart", "from": "open", "to": "paid", "trigger": "payment"},
-            "facets": [{"facet": "quality", "reasoning": "bounded", "measure": "2 seconds"}]
-        })))
+            "transition": {"subject": "ent:cart", "from": "open", "to": "paid", "trigger": "payment"}})))
         .unwrap();
     assert_eq!(v["created"], true);
     match t.staged.last().unwrap() {
@@ -235,7 +222,6 @@ fn entity_and_requirement_gates_name_their_rules() {
             assert_eq!(requirement.edges.len(), 1);
             assert_eq!(requirement.edges[0].cardinality.as_deref(), Some("1..*"));
             assert_eq!(requirement.transition.as_ref().unwrap().subject, "ent:cart");
-            assert_eq!(requirement.facets[0].measure.as_deref(), Some("2 seconds"));
         }
         other => panic!("unexpected {:?}", other),
     }
@@ -377,14 +363,14 @@ fn lenient_entity_refs_resolve_unambiguously() {
     let v = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
+            &json!({ "statement": "The Customer shall buy items.", "entities": ["customer"], "section": "/shop/cart", "quote": "a Customer intends to buy"}),
         )
         .unwrap();
     assert_eq!(v["created"], true);
     let v2 = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
+            &json!({ "statement": "The Customer shall intend to buy.", "entities": ["Customer"], "section": "/shop/cart", "quote": "intends to buy"}),
         )
         .unwrap();
     assert_eq!(v2["created"], true);

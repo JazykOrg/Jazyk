@@ -30,14 +30,6 @@ fn attr(name: &str, ty: Option<&str>, value: Option<&str>) -> Attribute {
     }
 }
 
-fn behavior() -> Facet {
-    Facet {
-        facet: "behavior".into(),
-        reasoning: "a step".into(),
-        measure: None,
-    }
-}
-
 // The showcase graph: one small shop that exercises every emitter
 // (docs/compiler/diagrams.md#the-emitters), in an in-memory store with the one
 // document its quotes cite.
@@ -158,13 +150,12 @@ pub(crate) fn showcase_store() -> Store {
                section: &str,
                entities: &[&str],
                edges: Vec<ReqEdge>,
-               transition: Option<Transition>,
-               facets: Vec<Facet>| Requirement {
+               transition: Option<Transition>| Requirement {
         statement: statement.into(),
         entities: entities.iter().map(|e| e.to_string()).collect(),
         edges,
         transition,
-        facets,
+
         sources: vec![src("shop.md", section, statement)],
         ..Default::default()
     };
@@ -180,7 +171,6 @@ pub(crate) fn showcase_store() -> Store {
                     edge("ent:customer", "ent:shopping-cart", "association", None),
                 ],
                 None,
-                vec![behavior()],
             ),
         ),
         (
@@ -196,7 +186,6 @@ pub(crate) fn showcase_store() -> Store {
                     None,
                 )],
                 None,
-                vec![],
             ),
         ),
         (
@@ -212,7 +201,6 @@ pub(crate) fn showcase_store() -> Store {
                     None,
                 )],
                 None,
-                vec![behavior()],
             ),
         ),
         (
@@ -228,7 +216,6 @@ pub(crate) fn showcase_store() -> Store {
                     None,
                 )],
                 None,
-                vec![],
             ),
         ),
         (
@@ -239,7 +226,6 @@ pub(crate) fn showcase_store() -> Store {
                 &["ent:order"],
                 vec![],
                 None,
-                vec![],
             ),
         ),
         (
@@ -255,7 +241,6 @@ pub(crate) fn showcase_store() -> Store {
                     Some("1..*"),
                 )],
                 None,
-                vec![],
             ),
         ),
         (
@@ -272,7 +257,6 @@ pub(crate) fn showcase_store() -> Store {
                     trigger: Some("payment succeeds".into()),
                     guard: None,
                 }),
-                vec![behavior()],
             ),
         ),
         (
@@ -289,11 +273,6 @@ pub(crate) fn showcase_store() -> Store {
                     trigger: Some("payment declined".into()),
                     guard: None,
                 }),
-                vec![Facet {
-                    facet: "failure-mode".into(),
-                    reasoning: "the declined branch".into(),
-                    measure: None,
-                }],
             ),
         ),
         (
@@ -313,7 +292,6 @@ pub(crate) fn showcase_store() -> Store {
                     edge("ent:ana", "ent:anas-cart", "association", None),
                 ],
                 None,
-                vec![],
             ),
         ),
         (
@@ -324,11 +302,6 @@ pub(crate) fn showcase_store() -> Store {
                 &["ent:shop"],
                 vec![],
                 None,
-                vec![Facet {
-                    facet: "quality".into(),
-                    reasoning: "bounded".into(),
-                    measure: Some("2 seconds".into()),
-                }],
             ),
         ),
         (
@@ -339,13 +312,22 @@ pub(crate) fn showcase_store() -> Store {
                 &["ent:shop"],
                 vec![],
                 None,
-                vec![],
             ),
         ),
     ];
     for (id, r) in reqs {
         s.graph.requirements.insert(id.into(), r);
     }
+    s.graph.criteria.insert(
+        "crit:checkout-latency".into(),
+        Criterion {
+            requirement: "req:shop-10".into(),
+            statement: "Checkout confirmation completes within2seconds".into(),
+            kind: "quality".into(),
+            measure: Some("2 seconds".into()),
+            ..Default::default()
+        },
+    );
     s
 }
 
@@ -353,7 +335,6 @@ pub(crate) fn showcase_store() -> Store {
 // root, each with ten sections; a containment tree of fan-out eight over a wide
 // top level; names from a small vocabulary, every fiftieth entity a lookalike of
 // its neighbor across documents; requirements naming two entities each with an
-// edge, a behavior facet on every other, a transition on every tenth.
 pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
     const WORDS: [&str; 24] = [
         "order", "service", "cart", "customer", "stock", "api", "gateway", "ledger", "invoice",
@@ -470,7 +451,7 @@ pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
                     vec![edge(&a, &b, types[j % 4], None)]
                 },
                 transition,
-                facets: if j % 2 == 0 { vec![behavior()] } else { vec![] },
+
                 sources: vec![src(&doc, &section, &statement)],
                 ..Default::default()
             },

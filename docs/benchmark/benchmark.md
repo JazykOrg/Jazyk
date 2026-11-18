@@ -21,7 +21,7 @@ grade it), `declare-edges`, `curate-view`, `split-view`, and the fan-out variant
 `abstract-entity`. `derive-criteria` and `bind` have cases since. Every other kind in
 the [goal catalog](../compiler/reconciler.md#goal-derivation) (`place-anchors`,
 `retrace`, `conform-instance`, and the caps variant of `abstract-entity`) has no case,
-and no case grades edge cardinality or the `flow-unplaced` path of `curate-view`.
+and no case grades edge cardinality.
 
 The harness keeps compiling meanwhile: a case keys on a goal kind and a target, one
 session resolves that goal in a sandbox, and requirement checks match the `statement`

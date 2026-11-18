@@ -126,10 +126,10 @@ The policy is deterministic and budget-driven. Loading `A` brings:
 
 - `A` in full. For an entity: `name`, `aliases`, `definition`, `scope`, `stereotype`,
   `parent`, `attributes`, `limits`, its mentions with their quotes, its requirements
-  (statement, entities, edges, transition, facets), its relationships with their
+  (statement, entities, edges and transition), its relationships with their
   contribution groups, the views that include it, and its state machine in summary
   when it is a subject. For a requirement: `statement`, `entities`, `edges`,
-  `transition`, `facets`, `source` or `provenance`, the pairs its edges contribute to,
+  `transition`, `source` or `provenance`, the pairs its edges contribute to,
   and the views it belongs to. For a view: `kind`, `title`, the ordered members as
   stubs, `excluded`, `collapse`, `query`, `limits`, and the relationships among the
   members with a count. For a section: the body (`raw`), the coverage state, the
@@ -251,7 +251,7 @@ mentions: docs/orders.md#/orders "An order carries a total and a currency."
 requirements (7):
 - req:orders-1: An order carries a total and a currency.
 - req:orders-6: When payment succeeds, the order becomes paid.
-  transition: placed → paid (payment succeeds)   facets: behavior
+  transition: placed → paid (payment succeeds)
   ...
 related: ent:shopping-cart (composition 1..*, 1 requirement), ent:customer (association, 2 requirements)
   [3 more edges: h:ent:order:related]

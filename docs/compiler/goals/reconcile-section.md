@@ -234,7 +234,7 @@ The goal block carries the contract paragraph from
 [`prompts/reconcile-section.md`](./prompts/reconcile-section.md): apply the extraction
 skill to every sentence, code block step, test case, and list item; record each
 obligation as one atomic `statement` in clear wording with its entities, edges,
-transition, facets, and a verbatim quote; leave an unchanged statement alone,
+transition and a verbatim quote; leave an unchanged statement alone,
 re-record a changed one, delete one the section stopped making; honor every stale
 anchor; search before creating an entity and read "the system" as the entity another
 document introduced, never minting a sibling for the document's own subject; record
@@ -245,7 +245,7 @@ it states. Then the change in one line, the gate in one line, and the hints.
 The `extraction` skill is active from the first round: the kind names it, and loading a
 section brings it anyway ([skills](../sessions.md#skills)). The skill carries the
 sentence test, granularity, enumerations, code blocks, test cases, quotes, entities,
-edges, transitions, attributes, facets, stability, and coverage honesty; the doctrine
+edges, transitions, attributes, stability, and coverage honesty; the doctrine
 behind it is [statements](../concepts/statements.md).
 
 The initially loaded set for the batch holds, per section:
@@ -254,7 +254,7 @@ The initially loaded set for the batch holds, per section:
   prefixed `+ `, the removed lines listed under it), or truncated with `read_section` pointers when it exceeds its share
   of the budget; its parent chain as titles, for orientation.
 - Under the body, the requirements already sourced from the section: id, `statement`,
-  quote, entities, edges, transition, facets. An unchanged statement is a no-op, and a
+  quote, entities, edges and transition. An unchanged statement is a no-op, and a
   coverage claim sees what the section already yielded.
 - The stale anchors, each with its statement or entity name, its dead quote, and its
   former section.
@@ -304,7 +304,7 @@ The `reconcile-section` toolset ([toolsets](../tools.md#toolsets)):
   under another name), `retract_entity_mention` (an independent incorrect mention),
   `delete_entity`.
 - Requirement tools: `upsert_requirement` (statement, entities, section, quote, edges,
-  transition, facets), `update_requirement`, `delete_requirement`.
+  transition), `update_requirement`, `delete_requirement`.
 - Criterion tools: `upsert_criterion` (the stated criteria: a test case's lead-in, an
   example sentence, a threshold bullet, each on the requirement it exercises),
   `update_criterion`, `delete_criterion` ([criterion](../model/criterion.md)).

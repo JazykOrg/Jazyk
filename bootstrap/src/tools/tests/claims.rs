@@ -802,7 +802,7 @@ fn full_flow_stages_ops_and_done() {
     assert_eq!(id, "ent:shopping-cart");
     t.dispatch(
         "upsert_requirement",
-        &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
+        &json!({ "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": [id, "ent:customer"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer", "type": "association"}]}),
     )
     .unwrap();
     t.dispatch(
@@ -850,7 +850,7 @@ fn explicit_done_requires_a_mark_per_dirty_section() {
     .unwrap();
     t.dispatch(
         "upsert_requirement",
-        &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+        &json!({ "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
     )
     .unwrap();
     t.dispatch(

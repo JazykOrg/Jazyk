@@ -43,7 +43,6 @@ fn session_for(proj: &Project, out: &Path, target: &str) -> ToolSession {
 }
 
 // The mechanical sentence a field edit implies, when one exists. The same templates
-// the edit_fact tool uses; fields with no sentence form (edges, transition, facets,
 // members) have no mechanical rewrite and take the decree path instead.
 fn mechanical_sentence(store: &Store, id: &str, field: &str, value: &Value) -> Option<String> {
     let id = store.resolve_id(id);
@@ -396,7 +395,7 @@ mod tests {
                     "entities": ["ent:shop"],
                     "section": "docs/shop.md#/shop",
                     "quote": "The shop stores orders.",
-                    "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
                 }),
             )
             .expect("requirement stages");

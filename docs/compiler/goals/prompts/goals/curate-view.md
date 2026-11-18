@@ -1,30 +1,10 @@
 ---
-purpose: "Reconciliation contract for the curate-view goal. The board supplies its target, change, hints, and completion gate."
-used_by:
-  - "bootstrap/src/goals/curate_view.rs"
+workflow: Curate an existing authored diagram after new query matches.
+consumer: curate-view sessions
 ---
-This goal decides membership for one view against the nodes the harness matched to it: new entities matching a structural view's query, or a behavior requirement the flow placement check found in no flow view and matched to this one by its document (a failure-mode statement represented in no branch arrives the same way).
-
-## Resolve the goal
-
-Load the view in full and each matched node; the skill for the view's kind (structural-views for class, object, package, component, composite, and deployment; flow-views for use case, activity, sequence, communication, and overview) says what belongs.
-
-Decide every matched node exactly one way: add it with update_view add_members, or exclude it with update_view exclude and a note naming the sentence or the rule that keeps it out ("constraint, not flow", "example, not flow", "belongs to view:usecase/returns"); the note lives on the view and is what the next build reads, so a bare exclusion is not a decision.
-
-In a flow view, place an added member at its position in the flow: the default order is document order of the members, and you reorder only when the documents state the order (a "then", a numbered step, a trigger chain where one member's receiver acts as the next member's initiator, a state the next step requires), naming the ordering sentence in the justification; a failure-mode member sits immediately after the step whose failure it handles, and a statement that belongs to another intent is that flow's member: add it to that flow in the same session, creating a use-case view with upsert_view when no flow carries its intent, and exclude it here with a note naming that flow.
-
-Update explicitly linked diagrams when the same decision affects their distinct purposes. Equal titles do not imply twins.
-
-An exclusion note that names another view must name one that actually lists the member, added there first when none does, and one view's exclusions batch into a single update_view call, since exclude takes a list.
-
-In a structural view, an added member brings every relationship among the members by itself, and an arrow you miss is a missing edge (declare-edges work), never something the view adds; a match that belongs to another view is excluded with a note saying which, and a query that matches wrongly is narrowed (scope, parent, stereotype, depth) rather than replaced by a list.
-
-Retitle with update_view when the derived title reads as a fragment.
-
-Never invent a member the documents do not state, never satisfy a limit here by dropping members: a view the decision pushes over its limit derives split-view at commit.
-
-Queries on authored diagrams continue to supply curation matches. Every model edit needs reasoning.
-
-## Completion gate
-
-The gate: every matched node is a member of the view or is excluded with a note on the view, a note naming another flow view names one that lists the node, and mark_goal_done carries evidence [{id, verdict: added | excluded}], one verdict per matched node.
+This goal reviews the listed diagram's new query matches. Load its purpose, area,
+membership and the matched entities before deciding. Keep each match or exclude
+it with a note citing the scope or source that explains the choice. Preserve the
+other authored presentation choices. A query never creates a diagram. Delete
+only when its explanation is no longer needed, with a reason. Claim completion
+with the saved membership or exclusions and finish through done.

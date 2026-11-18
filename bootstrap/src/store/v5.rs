@@ -182,7 +182,7 @@ pub fn entity_fact_hash(store: &Store, id: &str) -> String {
             sources.sort_by(|a, b| {
                 (&a.doc, &a.section, &a.quote).cmp(&(&b.doc, &b.section, &b.quote))
             });
-            reqs.push(serde_json::json!({"id":rid,"statement": normalize_statement(&r.statement),"sources":sources,"provenance":r.provenance,"facets":r.facets,"transition":r.transition}));
+            reqs.push(serde_json::json!({"id":rid,"statement": normalize_statement(&r.statement),"sources":sources,"provenance":r.provenance,"transition":r.transition}));
         }
         for ed in &r.edges {
             if ed.a == id || ed.b == id {

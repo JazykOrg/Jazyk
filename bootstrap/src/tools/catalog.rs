@@ -181,9 +181,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "quote": {"type": "string"},
                     "provenance": derived_schema(),
                     "edges": {"type": "array", "items": edge_schema()},
-                    "transition": transition_schema(),
-                    "facets": {"type": "array", "items": facet_schema()}
-                }),
+                    "transition": transition_schema()}),
                 &["statement", "entities"],
             ),
         },
@@ -197,7 +195,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "entities": {"type": "array", "items": {"type": "string"}},
                     "edges": {"type": "array", "items": edge_schema()},
                     "transition": transition_schema(),
-                    "facets": {"type": "array", "items": facet_schema()},
+
                     "section": {"type": "string"},
                     "quote": {"type": "string"}
                 }),
@@ -1055,19 +1053,6 @@ fn transition_schema() -> Value {
     })
 }
 
-// One judged facet. Mirrors docs/compiler/model/requirement.md#facets.
-fn facet_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "facet": {"type": "string", "enum": FACETS},
-            "reasoning": {"type": "string"},
-            "measure": {"type": "string"}
-        },
-        "required": ["facet", "reasoning"]
-    })
-}
-
 // Membership by rule. Mirrors docs/compiler/model/view.md#fields.
 fn query_schema() -> Value {
     json!({
@@ -1105,7 +1090,7 @@ pub(crate) fn prompt_schema() -> Value {
                     "facts": {"type": "array", "description": "the fact changes the rewrite implies for the requirements quoted from this section (e.g. a transition's new `to`), applied with the prose",
                         "items": {"type": "object", "properties": {
                             "id": {"type": "string", "description": "a requirement quoted from the edit's section"},
-                            "field": {"type": "string", "enum": ["statement", "entities", "edges", "transition", "facets"]},
+                            "field": {"type": "string", "enum": ["statement", "entities", "edges", "transition"]},
                             "value": {"description": "the field's whole new value, in the shape update_requirement takes"}},
                             "required": ["id", "field", "value"]}}},
                     "required": ["doc", "section", "old_text", "new_text"]},

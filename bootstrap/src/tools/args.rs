@@ -176,67 +176,6 @@ pub(super) fn parse_edges(
     Ok(edges)
 }
 
-// Parse the facets argument: each names a facet from the catalog with its reasoning;
-// `measure` is accepted only on `quality`. Mirrors docs/compiler/model/requirement.md#facets.
-pub(super) fn parse_facets(v: &Value) -> Result<Vec<Facet>, ToolError> {
-    let Some(arr) = v.as_array() else {
-        return Err(ToolError::new(
-            "bad-facet",
-            "facets is a list of {facet, reasoning, measure?}".into(),
-        ));
-    };
-    let mut out: Vec<Facet> = Vec::new();
-    for f in arr {
-        // Empty means absent (docs/compiler/tools.md#validation-and-errors): an
-        // all-empty item is a filled-in blank, not a facet.
-        if !ToolSession::present(f) {
-            continue;
-        }
-        let facet = f["facet"].as_str().unwrap_or_default().trim().to_string();
-        if !FACETS.contains(&facet.as_str()) {
-            return Err(ToolError::new(
-                "bad-facet",
-                format!("unknown facet `{}`; one of: {}", facet, FACETS.join(", ")),
-            ));
-        }
-        let reasoning = f["reasoning"]
-            .as_str()
-            .unwrap_or_default()
-            .trim()
-            .to_string();
-        if reasoning.is_empty() {
-            return Err(ToolError::new(
-                "bad-facet",
-                format!("facet `{}` needs its reasoning", facet),
-            ));
-        }
-        let measure = f["measure"]
-            .as_str()
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty());
-        if measure.is_some() && facet != "quality" {
-            return Err(ToolError::new(
-                "bad-facet",
-                format!(
-                    "measure is stated only on a quality facet, not on `{}`",
-                    facet
-                ),
-            ));
-        }
-        if let Some(mine) = out.iter_mut().find(|x| x.facet == facet) {
-            mine.reasoning = reasoning;
-            mine.measure = measure;
-            continue;
-        }
-        out.push(Facet {
-            facet,
-            reasoning,
-            measure,
-        });
-    }
-    Ok(out)
-}
-
 // The membership rule of a view kind: what its members are.
 // Mirrors docs/compiler/model/view.md#kinds.
 pub(super) fn member_rule(kind: &str) -> &'static str {

@@ -167,7 +167,7 @@ Project and store reads:
   requirements referencing it, its relationships, the views it belongs to, its derived
   state machine when one exists, and its verification statuses.
 - `GET /api/requirements/{id}`: the requirement (statement, entities, edges,
-  transition, facets, provenance) and its verification status.
+  transition, provenance) and its verification status.
 - `GET /api/views`: every [view](../compiler/model/view.md), default and curated, with
   kind, title, member count, edge count, and where it stands against the
   [limits registry](../compiler/graph.md#limits).

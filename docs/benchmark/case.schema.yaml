@@ -136,7 +136,7 @@ properties:
           requirements:
             description: >-
               Map of requirement id to requirement fields. A requirement carries
-              statement, entities, and source, plus edges, transition, and facets
+              statement, entities, and source, plus edges and transition
               where the case needs them
             type: object
             additionalProperties:
@@ -219,8 +219,6 @@ definitions:
         $ref: '#/definitions/criteriaMatching'
       relationshipExists:
         $ref: '#/definitions/relationshipExists'
-      facetCount:
-        $ref: '#/definitions/facetCount'
       transitionSubject:
         $ref: '#/definitions/transitionSubject'
       edgeDeclared:
@@ -406,26 +404,6 @@ definitions:
         minItems: 1
         items:
           type: string
-  facetCount:
-    description: >-
-      The number of requirements carrying the facet, of those whose statement matches
-      the pattern when one is given, is within bounds
-    type: object
-    required: [facet]
-    additionalProperties: false
-    properties:
-      facet:
-        type: string
-        enum: [behavior, constraint, failure-mode, quality]
-      statementPattern:
-        description: Regular expression tested against the requirement's statement
-        type: string
-      min:
-        type: integer
-        minimum: 0
-      max:
-        type: integer
-        minimum: 0
   transitionSubject:
     description: >-
       The number of requirements whose transition names the entity as its subject is

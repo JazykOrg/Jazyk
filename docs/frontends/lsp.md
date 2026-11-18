@@ -62,8 +62,7 @@ the CLI and ACP chat.
   [shared fields](../compiler/model.md#shared-fields)). Quotes survive unrelated edits, so
   anchors stay put while typing. Findings of the
   [checks](../compiler/compilation.md#checks) publish the same way when their subject
-  carries a quote: a `quality-unmeasured` warning sits on the sentence that states the
-  quality, an `unplaced-behavior` warning on the behavior statement.
+  carries a quote: a `contradiction` diagnostic sits on the sentence that supports its subject.
 - Missing document links are checked against the current editor text and project
   files, even before compilation. The shared `broken-link` check highlights each
   link with UTF-16 ranges and names the missing target. Saved targets and file
@@ -147,7 +146,7 @@ the CLI and ACP chat.
   under the out directory.
 - Hover inside a requirement's located quote: the requirement card, three parts, each part
   linked. The hover range is the located quote, so the whole statement highlights.
-  - The requirement: the id, the `statement`, its facets, its edges and transition when
+  - The requirement: the id, the `statement`, its edges and transition when
     it has them, its [status word](../consumers/gen.md#status-words), and a link to the
     requirement's heading in its entity's requirements document at
     `<out>/derived/docsgen/<slug>.md`. When a flow view lists the requirement as a member, the

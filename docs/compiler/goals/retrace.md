@@ -137,7 +137,7 @@ Computed by the harness and rendered under the goal block:
   [pairs](../reconciler.md#pairs)), so a statement re-extracted under a new id is found
   without a search.
 - For a view: the member order with the dead member's position marked, and the
-  `failure-mode` member right after it, whose branch depended on the dead step.
+  member with a guarded transition right after it, whose branch depended on the dead step.
 - For an instance: the type it instantiated, and whether another requirement still
   states the instantiation.
 - `load <target>`, `skill <name>` by the target's kind, and the tool per disposition:
@@ -194,7 +194,7 @@ E.g.:
   Change: member req:orders-6 deleted in g409 (reason: duplicate), position 3 of 5.
   Gate: nothing on the view points at a dead node.
   Hints: candidate req:orders-11 "Held orders expire after 30 days" (same section,
-  tokens hold, expire); req:orders-7 (failure-mode) followed the dead step;
+  tokens hold, expire); req:orders-7 (guarded transition) followed the dead step;
   load view:usecase/holds; skill flow-views
 
 ## Loaded (5.6k of 24k chars)

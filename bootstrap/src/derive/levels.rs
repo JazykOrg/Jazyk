@@ -364,8 +364,8 @@ impl Levels {
 
         #[cfg(test)]
         let flow_views = {
-            // The flow rule instances of every held level: the behavior and failure-mode
-            // requirements whose entities lift to at least one member, clustered by
+            // Fixture interaction specifications for every held level: requirements
+            // with edges or transitions reaching a member, clustered by
             // document (the author's own cut of the subject into flows; the actors are
             // read off the members at render time, never baked into the key).
             // Mirrors docs/compiler/model/view.md#membership.
@@ -373,10 +373,10 @@ impl Levels {
                 vec![BTreeMap::new(); levels.len()];
             for rid in &ix.document_order {
                 let r = &store.graph.requirements[rid];
-                let flows = r
-                    .facets
-                    .iter()
-                    .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
+                let flows = r.transition.is_some()
+                    || r.edges
+                        .iter()
+                        .any(|e| e.rel_type.as_deref().unwrap_or("dependency") == "dependency");
                 let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
                     continue;
                 };
@@ -569,10 +569,10 @@ fn flow_view_rules_scan(
     let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rid in &ix.document_order {
         let r = &store.graph.requirements[rid];
-        let flows = r
-            .facets
-            .iter()
-            .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
+        let flows = r.transition.is_some()
+            || r.edges
+                .iter()
+                .any(|e| e.rel_type.as_deref().unwrap_or("dependency") == "dependency");
         let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
             continue;
         };

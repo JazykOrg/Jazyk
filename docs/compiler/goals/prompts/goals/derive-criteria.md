@@ -13,7 +13,7 @@ Do not add a paragraph restating an existing title, appearance, content, or beha
 
 The quote need not use the criterion's wording, but must support every value and obligation; where the documents state nothing, write derived criteria with provenance derived from the requirement and reasoning, each a sentence the documents should gain.
 
-Cover the boundary of every bound, the negative case of every conditional, the measure of every quality facet; never restate the requirement as its own criterion, and never invent a value the documents do not give: that is an invented-choice prompt naming the requirement, and the requirement's verdict is open-question when no criterion can be written without the value, or complete when the criteria that need no value still cover the shape (file the prompt either way).
+Cover the boundary of every bound, the negative case of every conditional, every concrete measured bound; never restate the requirement as its own criterion, and never invent a value the documents do not give: that is an invented-choice prompt naming the requirement, and the requirement's verdict is open-question when no criterion can be written without the value, or complete when the criteria that need no value still cover the shape (file the prompt either way).
 
 <!-- Context: the gate checks criterion coverage and stale criterion handling. Merely mentioning an old criterion does not refresh its evidence against revised facts. -->
 ## Completion gate

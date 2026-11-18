@@ -239,134 +239,9 @@ fn justified(store: &Store, subject: &str, p: &Provenance) -> Result<(), String>
 // The flow view a requirement fits best: its own cluster's view, else the flow view
 // sharing the most entities (same document first, then the first member's order,
 // then id). Returns the ranking, best first. Mirrors docs/compiler/goals/curate-view.md.
-fn flow_placement_ranking(store: &Store, ix: &Indices, rid: &str) -> Vec<String> {
-    let Some(r) = store.graph.requirements.get(rid) else {
-        return Vec::new();
-    };
-    let ents: BTreeSet<String> = r
-        .entities
-        .iter()
-        .map(|e| store.resolve_id(e).to_string())
-        .collect();
-    let doc = r.sources.first().map(|s| s.doc.clone()).unwrap_or_default();
-    let position = |id: &str| {
-        ix.requirement_position
-            .get(id)
-            .copied()
-            .unwrap_or(usize::MAX)
-    };
-    let kind_rank = |k: &str| goals::FLOW_KINDS.iter().position(|x| *x == k).unwrap_or(9);
-    let mut ranked: Vec<(std::cmp::Reverse<usize>, bool, usize, usize, String)> = store
-        .graph
-        .views
-        .iter()
-        .filter(|(_, v)| goals::is_flow_kind(&v.kind))
-        .map(|(vid, v)| {
-            let members: Vec<&Requirement> = v
-                .members
-                .iter()
-                .filter_map(|m| store.graph.requirements.get(m))
-                .collect();
-            let shared = members
-                .iter()
-                .flat_map(|m| m.entities.iter().map(|e| store.resolve_id(e)))
-                .collect::<BTreeSet<_>>()
-                .iter()
-                .filter(|e| ents.contains(**e))
-                .count();
-            let same_doc = members
-                .iter()
-                .any(|m| m.sources.first().is_some_and(|s| s.doc == doc));
-            let first = v.members.first().map(|m| position(m)).unwrap_or(usize::MAX);
-            (
-                std::cmp::Reverse(shared),
-                !same_doc,
-                kind_rank(&v.kind),
-                first,
-                vid.clone(),
-            )
-        })
-        .collect();
-    ranked.sort();
-    let ids: Vec<String> = ranked
-        .into_iter()
-        .filter(|(shared, _, _, _, _)| shared.0 > 0)
-        .map(|(_, _, _, _, id)| id)
-        .collect();
-    ids
-}
 
 // The flow placement findings, each with the view the record lands on and the
 // alternatives. Runs only where flow views exist.
-pub(super) fn flow_placement(
-    store: &Store,
-    ix: &Indices,
-) -> Vec<(Finding, Option<String>, Vec<String>, String)> {
-    if !store
-        .graph
-        .views
-        .values()
-        .any(|v| goals::is_flow_kind(&v.kind))
-    {
-        return Vec::new();
-    }
-    let placed: BTreeSet<&str> = store
-        .graph
-        .views
-        .values()
-        .filter(|v| goals::is_flow_kind(&v.kind))
-        .flat_map(|v| v.members.iter().map(String::as_str))
-        .collect();
-    let excluded: BTreeSet<&str> = store
-        .graph
-        .views
-        .values()
-        .filter(|v| goals::is_flow_kind(&v.kind))
-        .flat_map(|v| v.excluded.iter())
-        .filter(|x| !x.note.trim().is_empty())
-        .map(|x| x.id.as_str())
-        .collect();
-    let mut out = Vec::new();
-    for (rid, r) in &store.graph.requirements {
-        let facet = r
-            .facets
-            .iter()
-            .map(|f| f.facet.as_str())
-            .find(|f| *f == "behavior" || *f == "failure-mode");
-        let Some(facet) = facet else { continue };
-        if placed.contains(rid.as_str()) || excluded.contains(rid.as_str()) {
-            continue;
-        }
-        let ranking = flow_placement_ranking(store, ix, rid);
-        if ranking.is_empty() {
-            continue;
-        }
-        let (rule, message) = if facet == "behavior" {
-            (
-                "unplaced-behavior",
-                format!(
-                    "{} is a behavior requirement in no flow view and excluded from none",
-                    rid
-                ),
-            )
-        } else {
-            (
-                "unrepresented-failure-mode",
-                format!(
-                    "{} is a failure-mode requirement no flow branch represents",
-                    rid
-                ),
-            )
-        };
-        out.push((
-            finding(rule, rid, "info", message),
-            ranking.first().cloned(),
-            ranking.iter().skip(1).take(3).cloned().collect(),
-            facet.to_string(),
-        ));
-    }
-    out
-}
 
 // The deterministic checks over the whole graph. Mirrors docs/compiler/compilation.md#checks.
 pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
@@ -929,9 +804,7 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
         }
     }
     // Flow placement, wherever flow views exist.
-    for (finding, _, _, _) in flow_placement(store, &ix) {
-        f.push(finding);
-    }
+
     // Containment consistency: a composition never crosses the tree sideways.
     for rel in store.graph.relationships.values() {
         for c in &rel.contributions {
@@ -1053,20 +926,6 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     realizers.join(", ")
                 ),
             )),
-        }
-    }
-    // A quality facet without a measure.
-    for (rid, r) in &store.graph.requirements {
-        if r.facets
-            .iter()
-            .any(|x| x.facet == "quality" && x.measure.as_deref().unwrap_or("").trim().is_empty())
-        {
-            f.push(finding(
-                "quality-unmeasured",
-                rid,
-                "warning",
-                format!("{} states a quality without a measurable bound", rid),
-            ));
         }
     }
     // Decompiled documents nobody has touched since the machine wrote them.

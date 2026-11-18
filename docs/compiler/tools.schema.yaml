@@ -765,10 +765,6 @@ definitions:
           $ref: 'graph.json#/definitions/requirementEdge'
       transition:
         $ref: 'graph.json#/definitions/transition'
-      facets:
-        type: array
-        items:
-          $ref: 'graph.json#/definitions/facet'
     additionalProperties: false
   updateRequirement:
     description: >-
@@ -796,10 +792,6 @@ definitions:
         oneOf:
           - $ref: 'graph.json#/definitions/transition'
           - type: 'null'
-      facets:
-        type: array
-        items:
-          $ref: 'graph.json#/definitions/facet'
       section:
         type: string
         description: Section reference the revised statement comes from
@@ -1777,7 +1769,7 @@ definitions:
       field:
         type: string
         description: >-
-          statement, edges, transition, facets, definition, stereotype, parent,
+          statement, edges, transition, definition, stereotype, parent,
           attributes.<name>.type, attributes.<name>.value, or members
       value:
         description: The new value, shaped as the field is

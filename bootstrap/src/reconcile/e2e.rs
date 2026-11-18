@@ -217,24 +217,6 @@ fn statement_of(sentence: &str) -> String {
     links.replace_all(sentence, "$1").to_string()
 }
 
-fn facet_of(sentence: &str) -> (&'static str, &'static str) {
-    let l = sentence.to_lowercase();
-    if l.contains("should not") || l.contains("must not") {
-        (
-            "failure-mode",
-            "the sentence says what must not happen when something goes wrong",
-        )
-    } else if l.contains(" shall ")
-        || ["browses", "places", "lists", "submits", "display", "send"]
-            .iter()
-            .any(|v| l.contains(v))
-    {
-        ("behavior", "the sentence says what the subject does")
-    } else {
-        ("constraint", "the sentence states a fact the subject holds")
-    }
-}
-
 impl ScriptedRunner {
     pub(crate) fn new(project: &Project) -> ScriptedRunner {
         Self::with_terms(project, &F1_TERMS, false)
@@ -475,13 +457,12 @@ impl ScriptedRunner {
         for sentence in fresh {
             let ents = self.entity_ids(server, batch, &full_ref, &sentence, ids);
             let entities: Vec<&String> = ents.iter().map(|e| &e.0).collect();
-            let (facet, why) = facet_of(&sentence);
             let mut args = json!({
                 "statement": statement_of(&sentence),
                 "section": full_ref,
                 "quote": sentence,
                 "entities": entities,
-                "facets": [{"facet": facet, "reasoning": why}],
+
             });
             if self.extract_edges && ents.len() >= 2 {
                 args["edges"] = json!([Self::edge_among(&ents)]);
@@ -513,7 +494,7 @@ impl ScriptedRunner {
                     "statement": d.statement,
                     "entities": from,
                     "provenance": {"derived": {"from": from, "reasoning": "the section implies it without stating it; the proposal offers the sentence"}},
-                    "facets": [{"facet": "constraint", "reasoning": "the sentence states a fact the subject holds"}],
+
                 }),
             );
         }
@@ -1143,12 +1124,7 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
             src.doc,
             src.section
         );
-        assert!(
-            !r.entities.is_empty() && !r.facets.is_empty(),
-            "{}: {:?}",
-            id,
-            r
-        );
+        assert!(!r.entities.is_empty(), "{}: {:?}", id, r);
     }
     for (id, e) in &store.graph.entities {
         assert!(

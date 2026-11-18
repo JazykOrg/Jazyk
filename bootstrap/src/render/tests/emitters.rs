@@ -48,11 +48,7 @@ fn a_level_sequence_view_lifts_endpoints_to_the_level_members() {
             rel_type: Some("dependency".into()),
             cardinality: None,
         }],
-        facets: vec![Facet {
-            facet: "behavior".into(),
-            reasoning: String::new(),
-            measure: None,
-        }],
+
         sources: vec![SourceRef {
             doc: "checkout.md".into(),
             section: "/checkout".into(),
@@ -769,6 +765,82 @@ fn authored_presentation_and_nested_sequence_fragments_render_deterministically(
     );
     assert!(
         puml.find("Message 1").unwrap() < puml.find("Message 2").unwrap(),
+        "{puml}"
+    );
+    assert!(in_process_svg(&puml).unwrap().contains("<svg"));
+}
+
+#[test]
+fn sequence_alternatives_follow_transition_conditions_without_classification() {
+    let mut s = Store::default();
+    for id in ["ent:a", "ent:b"] {
+        s.graph.entities.insert(
+            id.into(),
+            Entity {
+                name: id.into(),
+                ..Default::default()
+            },
+        );
+    }
+    for (id, from, to, trigger, guard) in [
+        (
+            "req:approved",
+            "ready",
+            "sent",
+            "approved",
+            Some("amount is positive"),
+        ),
+        (
+            "req:declined",
+            "ready",
+            "rejected",
+            "declined",
+            Some("card is expired"),
+        ),
+        ("req:acknowledged", "sent", "complete", "acknowledged", None),
+    ] {
+        s.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: trigger.into(),
+                entities: vec!["ent:a".into(), "ent:b".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:a".into(),
+                    b: "ent:b".into(),
+                    rel_type: Some("dependency".into()),
+                    cardinality: None,
+                }],
+                transition: Some(Transition {
+                    subject: "ent:a".into(),
+                    from: from.into(),
+                    to: to.into(),
+                    trigger: Some(trigger.into()),
+                    guard: guard.map(String::from),
+                }),
+                ..Default::default()
+            },
+        );
+    }
+    let view = View {
+        kind: "sequence".into(),
+        title: "Decision".into(),
+        members: vec![
+            "req:approved".into(),
+            "req:declined".into(),
+            "req:acknowledged".into(),
+        ],
+        ..Default::default()
+    };
+    let puml = crate::render::emit(&s, "view:sequence/decision", &view);
+    assert!(puml.contains("alt approved [amount is positive]"), "{puml}");
+    assert!(puml.contains("else declined [card is expired]"), "{puml}");
+    assert_eq!(
+        puml.matches("alt ").count(),
+        1,
+        "An ordinary trigger is not a branch"
+    );
+    assert!(
+        puml.find("end\n").unwrap() < puml.find("acknowledged (req:acknowledged)").unwrap(),
         "{puml}"
     );
     assert!(in_process_svg(&puml).unwrap().contains("<svg"));

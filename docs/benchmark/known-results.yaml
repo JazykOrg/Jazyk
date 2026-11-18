@@ -1,3 +1,5 @@
+# Historical scores retain their original case-set hashes. New classification-free
+# cases need an explicitly approved benchmark run before receiving current scores.
 # Known benchmark results, embedded into the binary at compile time.
 # Curated by hand from machine-wide history entries worth publishing.
 # Shape per entry: {model, baseUrl, gradedAt, caseSetHash, codecs: {native|text|agent: report}}

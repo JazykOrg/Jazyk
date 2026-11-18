@@ -16,81 +16,35 @@ impl GoalKind for CurateView {
     }
     fn derive_goals(&self, store: &Store, _gen: &GenSettings) -> Vec<Goal> {
         let mut by_view: BTreeMap<String, Vec<&ChangeRecord>> = BTreeMap::new();
-        for rec in records_of(store, &[store::CHANGE_QUERY_MATCH, CHANGE_FLOW_UNPLACED]) {
+        for rec in records_of(store, &[store::CHANGE_QUERY_MATCH]) {
             if store.graph.views.contains_key(&rec.subject) {
                 by_view.entry(rec.subject.clone()).or_default().push(rec);
             }
         }
-        let mut out = Vec::new();
-        for (vid, recs) in by_view {
-            let v = &store.graph.views[&vid];
-            let mut matched: Vec<Value> = Vec::new();
-            let mut hints = vec![format!("load {}", vid)];
-            for r in &recs {
-                if r.kind == store::CHANGE_QUERY_MATCH {
-                    for id in str_list(&r.detail["added"]) {
-                        matched.push(json!({"id": id, "why": "query-match"}));
+        by_view
+            .into_iter()
+            .map(|(vid, recs)| {
+                let mut matched = Vec::new();
+                let mut hints = vec![format!("load {}", vid)];
+                for rec in &recs {
+                    for id in str_list(&rec.detail["added"]) {
+                        matched.push(json!({"id":id,"why":"query-match"}));
                         hints.push(format!("load {} (query match)", id));
                     }
-                } else {
-                    let rid = r.detail["requirement"].as_str().unwrap_or("").to_string();
-                    let facet = r.detail["facet"].as_str().unwrap_or("").to_string();
-                    let rec_shared = str_list(&r.detail["shared"]);
-                    let why = if facet == "failure-mode" {
-                        "unrepresented failure mode"
-                    } else {
-                        "unplaced behavior"
-                    };
-                    matched.push(json!({"id": rid, "why": why, "facet": facet, "diagnostic": r.detail["diagnostic"]}));
-                    hints.push(format!("load {} ({})", rid, why));
-                    for alt in str_list(&r.detail["alternatives"]).iter().take(3) {
-                        let shared = store
-                            .graph
-                            .views
-                            .get(alt)
-                            .map(|av| {
-                                let ents: BTreeSet<String> = av
-                                    .members
-                                    .iter()
-                                    .filter_map(|m| store.graph.requirements.get(m))
-                                    .flat_map(|q| q.entities.iter().cloned())
-                                    .collect();
-                                rec_shared.iter().filter(|e| ents.contains(*e)).count()
-                            })
-                            .unwrap_or(0);
-                        hints.push(format!("alternative {} (shares {} entities)", alt, shared));
-                    }
-                    if facet == "failure-mode" {
-                        if let Some(req) = store.graph.requirements.get(&rid) {
-                            if let Some(t) = req.transition.as_ref().and_then(|t| t.trigger.clone())
-                            {
-                                let after = v
-                                    .members
-                                    .iter()
-                                    .find(|m| {
-                                        store.graph.requirements.get(*m).is_some_and(|q| {
-                                            q.transition.as_ref().and_then(|x| x.trigger.as_ref())
-                                                == Some(&t)
-                                        })
-                                    })
-                                    .cloned();
-                                if let Some(a) = after {
-                                    hints.push(format!("after {} ({})", a, t));
-                                }
-                            }
-                        }
-                    }
                 }
-            }
-            let cause = earliest_cause(&recs);
-            let change = json!({"matched": matched});
-            for s in skills_for("curate-view", store, &vid) {
-                hints.push(format!("skill {}", s));
-            }
-            hints.push("update_view add_members or exclude".into());
-            out.push(build_goal(self, &vid, false, change, cause, hints));
-        }
-        out
+                for skill in skills_for("curate-view", store, &vid) {
+                    hints.push(format!("skill {}", skill));
+                }
+                build_goal(
+                    self,
+                    &vid,
+                    false,
+                    json!({"matched":matched}),
+                    earliest_cause(&recs),
+                    hints,
+                )
+            })
+            .collect()
     }
     fn ready(&self, goal: &Goal, board: &Board) -> Ready {
         gc_ready(goal, board)

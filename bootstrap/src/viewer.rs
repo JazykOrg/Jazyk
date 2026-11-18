@@ -1308,21 +1308,7 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
                 edges.join(", ")
             );
         }
-        if !r.facets.is_empty() {
-            let facets: Vec<String> = r
-                .facets
-                .iter()
-                .map(|f| match &f.measure {
-                    Some(m) => format!("{} ({})", f.facet, m),
-                    None => f.facet.clone(),
-                })
-                .collect();
-            let _ = write!(
-                body,
-                "<p><span class=\"k\">facets</span> {}</p>",
-                esc(&facets.join(", "))
-            );
-        }
+
         if let Some(t) = &r.transition {
             let mut tl = format!("{}: {} → {}", t.subject, t.from, t.to);
             if let Some(tr) = &t.trigger {
@@ -1630,11 +1616,7 @@ mod tests {
                     trigger: Some("an item lands".into()),
                     guard: None,
                 }),
-                facets: vec![Facet {
-                    facet: "quality".into(),
-                    reasoning: "bounded".into(),
-                    measure: Some("2 seconds".into()),
-                }],
+
                 sources: vec![SourceRef {
                     doc: "shop.md".into(),
                     section: "/shop".into(),
@@ -1697,8 +1679,10 @@ mod tests {
         assert!(html.contains("&quot;items&quot; &amp; things"));
         assert!(html.contains("href=\"#n-req:shop-1\""));
         assert!(html.contains("The Cart shall hold items."));
-        // Facets and transition as stated.
-        assert!(html.contains("quality (2 seconds)"), "{}", html);
+        assert!(
+            !html.contains("facets"),
+            "Removed requirement classifications are absent"
+        );
         assert!(
             html.contains("ent:cart: empty → filled on an item lands"),
             "{}",
@@ -1749,11 +1733,7 @@ mod tests {
         Requirement {
             statement: "The User asks the API.".into(),
             entities: entities.iter().map(|e| e.to_string()).collect(),
-            facets: vec![Facet {
-                facet: "behavior".into(),
-                reasoning: "a flow".into(),
-                measure: None,
-            }],
+
             sources: vec![SourceRef {
                 doc: "shop.md".into(),
                 section: "/shop".into(),

@@ -1054,16 +1054,7 @@ impl LoadedSet {
                                     .unwrap_or_default()
                             ));
                         }
-                        if !r.facets.is_empty() {
-                            s.push_str(&format!(
-                                "   facets: {}",
-                                r.facets
-                                    .iter()
-                                    .map(|f| f.facet.clone())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            ));
-                        }
+
                         s
                     })
                 })
@@ -1165,22 +1156,7 @@ impl LoadedSet {
                 }
             }
         }
-        if !r.facets.is_empty() {
-            b.push(&format!(
-                "facets: {}",
-                r.facets
-                    .iter()
-                    .map(|f| {
-                        let mut s = f.facet.clone();
-                        if let Some(m) = &f.measure {
-                            s.push_str(&format!(" ({})", m));
-                        }
-                        s
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
-        }
+
         if !r.edges.is_empty() {
             b.push(&format!(
                 "edges: {}",

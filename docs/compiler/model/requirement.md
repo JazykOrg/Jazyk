@@ -28,8 +28,6 @@ prescribing a syntax. See [statements](../concepts/statements.md).
   [edges](#edges).
 - `transition`: `{subject, from, to, trigger?, guard?}`, present when the statement
   describes a state change. See [transition](#transition).
-- `facets`: `[{facet, reasoning, measure?}]`, the judged facets of the statement. See
-  [facets](#facets).
 - `sources`: a non-empty list of `{doc, section, quote}` locations for an obligation
   extracted from prose. Each quote is verbatim, located by whitespace-insensitive
   string search, and may span consecutive sentences within its section.
@@ -46,7 +44,6 @@ req:shop-3:
   statement: When checkout succeeds, the order service reserves stock through the stock API.
   entities: [ent:order-service, ent:stock-api]
   edges: [{a: ent:order-service, b: ent:stock-api, type: dependency}]
-  facets: [{facet: behavior, reasoning: A step the order service performs on an event.}]
   sources:
   - {doc: docs/shop.md, section: /shop/checkout,
      quote: "When checkout succeeds, the order service reserves stock through the stock API."}
@@ -102,35 +99,14 @@ transition: {subject: ent:order, from: placed, to: paid, trigger: payment succee
 
 Transitions are the source of the derived [state machine](./state-machine.md): the store
 recomputes the subject's machine on every commit, and the machine checks run on it. A
-transition statement usually also carries a `behavior` facet, which places it in a flow.
+transition supplies lifecycle and interaction evidence for authored diagrams.
 
-## Facets
+## Observable criteria
 
-`facets: [{facet, reasoning, measure?}]`. A facet is a judgment recorded at extraction,
-with its reasoning. Nothing derives a facet from the wording; the model states it. Every
-requirement carries at least one, and may carry several: the four kinds are exhaustive
-for an obligation, and a facetless statement is invisible to everything downstream. A
-create without one is refused (`facets-missing`), naming the four; `constraint` is the
-honest answer for a plain stated fact. A novel's plot document once left 40 of its 55
-statements facetless, so its story joined no flow, gave no branch, and shaped no test,
-with nothing to say so. A [dual write](../../frontends/acp.md#dual-write-tools) records the author's own
-sentence as a `constraint`, the honest facet of a stated fact, which a review may
-sharpen.
-
-- `behavior`: the subject does something, in response to an event or as a step. Behavior
-  requirements cluster into flow views. A behavior requirement placed in no flow view and
-  excluded from none draws `unplaced-behavior`.
-- `constraint`: an invariant the subject holds.
-- `failure-mode`: what happens when something goes wrong. A failure-mode requirement gives
-  a flow its branches. One represented in no branch draws `unrepresented-failure-mode`.
-- `quality`: a quality attribute (performance, capacity, availability). `measure` is
-  stated only on `quality`: the measurable bound, e.g. `2 seconds`. A `quality` facet
-  without `measure` draws `quality-unmeasured`. A time measure on a subject that has a
-  state machine is what a curated [`timing` view](./view.md#kinds) reads. Nothing
-  derives a timing view; there is no default one.
-
-Consumers read facets: authored flow diagrams, the flow placement checks, and test shaping
-in [generation](../../consumers/gen.md).
+A requirement needs no classification. Its statement carries the obligation.
+Concrete bounds, observable conditions, outcomes and test shape belong in
+[criteria](./criterion.md). Edges and transitions supply graph structure and
+interaction evidence without classifying the statement.
 
 ## Identity
 
@@ -153,7 +129,7 @@ in [generation](../../consumers/gen.md).
 - `remove_requirement_source` removes exactly the named location. Reconciliation of
   section A removes only A's obsolete anchors. Removing the last source deletes the
   requirement and its criteria. Derived and decreed facts have no quote sources.
-- `merge_requirements` unions sources, entities, edges, and facets, reparents criteria,
+- `merge_requirements` unions sources, entities and edges, reparents criteria,
   and redirects the loser to the survivor. Conflicting transitions require an explicit
   reconciliation before merging. Ledger rows, views, diagnostics, derived references,
   and pair decisions follow redirects. Changed obligation hashes retain no false pass.

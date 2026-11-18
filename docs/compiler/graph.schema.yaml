@@ -88,14 +88,6 @@ definitions:
     description: "Multiplicity on the b side of an edge: `*`, a count (1, 4), or a range (0..1, 1..*, 2..3)"
     type: string
     pattern: '^(\*|[0-9]+|[0-9]+\.\.([0-9]+|\*))$'
-  facetName:
-    description: The judged facet of a requirement
-    type: string
-    enum:
-      - behavior
-      - constraint
-      - failure-mode
-      - quality
   viewKind:
     description: A renderable view kind from the catalog
     type: string
@@ -291,21 +283,6 @@ definitions:
         type: string
         description: The condition under which it fires
     additionalProperties: false
-  facet:
-    description: One judged facet of a requirement, recorded with reasoning
-    type: object
-    required:
-      - facet
-      - reasoning
-    properties:
-      facet:
-        $ref: '#/definitions/facetName'
-      reasoning:
-        type: string
-      measure:
-        type: string
-        description: The measurable bound. Stated only on a quality facet
-    additionalProperties: false
   entity:
     description: One node file under graph/entities/
     type: object
@@ -417,10 +394,6 @@ definitions:
           $ref: '#/definitions/requirementEdge'
       transition:
         $ref: '#/definitions/transition'
-      facets:
-        type: array
-        items:
-          $ref: '#/definitions/facet'
       sources:
         description: All supporting source locations of one obligation
         type: array
@@ -854,7 +827,6 @@ definitions:
                           - entities
                           - edges
                           - transition
-                          - facets
                       value:
                         description: The field's new content, in the shape update_requirement takes
                     additionalProperties: false
@@ -960,7 +932,6 @@ definitions:
       - edges-missing
       - lookalike
       - query-match
-      - flow-unplaced
       - reparent-flip
   changeRecord:
     description: >-

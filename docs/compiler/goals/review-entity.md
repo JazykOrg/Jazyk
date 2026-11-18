@@ -248,7 +248,7 @@ The initially loaded set for the batch holds:
 - The entity in full ([policy](../context.md#policy)): `definition`, `aliases`,
   `scope`, `stereotype`, `parent` with its chain, `attributes`, mentions each with one
   parent chain, and every requirement on it across all documents with `statement`,
-  quote, section, entities, edges, transition, facets. One hop of related entities as
+  quote, section, entities, edges and transition. One hop of related entities as
   stubs with edge counts. An over-budget list becomes a handle
   (`h:ent:order:requirements`, `h:ent:order:related`).
 - The lookalike candidates as stubs.

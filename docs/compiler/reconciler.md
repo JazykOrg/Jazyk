@@ -201,7 +201,7 @@ The kinds, what each is computed from, and what derives from it:
 | `threshold-crossed` | the node over a limit | the limit counts | `split-view`, `abstract-entity` |
 | `edges-missing` | requirement | several entities, no `edges`, no `structure/` decision on the statement | `declare-edges` |
 | `lookalike` | entity pair | the name index over the threshold, no `lookalikes/` decision at or above the score | `dedupe-candidates` |
-| `query-match`, `flow-unplaced` | view | the view's query against its `curation/` decision, the flow placement check | `curate-view` |
+| `query-match` | view | the view's query against its `curation/` decision | `curate-view` |
 
 No goal derives on a target an open `goal-failed` diagnostic names
 ([parked and failed](#parked-and-failed)): the derivation keeps the finding and renders
@@ -463,7 +463,7 @@ tools.
 | [`answer`](./goals/answer.md) | compile | 4 | B | diagnostic | `prompt-unanswered` |
 | [`declare-edges`](./goals/declare-edges.md) | gc | | O | requirement | `edges-missing` |
 | [`dedupe-candidates`](./goals/dedupe-candidates.md) | gc | | O | entity pair | `lookalike` |
-| [`curate-view`](./goals/curate-view.md) | gc | | O | view | `query-match`, `flow-unplaced` |
+| [`curate-view`](./goals/curate-view.md) | gc | | O | view | `query-match` |
 | [`split-view`](./goals/split-view.md) | gc | | O→M | view | `threshold-crossed` (view limits) |
 | [`abstract-entity`](./goals/abstract-entity.md) | gc | | O→M | entity | `threshold-crossed` (entity limits, state limit; the [fan-out](#fan-out) form on a node or on `scope:<scope>`) |
 

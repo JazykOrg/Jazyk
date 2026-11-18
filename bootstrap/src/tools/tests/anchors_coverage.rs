@@ -7,7 +7,7 @@ fn non_normative_contradicts_an_extracted_statement() {
     t.dispatch(
         "upsert_requirement",
         &json!({
-            "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
             "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
             "entities": ["ent:customer"],
             "section": "/shop/cart",
@@ -65,7 +65,7 @@ fn reanchor_rejection_names_the_existing_anchor() {
         .dispatch(
             "upsert_requirement",
             &json!({
-                "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
                 "statement": "The Shopping Cart shall hold items a Customer intends to buy.",
                 "entities": ["ent:customer"],
                 "section": "/shop/cart",
@@ -186,7 +186,7 @@ fn stale_anchor_satisfied_by_same_statement_reupsert() {
     let v = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            &json!({ "statement": "The Shopping Cart shall hold items a Customer intends to buy.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
         )
         .unwrap();
     assert_eq!(v["id"], "req:shop-1");
@@ -214,7 +214,7 @@ fn stale_anchor_reworded_statement_resolves_to_the_anchor() {
     let v = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
+            &json!({ "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "The Shopping Cart keeps items a Customer intends to buy."}),
         )
         .unwrap();
     assert_eq!(v["id"], "req:shop-1");

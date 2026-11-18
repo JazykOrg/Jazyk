@@ -917,9 +917,7 @@ impl Store {
                         if requirement.transition.is_some() {
                             r.transition = requirement.transition.clone();
                         }
-                        if !requirement.facets.is_empty() {
-                            r.facets = requirement.facets.clone();
-                        }
+
                         // The matched statement and quote refresh in place (same
                         // statement modulo punctuation); the id never churns. A refresh
                         // that changes something is journaled as the update it is.
@@ -964,7 +962,7 @@ impl Store {
                                 entities: None,
                                 edges: None,
                                 transition: None,
-                                facets: None,
+
                                 source: refreshed_source,
                                 provenance: None,
                             });
@@ -1011,7 +1009,7 @@ impl Store {
                     entities,
                     edges,
                     transition,
-                    facets,
+
                     source,
                     provenance,
                 } => {
@@ -1111,9 +1109,7 @@ impl Store {
                     if let Some(t) = &transition {
                         r.transition = Some(t.clone());
                     }
-                    if let Some(f) = &facets {
-                        r.facets = f.clone();
-                    }
+
                     if let Some(s) = &source {
                         // Same rule as the create fold: a re-anchored quote that
                         // changed in substance marks the statement revised. A quote
@@ -1147,14 +1143,12 @@ impl Store {
                     r.updated = Some(build.clone());
                     let after = r.entities.clone();
                     // What the update dirtied: the fact itself (statement, transition,
-                    // facets, provenance) reopens every entity's review; a change to
                     // the entity list alone reaches only the entities added or removed;
                     // an edge change alone reaches the two ends of a new composition,
                     // whose part may need its parent set, and nothing else.
                     // Mirrors docs/compiler/goals/review-entity.md#created-when.
                     let fact_changed = r.statement != statement_before
                         || transition.is_some()
-                        || facets.is_some()
                         || source.is_some()
                         || provenance.is_some();
                     if fact_changed {
@@ -1183,7 +1177,7 @@ impl Store {
                         entities: resolved_entities,
                         edges,
                         transition,
-                        facets,
+
                         source,
                         provenance,
                     });
@@ -1319,11 +1313,7 @@ impl Store {
                             k.edges.push(edge);
                         }
                     }
-                    for facet in a.facets {
-                        if !k.facets.contains(&facet) {
-                            k.facets.push(facet);
-                        }
-                    }
+
                     if k.transition.is_none() {
                         k.transition = a.transition;
                     }

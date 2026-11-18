@@ -238,7 +238,7 @@ statement: When reading a line of input, the sort utility strips leading and tra
 
 - A branch inside the steps is its own obligation: "If stripped line is empty string,
   continue to next line" is a requirement of its own, a failure mode when the branch
-  handles bad input. See [facets](../model/requirement.md#facets).
+  handles bad input. See [criteria](../model/criterion.md#fields).
 - A variable local to the steps (a loop counter, an accumulator array) is requirement
   detail, never an entity. Name it in the statement when the behavior needs it.
 - A fenced block is an illustration only when it shows sample data, an outside system's
@@ -301,15 +301,14 @@ statement: When payment succeeds, the order becomes paid.
 transition: {subject: ent:order, from: placed, to: paid, trigger: payment succeeds}
 ```
 
-- Measured. A quality bound stays in the statement as stated, and the `quality` facet
-  records it as `measure` when the bound is a number, duration, count, or rate; a bare
-  adverb (promptly, quickly, soon) is the unmeasured case and `measure` stays absent.
+- Measured. A concrete bound stays in the statement as stated. Its observable
+  conditions, boundary values and measurement belong in criteria. A bare adverb
+  supplies no invented numeric value.
   E.g.:
 
 ```
 quote: Checkout is confirmed in under two seconds.
 statement: The shop confirms checkout within 2 seconds.
-facets: [{facet: quality, reasoning: a timing bound on checkout, measure: 2 seconds}]
 ```
 
 - In the documents' terms. The statement uses the vocabulary of the medium it reads
@@ -342,8 +341,6 @@ Statements express obligations. Everything else is a separate node or a derivati
   [derived data](../graph.md#derived-data).
 - State machines derive from `transition`, never from the statement text. See
   [derivation](../model/state-machine.md#derivation).
-- Facets are judgments recorded beside the statement, with reasoning, not read from
-  its shape. See [facets](../model/requirement.md#facets).
 - Which flow or diagram a requirement appears in is view membership: diagrams
   are explicitly authored, and `curate-view` reviews later membership matches. A statement carries no view.
   See [membership](../model/view.md#membership) and

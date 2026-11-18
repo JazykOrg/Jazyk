@@ -116,7 +116,7 @@ impl Store {
                 entities: None,
                 edges: None,
                 transition: None,
-                facets: None,
+
                 source: Some(SourceRef {
                     doc: edit.doc.clone(),
                     section: edit.section.clone(),

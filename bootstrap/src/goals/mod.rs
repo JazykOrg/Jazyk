@@ -235,7 +235,7 @@ pub fn record_kinds(kind: &str) -> &'static [&'static str] {
         "answer" => &[store::CHANGE_PROMPT_UNANSWERED],
         "declare-edges" => &[store::CHANGE_EDGES_MISSING],
         "dedupe-candidates" => &[CHANGE_LOOKALIKE],
-        "curate-view" => &[store::CHANGE_QUERY_MATCH, CHANGE_FLOW_UNPLACED],
+        "curate-view" => &[store::CHANGE_QUERY_MATCH],
         "split-view" | "abstract-entity" => &[store::CHANGE_THRESHOLD_CROSSED],
         _ => &[],
     }
@@ -243,7 +243,6 @@ pub fn record_kinds(kind: &str) -> &'static [&'static str] {
 
 pub const CHANGE_LEDGER_STALE: &str = "ledger-stale";
 pub const CHANGE_LOOKALIKE: &str = "lookalike";
-pub const CHANGE_FLOW_UNPLACED: &str = "flow-unplaced";
 
 // The skills a batch of this kind activates from the first round. The view and
 // retrace kinds follow the target's kind.

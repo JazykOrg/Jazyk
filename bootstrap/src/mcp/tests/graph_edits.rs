@@ -47,7 +47,7 @@ fn cart(server: &McpServer) {
 }
 
 fn requirement(server: &McpServer) -> String {
-    call(server, "upsert_requirement", json!({"statement":"The Cart shows its items.","entities":["ent:cart"],"section":"docs/reader.md#/reader","quote":"The Cart shows its items.","facets":[{"facet":"behavior","reasoning":"Displays the contents."}]}))["id"].as_str().unwrap().to_string()
+    call(server, "upsert_requirement", json!({"statement":"The Cart shows its items.","entities":["ent:cart"],"section":"docs/reader.md#/reader","quote":"The Cart shows its items."}))["id"].as_str().unwrap().to_string()
 }
 
 #[test]
@@ -164,12 +164,12 @@ fn graph_edits_record_model_judgment_and_explicit_human_decisions_separately() {
     let (dir, project, server) = fixture("chat-graph-provenance");
     cart(&server);
     let rid = requirement(&server);
-    let base = json!({"id":rid,"field":"facets","value":[{"facet":"behavior","reasoning":"Displays the contents."}]});
+    let base = json!({"id":rid,"field":"transition","value":{"subject":"ent:cart","from":"empty","to":"shown","trigger":"items selected"}});
     let generation = crate::store::read_generation(&project.out);
     refusal(server.handle("tools/call", &json!({"name":"edit_fact","arguments":base})));
     assert_eq!(crate::store::read_generation(&project.out), generation);
     let mut derived = base.clone();
-    derived["provenance"] = json!({"derived":{"from":["ent:cart"],"reasoning":"Displaying contents is behavior of the Cart."}});
+    derived["provenance"] = json!({"derived":{"from":["ent:cart"],"reasoning":"The Cart changes state when its items are selected."}});
     let reply = call(&server, "edit_fact", derived.clone());
     assert_eq!(reply["path"], "derived");
     let store = Store::load(&project.out);
@@ -178,17 +178,17 @@ fn graph_edits_record_model_judgment_and_explicit_human_decisions_separately() {
         Some(crate::model::Provenance::Derived { .. })
     ));
     assert!(store.pending_proposals() > 0);
-    derived["decision"] = json!("Treat this as a behavior.");
+    derived["decision"] = json!("Use this state transition.");
     refusal(server.handle(
         "tools/call",
         &json!({"name":"edit_fact","arguments":derived}),
     ));
     let mut human = base;
-    human["decision"] = json!("Treat this as a behavior.");
+    human["decision"] = json!("Use this state transition.");
     let reply = call(&server, "edit_fact", human);
     assert_eq!(reply["path"], "decree");
     assert!(
-        matches!(&Store::load(&project.out).graph.requirements[&rid].provenance, Some(crate::model::Provenance::Decree {note: Some(note), ..}) if note == "Treat this as a behavior.")
+        matches!(&Store::load(&project.out).graph.requirements[&rid].provenance, Some(crate::model::Provenance::Decree {note: Some(note), ..}) if note == "Use this state transition.")
     );
     crate::vfs::remove_dir_all(dir).unwrap();
 }
@@ -405,7 +405,7 @@ fn entity_scoped_tasks_exclude_unrelated_work_and_report_prerequisites_honestly(
     call(
         &server,
         "upsert_requirement",
-        json!({"statement":"The Basket holds items.","entities":["ent:basket"],"section":"docs/domain.md#/domain","quote":"A Basket holds items.","facets":[{"facet":"behavior","reasoning":"Holds its contents."}]}),
+        json!({"statement":"The Basket holds items.","entities":["ent:basket"],"section":"docs/domain.md#/domain","quote":"A Basket holds items."}),
     );
     call(&server, "release_work", json!({"stage":"generate"}));
     let all = call(&server, "generation_tasks", json!({}));

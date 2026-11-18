@@ -65,7 +65,7 @@ fn an_answer_carrying_an_edit_writes_no_entity_changed() {
                 entities: None,
                 edges: None,
                 transition: None,
-                facets: None,
+
                 source: Some(mention(
                     "docs/pay.md",
                     "/pay",
@@ -158,7 +158,7 @@ fn dual_write_absorbs_its_own_hashes_and_rolls_back_a_stale_edit() {
                 entities: None,
                 edges: None,
                 transition: None,
-                facets: None,
+
                 source: Some(mention(
                     "docs/pay.md",
                     "/pay",

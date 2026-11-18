@@ -1155,12 +1155,6 @@
         },
         "transition": {
           "$ref": "graph.json#/definitions/transition"
-        },
-        "facets": {
-          "type": "array",
-          "items": {
-            "$ref": "graph.json#/definitions/facet"
-          }
         }
       },
       "additionalProperties": false
@@ -1200,12 +1194,6 @@
               "type": "null"
             }
           ]
-        },
-        "facets": {
-          "type": "array",
-          "items": {
-            "$ref": "graph.json#/definitions/facet"
-          }
         },
         "section": {
           "type": "string",
@@ -2718,7 +2706,7 @@
         },
         "field": {
           "type": "string",
-          "description": "statement, edges, transition, facets, definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value, or members"
+          "description": "statement, edges, transition, definition, stereotype, parent, attributes.<name>.type, attributes.<name>.value, or members"
         },
         "value": {
           "description": "The new value, shaped as the field is"

@@ -167,7 +167,7 @@ pub fn answer(
                             entities: None,
                             edges: None,
                             transition: Some(next),
-                            facets: None,
+
                             source: None,
                             provenance: None,
                         });
@@ -892,7 +892,7 @@ mod tests {
                     entities: None,
                     edges: None,
                     transition: None,
-                    facets: None,
+
                     source: None,
                     provenance: Some(decree),
                 },
@@ -1906,8 +1906,8 @@ mod tests {
             },
             crate::model::FactChange {
                 id: "req:arcs-29".into(),
-                field: "facets".into(),
-                value: json!([{"facet": "behavior", "reasoning": "a stance change on a plot event"}]),
+                field: "statement".into(),
+                value: json!("Theo moves from acquaintance to rival."),
             },
         ];
         let (project, out, did) =
@@ -1926,8 +1926,7 @@ mod tests {
                 "Ines confronts Theo about the stolen survey"
             ))
         );
-        assert_eq!(r.facets.len(), 1);
-        assert_eq!(r.facets[0].facet, "behavior");
+        assert_eq!(r.statement, "Theo moves from acquaintance to rival.");
         assert!(r.sources.first().unwrap().quote.ends_with("to rival."));
         let entry = journal_kind(&out, before + 1);
         assert_eq!(entry.kind, "answer");

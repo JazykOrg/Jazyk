@@ -362,7 +362,7 @@ Their semantics:
   the section's last sentence, which is how a ratification proposal lands. The edit
   keeps the document's line endings: in a CRLF document the section locates the same
   way and the inserted text takes CRLF.
-- `edit_fact` sets one field on one node (`statement`, `edges`, `transition`, `facets`,
+- `edit_fact` sets one field on one node (`statement`, `edges`, `transition`,
   `definition`, `stereotype`, `parent`, an attribute's `type` or `value`, a view's
   `members`). Paired with `edit_doc_prose` it
   is a dual write: the fact stays quoted,
@@ -464,8 +464,6 @@ The gates:
   spacing variant of an existing id, or an entity named by its exact name or alias,
   resolves to the unique matching node. Only genuine absence or ambiguity is an error,
   and the error names the nearest candidates.
-- Every requirement carries at least one `facet`
-  ([facets](./model/requirement.md#facets)); a create without one is refused.
 - Every `quote` must appear verbatim in its named section. Locating is
   whitespace-insensitive and forgives markdown escapes (a model often
   writes `` \` `` for a backtick inside JSON); the stored quote is the form that
@@ -524,9 +522,6 @@ The gates:
   of `1`, `0..1`, `1..*`, `*`.
 - `transition.subject` must exist and be among the requirement's `entities`; `from` and
   `to` are non-empty state names. See [transition](./model/requirement.md#transition).
-- `facets` name a facet from `behavior`, `constraint`, `failure-mode`, `quality`, each
-  with `reasoning`; `measure` is accepted only on `quality`. See
-  [facets](./model/requirement.md#facets).
 - A view's `kind` is from the [catalog](./model/view.md#kinds), its `title` is
   non-empty, and every id in `members`, `excluded`, and `collapse` exists. Members
   follow the kind's row in the catalog: entities for structural kinds (`composite`
@@ -669,7 +664,7 @@ The kinds, what each is computed from, and the goal it feeds:
 | `provenance-pending` | a derived or decreed fact | `ratify` |
 | `threshold-crossed` | a count over its node's limit ([limits](#limits)) | `split-view`, `abstract-entity` |
 | `lookalike` | an entity pair over the score threshold with no `lookalikes/` decision at its current score | `dedupe-candidates` |
-| `query-match`, `flow-unplaced` | a node a curated view's query matches that its `curation/` decision does not list; a flow no view places | `curate-view` |
+| `query-match` | a node an authored view's query matches that its `curation/` decision does not list | `curate-view` |
 | `ledger-stale` | the [ledger](../consumers/gen.md#the-ledger) comparison: a requirement unbound, changed since it was bound, or its artifact gone; an entity whose facts differ from the ledger; a row whose derived status says action | `bind`, `generate`, `verify` |
 | `reparent-flip` | the build's own journal replay of a child moved back between two parents | nothing directly: [flip detection](./reconciler.md#flip-detection) parks the goal |
 
@@ -1074,3 +1069,12 @@ Views are authored graph nodes. Store version 7 upgrades version 6 at the next
 writable opening. Untouched defaults are discarded. Curated views preserve IDs,
 provenance and content. Older stores archive; newer stores remain read-only.
 Diagram suppression decisions live in `graph/decisions/diagram-coverage/`.
+
+## Obsolete requirement fields
+
+Requirement files may carry an obsolete `facets` field. The loader ignores it.
+The next save omits it. No store version changes for this removal. Store version
+7 still upgrades only version 6; earlier stores retain the archive policy.
+
+Cached findings from retired classification checks resolve during normal closing
+reconciliation. No new findings are produced for those rules.

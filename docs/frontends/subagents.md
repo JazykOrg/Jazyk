@@ -176,7 +176,10 @@ A hosted sub-agent turn is checkpointed with its parent, in the same
 - A resumed parent continues each turn it still waits for: from the turn's frame, or
   from its opening when the turn saved no frame. A turn that had ended reports its
   recorded result. Saved model responses are reused, not requested again.
-- Each result is delivered to the parent once, as in [results](#results).
+- Each result is delivered to the parent once, as in [results](#results). The
+  result of a turn a person started is delivered in the checkpoint that records the
+  turn's end ([prompting a sub-agent](#prompting-a-sub-agent)). A resumed turn
+  delivers it once.
 - Stopping a suspended execution ends its sub-agent conversations as `cancelled`.
   Each parent conversation records the recorded results and `cancelled` for its
   other sub-agents, so its next turn does not wait for them.

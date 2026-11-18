@@ -14,7 +14,12 @@ import {
 let client: LanguageClient | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  await startClient();
+  context.subscriptions.push(vscode.commands.registerCommand('jazyk.openChat', openChat));
+  try {
+    await startClient();
+  } catch (error) {
+    void vscode.window.showErrorMessage(`Jazyk language server failed to start: ${error}`);
+  }
   context.subscriptions.push(
     vscode.commands.registerCommand('jazyk.markDocuments', (uri: vscode.Uri) => markSelection(uri, 'docs')),
     vscode.commands.registerCommand('jazyk.markSource', (uri: vscode.Uri) => markSelection(uri, 'source')),
@@ -72,6 +77,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     })
   );
+}
+
+async function openChat(): Promise<void> {
+  const acp = vscode.extensions.getExtension('formulahendry.acp-client');
+  if (!acp) {
+    const action = await vscode.window.showInformationMessage(
+      'Run jazyk setup vscode (or jazyk setup cursor) to register Jazyk and install ACP Client.',
+      'Show ACP Client'
+    );
+    if (action) {
+      await vscode.commands.executeCommand('workbench.extensions.search', '@id:formulahendry.acp-client');
+    }
+    return;
+  }
+  await acp.activate();
+  await vscode.commands.executeCommand('acp.connectAgent', 'Jazyk');
+  await vscode.commands.executeCommand('acp.openChat');
 }
 
 async function startClient(): Promise<void> {

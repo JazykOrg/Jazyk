@@ -26,7 +26,8 @@ following work. No dogfood compilation or graph mutation is part of planning.
 - Uncommitted graph work survives crashes, disconnects, stops, and model failures.
   Only explicit commit or discard removes the recoverable changeset.
 - Soft locks are warnings derived from live open work. They never claim a node,
-  hide a goal, refuse a mutation, or prevent a commit.
+  hide a goal, refuse a mutation, or prevent a commit. No explicit override or
+  additional review goal is required for overlapping work.
 - Commit replays field changes on the current graph. The last committed writer
   wins an overlapping field. Disjoint fields survive.
 - Overwrites are reported to the committer, journaled, and delivered to other
@@ -142,8 +143,28 @@ The later staging reply names the earlier work immediately. The earlier work get
 an overlap notice on its next tool reply, even if its earlier stage preceded the
 second agent. Thus both receive warnings without requiring retroactive delivery.
 Warnings name node/section, work ID, owner identity, batch/goals, staged mutations
-on that target, and last activity. Reads carry one short note plus work IDs; full
-mutation details come from `read_open_work`.
+on that target, and last activity. The warning explicitly says the change was
+staged successfully and explains the commit-order consequence: if the other work
+commits first, this work's commit reply will present any merge conflicts with
+those committed changes. Disjoint fields merge; overlapping fields use the later
+committer's value and report what it overwrote. Existing integrity gates still
+apply. The warning requires no override or review acknowledgment.
+
+E.g.:
+
+```text
+Staged successfully. WARNING: ent:order also has staged changes in work w-other
+(worker agent-2, client Codex, session orders, batch b412-1; last active 10s ago).
+If that work commits first, your commit reply will report any merge conflicts
+with its committed changes. Disjoint fields merge; your later commit wins
+conflicting fields and reports what it overwrites, subject to integrity gates.
+Use read_open_work(w-other) to inspect its staged mutations.
+```
+
+Reads carry one short note plus work IDs; full mutation details come from
+`read_open_work`. Overlap does not create mandatory review goals or mark adjacent
+nodes dirty merely to require acknowledgment. Normal commit dirtiness and goal
+derivation still follow actual graph changes.
 
 A heartbeat refreshes only work still attached to an active execution. A connected
 server must not refresh abandoned or stopped conversations indefinitely. Stop
@@ -310,8 +331,9 @@ Each implementation slice updates its requirements before code. Read the
    adoption with a racy `meta`/`put_meta` pair. Hosted writes fail clearly without a
    durable record store. No fallback into Git-exported workspace files.
 8. Update session, serving and inline prompt payloads and relevant workflow skills.
-   Explain that warnings follow accepted writes; inspect, proceed, wait, or coordinate
-   outside Jazyk. Explain successful overwrite replies, recovery IDs, expiry,
+   Explain that warnings follow accepted writes and state what conflicts the later
+   committer will see. Inspect, proceed, wait, or coordinate outside Jazyk without
+   requiring an override or review acknowledgment. Explain overwrite replies, recovery IDs, expiry,
    explicit adoption/discard, and integrity-gate repair. Share guidance through
    partials and preserve parser conventions. No corrective Rust prompt strings.
 9. Run focused tests, then full validation, commit coherent slices, integrate with
@@ -328,7 +350,7 @@ sessions. No paid model sessions and no `jazyk compile/check/gen/test` on dogfoo
 |---|---|
 | Crash after stage success | Kill the process, reopen by work ID; mutation IDs, staged writes, scope, outcomes and original base survive; no graph commit occurred |
 | Disk failure / torn append | Refused call changes neither effective staging nor touched-node index; complete earlier records survive; corrupt interior logs remain inspectable |
-| Two agents stage one node | Both calls succeed; later caller gets a warning immediately, earlier gets it next reply; full foreign staging and identity can be read |
+| Two agents stage one node | Both calls succeed without override; later caller gets a warning immediately explaining second-committer conflict reporting, earlier gets it next reply; full foreign staging and identity can be read; no overlap review gate is created |
 | Both commit the same field | Both commits succeed in either order; later value wins; reply/journal include exact prior value, generation and author; info diagnostic exists |
 | Disjoint fields | Entity name and definition, distinct attributes, requirement/criterion/view/diagnostic fields survive both commits; no false overwrite diagnostic |
 | Explicit collections | Add/remove by member identity commutes where disjoint; overlapping add/remove follows commit order; full replacement is reported accurately |

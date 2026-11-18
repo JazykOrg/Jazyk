@@ -249,7 +249,7 @@ impl McpServer {
         pb.batch = batch.id.clone();
         let full = args["full"].as_bool() == Some(true);
         let (include_contract, skip_skills) = {
-            let mut d = self.delivered.lock().unwrap();
+            let d = self.delivered.lock().unwrap();
             let include = full || !d.contract;
             let skip: BTreeSet<String> = if full {
                 BTreeSet::new()
@@ -260,8 +260,6 @@ impl McpServer {
                     .filter(|n| d.skills.contains(n))
                     .collect()
             };
-            d.contract = true;
-            d.skills.extend(skills.rendered_names());
             (include, skip)
         };
         let mut instructions = crate::session::session_prompt_elided(
@@ -283,7 +281,10 @@ impl McpServer {
             .filter(|n| !skip_skills.contains(n))
             .collect();
         if instructions.len() > INLINE_LIMIT && !inline_skills.is_empty() {
-            let all: BTreeSet<String> = skills.rendered_names().into_iter().collect();
+            // An omitted payload has not entered this serving's model context.
+            for name in &inline_skills {
+                skills.forget(name);
+            }
             let body = crate::session::session_prompt_elided(
                 &store,
                 &goals,
@@ -291,7 +292,7 @@ impl McpServer {
                 &skills,
                 &pb,
                 include_contract,
-                &all,
+                &skip_skills,
                 crate::session::Protocol::Serving,
             );
             instructions = format!(
@@ -302,10 +303,11 @@ impl McpServer {
                 inline_skills.join(", "),
                 body
             );
-            // Pointers are not renderings: load_skill must hand the text over.
-            for n in &inline_skills {
-                skills.forget(n);
-            }
+        }
+        {
+            let mut delivered = self.delivered.lock().unwrap();
+            delivered.contract = true;
+            delivered.skills.extend(skills.rendered_names());
         }
         let pinned: BTreeSet<String> = goals.iter().map(|g| g.target.clone()).collect();
         let package = loaded.render_status(&skills.index_line(), skills.rendered_chars(), &pinned);

@@ -130,8 +130,7 @@ impl SessionRunner for InProcessRunner {
         };
 
         // The same flags the native runner gives its injected serving: it belongs
-        // to this one batch (so the long poll is not offered, and end of input with
-        // an open batch runs the implicit finish), it claims only this batch, and it
+        // to this one batch (so the long poll is not offered), it opens only this batch, and it
         // runs under the build's token so the build lease does not refuse it. The
         // prompt is not pre-packaged: begin_goals answers with it, and the loop
         // opens on that.
@@ -259,9 +258,11 @@ impl SessionRunner for InProcessRunner {
             }
             _ => None,
         };
+        // Ending without done is not an instruction to discard accepted staging.
+        server.pause_open_work();
         if trace.is_cancelled() {
             // User Stop wins over a simultaneous model/checkpoint interruption.
-            // Earlier commits do not grant permission to retain a new open batch.
+            // Stop releases live attachments while durable staging remains recoverable.
             server.cancel_owned();
         } else if let Some(reason) = interruption {
             return SessionReport {
@@ -274,16 +275,7 @@ impl SessionRunner for InProcessRunner {
                 stopped: Some(reason),
             };
         }
-        // A batch the model left open never commits: drop the changeset so the goals
-        // return to open rather than sitting claimed.
-        if !committed {
-            let _ = server.handle(
-                "tools/call",
-                &json!({"name": "abandon_goals", "arguments": {"reason": "the session ended without committing"}}),
-            );
-        }
-
-        // Discard any abandoned staged display and publish the actual session base.
+        // Close the staged preview and publish the actual committed session base.
         let store = crate::store::Store::load(&self.out);
         trace.event(TraceEvent::GraphPreview {
             preview: crate::live_preview::Preview {

@@ -83,6 +83,13 @@ impl McpServer {
             }
             other => other,
         };
+        if params["name"] == "load_skill"
+            && reply.as_ref().is_ok_and(|value| value["isError"] != true)
+        {
+            if let Some(name) = params["arguments"]["name"].as_str() {
+                self.delivered.lock().unwrap().skills.insert(name.into());
+            }
+        }
         // The skill tools name every skill's tools by design: no hint there.
         if crate::agent_workflows::TOOLS.contains(&params["name"].as_str().unwrap_or_default()) {
             return reply;

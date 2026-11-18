@@ -77,30 +77,47 @@ pub fn resolve_executor(
     }
 }
 
+// The [acp.agents.<name>] table that launches a profile: the first of the project and
+// global tables with a `command`. A table without one (e.g. only `max_sessions`) leaves
+// the launch to the next table or the built-in profile.
+// Mirrors docs/compiler/project-settings.md#acp.
+fn launch_table<'a>(
+    name: &str,
+    proj: &'a AcpSettings,
+    global: &'a AcpSettings,
+) -> Option<&'a crate::project::AcpAgentProfile> {
+    [proj, global]
+        .into_iter()
+        .filter_map(|s| s.agents.get(name))
+        .find(|p| !p.command.is_empty())
+}
+
 // One named profile from the project or global [acp.agents] tables, or a built-in
-// one. A table entry shadows the built-in of the same name.
+// one. A table with a `command` shadows the built-in of the same name.
 fn profile_named(
     name: &str,
     proj: &AcpSettings,
     global: &AcpSettings,
 ) -> Result<ResolvedAgent, String> {
-    let profile = proj.agents.get(name).or_else(|| global.agents.get(name));
-    match profile {
-        Some(p) if !p.command.is_empty() => Ok(ResolvedAgent {
+    if let Some(p) = launch_table(name, proj, global) {
+        return Ok(ResolvedAgent {
             name: name.to_string(),
             command: p.command.clone(),
             args: p.args.clone(),
             env: p.env.clone(),
             serve_files: p.serve_files,
-        }),
-        Some(_) => Err(format!("agent profile `{}` has no command", name)),
-        None => builtin_profile(name).ok_or_else(|| {
-            format!(
-                "unknown agent profile `{}`; define [acp.agents.{}] in jazyk.toml or the global config",
-                name, name
-            )
-        }),
+        });
     }
+    if let Some(builtin) = builtin_profile(name) {
+        return Ok(builtin);
+    }
+    if proj.agents.contains_key(name) || global.agents.contains_key(name) {
+        return Err(format!("agent profile `{}` has no command", name));
+    }
+    Err(format!(
+        "unknown agent profile `{}`; define [acp.agents.{}] in jazyk.toml or the global config",
+        name, name
+    ))
 }
 
 // The agents jazyk can drive with no profile written: name, label, command, args,
@@ -150,12 +167,16 @@ pub fn shadow_notes(
         })
         .unwrap_or_else(|_| "the global config".to_string());
     let mut out = Vec::new();
+    // Only a table with a `command` replaces the launch; one without keeps the built-in.
+    let launches = |s: &crate::project::AcpSettings, name: &str| {
+        s.agents.get(name).is_some_and(|p| !p.command.is_empty())
+    };
     for (name, ..) in BUILTIN_AGENTS.iter().filter(|a| a.0 != EMBEDDED) {
-        let file = if project.agents.contains_key(*name) {
+        let file = if launches(project, name) {
             project_file
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "the project's jazyk.toml".to_string())
-        } else if global.agents.contains_key(*name) {
+        } else if launches(global, name) {
             global_file.clone()
         } else {
             continue;
@@ -205,15 +226,13 @@ pub fn embedded_profile() -> ResolvedAgent {
 }
 
 // How many sessions of the named profile one build runs at once. The first value
-// found wins: the profile's own table, the project [acp], the global [acp], then the
-// default (one for the embedded agent on a loopback endpoint). A value below 1 counts
+// found wins: the profile's project table, its global table, the project [acp], the
+// global [acp], then the default (one for the embedded agent on a loopback endpoint). A value below 1 counts
 // as 1. Mirrors docs/compiler/project-settings.md#acp.
 pub fn max_sessions(name: &str, proj: &AcpSettings, global: &AcpSettings, base_url: &str) -> usize {
-    let own = proj
-        .agents
-        .get(name)
-        .or_else(|| global.agents.get(name))
-        .and_then(|p| p.max_sessions);
+    let own = [proj, global]
+        .into_iter()
+        .find_map(|s| s.agents.get(name).and_then(|p| p.max_sessions));
     match own.or(proj.max_sessions).or(global.max_sessions) {
         Some(n) => n.max(1) as usize,
         None if name == EMBEDDED && is_loopback_url(base_url) => {
@@ -584,5 +603,34 @@ mod tests {
         )
         .unwrap_err();
         assert!(e.contains("acp.agents.nope"));
+    }
+
+    // A built-in's table that sets only `max_sessions` keeps the built-in launch and
+    // names no shadowing file; a table without a command for an unknown name is still
+    // refused. Mirrors docs/compiler/project-settings.md#acp.
+    #[test]
+    fn a_commandless_table_overrides_only_max_sessions() {
+        let none = AcpSettings::default();
+        for name in ["embedded", "claude", "codex", "opencode"] {
+            let proj =
+                crate::project::parse_acp_text(&format!("[acp.agents.{name}]\nmax_sessions = 2\n"));
+            let resolved = resolve_acp(Some(name), &proj, &none, |_| None).unwrap();
+            assert_eq!(resolved, builtin_profile(name).unwrap(), "{name}");
+            assert_eq!(max_sessions(name, &proj, &none, "http://127.0.0.1:1"), 2);
+            assert!(shadow_notes(&proj, None, &none).is_empty(), "{name}");
+        }
+        // The project table sets the count; the global table still launches.
+        let global = crate::project::parse_acp_text(
+            "[acp.agents.claude]\ncommand = 'my-claude'\nmax_sessions = 7\n",
+        );
+        let proj = crate::project::parse_acp_text("[acp.agents.claude]\nmax_sessions = 3\n");
+        let resolved = resolve_acp(Some("claude"), &proj, &global, |_| None).unwrap();
+        assert_eq!(resolved.command, "my-claude");
+        assert_eq!(max_sessions("claude", &proj, &global, ""), 3);
+        let proj_cmd = crate::project::parse_acp_text("[acp.agents.claude]\ncommand = 'x'\n");
+        assert_eq!(max_sessions("claude", &proj_cmd, &global, ""), 7);
+        let mine = crate::project::parse_acp_text("[acp.agents.mine]\nmax_sessions = 2\n");
+        let e = resolve_acp(Some("mine"), &mine, &none, |_| None).unwrap_err();
+        assert!(e.contains("has no command"), "{e}");
     }
 }

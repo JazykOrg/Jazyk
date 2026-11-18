@@ -11,6 +11,84 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+// A test build never changes the source checkout it was built from: tests work on
+// temporary or in-memory projects, so a full `cargo test` leaves the repository as it
+// found it. Only the build's own `target*` directories under the crate are writable.
+// A write that would land in the checkout panics before it writes, naming the test
+// thread. An in-memory tree is never the checkout.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn guard_checkout(p: &Path, what: &str) -> io::Result<()> {
+    if is_scoped() {
+        return Ok(());
+    }
+    match checkout_path(p) {
+        Some(inside) => {
+            let thread = std::thread::current();
+            let msg = format!(
+                "test {} tried to {} {} inside the source checkout",
+                thread.name().unwrap_or("?"),
+                what,
+                inside.display()
+            );
+            panic!("{msg}");
+        }
+        None => Ok(()),
+    }
+}
+
+// The path when it lies in the source checkout outside the crate's `target*` build
+// directories. Both the path and the checkout compare in absolute and in canonical
+// form, so a relative path or a symlinked directory cannot slip past.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) fn checkout_path(p: &Path) -> Option<PathBuf> {
+    let krate = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repo = krate.parent()?;
+    let abs = std::path::absolute(p).ok()?;
+    // The canonical form of the longest existing ancestor, with the rest appended.
+    let mut canon = abs.clone();
+    let mut rest = Vec::new();
+    let mut cur = abs.as_path();
+    loop {
+        if let Ok(c) = std::fs::canonicalize(cur) {
+            canon = rest
+                .iter()
+                .rev()
+                .fold(c, |acc: PathBuf, part| acc.join(part));
+            break;
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                cur = parent;
+            }
+            _ => break,
+        }
+    }
+    let roots = [
+        (repo.to_path_buf(), krate.to_path_buf()),
+        (
+            std::fs::canonicalize(repo).ok()?,
+            std::fs::canonicalize(krate).ok()?,
+        ),
+    ];
+    for path in [&abs, &canon] {
+        for (repo, krate) in &roots {
+            if !path.starts_with(repo) {
+                continue;
+            }
+            let build_dir = path
+                .strip_prefix(krate)
+                .ok()
+                .and_then(|r| r.components().next())
+                .is_some_and(|c| c.as_os_str().to_string_lossy().starts_with("target"));
+            if !build_dir {
+                return Some(path.to_path_buf());
+            }
+        }
+    }
+    None
+}
+
 // Path predicates. Inherent `Path` methods answer against the real filesystem on
 // every target, so the crate asks these instead.
 pub trait VPathExt {
@@ -118,6 +196,8 @@ mod imp {
         std::fs::read(p)
     }
     pub fn write(p: impl AsRef<Path>, c: impl AsRef<[u8]>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "write")?;
         if super::is_symlink(p.as_ref()) {
             return Err(io::Error::new(
                 io::ErrorKind::PermissionDenied,
@@ -130,42 +210,56 @@ mod imp {
         std::fs::write(p, c)
     }
     pub fn create_dir(p: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "create_dir")?;
         if super::is_scoped() {
             return super::memory::create_dir(super::checked(p.as_ref())?);
         }
         std::fs::create_dir(p)
     }
     pub fn create_dir_all(p: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "create_dir_all")?;
         if super::is_scoped() {
             return super::memory::create_dir_all(super::checked(p.as_ref())?);
         }
         std::fs::create_dir_all(p)
     }
     pub fn remove_file(p: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "remove_file")?;
         if super::is_scoped() {
             return super::memory::remove_file(super::checked(p.as_ref())?);
         }
         std::fs::remove_file(p)
     }
     pub fn remove_dir(p: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "remove_dir")?;
         if super::is_scoped() {
             return super::memory::remove_dir(super::checked(p.as_ref())?);
         }
         std::fs::remove_dir(p)
     }
     pub fn remove_dir_all(p: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(p.as_ref(), "remove_dir_all")?;
         if super::is_scoped() {
             return super::memory::remove_dir_all(super::checked(p.as_ref())?);
         }
         std::fs::remove_dir_all(p)
     }
     pub fn rename(a: impl AsRef<Path>, b: impl AsRef<Path>) -> io::Result<()> {
+        #[cfg(test)]
+        super::guard_checkout(b.as_ref(), "rename")?;
         if super::is_scoped() {
             return super::memory::rename(super::checked(a.as_ref())?, super::checked(b.as_ref())?);
         }
         std::fs::rename(a, b)
     }
     pub fn copy(a: impl AsRef<Path>, b: impl AsRef<Path>) -> io::Result<u64> {
+        #[cfg(test)]
+        super::guard_checkout(b.as_ref(), "copy")?;
         if super::is_scoped() {
             return super::memory::copy(super::checked(a.as_ref())?, super::checked(b.as_ref())?);
         }
@@ -933,5 +1027,40 @@ mod tests {
             reads,
             "a read changed the count"
         );
+    }
+}
+
+// A test build refuses to change the source checkout: its managed files (AGENTS.md,
+// CLAUDE.md, `.mcp.json`, the dogfood `.jazyk/`) and every other file, while the
+// crate's build directories and temporary directories stay writable.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod checkout_guard_tests {
+    use super::*;
+
+    #[test]
+    fn the_source_checkout_is_never_written_by_a_test() {
+        let krate = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let repo = krate.parent().unwrap();
+        for managed in [
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".mcp.json",
+            ".jazyk/ds_main/store.yaml",
+        ] {
+            assert!(checkout_path(&repo.join(managed)).is_some(), "{managed}");
+        }
+        assert!(checkout_path(&krate.join("src/lib.rs")).is_some());
+        assert!(checkout_path(Path::new("../AGENTS.md")).is_some());
+        assert!(checkout_path(&krate.join("target/debug/x")).is_none());
+        assert!(checkout_path(&std::env::temp_dir().join("jazyk-x/AGENTS.md")).is_none());
+        let probe = repo.join(".jazyk-checkout-guard-probe");
+        assert!(std::panic::catch_unwind(|| write(&probe, "x")).is_err());
+        assert!(!probe.exists());
+        // An in-memory tree is never the checkout.
+        let _fs = Scope::enter(&std::collections::BTreeMap::from([(
+            "AGENTS.md".to_string(),
+            b"x".to_vec(),
+        )]));
+        assert!(guard_checkout(&repo.join("AGENTS.md"), "write").is_ok());
     }
 }

@@ -182,9 +182,9 @@ non-conversational execution.
 
 A conversation's [sub-agents](../frontends/subagents.md) run inside its prompt
 request, as asynchronous tasks on the request's thread. They share the execution
-profile: its model transport, its events, and its Stop. Sub-agent turns take no
-checkpoint of their own. A turn resumed after a suspension receives a failed result
-for each sub-agent it still waited for.
+profile: its model transport, its events, its checkpoints, and its Stop. Each running
+sub-agent turn is saved in the execution's capsule and resumes with its parent
+([sub-agent checkpoints](../frontends/subagents.md#checkpoints)).
 
 Portable capabilities advertise `conversationJobs: true`. The native GUI does not
 advertise it. Its jobs retain their separate build transcript until its ACP job

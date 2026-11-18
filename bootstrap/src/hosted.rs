@@ -241,8 +241,11 @@ impl Workspace {
         });
         let _recovery = crate::session_recovery::Scope::enter(None);
         let conversations = crate::conversation::Scope::enter()?;
-        crate::session_recovery::stop_owned(capsule)?;
+        let settled = crate::session_recovery::stop_owned(capsule)?;
         crate::conversation::replay_updates(events)?;
+        for (key, inputs) in settled {
+            crate::conversation::deliver_stopped(&key, inputs);
+        }
         crate::conversation::stop_recovered();
         conversations.save()?;
         self.files = fs.snapshot();

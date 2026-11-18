@@ -656,12 +656,12 @@ fn duplicate_requirement_splits_warning_and_info() {
         .iter()
         .any(|(_, subj, sev, msg, _)| subj.iter().any(|s| s == "req:a-1")
             && sev == "warning"
-            && msg.contains("keep one")));
+            && msg.contains("consolidate")));
     assert!(hits
         .iter()
         .any(|(_, subj, sev, msg, _)| subj.iter().any(|s| s == "req:b-1")
             && sev == "info"
-            && msg.contains("both kept")));
+            && msg.contains("consolidate")));
     // A session's two-subject finding on the cross-document pair: the check
     // files no twin beside it (docs/compiler/compilation.md#checks).
     s.graph.diagnostics.insert(

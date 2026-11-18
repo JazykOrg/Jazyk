@@ -582,7 +582,31 @@ impl ToolSession {
                 _ => return Err(bad_field("a requirement", "statement, edges, transition")),
             }
             let sentence = statement.clone().unwrap_or_else(|| r.statement.clone());
-            return match (r.sources.first(), note.as_deref()) {
+            let selected: Option<SourceRef> = args
+                .get("source")
+                .filter(|v| !v.is_null())
+                .map(|v| {
+                    serde_json::from_value(v.clone())
+                        .map_err(|e| ToolError::new("bad-source", e.to_string()))
+                })
+                .transpose()?;
+            if selected
+                .as_ref()
+                .is_some_and(|source| !r.sources.contains(source))
+            {
+                return Err(ToolError::new(
+                    "source-changed",
+                    "The selected source is no longer attached to this requirement.".into(),
+                ));
+            }
+            if !graph_only && note.is_some() && r.sources.len() > 1 && selected.is_none() {
+                return Err(ToolError::new(
+                    "source-selection-required",
+                    "This requirement has several source locations.".into(),
+                ));
+            }
+            let source = selected.as_ref().or_else(|| r.sources.first());
+            return match (source, note.as_deref()) {
                 (Some(src), Some(rewrite)) if !graph_only => {
                     let rewrite = rewrite.trim().to_string();
                     self.stage(Op::UpdateRequirement {
@@ -592,12 +616,18 @@ impl ToolSession {
                         edges,
                         transition,
 
-                        source: Some(SourceRef {
+                        source: None,
+                        provenance: None,
+                    })?;
+                    self.stage(Op::PlaceAnchor {
+                        id: rid.clone(),
+                        from: src.clone(),
+                        to: SourceRef {
                             doc: src.doc.clone(),
                             section: src.section.clone(),
                             quote: rewrite.clone(),
-                        }),
-                        provenance: None,
+                        },
+                        reevaluate: false,
                     })?;
                     Ok(json!({
                         "id": rid, "field": field, "path": "dual-write",

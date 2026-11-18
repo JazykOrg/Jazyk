@@ -18,13 +18,28 @@ pub fn undecided_proposals(staged: &[Op], proposals: &[String]) -> Vec<String> {
 // Stale anchors are a contract. Each must be re-anchored (its quote locates
 // again), re-recorded under its natural key, revised, or deleted. An anchor
 // flagged for re-evaluation owes a decision even though its quote locates.
-pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<String> {
+pub fn untouched_stale(
+    store: &Store,
+    staged: &[Op],
+    anchors: &[String],
+    scopes: &[(&str, &[String])],
+) -> Vec<String> {
     let mut untouched: Vec<String> = Vec::new();
     for a in anchors {
         let Some(r) = store.graph.requirements.get(a) else {
             continue;
         };
         for src in &r.sources {
+            if !scopes.is_empty()
+                && !scopes.iter().any(|(doc, sections)| {
+                    *doc == src.doc
+                        && (sections.is_empty()
+                            || sections.contains(&src.section)
+                            || sections.contains(&owning_section(store, doc, &src.section)))
+                })
+            {
+                continue;
+            }
             if store.quote_locates(&src.doc, &src.section, &src.quote)
                 && !store.status.reevaluate.contains(a)
             {
@@ -32,10 +47,19 @@ pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<
             }
             let addressed = staged.iter().any(|o| match o {
                 Op::RemoveRequirementSource { id, source, .. } => id == a && source == src,
-                Op::AddRequirementSource { id, source } => {
-                    id == a && source.doc == src.doc && source.section == src.section
+                Op::AddRequirementSource { id, source } => id == a && source == src,
+                Op::PlaceAnchor { id, from, .. } | Op::OrphanAnchor { id, from, .. } => {
+                    id == a && from == src
                 }
-                Op::UpdateRequirement { id, .. } | Op::DeleteRequirement { id, .. } => id == a,
+                Op::UpdateRequirement {
+                    id,
+                    source: Some(source),
+                    ..
+                } => id == a && source.doc == src.doc && source.section == src.section,
+                Op::UpdateRequirement { id, .. } => {
+                    id == a && store.quote_locates(&src.doc, &src.section, &src.quote)
+                }
+                Op::DeleteRequirement { id, .. } => id == a,
                 // A staged create that resolved to the anchor carries its id; the
                 // statement-equality fallback covers pre-resolution stages.
                 Op::CreateRequirement { id, requirement } => {
@@ -51,6 +75,8 @@ pub fn untouched_stale(store: &Store, staged: &[Op], anchors: &[String]) -> Vec<
             }
         }
     }
+    untouched.sort();
+    untouched.dedup();
     untouched
 }
 

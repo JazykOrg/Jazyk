@@ -154,7 +154,12 @@ pub fn answer(
                     continue;
                 }
                 let r = &s.graph.requirements[&qid];
-                let (Some(t), Some(src)) = (r.transition.as_ref(), r.sources.first()) else {
+                let source = r.sources.iter().find(|source| {
+                    source.doc == prose.doc
+                        && source.section == prose.section
+                        && prose.splice(&source.quote).as_deref() == Some(new_quote.as_str())
+                });
+                let (Some(t), Some(src)) = (r.transition.as_ref(), source) else {
                     continue;
                 };
                 match follow_transition(&src.quote, &new_quote, t) {
@@ -622,8 +627,18 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
     for sub in &d.subjects {
         let sid = store.resolve_id(sub).to_string();
         if let Some(r) = store.graph.requirements.get(&sid) {
-            match r.sources.first() {
-                Some(src) => s.push_str(&line(
+            if r.sources.is_empty() {
+                s.push_str(&line(
+                    "subject-derived",
+                    &[
+                        ("id", &sid),
+                        ("statement", &r.statement),
+                        ("provenance", &crate::session::provenance_line(r)),
+                    ],
+                ));
+            }
+            for src in &r.sources {
+                s.push_str(&line(
                     "subject-quoted",
                     &[
                         ("id", &sid),
@@ -632,15 +647,7 @@ pub fn handling_prompt(out: &Path, id: &str) -> Result<String, String> {
                         ("section", &src.section),
                         ("quote", &src.quote),
                     ],
-                )),
-                None => s.push_str(&line(
-                    "subject-derived",
-                    &[
-                        ("id", &sid),
-                        ("statement", &r.statement),
-                        ("provenance", &crate::session::provenance_line(r)),
-                    ],
-                )),
+                ));
             }
         } else if let Some(c) = store.graph.criteria.get(&sid) {
             s.push_str(&line(

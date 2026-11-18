@@ -105,25 +105,59 @@ impl Store {
             })
         };
         let splice = |text: &str| edit.splice(text);
-        for (qid, new_quote) in self.quote_rewrites(edit) {
-            if handled(&qid) {
+        for (qid, r) in &self.graph.requirements {
+            if ops.iter().any(|o| matches!(o,
+                Op::RatifyProvenance {id,..} | Op::DeleteRequirement {id,..} | Op::RetractDecree {id,..} if id == qid)) {
                 continue;
             }
-            let r = &self.graph.requirements[&qid];
-            out.push(Op::UpdateRequirement {
-                id: qid.clone(),
-                statement: splice(&r.statement),
-                entities: None,
-                edges: None,
-                transition: None,
-
-                source: Some(SourceRef {
-                    doc: edit.doc.clone(),
-                    section: edit.section.clone(),
-                    quote: new_quote,
-                }),
-                provenance: None,
-            });
+            let mut changed = false;
+            for src in &r.sources {
+                if src.doc != edit.doc || src.section != edit.section {
+                    continue;
+                }
+                let Some(new_quote) = splice(&src.quote) else {
+                    continue;
+                };
+                let replaced = ops.iter().any(|o| match o {
+                    Op::PlaceAnchor { id, from, .. } => id == qid && from == src,
+                    Op::UpdateRequirement {
+                        id,
+                        source: Some(source),
+                        ..
+                    } => id == qid && source.doc == src.doc && source.section == src.section,
+                    _ => false,
+                });
+                if replaced {
+                    continue;
+                }
+                out.push(Op::PlaceAnchor {
+                    id: qid.clone(),
+                    from: src.clone(),
+                    to: SourceRef {
+                        quote: new_quote,
+                        ..src.clone()
+                    },
+                    reevaluate: false,
+                });
+                changed = true;
+            }
+            if changed
+                && !ops.iter().any(
+                    |o| matches!(o, Op::UpdateRequirement {id,statement:Some(_),..} if id == qid),
+                )
+            {
+                if let Some(statement) = splice(&r.statement) {
+                    out.push(Op::UpdateRequirement {
+                        id: qid.clone(),
+                        statement: Some(statement),
+                        entities: None,
+                        edges: None,
+                        transition: None,
+                        source: None,
+                        provenance: None,
+                    });
+                }
+            }
         }
         for (eid, e) in &self.graph.entities {
             if handled(eid) {
@@ -136,6 +170,12 @@ impl Store {
                 let Some(new_quote) = splice(&m.quote) else {
                     continue;
                 };
+                // Requirement placements move identical entity mentions with them.
+                if out.iter().chain(ops).any(|op| matches!(op,
+                    Op::PlaceAnchor {id,from,to,..} if self.graph.requirements.contains_key(id)
+                        && from == m && to.doc == m.doc && to.section == m.section && to.quote == new_quote)) {
+                    continue;
+                }
                 out.push(Op::PlaceAnchor {
                     id: eid.clone(),
                     from: m.clone(),

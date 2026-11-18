@@ -268,9 +268,9 @@ Every check run journals a `checks` entry under its own generation.
   entity, both quote-anchored. Near-identical means the words of three or more
   characters of the two [normalized statements](./graph.md#mutations) overlap by at
   least 80% of their union, so `1.5` and `2.5` stay distinct words. Any shared source quote is a
-  warning. Distinct source locations produce an info, including other sections in
-  the same document. Both signals request consolidation into one requirement with
-  the union of its sources.
+  warning. Repeated normalized statements at other locations produce an info.
+  Near-identical statements across documents also produce an info. Both signals
+  request consolidation into one requirement with the union of its sources.
   Rephrased duplicates are [`rejudge-pair`](./goals/rejudge-pair.md)'s judgment, and a
   pair a session already judged is left to it: when an open `contradiction` or
   `duplicate-requirement` diagnostic names both statements, the check files nothing,

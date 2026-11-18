@@ -84,63 +84,6 @@ fn requirement_exists_takes_an_optional_entity() {
     .is_some());
 }
 
-// facetCount counts the requirements carrying a facet, optionally only those
-// whose statement matches. Mirrors docs/benchmark/cases.md#checks.
-#[test]
-fn facet_count_reads_the_facets_of_matching_statements() {
-    let mut s = Store::default();
-    let req = |statement: &str, facets: &[&str]| crate::model::Requirement {
-        statement: statement.into(),
-        facets: facets
-            .iter()
-            .map(|f| Facet {
-                facet: f.to_string(),
-                reasoning: "judged".into(),
-                measure: None,
-            })
-            .collect(),
-        ..Default::default()
-    };
-    s.graph.requirements.insert(
-        "req:p-1".into(),
-        req("Dot tells Ines who Theo works for.", &["behavior"]),
-    );
-    s.graph.requirements.insert(
-        "req:p-2".into(),
-        req("Ines asks Dot for the harbor ledger.", &["constraint"]),
-    );
-    s.graph
-        .requirements
-        .insert("req:p-3".into(), req("Ines Marlow is 31.", &["constraint"]));
-    let ok = |a: Value| eval_check("facetCount", &a, &s, 0);
-    assert_eq!(
-        ok(serde_json::json!({"facet": "behavior", "min": 1, "max": 1})),
-        None
-    );
-    assert_eq!(
-        ok(serde_json::json!({"facet": "constraint", "min": 2})),
-        None
-    );
-    assert_eq!(
-        ok(serde_json::json!({"facet": "behavior", "statementPattern": "tells", "min": 1})),
-        None
-    );
-    // A scene labeled constraint fails the scene's behavior check and its max 0.
-    assert!(
-        ok(serde_json::json!({"facet": "behavior", "statementPattern": "ledger", "min": 1}))
-            .is_some()
-    );
-    assert!(ok(
-        serde_json::json!({"facet": "constraint", "statementPattern": "ledger|tells", "max": 0})
-    )
-    .is_some());
-    assert_eq!(
-        ok(serde_json::json!({"facet": "constraint", "statementPattern": "tells", "max": 0})),
-        None
-    );
-    assert!(ok(serde_json::json!({"facet": "behavior", "statementPattern": "(bad"})).is_some());
-}
-
 // transitionSubject counts the transitions whose subject is the entity, at
 // least one by default. Mirrors docs/benchmark/cases.md#checks.
 #[test]

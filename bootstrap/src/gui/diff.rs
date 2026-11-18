@@ -84,7 +84,6 @@ impl Replay {
                         "entities",
                         "edges",
                         "transition",
-                        "facets",
                         "source",
                         "provenance",
                     ] {

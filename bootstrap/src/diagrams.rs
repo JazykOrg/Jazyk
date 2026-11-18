@@ -906,7 +906,6 @@ fn semantic_hash(mut value: Value) -> String {
     if let Some(o) = value.as_object_mut() {
         o.remove("created");
         o.remove("updated");
-        o.remove("facets");
     }
     hash_hex(&value.to_string())
 }

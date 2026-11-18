@@ -35,7 +35,12 @@ labels, annotations, relationship choices and links while curating membership.
 
 ## Tools
 
-Read with the normal graph and diagram tools. Write through `upsert_view`,
+Read with `load`, `expand`, `unload`, `graph_status`, `search`, `read_section`,
+`get_entity`, `get_view`, `diagnostics`, `inspect_input`, `list_views` and
+`list_diagram_suppressions`. Write through `upsert_view`,
 `update_view`, and `delete_view`. `mark_goal_done` records a justified outcome;
 `done` validates and commits the batch atomically. Suppression tools are available
 only when the batch also includes diagram coverage work.
+
+`mark_goal_failed` records a concrete failure. `load_skill` supplies diagram
+guidance. `report_feedback` and `report_spend` record session observations.

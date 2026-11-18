@@ -1075,3 +1075,6 @@ Diagram suppression decisions live in `graph/decisions/diagram-coverage/`.
 Requirement files may carry an obsolete `facets` field. The loader ignores it.
 The next save omits it. No store version changes for this removal. Store version
 7 still upgrades only version 6; earlier stores retain the archive policy.
+
+Cached findings from retired classification checks resolve during normal closing
+reconciliation. No new findings are produced for those rules.

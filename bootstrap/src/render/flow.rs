@@ -460,40 +460,56 @@ pub(super) fn emit_sequence(scene: &Scene) -> String {
         out.push("end".into());
     }
     if fragments.is_none() {
-        for m in &msgs {
-            // A failure-mode step is a branch: its message sits in an `alt` fragment
-            // labeled by its condition (the transition's trigger and guard when it has
-            // one). Mirrors docs/compiler/diagrams.md#the-emitters.
-            let r = scene.requirement(&m.rid);
-            let failure = r.facets.iter().any(|f| f.facet == "failure-mode");
-            if failure {
-                let cond = r
+        let key = |m: &Message| {
+            scene
+                .requirement(&m.rid)
+                .transition
+                .as_ref()
+                .map(|t| (t.subject.clone(), normalize_state(&t.from)))
+        };
+        let condition = |m: &Message| {
+            scene.requirement(&m.rid).transition.as_ref().and_then(|t| {
+                let mut c = t.trigger.clone().unwrap_or_default();
+                if let Some(g) = &t.guard {
+                    if !c.is_empty() {
+                        c.push(' ');
+                    }
+                    c.push_str(&format!("[{}]", g));
+                }
+                (!c.is_empty()).then_some(c)
+            })
+        };
+        let mut i = 0;
+        while i < msgs.len() {
+            let mut end = i + 1;
+            if let Some(k) = key(&msgs[i]) {
+                while end < msgs.len() && key(&msgs[end]).as_ref() == Some(&k) {
+                    end += 1;
+                }
+            }
+            let branch = (end - i >= 2
+                || scene
+                    .requirement(&msgs[i].rid)
                     .transition
                     .as_ref()
-                    .and_then(|t| {
-                        let mut c = t.trigger.clone().unwrap_or_default();
-                        if let Some(g) = &t.guard {
-                            c = if c.is_empty() {
-                                format!("[{}]", g)
-                            } else {
-                                format!("{} [{}]", c, g)
-                            };
-                        }
-                        (!c.is_empty()).then_some(c)
-                    })
-                    .unwrap_or_else(|| "failure".to_string());
-                out.push(format!("alt {}", condition_text(&cond)));
+                    .is_some_and(|t| t.guard.is_some()))
+                && msgs[i..end].iter().all(|m| condition(m).is_some());
+            if branch {
+                for (n, m) in msgs[i..end].iter().enumerate() {
+                    out.push(format!(
+                        "{} {}",
+                        if n == 0 { "alt" } else { "else" },
+                        condition_text(&condition(m).unwrap())
+                    ));
+                    out.push(emit_message(scene, m));
+                }
+                out.push("end".into());
+            } else {
+                for m in &msgs[i..end] {
+                    out.push(emit_message(scene, m));
+                }
             }
-            out.push(format!(
-                "{}{} -> {} : {}",
-                if failure { "  " } else { "" },
-                alias_of(&m.from),
-                alias_of(&m.to),
-                scene.flow_label(&m.rid)
-            ));
-            if failure {
-                out.push("end".to_string());
-            }
+            i = end;
         }
     } else {
         let mut used = BTreeSet::new();
@@ -557,17 +573,6 @@ fn leading_number(measure: &str) -> Option<String> {
     (!n.is_empty() && n.chars().any(|c| c.is_ascii_digit())).then_some(n)
 }
 
-fn legacy_timing_measure(scene: &Scene) -> Option<(String, String)> {
-    scene.requirements.iter().find_map(|rid| {
-        scene
-            .requirement(rid)
-            .facets
-            .iter()
-            .find(|f| f.facet == "quality" && f.measure.is_some())
-            .map(|f| (rid.clone(), f.measure.clone().unwrap_or_default()))
-    })
-}
-
 pub(super) fn emit_timing(scene: &Scene) -> String {
     let note = flow_note(scene, None);
     let governing = scene
@@ -589,8 +594,7 @@ pub(super) fn emit_timing(scene: &Scene) -> String {
                     .and_then(|c| c.measure.as_ref())
                     .map(|m| (rid.clone(), m.clone()))
             })
-        })
-        .or_else(|| legacy_timing_measure(scene));
+        });
     let mut lanes: Vec<&String> = scene
         .entities
         .iter()

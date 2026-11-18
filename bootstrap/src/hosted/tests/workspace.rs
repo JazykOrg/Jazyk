@@ -509,7 +509,7 @@ fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
                 ),
                 (
                     "upsert_requirement",
-                    json!({"statement":"Alpha stores records.","facets":[{"facet":"behavior","reasoning":"Alpha performs the storage action."}],"entities":["ent:alpha","ent:records"],"edges":[{"a":"ent:alpha","b":"ent:records","type":"association"}],"section":"docs/main.md#/alpha","quote":"Alpha stores records."}),
+                    json!({"statement":"Alpha stores records.","entities":["ent:alpha","ent:records"],"edges":[{"a":"ent:alpha","b":"ent:records","type":"association"}],"section":"docs/main.md#/alpha","quote":"Alpha stores records."}),
                 ),
                 (
                     "set_coverage",

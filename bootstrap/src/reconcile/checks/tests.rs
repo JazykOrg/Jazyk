@@ -931,48 +931,16 @@ fn justification_closure_finds_a_fact_without_provenance() {
 }
 
 #[test]
-fn flow_placement_flags_an_unplaced_behavior_and_feeds_curate_view() {
-    let mut s = crate::derive::tests::authored_showcase_store();
-    // A lone behavior requirement in another document: its cluster has one member.
-    let text = "# Returns\n\nreturns body\n";
-    seed_doc(&mut s, "returns.md", text);
-    s.graph.requirements.insert(
-        "req:returns-1".into(),
-        Requirement {
-            statement: "The customer returns an item.".into(),
-            entities: vec!["ent:customer".into()],
-            facets: vec![Facet {
-                facet: "behavior".into(),
-                reasoning: "a step".into(),
-                measure: None,
-            }],
-            sources: vec![SourceRef {
-                doc: "returns.md".into(),
-                section: "/returns".into(),
-                quote: "returns body".into(),
-            }],
-            ..Default::default()
-        },
-    );
-    let mut batch = crate::store::RecordBatch::new(1);
-    crate::derive::recompute(&mut s, "g1", &mut batch);
-    assert!(
-        s.graph.views.values().any(|v| v.kind == "use-case"),
-        "the showcase derives a flow view"
-    );
-    let f = checks(&s, &Project::default());
-    let hits = rules_for(&f, "unplaced-behavior");
-    assert_eq!(hits.len(), 1, "{:?}", hits);
-    assert_eq!(hits[0].1, ["req:returns-1"]);
-    let placement = flow_placement(&s, &Indices::build(&s));
-    let (_, best, _, facet) = &placement[0];
-    assert_eq!(facet, "behavior");
-    assert!(
-        best.as_deref()
-            .is_some_and(|v| v.starts_with("view:usecase/") && v.ends_with("shop")),
-        "{:?}",
-        best
-    );
+fn removed_classification_checks_do_not_emit_findings() {
+    let s = crate::derive::tests::authored_showcase_store();
+    let findings = checks(&s, &Project::default());
+    for rule in [
+        "quality-unmeasured",
+        "unplaced-behavior",
+        "unrepresented-failure-mode",
+    ] {
+        assert!(rules_for(&findings, rule).is_empty(), "{rule}");
+    }
 }
 
 #[test]

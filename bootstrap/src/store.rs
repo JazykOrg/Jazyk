@@ -115,8 +115,6 @@ pub enum Op {
         edges: Option<Vec<ReqEdge>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         transition: Option<Transition>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        facets: Option<Vec<Facet>>,
         // A revision may re-anchor its quote (docs/compiler/tools.md#write-tools).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         source: Option<SourceRef>,
@@ -316,6 +314,8 @@ pub const CHECK_RULES: [&str; 34] = [
     "section-too-large",
     "doc-too-large",
     "unjustified-fact",
+    // Retained ownership lets ordinary closing reconciliation clear cached findings.
+    // These retired rules have no producer.
     "unplaced-behavior",
     "unrepresented-failure-mode",
     "containment-mismatch",
@@ -327,6 +327,7 @@ pub const CHECK_RULES: [&str; 34] = [
     "unhandled-event",
     "provider-missing",
     "provider-ambiguous",
+    // Retired, retained only for reconciliation of cached findings.
     "quality-unmeasured",
     "unratified",
     "incomplete-build",

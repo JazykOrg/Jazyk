@@ -285,17 +285,6 @@ pub struct Transition {
     pub guard: Option<String>,
 }
 
-// One judged facet of a requirement. Mirrors docs/compiler/model/requirement.md#facets.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Facet {
-    pub facet: String,
-    pub reasoning: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub measure: Option<String>,
-}
-
-pub const FACETS: [&str; 4] = ["behavior", "constraint", "failure-mode", "quality"];
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Requirement {
     pub statement: String,
@@ -304,8 +293,6 @@ pub struct Requirement {
     pub edges: Vec<ReqEdge>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transition: Option<Transition>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub facets: Vec<Facet>,
     // The quote form of provenance. A requirement has exactly one of non-empty `sources` or
     // `provenance`. Mirrors docs/compiler/model/requirement.md#fields.
     #[serde(
@@ -607,7 +594,6 @@ pub struct SuggestedEdit {
 }
 
 // One field of one requirement set to a new value: `statement`, `entities`, `edges`,
-// `transition`, or `facets`, the value in the shape update_requirement takes.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct FactChange {
     pub id: String,
@@ -616,7 +602,7 @@ pub struct FactChange {
 }
 
 // The requirement fields an edit option's `facts` may set.
-pub const FACT_FIELDS: [&str; 5] = ["statement", "entities", "edges", "transition", "facets"];
+pub const FACT_FIELDS: [&str; 4] = ["statement", "entities", "edges", "transition"];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct DiagnosticAnswer {
@@ -1776,18 +1762,7 @@ mod tests {
                 trigger: Some("payment succeeds".into()),
                 guard: None,
             }),
-            facets: vec![
-                Facet {
-                    facet: "behavior".into(),
-                    reasoning: "a step on an event".into(),
-                    measure: None,
-                },
-                Facet {
-                    facet: "quality".into(),
-                    reasoning: "bounded".into(),
-                    measure: Some("2 seconds".into()),
-                },
-            ],
+
             sources: vec![src.clone()],
             ..Default::default()
         };
@@ -1796,7 +1771,6 @@ mod tests {
         assert!(!y.contains("provenance"), "{}", y);
         let back: Requirement = serde_norway::from_str(&y).unwrap();
         assert_eq!(back.transition, req.transition);
-        assert_eq!(back.facets, req.facets);
         assert_eq!(back.edges, req.edges);
         assert_eq!(back.sources.first(), req.sources.first());
 

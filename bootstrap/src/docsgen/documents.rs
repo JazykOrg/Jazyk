@@ -476,17 +476,7 @@ pub(super) fn write_documents(
                     last_group = Some(group);
                 }
                 s.push_str(&format!("### `{}`\n\n{}\n\n", rid, r.statement));
-                if !r.facets.is_empty() {
-                    let fs: Vec<String> = r
-                        .facets
-                        .iter()
-                        .map(|f| match &f.measure {
-                            Some(m) => format!("{} ({})", f.facet, m),
-                            None => f.facet.clone(),
-                        })
-                        .collect();
-                    s.push_str(&format!("Facets: {}\n\n", fs.join(", ")));
-                }
+
                 if !r.edges.is_empty() {
                     let es: Vec<String> = r
                         .edges

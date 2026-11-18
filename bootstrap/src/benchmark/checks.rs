@@ -580,41 +580,8 @@ pub fn eval_check(kind: &str, arg: &Value, store: &Store, staged: usize) -> Opti
                     )
                 })
         }
-        // Requirements carrying the facet, optionally only those whose statement
         // matches. Mirrors docs/benchmark/cases.md#checks.
-        "facetCount" => {
-            let facet = arg["facet"].as_str().unwrap_or_default();
-            let rx = match arg["statementPattern"].as_str() {
-                Some(p) => match compile(p) {
-                    Ok(r) => Some(r),
-                    Err(e) => return Some(e),
-                },
-                None => None,
-            };
-            let n = store
-                .graph
-                .requirements
-                .values()
-                .filter(|r| {
-                    rx.as_ref()
-                        .map(|re| re.is_match(&r.statement))
-                        .unwrap_or(true)
-                })
-                .filter(|r| r.facets.iter().any(|f| f.facet == facet))
-                .count();
-            within(
-                n,
-                arg,
-                &format!(
-                    "`{}` requirements{}",
-                    facet,
-                    arg["statementPattern"]
-                        .as_str()
-                        .map(|p| format!(" matching `{}`", p))
-                        .unwrap_or_default()
-                ),
-            )
-        }
+
         // Requirements whose transition's subject is the entity; `min` defaults to 1.
         // Mirrors docs/benchmark/cases.md#checks.
         "transitionSubject" => {

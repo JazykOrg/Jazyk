@@ -642,7 +642,7 @@ pub fn extract(trace: &Path, label: &str) -> Result<String, String> {
             if r["source"].is_object() {
                 o.insert("source".into(), sec_ref(&r["source"]));
             }
-            for k in ["edges", "transition", "facets"] {
+            for k in ["edges", "transition"] {
                 if !r[k].is_null() && r[k] != json!([]) {
                     o.insert(k.into(), r[k].clone());
                 }

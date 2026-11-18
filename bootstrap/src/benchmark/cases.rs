@@ -327,7 +327,6 @@ pub(super) fn entity_of(e: &Value) -> Entity {
 }
 
 // A fixture requirement: statement, entities, source, plus edges, transition, and
-// facets where the case states them. None without a source.
 pub(super) fn requirement_of(r: &Value) -> Option<Requirement> {
     let sources: Vec<SourceRef> = r["sources"]
         .as_array()
@@ -340,7 +339,7 @@ pub(super) fn requirement_of(r: &Value) -> Option<Requirement> {
         statement: r["statement"].as_str().unwrap_or_default().to_string(),
         entities: str_list(&r["entities"]),
         edges: serde_json::from_value(r["edges"].clone()).unwrap_or_default(),
-        facets: serde_json::from_value(r["facets"].clone()).unwrap_or_default(),
+
         transition: serde_json::from_value(r["transition"].clone()).ok(),
         sources,
         ..Default::default()

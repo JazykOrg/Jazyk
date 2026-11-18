@@ -116,76 +116,19 @@ the morning" is illustration under a section that states one rule (trap 4), not 
 instance of Product. No `instantiation` edge, no `conform-instance` goal, no
 `view:object/*`.
 
-## Flow clusters and default views
+## Authored diagram review
 
-Behavior-facet requirements cluster by document, the author's own cut of the subject
-into flows ([flow clusters](../../../docs/compiler/model/view.md#level-views)); the
-actors are read off the members when the view renders. Clusters of two or more derive a
-`use-case` and a `sequence` view sharing a title. A sequence view derives only when at
-least two members carry an edge; a use-case view without a sequence twin is
-mechanism-faithful for an edge-poor cluster. Expected:
+A fresh graph contains no diagrams. Dependency edges, transitions, containment and
+existing scenario criteria identify areas for diagram review. The model authors
+an explanation or records a reasoned suppression. No standard diagram ID is
+required, and no diagram is automatically created for a flow cluster or level.
 
-| cluster | members (document order) | views |
-| --- | --- | --- |
-| shipping.md (actors: Customer) | delivers a packed Order to its buyer; tracking link on dispatch; two failed attempts, return and refund (`failure-mode`) | `view:usecase/shipping`, `view:sequence/shipping`, title `Shipping` |
-| admin.md (actors: Operator) | `orderly serve` starts the system; `orderly report` for the daily numbers; every Order from the selected period | `view:usecase/admin`, `view:sequence/admin`, title `Admin CLI` |
-| returns.md (actors: Customer) | brings goods back into Inventory; open a Return within 30 days of delivery | `view:usecase/returns`, `view:sequence/returns`, title `Returns` |
-| orders.md (actors: Customer) | a Customer places an Order; submit, reserve Stock | `view:usecase/orders`, `view:sequence/orders`, title `Order` |
-
-When Operator is not minted, the admin.md cluster still derives (`admin`, title
-`Admin CLI`) and the use case draws no actor, never the Admin CLI as a stick figure.
-The other documents cluster the same way: system.md, customer.md, payment.md,
-inventory.md, and catalog.md each derive a use case titled by the document when two or
-more of their behavior statements reach the root level (`Orderly`, `Customer`,
-`Payment`, `Inventory`, `Catalog`), each drawing the actors its members name (Customer
-where the statements say so, none for the stock rules): mechanism-faithful surplus, and
-the four named clusters above are the graded minimum. A use case never draws a
-component as an actor (`actor Shipment` beside an inventory flow is a failure). Each
-lone member draws `unplaced-behavior` (info) with a `flow-unplaced` record and an
-optional `curate-view` goal: `optional advised` in the verdict, never blocking
-convergence.
-
-Structural defaults are level views: one per node with two or more children, the scope
-root included (docs/compiler/model/view.md#level-views). The kind is `component` when
-the node or any child carries a structural stereotype (`system`, `component`,
-`service`, `interface`, `actor`), `class` otherwise. Members are the direct children
-plus every outside entity with a lifted edge into the level, in document order; no
-`query`. Expected:
-
-- `view:component/public`, title `Public`: the scope root's level view, the per-scope
-  view under its old id. Members: the parentless entities (Orderly, Customer, Operator
-  when minted, and every domain concept left without a parent), never "every entity":
-  a child of Orderly appears in Orderly's level, not the root's. The kind is
-  `component` because Orderly «system» and Customer «actor» are parentless; a compile
-  that records neither stereotype derives `view:class/public` with the same members.
-- `view:component/orderly`, title `Orderly`: derives only when Orderly has two or more
-  children (Admin CLI, Inventory, Catalog per the entities above). Members: the
-  children plus the outside entities whose edges lift into the level: Customer
-  (browses the Catalog), Operator (uses the Admin CLI), and any parentless domain
-  concept with an edge into a child (Order → Stock lifts to Inventory when Stock sits
-  under Inventory; Return → Inventory). A compile that lands no containment has no
-  Orderly level view; that is acceptable but weaker.
-- A level view for any other node that gained two or more children (Catalog over
-  Product and Catalog category: `view:class/catalog`; Inventory over Stock and a
-  warehouse concept: `view:class/inventory`) is mechanism-faithful, not a defect. A
-  node with one child has no level view.
-- `view:state/order`, title `Order`, over `sm:order`.
-- No `view:object/*`, no package, activity, deployment, or timing view: nothing curates
-  them and no instance or time measure exists.
-
-Flow views derive per level too. The root form keeps the unprefixed ids in the table
-above (lifting to a parentless entity is identity). A deeper level clusters the
-behavior requirements whose entities lift into its members, by document, under
-`view:usecase/<node-slug>-<doc-slug>` and `view:sequence/<node-slug>-<doc-slug>`:
-`view:usecase/orderly-admin`, titled `Orderly: Admin CLI`, when Admin CLI sits under
-Orderly. These are mechanism-faithful
-surplus; the four root clusters above are the graded minimum. Every rendered member
-with a level view of its own carries a drill-down link (`[[../<kind>/<slug>.svg]]` in
-the `.puml`, an anchor in the `.svg`): Orderly in `component/public` links to
-`../component/orderly.svg`.
-
-Every default carries `default: true` and derived provenance. A no-op rebuild derives
-zero goals, makes zero LLM calls, and leaves every view and diagram byte-identical.
+Shipping, admin, returns and orders offer interaction questions. Order's stated
+machine offers lifecycle review. The model selects use-case, activity, sequence
+or state notation for a distinct reader question, rather than creating twins.
+Actors come from stated entities. No actor or guard is invented. Missing diagram
+membership raises no placement diagnostic. Query matches on an existing authored
+structural diagram can still open curate-view.
 
 ## Rendered diagrams
 

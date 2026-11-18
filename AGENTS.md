@@ -49,23 +49,26 @@ Read the relevant specifications before changing behavior:
   offsets), `derived` (sources + reasoning), or explicit human `decree`. Derived and
   decreed facts carry ratification proposals; acceptance changes provenance to `quote`.
 - Authored nodes: entity, requirement, criterion, view. Requirements are free-form
-  `statement`s with entities, directional `edges`, optional `transition`.
+  `statement`s with entities, directional `edges`, and optional `transition`.
   Criteria state observable conditions, outcomes, and concrete values; tests bind to
-  them. Entities have one containment parent. Views store inclusion, never appearance.
+  them. Entities have one containment parent. Views store membership and authored
+  presentation intent.
   Sections supply structure; diagnostics retain judgments.
-- Relationships, state machines, default views, and the name index are derived on
+- Relationships, state machines, and the name index are derived on
   every commit, without write tools. Relationships come from requirement edges
   (typeless means `dependency`); state machines come from transitions.
 - Goals are derived from docs, graph, decisions, sources, and ledger, never stored.
   `g:<kind>:<target>` identifies a goal, `change` persists its identity across
   derivations, and `cause` names the committed mutation that opened it.
-  Compile readiness: alignment → ingest (linked roots first) → judgment → ledger.
+  Compile readiness: alignment → ingest (linked roots first) → judgment → diagram
+  review → ledger.
   `ratify` and `answer` need humans. GC is optional at soft limits, mandatory past
   hard limits, and ready only without open compile goals in the target cone.
   Limits belong in `limits.rs`, never `jazyk.toml`.
 - Nothing claims work: builds, sessions, and agents open batches freely and commits
-  are the only synchronization (first commit wins; a later one rebases or gets a
-  commit conflict). A build runs up to the executor's `max_sessions` at once, one
+  synchronize graph writes. Later commits replay against current state, preserve
+  disjoint fields, and report overwritten fields. A build runs up to the executor's
+  `max_sessions` at once, one
   batch each from the highest ready tier, grouped by locality and context budget. Workers use embedded Goose GDK or external
   ACP executors. Prompts assemble payloads and skills, never per-goal authored text.
   Models explicitly load graph context. Writes stage behind gates, preview new goals,
@@ -84,10 +87,11 @@ Read the relevant specifications before changing behavior:
   journals, progress, workers, leases, and locks; `derived/` holds rebuilt graph
   kinds, diagrams, and docsgen. Generations are local counters. Logs live outside
   the project or in the host record store (`jazyk status` prints the log directory).
-- Store version is 5. Version 4 loads and rewrites at next build opening, preserving
-  IDs. Newer stores stay read-only (`store-newer`), never archived; older stores
+- Store version is 7. Version 6 loads and rewrites at the next build opening,
+  preserving authored IDs and dropping automatic default diagrams. Newer stores
+  stay read-only (`store-newer`), never archived; older stores
   archive under `.jazyk/local/archive/` and rebuild from empty. No other migrations.
-- Diagrams are disposable projections, emitted as `.puml`/`.svg` through
+- Authored view nodes define diagrams. Disposable `.puml`/`.svg` renderings use
   `plantuml-little`; `resvg` supplies PNG on demand. `JAZYK_PLANTUML` selects the
   official native renderer. Hidden endpoints lift to shown ancestors; arrows group
   by direction/type with strongest type and count. Over-limit views auto-collapse

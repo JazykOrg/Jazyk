@@ -641,18 +641,13 @@ and gate boundaries. No new paid sessions are authorized by this plan.
 
 ## Existing goals and checks
 
-- Curate-view keeps query matches and unplaced behavior for existing authored
-  diagrams. Rank by compatible area, shared entities, same document, source order,
-  then ID. There are no automatic twins. An explicit phase/detail link or shared
-  area gives locality without depending on equal titles.
-- If no suitable flow diagram exists, unplaced behavior feeds flow-area analysis.
-  It is not an error and does not fabricate a curate-view target. If a diagram
-  exists in that area, its unplaced behavior can still feed curate-view. A behavior
-  statement elsewhere in the project must not create an error merely because some
-  unrelated area happens to have a sequence diagram.
-- Valid area suppression waives corresponding placement advice for this measure.
-  Keep any actual semantic failure diagnostic, such as an inconsistent transition.
-  Distinguish coverage advice from semantic errors in check results.
+- Curate-view keeps only query matches on existing authored structural diagrams.
+  No flow-placement change record or classification-based placement check exists.
+- Interaction coverage uses dependency edges, transitions and existing scenario
+  criteria within an area. Missing diagrams and unplaced statements are not
+  placement errors. A reasoned suppression waives only the area's diagram advice.
+- Keep semantic checks, including inconsistent transitions. Concrete bounds and
+  test shapes live in criteria, without requirement classifications.
 - Split-view applies to every authored diagram. Preserve size thresholds, fan-out
   precedence, no-member-lost and no-arrow-lost gates, explicit sub-view linkage,
   and visible renderer over-limit notes. Layout hints never satisfy count gates.
@@ -862,7 +857,7 @@ actual gated tool execution, not model output strings asserted in isolation.
   precedence and cone gating over open and parked compile goals.
 - Checks: no flow diagram yields coverage advice, not placement errors;
   unrelated flow diagram does not alter that result; authored area diagrams still
-  expose unplaced behavior; suppression has bounded effect. Hard fan-out and
+  expose interaction evidence without placement diagnostics; suppression has bounded effect. Hard fan-out and
   semantic transition/containment failures still block as before.
 - Rendering: snapshot every kind with applicable intent fields, stable aliases,
   order, labels, group and arrow selection, sequence fragments, inert malicious

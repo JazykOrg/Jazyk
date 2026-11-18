@@ -39,7 +39,7 @@ fn repoint(id: &str, to: &str) -> Op {
         entities: Some(vec![to.into()]),
         edges: None,
         transition: None,
-        facets: None,
+
         source: None,
         provenance: None,
     }
@@ -464,7 +464,7 @@ fn fan_out_gate_accepts_a_valid_grouping() {
             entities: Some(vec!["ent:cart-pricing".into(), "ent:pricing".into()]),
             edges: None,
             transition: None,
-            facets: None,
+
             source: None,
             provenance: None,
         },

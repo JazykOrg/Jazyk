@@ -9,7 +9,7 @@ fn heading_quoted_as_body_is_named() {
         .dispatch(
             "upsert_requirement",
             &json!({
-                "facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],
+
                 "statement": "The Cart exists.",
                 "entities": ["ent:customer"],
                 "section": "/shop/cart",
@@ -34,11 +34,11 @@ fn quote_must_locate() {
 fn requirement_needs_a_statement_and_known_entities() {
     let mut t = session();
     let err = t
-        .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "   ", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
+        .dispatch("upsert_requirement", &json!({ "statement": "   ", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
         .unwrap_err();
     assert_eq!(err.rule, "bad-args");
     let err2 = t
-        .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Cart holds items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
+        .dispatch("upsert_requirement", &json!({ "statement": "The Cart holds items.", "entities": ["ent:cart"], "section": "/shop/cart", "quote": "holds items"}))
         .unwrap_err();
     assert_eq!(err2.rule, "unknown-id");
     assert!(
@@ -48,7 +48,7 @@ fn requirement_needs_a_statement_and_known_entities() {
     );
     // Free-form statements land: no shape gate stands between prose and the graph.
     let ok = t
-        .dispatch("upsert_requirement", &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
+        .dispatch("upsert_requirement", &json!({ "statement": "The cart is nice.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "holds items"}))
         .unwrap();
     assert_eq!(ok["created"], true);
 }
@@ -63,7 +63,7 @@ fn criteria_enter_through_upsert_criterion_and_cover_their_section() {
         .dispatch(
             "upsert_requirement",
             &json!({
-"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}],"statement": "The Shopping Cart holds the items a Customer intends to buy.",
+"statement": "The Shopping Cart holds the items a Customer intends to buy.",
                     "entities": ["ent:customer"], "section": "/shop/cart",
                     "quote": "The Shopping Cart holds items a Customer intends to buy."}),
         )
@@ -195,7 +195,7 @@ fn update_requirement_takes_an_empty_statement_as_unchanged_and_rejects_a_bad_ca
     let r = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart holds items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
+            &json!({ "statement": "The Shopping Cart holds items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"}),
         )
         .unwrap();
     let rid = r["id"].as_str().unwrap().to_string();
@@ -224,7 +224,7 @@ fn edges_must_be_subset_of_entities() {
     let err = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
+            &json!({ "statement": "The Shopping Cart shall exist.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items", "edges": [{"a": "ent:shopping-cart", "b": "ent:customer"}]}),
         )
         .unwrap_err();
     assert_eq!(err.rule, "bad-edge");
@@ -236,7 +236,7 @@ fn escaped_quote_locates_and_stores_source_form() {
     let v = t
         .dispatch(
             "upsert_requirement",
-            &json!({"facets": [{"facet": "constraint", "reasoning": "a stated fact the fixture carries"}], "statement": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
+            &json!({ "statement": "The Customer shall intend to buy.", "entities": ["ent:customer"], "section": "/shop/cart", "quote": "a Customer intends to buy\\."}),
         )
         .unwrap();
     assert_eq!(v["created"], true);
@@ -264,7 +264,7 @@ fn repeated_upsert_resolves_to_one_staged_statement() {
         &json!({"name": "Shopping Cart", "mention": {"section": "/shop/cart", "quote": "The Shopping Cart holds items"}}),
     )
     .unwrap();
-    let args = json!({"facets": [{"facet": "constraint", "reasoning": "an invariant the cart holds"}], "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
+    let args = json!({ "statement": "The Shopping Cart shall hold items.", "entities": ["ent:shopping-cart"], "section": "/shop/cart", "quote": "holds items a Customer intends to buy"});
     let v1 = t.dispatch("upsert_requirement", &args).unwrap();
     assert_eq!(v1["created"], true);
     // The identical call again is idempotent within the turn: same id, one staged op.
@@ -363,7 +363,7 @@ fn a_requirement_quote_spanning_two_sentences_locates() {
     );
     let req = |q: &str, sec: &str| {
         json!({"statement": "The Frontend is a React web application.", "entities": ["ent:frontend"],
-        "section": format!("w.md#{}", sec), "quote": q, "facets": [{"facet": "constraint", "reasoning": "its form"}]})
+        "section": format!("w.md#{}", sec), "quote": q})
     };
     let result = t
         .dispatch("upsert_requirement", &req("The frontend is a web application built using React. It communicates with the backend over a REST API.", "/warehouse/frontend"))
@@ -425,7 +425,7 @@ fn displayed_page_copy_uses_one_source_sentence_per_requirement() {
         json!({
             "statement": format!("The Landing Page hero displays '{quote}'"),
             "entities": ["ent:landing"], "section": "landing.md#/landing-page/hero", "quote": quote,
-            "facets": [{"facet":"constraint","reasoning":"the required display text"}],
+
         })
     };
     assert!(t
@@ -438,7 +438,7 @@ fn displayed_page_copy_uses_one_source_sentence_per_requirement() {
 #[test]
 fn matching_obligation_attaches_another_location_instead_of_minting() {
     let mut t = session();
-    let args = json!({"statement":"The Customer keeps items.", "entities":["ent:customer"], "section":"/shop/cart", "quote":"holds items", "facets":[{"facet":"constraint","reasoning":"fixture obligation"}]});
+    let args = json!({"statement":"The Customer keeps items.", "entities":["ent:customer"], "section":"/shop/cart", "quote":"holds items"});
     let first = t.dispatch("upsert_requirement", &args).unwrap();
     let mut second = args;
     second["section"] = json!("/shop");

@@ -403,18 +403,6 @@ impl ToolSession {
         } else {
             Some(self.parse_transition(&args["transition"], &entities)?)
         };
-        // Every requirement carries at least one facet: the four kinds are
-        // exhaustive, and a facetless statement joins no flow, gives no
-        // branch, and shapes no test
-        // (docs/compiler/model/requirement.md#facets).
-        let facets = if !Self::present(&args["facets"]) {
-            return Err(ToolError::new(
-                "facets-missing",
-                "a requirement carries at least one facet: behavior (the subject does something), constraint (an invariant it holds), failure-mode (what happens when something goes wrong), or quality (a measured bound, with measure); a plain stated fact is a constraint".into(),
-            ));
-        } else {
-            parse_facets(&args["facets"])?
-        };
         let source = SourceRef {
             doc: doc.clone(),
             section: sec.clone(),
@@ -425,7 +413,7 @@ impl ToolSession {
             entities,
             edges,
             transition,
-            facets,
+
             sources: vec![source.clone()],
             reasoning: Self::opt_str(args, "reasoning"),
             ..Default::default()
@@ -472,9 +460,7 @@ impl ToolSession {
             if requirement.transition.is_some() {
                 r.transition = requirement.transition;
             }
-            if !requirement.facets.is_empty() {
-                r.facets = requirement.facets;
-            }
+
             let matched = (crate::store::normalize_statement(&r.statement) != norm_statement)
                 .then(|| r.statement.clone());
             r.statement = requirement.statement;
@@ -659,11 +645,7 @@ impl ToolSession {
         } else {
             Some(self.parse_transition(&args["transition"], &listed)?)
         };
-        let facets = if !Self::present(&args["facets"]) {
-            None
-        } else {
-            Some(parse_facets(&args["facets"])?)
-        };
+
         // A revision may re-anchor its provenance: section plus quote, both or
         // neither. The quote must locate, same gate as a fresh upsert.
         // The common miscall is passing the statement as the quote while only
@@ -698,7 +680,7 @@ impl ToolSession {
                                 id: id.clone(),
                                 source: Some(SourceRef { doc: doc.clone(), section: sec.clone(), quote: q.clone() }),
                                 statement: None, entities: None, edges: None,
-                                transition: None, facets: None, provenance: None,
+                                transition: None,  provenance: None,
                             }],
                         ).contains(&id);
                     if doc != wd && !reference_repair {
@@ -730,7 +712,7 @@ impl ToolSession {
             entities,
             edges,
             transition,
-            facets,
+
             source,
             provenance: None,
         })?;
@@ -779,11 +761,7 @@ impl ToolSession {
         } else {
             Some(self.parse_transition(&args["transition"], &entities)?)
         };
-        let facets = if !Self::present(&args["facets"]) {
-            Vec::new()
-        } else {
-            parse_facets(&args["facets"])?
-        };
+
         let provenance = self.parse_derived(&args["provenance"])?;
         let from_set: BTreeSet<String> = match &provenance {
             Provenance::Derived { from, .. } => from.iter().cloned().collect(),
@@ -801,7 +779,7 @@ impl ToolSession {
             entities,
             edges,
             transition,
-            facets,
+
             provenance: Some(provenance),
             reasoning: Self::opt_str(args, "reasoning"),
             ..Default::default()
@@ -830,9 +808,7 @@ impl ToolSession {
             if requirement.transition.is_some() {
                 r.transition = requirement.transition;
             }
-            if !requirement.facets.is_empty() {
-                r.facets = requirement.facets;
-            }
+
             r.statement = requirement.statement;
             return Ok(json!({"id": id.clone(), "updated": true}));
         }

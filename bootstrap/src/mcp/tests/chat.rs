@@ -768,13 +768,13 @@ fn revise_requirement_commits_prose_and_graph_without_redirtying() {
 
     // A decree through edit_fact lands graph-only with its proposal.
     let v = server.edit_fact(
-            &json!({"id": "req:pay-1", "field": "facets", "value": [{"facet": "constraint", "reasoning": "an invariant"}], "decision": "Treat this as a constraint."}),
+            &json!({"id": "req:pay-1", "field": "transition", "value": {"subject":"ent:order","from":"ready","to":"done","trigger":"purchase"}, "decision": "Treat this as a constraint."}),
         );
     assert_eq!(v["path"], "decree", "{}", v);
     let s = Store::load(&out);
     let r = &s.graph.requirements["req:pay-1"];
     assert!(r.sources.is_empty() && matches!(r.provenance, Some(Provenance::Decree { .. })));
-    assert_eq!(r.facets.len(), 1);
+    assert!(r.transition.is_some());
     assert!(s
         .graph
         .diagnostics

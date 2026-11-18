@@ -101,7 +101,7 @@ fn criteria_key_on_their_requirement_and_follow_it() {
             entities: None,
             edges: None,
             transition: None,
-            facets: None,
+
             source: None,
             provenance: None,
         }],
@@ -355,7 +355,7 @@ fn requirement_remaps_provisional_ids_and_derives_edges() {
             entities: None,
             edges: Some(vec![]),
             transition: None,
-            facets: None,
+
             source: None,
             provenance: None,
         }],
@@ -560,11 +560,7 @@ fn views_curate_delete_and_bump() {
         requirement: Requirement {
             statement: statement.into(),
             entities: vec!["ent:cart".into()],
-            facets: vec![Facet {
-                facet: "behavior".into(),
-                reasoning: "a step".into(),
-                measure: None,
-            }],
+
             sources: vec![mention("t.md", "/t", "cart and order")],
             ..Default::default()
         },

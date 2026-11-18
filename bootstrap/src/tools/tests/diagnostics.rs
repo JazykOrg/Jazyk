@@ -131,14 +131,14 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
             if s == new && src.quote == new
     ));
     let v = t
-        .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "facets", "value": [{"facet": "behavior", "reasoning": "a step"}], "decision": "Treat this as a behavior."}))
+        .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "transition", "value": {"subject":"ent:customer","from":"ready","to":"done","trigger":"purchase"}, "decision": "Treat this as a behavior."}))
         .unwrap();
     assert_eq!(v["path"], "decree");
     let n = t.staged.len();
     assert!(matches!(
         &t.staged[n - 2],
-        Op::UpdateRequirement { facets: Some(f), source: None, provenance: Some(Provenance::Decree { .. }), .. }
-            if f.len() == 1
+        Op::UpdateRequirement { transition: Some(t), source: None, provenance: Some(Provenance::Decree { .. }), .. }
+            if t.to == "done"
     ));
     match &t.staged[n - 1] {
         Op::ReportDiagnostic { diagnostic, .. } => {
@@ -292,8 +292,8 @@ fn a_prompt_edits_facts_pass_the_requirement_gates() {
     assert_eq!(err.rule, "bad-fact");
     let elsewhere = prompt(
         "/shop",
-        json!([{"id": "req:shop-1", "field": "facets",
-        "value": [{"facet": "behavior", "reasoning": "a step"}], "decision": "Treat this as a behavior."}]),
+        json!([{"id": "req:shop-1", "field": "unknown-field",
+        "value": "ignored", "decision": "Treat this as a behavior."}]),
     );
     let err = t.parse_prompt(&elsewhere["prompt"]);
     let err = match err {

@@ -54,6 +54,11 @@ struct Chat {
     // A sub-agent's last turn result, {status, text}.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     result: Option<Value>,
+    // Results of sub-agent turns this conversation did not request, waiting for its
+    // running turn to take them as steering
+    // (docs/frontends/subagents.md#prompting-a-sub-agent).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    queued: Vec<Value>,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -452,6 +457,7 @@ pub fn create(body: &Value) -> Value {
                 inputs: BTreeMap::new(),
                 tree: None,
                 result: None,
+                queued: Vec::new(),
             },
         );
         id
@@ -802,6 +808,31 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
             json!({"error": "a turn is already running; cancel it or wait for it to end"}),
         );
     }
+    // A person's prompt to an idle sub-agent starts its next turn, which its parent
+    // did not request (docs/frontends/subagents.md#prompting-a-sub-agent). A resumed
+    // turn keeps the id it started with.
+    let agent_turn = match saved_turn.as_ref().map(|saved| saved["agentTurn"].as_str()) {
+        Some(turn) => turn.map(str::to_owned),
+        None if BOOK.with(|b| b.borrow().chats[id].tree.is_some()) => {
+            match agents_tree().begin_turn(id) {
+                Ok((node, turn)) => {
+                    BOOK.with(|b| {
+                        if let Some(tree) = b
+                            .borrow_mut()
+                            .chats
+                            .get_mut(id)
+                            .and_then(|c| c.tree.as_mut())
+                        {
+                            tree["turns"] = json!(node.turns);
+                        }
+                    });
+                    Some(turn)
+                }
+                Err(error) => return (409, json!({"error": error})),
+            }
+        }
+        None => None,
+    };
 
     if let Some(after) = body["afterN"].as_u64() {
         if after > (1u64 << 53) - 10_000 {
@@ -928,7 +959,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     }
     crate::session_recovery::set_parent(
         &recovery_key,
-        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text)}),
+        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"agentTurn":agent_turn}),
     );
 
     let mut dispatch = |name: &str, args: &Value| -> Result<String, String> {
@@ -951,7 +982,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let cancelled = || crate::portable::cancel_requested();
     let mut input_source = || {
         let mut seen = std::collections::BTreeSet::new();
-        crate::portable::take_inputs(id).into_iter().filter(|v| {
+        crate::portable::take_inputs(id).into_iter().chain(take_queued(id)).filter(|v| {
             v["messageId"].as_str().is_some_and(|mid| seen.insert(mid.to_owned()) && BOOK.with(|b| !b.borrow().chats[id].inputs.contains_key(mid)))
         }).map(|mut value| {
             value["sessionId"] = json!(id);
@@ -1000,6 +1031,12 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
         .await
     };
     drop(recovery);
+    let agent_outcome = agent_turn.as_ref().map(|_| match &stop {
+        Stop::Error(_) if crate::portable::cancel_requested() => {
+            goose_agent::subagent::SubagentOutcome::Cancelled
+        }
+        stop => harness::agents::outcome_of(stop, &history),
+    });
 
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
@@ -1060,11 +1097,22 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let stop_reason = update["stop"].clone();
     append(id, update);
     set_state(id, state);
+    // The parent receives the result in the checkpoint that records the turn's end,
+    // so a resumed turn delivers it once (docs/frontends/subagents.md#checkpoints).
+    if let (Some(turn), Some(outcome)) = (&agent_turn, agent_outcome) {
+        agents_tree().finish(id, turn, outcome.clone());
+        BOOK.with(|b| {
+            if let Some(c) = b.borrow_mut().chats.get_mut(id) {
+                c.result = Some(harness::agents::outcome_value(&outcome));
+            }
+        });
+        deliver_unrequested(id, turn, &outcome);
+    }
     let result =
         json!({"ok":true,"messageId":message_id,"turnId":turn_id,"stop":stop_reason,"state":state});
     crate::session_recovery::set_parent(
         &recovery_key,
-        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"result":result}),
+        json!({"messageId":message_id,"textHash":crate::model::hash_hex(&text),"agentTurn":agent_turn,"result":result}),
     );
     if let Err(error) = crate::session_recovery::checkpoint_parent().await {
         return (
@@ -1151,6 +1199,63 @@ fn input_update(chat_id: &str, value: Value) {
 }
 
 // ---- sub-agents (docs/frontends/subagents.md) ----
+
+// The result of a sub-agent turn its parent did not request: steering queued for a
+// running parent, or appended to an idle parent's history for its next turn. Its
+// message id makes a repeated delivery a no-op
+// (docs/frontends/subagents.md#prompting-a-sub-agent).
+fn deliver_unrequested(id: &str, turn: &str, outcome: &goose_agent::subagent::SubagentOutcome) {
+    let parent = BOOK.with(|b| {
+        b.borrow()
+            .chats
+            .get(id)
+            .and_then(|c| c.tree.as_ref())
+            .and_then(|t| t["parentId"].as_str().map(str::to_owned))
+    });
+    let Some(parent) = parent else {
+        return;
+    };
+    ensure_loaded(&parent);
+    let input = harness::agents::result_input(id, turn, outcome);
+    let message_id = input["messageId"].clone();
+    let running = BOOK.with(|b| {
+        let b = b.borrow();
+        let c = b.chats.get(&parent)?;
+        let seen = message_id
+            .as_str()
+            .is_some_and(|mid| c.inputs.contains_key(mid))
+            || c.queued.iter().any(|q| q["messageId"] == message_id);
+        (!seen).then(|| c.state == "running")
+    });
+    match running {
+        None => {}
+        Some(true) => BOOK.with(|b| {
+            if let Some(c) = b.borrow_mut().chats.get_mut(&parent) {
+                c.queued.push(input);
+            }
+        }),
+        Some(false) => {
+            let text = input["text"].as_str().unwrap_or_default().to_string();
+            BOOK.with(|b| {
+                if let Some(c) = b.borrow_mut().chats.get_mut(&parent) {
+                    harness::push_user_text(&mut c.history, &text);
+                }
+            });
+            input_update(&parent, input);
+        }
+    }
+}
+
+// The queued results a running turn takes as steering.
+fn take_queued(id: &str) -> Vec<Value> {
+    BOOK.with(|b| {
+        b.borrow_mut()
+            .chats
+            .get_mut(id)
+            .map(|c| std::mem::take(&mut c.queued))
+            .unwrap_or_default()
+    })
+}
 
 // The workspace's tree, holding every sub-agent conversation the book knows. A
 // sub-agent from an earlier request is idle until its parent messages it.

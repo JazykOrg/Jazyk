@@ -1308,3 +1308,215 @@ fn suspended_sub_agent_turn_resumes_or_stops_with_its_parent() {
         assert_eq!(updates(&parent, "turn_end").len(), 1, "{parent}");
     }
 }
+
+// A person's prompt to an idle hosted sub-agent delivers its result to the idle
+// parent once: in the parent's transcript and in its next model request, also when
+// the turn suspends and resumes, and not again when the finished request replays.
+// Mirrors docs/frontends/subagents.md#prompting-a-sub-agent.
+#[test]
+fn direct_prompt_to_idle_sub_agent_delivers_to_its_parent_once_across_resume() {
+    let mut w = workspace("Direct sub-agent prompt");
+    let suspend = Arc::new(AtomicBool::new(false));
+    let calls = Arc::new(std::sync::Mutex::new(Vec::<(String, &str)>::new()));
+    let (raise, seen) = (suspend.clone(), calls.clone());
+    let model: ModelAsyncTransport = Arc::new(move |request| {
+        let (raise, seen) = (raise.clone(), seen.clone());
+        Box::pin(async move {
+            let request: Value = serde_json::from_str(&request).unwrap();
+            let messages = request["messages"].to_string();
+            let answered = |after: &str| {
+                let all = request["messages"].as_array().unwrap();
+                let start = all
+                    .iter()
+                    .rposition(|m| m["role"] == "user" && m.to_string().contains(after))
+                    .unwrap_or(0);
+                all[start..].iter().any(|m| m["role"] == "tool")
+            };
+            let tool_call = |id: &str, name: &str, args: Value| {
+                json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+                    {"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}}],
+                    "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}})
+                .to_string()
+            };
+            let (step, reply) = if messages.contains("Count them again.") {
+                if answered("Count them again.") {
+                    ("direct-final", model_reply("Two sections now."))
+                } else {
+                    raise.store(true, Ordering::SeqCst);
+                    (
+                        "direct-status",
+                        tool_call("status-2", "agent_status", json!({})),
+                    )
+                }
+            } else if messages.contains("What did the sub-agent report?") {
+                ("followup", model_reply("It reported two sections."))
+            } else if messages.contains("You are a sub-agent started by the conversation") {
+                ("child", model_reply("One section."))
+            } else if messages.contains("Subagent chat-2 completed: One section.") {
+                ("parent-final", model_reply("Counted."))
+            } else if answered("Delegate") {
+                ("waiting", model_reply("Waiting for the sub-agent."))
+            } else {
+                let task = json!({"task":"Count the sections of docs/main.md","title":"Count"});
+                ("spawn", tool_call("spawn-1", "spawn_agent", task))
+            };
+            let mut seen = seen.lock().unwrap();
+            assert!(seen.len() < 14, "runaway model calls: {seen:?}");
+            seen.push((
+                request["_jazyk"]["requestId"].as_str().unwrap().into(),
+                step,
+            ));
+            Ok(reply)
+        })
+    });
+    type Records = BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>;
+    let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot, Records)>));
+    let checkpoint = saved.clone();
+    let host = host_records();
+    let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+        let checkpoint = checkpoint.clone();
+        let records = host.0.lock().unwrap().clone();
+        Box::pin(async move {
+            let next = capsule["sequence"].as_u64().unwrap() + 1;
+            capsule["sequence"] = json!(next);
+            *checkpoint.lock().unwrap() = Some((capsule, files, records));
+            Ok(next)
+        })
+    });
+    let plain = Execution {
+        model: "fixture".into(),
+        transport_async: Some(model.clone()),
+        ..Default::default()
+    };
+    value(&mut w, "POST", "/api/chat/sessions", json!({}), &plain);
+    let first = value(
+        &mut w,
+        "POST",
+        "/api/chat/sessions/chat-1/prompt",
+        json!({"text":"Delegate counting the sections.","messageId":"ask"}),
+        &plain,
+    );
+    assert_eq!(first["stop"], "end_turn", "{first}");
+
+    let path = "/api/chat/sessions/chat-2/prompt";
+    let body = json!({"text":"Count them again.","messageId":"again","turnId":"again"});
+    let execution = Execution {
+        checkpoint: Some(sink.clone()),
+        suspend: suspend.clone(),
+        ..plain.clone()
+    };
+    let suspended = value(&mut w, "POST", path, body.clone(), &execution);
+    assert_eq!(suspended["stop"], "suspended", "{suspended}");
+    let (capsule, files, records) = saved.lock().unwrap().clone().unwrap();
+    assert_eq!(
+        capsule["parent"]["chat:chat-2:again"]["agentTurn"],
+        "chat-2#2"
+    );
+    *host_records().0.lock().unwrap() = records;
+    let mut restored = Workspace::new(files).unwrap();
+    let resumed = Execution {
+        checkpoint: Some(sink.clone()),
+        resume: Some(capsule),
+        ..plain.clone()
+    };
+    let complete = value(&mut restored, "POST", path, body.clone(), &resumed);
+    assert_eq!(complete["stop"], "end_turn", "{complete}");
+    // The finished request replays from its last checkpoint without delivering again.
+    let (finished, _, _) = saved.lock().unwrap().clone().unwrap();
+    let replayed = Execution {
+        resume: Some(finished),
+        ..plain.clone()
+    };
+    let again = value(&mut restored, "POST", path, body, &replayed);
+    assert_eq!(again["stop"], "end_turn", "{again}");
+
+    let delivered = |w: &mut Workspace| {
+        let parent = value(
+            w,
+            "GET",
+            "/api/chat/sessions/chat-1",
+            Value::Null,
+            &Execution::default(),
+        );
+        parent["updates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|u| u["update"].clone())
+            .filter(|u| u["sessionUpdate"] == "user_message" && u["source"]["agentId"] == "chat-2")
+            .collect::<Vec<_>>()
+    };
+    let results = delivered(&mut restored);
+    assert_eq!(results.len(), 2, "{results:?}");
+    assert_eq!(
+        results[1]["text"],
+        "Subagent chat-2#2 completed: Two sections now."
+    );
+    let tree = value(
+        &mut restored,
+        "GET",
+        "/api/agent-tree",
+        Value::Null,
+        &Execution::default(),
+    );
+    let row = tree["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["id"] == "chat-2")
+        .unwrap()
+        .clone();
+    assert_eq!(row["result"]["text"], "Two sections now.", "{row}");
+
+    // The idle parent's next model request reads the result once.
+    let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+    let observed = requests.clone();
+    let followup = Execution {
+        model: "fixture".into(),
+        transport: Some(Arc::new(move |body| {
+            observed
+                .lock()
+                .unwrap()
+                .push(serde_json::from_str(body).unwrap());
+            Ok(model_reply("It reported two sections."))
+        })),
+        ..Default::default()
+    };
+    let next = value(
+        &mut restored,
+        "POST",
+        "/api/chat/sessions/chat-1/prompt",
+        json!({"text":"What did the sub-agent report?","messageId":"next"}),
+        &followup,
+    );
+    assert_eq!(next["stop"], "end_turn", "{next}");
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["messages"]
+            .to_string()
+            .matches("Subagent chat-2#2 completed: Two sections now.")
+            .count(),
+        1,
+        "{}",
+        requests[0]
+    );
+    assert_eq!(delivered(&mut restored).len(), 2);
+
+    let calls = calls.lock().unwrap().clone();
+    let mut ids: Vec<_> = calls.iter().map(|(id, _)| id.clone()).collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        calls.len(),
+        "a saved model call was repeated: {calls:?}"
+    );
+    for step in ["direct-status", "direct-final"] {
+        assert_eq!(
+            calls.iter().filter(|(_, s)| *s == step).count(),
+            1,
+            "{step} in {calls:?}"
+        );
+    }
+}

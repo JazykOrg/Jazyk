@@ -1,7 +1,7 @@
 # Persisted open work and soft node locks
 
-Status: implementation plan, 2026-11-17. This document records owner direction and
-implementation decisions. It does not claim that the behavior is implemented.
+Status: implementation and local validation, 2026-11-17. This document records
+owner direction, the implementation contract, and integration boundaries.
 
 ## Scope and integration baseline
 
@@ -16,9 +16,9 @@ multiple batches per serving, executor `max_sessions`, release gates, tier
 barriers, bounded store commit locks, and informational `openBy`. Replace its
 conflict refusal and ephemeral open-task records with the contracts below.
 
-This turn delivers the plan. The specification edits, engine implementation,
-behavioral tests, full Rust validation, and implementation integration are the
-following work. No dogfood compilation or graph mutation is part of planning.
+Implementation uses `feat/persisted-open-work` in `/Users/matus/dev/jazyk-open-work`,
+branched from `master` at `4766db6d` after parallel work merged. Dogfood compilation
+and graph mutation remain outside this workflow.
 
 ## Decisions
 
@@ -70,18 +70,15 @@ Native layout, relative to the document-set directory:
 local/open/<work-id>/
   manifest.yaml
   events.jsonl
-  base.yaml
 ```
 
 `manifest.yaml` contains format version, work ID, document-set identity, state,
 owner epoch, owner identity, batch and goals with their original `change`, snapshot
-generation, configuration hash, creation time, last activity, heartbeat,
-`expiresAt`, and last complete event sequence. `base.yaml` contains the immutable
-opening graph snapshot needed to restore the original view and validation context.
-It uses the existing serializable store representation, excluding runtime caches,
-credentials and process resources. It is local and is not a new graph format or
-store-version migration. Prefer a complete snapshot initially to a new mechanism
-for lazily reconstructing missing historical fields.
+generation, creation time, last activity, heartbeat, `expiresAt`, and last complete
+event sequence. The event checkpoint envelope contains the immutable opening graph
+snapshot needed to restore the original view and validation context. It uses the
+existing serializable session representation, excluding process resources. It is
+local and is not a new graph format or store-version migration.
 
 Owner identity includes worker ID, client name, conversation ID and display name,
 session ID/name, optional parent agent, PID and host where available. Missing
@@ -112,7 +109,7 @@ Document this capability explicitly.
 
 ## Lifecycle and concurrency
 
-Opening work persists the manifest and base before returning `workId`. Opening a
+Opening work persists its initial checkpoint and manifest before returning `workId`. Opening a
 batch does not itself soft-lock its goals' target nodes. Only staged mutations do.
 Conversational atomic graph edits use this same machinery with an empty goal list.
 Build and ledger visibility records must not masquerade as staged node locks.
@@ -337,9 +334,10 @@ Each implementation slice updates its requirements before code. Read the
    explicit adoption/discard, and integrity-gate repair. Share guidance through
    partials and preserve parser conventions. No corrective Rust prompt strings.
 9. Run focused tests, then full validation, commit coherent slices, integrate with
-   `git merge --no-ff` after the parallel-work base is integrated, and push engine
-   changes to `master`. Do not merge the plan branch into master prematurely if it
-   would import the other effort's unverified implementation. No deployment.
+   `git merge --no-ff` after the parallel-work base is integrated, and prepare the combined
+   deployment-triggering push to `master`. Do not merge the plan branch into master prematurely if it
+   would import the other effort's unverified implementation. Deploy only after both
+   efforts pass integrated verification, as the owner subsequently authorized.
 
 ## Tests and acceptance evidence
 
@@ -390,15 +388,36 @@ Planning alone requires plan link/style checks and `git diff --check`, not Rust
 builds or graph reconciliation. Configure the owner's signed commit identity before
 committing. Keep feature branches local and preserve unrelated work.
 
-## Remaining work and boundaries
+## Implementation decisions and release boundaries
 
-The plan settles the requested behavior and test contract. Normative docs, schema,
-code, fixtures, validation and implementation merge remain. Graph reconciliation
-is pending and must not start a dogfood model session under this request.
+The native log stores the existing serialized session checkpoint envelope alongside
+staged mutations. The original snapshot is inside that envelope rather than a
+separate `base.yaml`. Accepted calls remain atomic and recovery reuses the existing
+session representation. Expired records are retained until explicit discard.
 
-Host-side durable atomic adoption and commit-crash recovery are required engineering
-work, not optional follow-ups. The host adapter implementation and editor UI in
-`jazyk-cloud` remain separately owned. Browser process-exit durability requires host
-persistence and is not supplied by an in-memory workspace. Expired work may grow
-without bound until explicitly discarded; paginated discovery makes it manageable
-without silently losing recovery data. Retention automation needs separate design.
+Conflict notices derive from journal receipts on every reply and at `done`, rather
+than a separately mutated recipient queue. Delivery never consumes the only copy.
+`openBy` retains worker names for existing consumers; `openWork` supplies stable work
+IDs, identity, activity and expiry. Atomic-call groups and monotonic mutation IDs
+make `unstage` explicit; withdrawing work invalidates its goal claims.
+
+Graph commits use a local redo image and verify saved shards before removing it.
+Goal-resolution progress lands with the graph. Hosted commits retain a recovery
+payload until the host acknowledges a durable snapshot containing the journal
+receipt. Cloud adds the atomic record adapter and migration `0040_open_work.sql`.
+No store version bump is needed for runtime open-work records.
+
+Local validation covers cargo tests and CLI fixtures, formatting, clippy with
+warnings denied, WASM checking, and release compilation. Tests include killed
+process recovery, adoption and owner fencing, overwrite attribution, disjoint field
+and alias merging, repeated notices, redo recovery, and a host crash before its
+workspace checkpoint. Cloud validates its record adapter with real PostgreSQL and
+its editor refresh behavior with unit tests. No paid model sessions are required.
+
+Integration coordinates with the authored-diagram effort. Its new decision and view
+fields use the shared touched-target and serialized field audit. Both efforts must
+be complete and verified before the combined deployment-triggering push. Keep
+work branches local and merge with `git merge --no-ff`. Hosted publication and live
+verification follow the owner's explicit combined-deployment instruction. AWS
+actions require an owner-supplied profile. Graph reconciliation remains pending;
+no dogfood LLM session runs as part of this implementation.

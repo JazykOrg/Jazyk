@@ -57,6 +57,9 @@ impl Board {
             }
             v["openBy"] = json!(names);
         }
+        if let Some(work) = self.open_work.get(&g.id) {
+            v["openWork"] = json!(work);
+        }
         if let Some(b) = self.batches.iter().find(|b| b.goals.contains(&g.id)) {
             v["batch"] = json!(b.id);
         }

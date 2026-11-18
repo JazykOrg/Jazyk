@@ -214,6 +214,10 @@ pub fn command_timeout() -> std::time::Duration {
 pub const REQUIREMENT_CLUSTER_SOFT: usize = 2;
 pub const REQUIREMENT_CLUSTER_HARD: usize = 10;
 
+// Persisted changesets unlock on inactivity, but retain their staged data.
+pub const OPEN_WORK_TTL_SECS: u64 = 120;
+pub const OPEN_WORK_HEARTBEAT_SECS: u64 = 30;
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -373,14 +373,22 @@ pub fn spawn_control_watcher(st: SharedState) {
                     .unwrap_or_default()
             };
             s.push_str(&meta(&crate::control::Control::path(out)));
-            for dir in ["workers", "open"] {
-                if let Ok(entries) = crate::vfs::read_dir(out.join(dir)) {
+            for dir in [
+                crate::layout::workers_dir(out),
+                crate::layout::open_dir(out),
+            ] {
+                if let Ok(entries) = crate::vfs::read_dir(dir) {
                     let mut names: Vec<String> = entries
                         .flatten()
                         .map(|e| format!("{}{}", e.file_name().to_string_lossy(), meta(&e.path())))
                         .collect();
                     names.sort();
                     s.push_str(&names.join(""));
+                }
+            }
+            if let Ok(work) = crate::open_work::list(out) {
+                for r in work {
+                    s.push_str(&format!("{}:{};", r.receipt.id, r.active()));
                 }
             }
             s

@@ -51,11 +51,18 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
         let names = tool_names(&server);
         let mut expected = toolset_for_kinds(&[kind]);
         expected.extend(LIFECYCLE);
+        expected.extend([
+            "open_work",
+            "read_open_work",
+            "adopt_open_work",
+            "discard_open_work",
+            "unstage",
+        ]);
         expected.push("project_context");
         expected.extend(crate::agent_workflows::TOOLS);
         assert_eq!(
             names.len(),
-            count + 1 + crate::agent_workflows::TOOLS.len(),
+            count + 6 + crate::agent_workflows::TOOLS.len(),
             "{kind}"
         );
         assert_eq!(
@@ -88,6 +95,13 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
     let names = tool_names(&server);
     let mut expected = toolset_for_kinds(&["declare-edges"]);
     expected.extend(LIFECYCLE);
+    expected.extend([
+        "open_work",
+        "read_open_work",
+        "adopt_open_work",
+        "discard_open_work",
+        "unstage",
+    ]);
     expected.push("project_context");
     expected.extend(crate::agent_workflows::TOOLS);
     assert_eq!(
@@ -106,7 +120,10 @@ fn active_catalog_follows_batch_scope_and_keeps_hidden_write_gates() {
         .as_str()
         .unwrap()
         .contains("wrong-toolset"));
-    // Recovery restores the scope before the next catalog is requested.
+    // Recovery restores the latest persisted scope before the next catalog is requested.
+    server
+        .handle("tools/call", &json!({"name":"graph_status","arguments":{}}))
+        .unwrap();
     let checkpoint = server.checkpoint().unwrap();
     drop(server);
     let recovered = make();
@@ -267,6 +284,7 @@ fn reader_serving_lists_only_the_read_tools() {
             .copied()
             .chain(std::iter::once("project_context"))
             .chain(crate::agent_workflows::TOOLS)
+            .chain(["open_work", "read_open_work"])
             .map(str::to_string)
             .collect::<Vec<_>>()
     );
@@ -307,6 +325,8 @@ fn project_reader_keeps_read_only_instructions_and_set_discovery() {
             || name == "list_document_sets"
             || name == "read_document"
             || name == "project_context"
+            || name == "open_work"
+            || name == "read_open_work"
             || crate::tools::READ_TOOLS.contains(&name.as_str())
     ));
     #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]

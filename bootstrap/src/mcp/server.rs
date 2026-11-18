@@ -261,6 +261,7 @@ impl McpServer {
             modes,
             write,
             client: std::sync::Mutex::new(None),
+            identity: std::sync::Mutex::new(json!({})),
             open: std::sync::Mutex::new(None),
             bench: std::sync::Mutex::new(BenchRun::default()),
             worker: std::sync::Arc::new(std::sync::Mutex::new(None)),
@@ -305,10 +306,12 @@ impl McpServer {
             "setId": self.project.set_id,
             "configHash": project.config_hash,
             "open": &*self.open.lock().map_err(|_| "MCP batch state poisoned")?,
+            "parked": &*self.parked.lock().map_err(|_| "MCP parked state poisoned")?,
             "delivered": &*self.delivered.lock().map_err(|_| "MCP delivery state poisoned")?,
             "finished": &*self.finished.lock().map_err(|_| "MCP completion state poisoned")?,
             "ledgerTarget": &*self.ledger_target.lock().map_err(|_| "MCP ledger state poisoned")?,
             "client": &*self.client.lock().map_err(|_| "MCP client state poisoned")?,
+            "identity": &*self.identity.lock().map_err(|_| "MCP identity poisoned")?,
             "callMemory": &*self.call_memory.lock().map_err(|_| "MCP call memory poisoned")?,
             "skills": &*self.skills.lock().map_err(|_| "MCP skill state poisoned")?,
             "children": children
@@ -332,6 +335,28 @@ impl McpServer {
         };
         let mut open: Option<OpenBatch> =
             serde_json::from_value(value["open"].clone()).map_err(|e| e.to_string())?;
+        let mut completed = None;
+        if let Some(batch) = open.as_mut() {
+            if self.restore_work_record(batch)? {
+                completed = Some(batch.id.clone());
+            }
+        }
+        if completed.is_some() {
+            open = None;
+        }
+        let mut parked: BTreeMap<String, OpenBatch> =
+            serde_json::from_value(value.get("parked").cloned().unwrap_or(json!({})))
+                .map_err(|e| e.to_string())?;
+        let mut closed = Vec::new();
+        for (id, batch) in &mut parked {
+            if self.restore_work_record(batch)? {
+                closed.push(id.clone());
+            }
+        }
+        for id in closed {
+            parked.remove(&id);
+        }
+        *self.parked.lock().unwrap() = parked;
         if let Some(batch) = open.as_mut() {
             if batch.session.snapshot.out != self.out
                 || self.bridge.only.as_ref().is_some_and(|id| id != &batch.id)
@@ -361,8 +386,8 @@ impl McpServer {
         *self
             .finished
             .lock()
-            .map_err(|_| "MCP completion state poisoned")? =
-            serde_json::from_value(value["finished"].clone()).map_err(|e| e.to_string())?;
+            .map_err(|_| "MCP completion state poisoned")? = completed
+            .or(serde_json::from_value(value["finished"].clone()).map_err(|e| e.to_string())?);
         let ledger_target: Option<String> =
             serde_json::from_value(value["ledgerTarget"].clone()).map_err(|e| e.to_string())?;
         if let Some(target) = &ledger_target {
@@ -383,6 +408,7 @@ impl McpServer {
             .call_memory
             .lock()
             .map_err(|_| "MCP call memory poisoned")? = call_memory;
+        *self.identity.lock().unwrap() = value.get("identity").cloned().unwrap_or(json!({}));
         if let Some(children) = value["children"].as_object() {
             let workspace =
                 crate::document_sets::Workspace::load(&self.project.root).map_err(|e| e.1)?;

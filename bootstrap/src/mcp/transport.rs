@@ -203,6 +203,7 @@ impl McpServer {
             source: "mcp".into(),
             task: task.into(),
             target: target.into(),
+            run: self.trace.run(),
             client: self.client.lock().unwrap().clone(),
             ..Default::default()
         }

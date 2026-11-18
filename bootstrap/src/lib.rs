@@ -55,6 +55,7 @@ pub mod mcp;
 pub mod md;
 pub mod merge_file;
 pub mod model;
+pub mod open_work;
 pub mod payload;
 pub mod portable;
 pub mod project;

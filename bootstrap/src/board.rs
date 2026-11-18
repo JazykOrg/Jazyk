@@ -76,6 +76,7 @@ pub struct Board {
     // The workers with each goal open: information, never a block.
     // Mirrors docs/compiler/control-plane.md#workers-and-open-work.
     pub open_by: BTreeMap<String, Vec<String>>,
+    pub open_work: BTreeMap<String, Vec<serde_json::Value>>,
     // Batch ids workers have open: form_batches numbers past them.
     // Mirrors docs/compiler/reconciler.md#batching.
     pub held_batches: BTreeSet<String>,

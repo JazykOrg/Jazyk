@@ -319,3 +319,54 @@ fn drop_graph_snapshots() {
 pub fn root() -> PathBuf {
     PathBuf::from("/project")
 }
+
+/// Compact a completed changeset only after the host durably saved the workspace
+/// containing its commit journal receipt. Call with a loaded durable snapshot, never
+/// an uncommitted in-memory candidate.
+pub fn confirm_open_work(
+    snapshot: &Snapshot,
+    records: &dyn records::RecordStore,
+) -> Result<(), String> {
+    let pending = records.keys(records::Stream::OpenWork)?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut committed = std::collections::BTreeSet::new();
+    for (path, bytes) in snapshot {
+        if path.contains("/local/journal/g") && path.ends_with(".yaml") {
+            if let Ok(entry) = serde_norway::from_slice::<crate::model::JournalEntry>(bytes) {
+                if let Some(id) = entry.work_id {
+                    committed.insert(id);
+                }
+            }
+        }
+    }
+    for (key, value) in pending {
+        let Ok(mut record) = serde_json::from_value::<crate::open_work::Record>(value) else {
+            continue;
+        };
+        if record.state == "committed"
+            && !record.payload.is_null()
+            && committed.contains(&record.receipt.id)
+        {
+            let sequence = record.sequence;
+            record.sequence += 1;
+            record.payload = Value::Null;
+            record.mutations.clear();
+            records.compare_open_work(
+                &key,
+                Some(sequence),
+                &serde_json::to_value(record).map_err(|e| e.to_string())?,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn has_execution() -> bool {
+    execution::has_execution()
+}
+
+pub(crate) fn open_work_cancel() -> Option<(Arc<AtomicBool>, Arc<AtomicBool>)> {
+    execution::open_work_cancel()
+}

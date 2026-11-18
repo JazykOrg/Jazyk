@@ -18,6 +18,8 @@ pub enum Stream {
     Feedback,
     /// One run's transcript.
     Trace,
+    /// Recoverable uncommitted graph changesets.
+    OpenWork,
 }
 
 impl Stream {
@@ -27,6 +29,7 @@ impl Stream {
             Stream::ChatHistory => "chat-history",
             Stream::Feedback => "feedback",
             Stream::Trace => "trace",
+            Stream::OpenWork => "open-work",
         }
     }
 }
@@ -35,6 +38,17 @@ impl Stream {
 /// numbered from 0 within a key. The engine requires only that a stream it reads back
 /// holds what it appended, in order, and treats a missing key as empty.
 pub trait RecordStore: Send + Sync {
+    /// Atomically compare metadata sequence, append a full recovery event and publish
+    /// its metadata. Hosts must implement this before advertising durable open work.
+    fn compare_open_work(
+        &self,
+        _key: &str,
+        _expected: Option<u64>,
+        _record: &Value,
+    ) -> Result<(), String> {
+        Err("host does not support atomic durable open work".into())
+    }
+
     /// Every key of a stream with its metadata.
     fn keys(&self, stream: Stream) -> Result<Vec<(String, Value)>, String>;
     /// One key's metadata, `None` when the key is absent.

@@ -56,8 +56,10 @@ Some profiles are built in, so naming them is enough (`[acp] agent = "claude"`):
 | `opencode` | OpenCode | `opencode acp` |
 
 The adapters are pinned to the versions whose steering contract the host knows
-([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table in the
-project or the global config shadows the built-in profile of the same name. A
+([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table with a `command` in
+the project or the global config shadows the built-in profile of the same name. A
+table without `command` (e.g. one that sets only `max_sessions`) keeps the built-in
+launch ([ACP settings](../compiler/project-settings.md#acp)). A
 shadowed built-in is easy to forget (an old adapter, a forced model the account no
 longer serves), so the [launcher](./cli.md#jazyk), [`jazyk init`](./cli.md#jazyk-init),
 and `jazyk acp` at startup (on standard error, into the IDE's agent log) name the file

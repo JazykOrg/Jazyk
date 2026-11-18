@@ -1242,6 +1242,32 @@ impl Costs {
             && self.by_class.is_empty()
     }
 
+    // Add another build's spend, line by line.
+    pub fn add(&mut self, other: &Costs) {
+        self.sessions += other.sessions;
+        self.tokens += other.tokens;
+        for (map, theirs) in [
+            (&mut self.by_kind, &other.by_kind),
+            (&mut self.by_class, &other.by_class),
+        ] {
+            for (key, line) in theirs {
+                let mine = map.entry(key.clone()).or_default();
+                mine.sessions += line.sessions;
+                mine.tokens += line.tokens;
+            }
+        }
+    }
+
+    // The sum of the builds' own spend: the shared totals.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    pub fn sum<'a>(runs: impl IntoIterator<Item = &'a Costs>) -> Costs {
+        let mut total = Costs::default();
+        for c in runs {
+            total.add(c);
+        }
+        total
+    }
+
     // Charge one session to a goal kind and its class.
     pub fn charge(&mut self, kind: &str, class: &str, tokens: u64) {
         self.sessions += 1;
@@ -1390,6 +1416,10 @@ pub struct Status {
     pub failed: Vec<FailedGoal>,
     #[serde(default, skip_serializing_if = "Costs::is_empty")]
     pub costs: Costs,
+    // Each of the latest builds' own spend by run id; `costs` is their sum.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub run_costs: BTreeMap<String, Costs>,
     #[serde(default)]
     pub spent: Spent,
     // Open diagnostic counts by severity (suppressed excluded), refreshed by the
@@ -1426,6 +1456,7 @@ impl Default for Status {
             parked: Vec::new(),
             failed: Vec::new(),
             costs: Costs::default(),
+            run_costs: BTreeMap::new(),
             spent: Spent::default(),
             diagnostics: BTreeMap::new(),
             alignment: Vec::new(),

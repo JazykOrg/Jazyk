@@ -88,6 +88,22 @@ Delivery follows the GDK's sub-agent operation (`SubagentOperation` in
 The delivered message is an input of the parent conversation with
 `source: {agentId}`, so a transcript shows which sub-agent reported.
 
+## Prompting a sub-agent
+
+A person can open a sub-agent's conversation and write to it:
+
+- Text to a running sub-agent steers its turn.
+- A prompt to an idle sub-agent starts its next turn, `<id>#<n>`, with its own
+  depth, write scope, and parent, within the [limits](#limits). A limit refuses the
+  prompt and names the limit.
+- The parent did not request that turn, so it does not wait for it. When the turn
+  ends, its result is delivered to the parent as the same message, with
+  `source: {agentId}`. A running parent receives it as
+  [steering](./acp.md#steering-active-turns). An idle parent's conversation records
+  it, and the parent's model reads it at its next turn.
+- Stopping the sub-agent stops that turn and its descendants. The parent receives
+  the `cancelled` result.
+
 ## Write scope
 
 A sub-agent is read-only unless its parent grants more:
@@ -125,6 +141,10 @@ for a running sub-agent or does the work itself.
   and receives the `cancelled` result.
 - A turn that ends in an error or at its round budget stops its sub-agents the same
   way.
+- Deleting a conversation deletes its sub-agents and their descendants, with their
+  transcripts. Running ones stop first. A deleted sub-agent leaves the tree: its
+  parent's agent tools no longer name it, and a turn the parent still waited for is
+  delivered as failed.
 
 ## Where sub-agents run
 
@@ -134,9 +154,10 @@ with its own conversation, its own serving, and so its own
 
 - The embedded agent runs each sub-agent turn on its own thread. The sub-agent opens
   its own connections to the session's MCP servers, so a `jazyk mcp chat` serving is
-  started for it. Its updates travel on the parent's ACP session
+  started for it. Its updates travel on the root conversation's ACP session
   ([sub-agent updates](./acp.md#sub-agent-updates)), and the GUI shows each sub-agent
-  as a conversation.
+  as a conversation. A turn a person started can run while the root conversation is
+  idle. Its updates travel on the root session all the same.
 - The browser engine and the hosted runtime run sub-agents as asynchronous tasks on
   the workspace's one thread, interleaved with the parent. They mostly await the
   model, so they progress together, and their commits are serial by construction.

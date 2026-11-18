@@ -530,7 +530,7 @@ pub async fn post_prompt(
                 Some(h) => (h, false),
                 None => match st2.chat.open_acp_session(&st2, &id) {
                     Ok(h) => {
-                        sess2.lock().unwrap().handle = Some(h.clone());
+                        attach(&st2, &sess2, h.clone());
                         (h, true)
                     }
                     Err(e) => {
@@ -589,31 +589,15 @@ pub async fn post_prompt(
             let cb_sess = sess2.clone();
             let initial_id = current_input_id.clone();
             let outcome = handle.prompt_cancellable(
-            &turn_text,
-            Arc::new(move |ev: &HostEvent| match ev {
-                HostEvent::Update(u) => {
-                    update_input(&cb_st,&cb_sess,&json!(initial_id),"delivered",None);
-                    if let Ok(v) = serde_json::to_value(u) {
-                        if v["_meta"]["jazyk"]["agent"].is_object() {
-                            let root = cb_sess.lock().unwrap().id.clone();
-                            subagents::child_update(&cb_st, &root, v);
-                        } else if let Some(delivered) = v["_meta"]["jazyk"]["input"].as_object() {
-                            let message_id = delivered.get("messageId").cloned().unwrap_or_default();
-                            // A sub-agent's result delivered to this conversation.
-                            subagents::delivered_result(&cb_st, &cb_sess, &v["_meta"]["jazyk"]["input"]);
-                            update_input(&cb_st, &cb_sess, &message_id, "delivered", None);
-                        } else { append(&cb_st, &cb_sess, v); }
+                &turn_text,
+                Arc::new(move |ev: &HostEvent| {
+                    if let HostEvent::Update(_) = ev {
+                        update_input(&cb_st, &cb_sess, &json!(initial_id), "delivered", None);
                     }
-                }
-                HostEvent::Permission { id, request } => {
-                    let ask = json!({"id": id, "request": serde_json::to_value(request).unwrap_or_default()});
-                    cb_sess.lock().unwrap().pending.push(ask.clone());
-                    let sid = cb_sess.lock().unwrap().id.clone();
-                    cb_st.events.emit("chat.permission", json!({"sessionId": sid, "ask": ask}));
-                }
-            }),
-            &|| sess2.lock().unwrap().stopped,
-        );
+                    route_event(&cb_st, &cb_sess, ev);
+                }),
+                &|| sess2.lock().unwrap().stopped,
+            );
             {
                 let mut s = sess2.lock().unwrap();
                 s.pending.clear();
@@ -694,6 +678,47 @@ pub async fn post_prompt(
         }
     });
     (StatusCode::ACCEPTED, Json(input)).into_response()
+}
+
+// A conversation's new ACP session. Sub-agent turns a person started report
+// between prompts (docs/frontends/acp.md#sub-agent-updates).
+fn attach(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, handle: SessionHandle) {
+    let (listen_st, listen_sess) = (st.clone(), sess.clone());
+    handle.listen(Arc::new(move |ev: &HostEvent| {
+        route_event(&listen_st, &listen_sess, ev)
+    }));
+    sess.lock().unwrap().handle = Some(handle);
+}
+
+// One event of a conversation's ACP session: an update of one of its sub-agents, a
+// sub-agent's result delivered to it, its own update, or a permission request.
+fn route_event(st: &SharedState, sess: &Arc<Mutex<ChatSession>>, ev: &HostEvent) {
+    match ev {
+        HostEvent::Update(u) => {
+            let Ok(v) = serde_json::to_value(u) else {
+                return;
+            };
+            if v["_meta"]["jazyk"]["agent"].is_object() {
+                let root = sess.lock().unwrap().id.clone();
+                subagents::child_update(st, &root, v);
+            } else if let Some(delivered) = v["_meta"]["jazyk"]["input"].as_object() {
+                let message_id = delivered.get("messageId").cloned().unwrap_or_default();
+                // A sub-agent's result delivered to this conversation.
+                subagents::delivered_result(st, sess, &v["_meta"]["jazyk"]["input"]);
+                update_input(st, sess, &message_id, "delivered", None);
+            } else {
+                append(st, sess, v);
+            }
+        }
+        HostEvent::Permission { id, request } => {
+            let ask =
+                json!({"id": id, "request": serde_json::to_value(request).unwrap_or_default()});
+            sess.lock().unwrap().pending.push(ask.clone());
+            let sid = sess.lock().unwrap().id.clone();
+            st.events
+                .emit("chat.permission", json!({"sessionId": sid, "ask": ask}));
+        }
+    }
 }
 
 fn update_input(
@@ -916,17 +941,31 @@ pub async fn cancel(State(st): State<SharedState>, Path(id): Path<String>) -> Re
 // back. Mirrors docs/frontends/acp.md#session-store.
 pub async fn delete_session(State(st): State<SharedState>, Path(id): Path<String>) -> Response {
     st.chat.restore(&st.out);
-    let Some(sess) = st.chat.sessions.lock().unwrap().remove(&id) else {
+    let Some(sess) = st.chat.sessions.lock().unwrap().get(&id).cloned() else {
         return super::api::err(StatusCode::NOT_FOUND, format!("no chat session {}", id));
     };
-    // Closing waits on the agent, so it runs off the async threads.
+    // Its sub-agents go with it, stopped first (docs/frontends/subagents.md#cancellation).
+    let below = subagents::descendants(&st, &id);
+    if sess.lock().unwrap().agent.is_some() {
+        subagents::delete_child(&st, &sess);
+    }
+    // Closing waits on the agent, so it runs off the async threads. Closing a root
+    // conversation's session stops and removes its whole tree in the agent.
     if let Some(h) = sess.lock().unwrap().handle.take() {
         tokio::task::spawn_blocking(move || {
             h.cancel();
             h.close();
         });
     }
-    crate::acp::sessions::remove(&st.out, &id);
+    for gone in std::iter::once(sess).chain(below) {
+        let gone_id = {
+            let mut s = gone.lock().unwrap();
+            s.stopped = true;
+            s.id.clone()
+        };
+        st.chat.sessions.lock().unwrap().remove(&gone_id);
+        crate::acp::sessions::remove(&st.out, &gone_id);
+    }
     super::agent_tree::sessions_changed(&st);
     Json(json!({"ok": true})).into_response()
 }

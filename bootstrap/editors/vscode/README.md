@@ -27,6 +27,13 @@ requirements document link opens the file at the requirement's heading. Go to Ty
 Definition (the editor's context menu or the command palette) on an entity opens its
 card; Go to Definition still jumps to the defining sentence in the prose.
 
+## Agent chat
+
+Run `jazyk setup vscode` to register Jazyk with ACP Client. Open the Command Palette
+and choose `Jazyk: Open Chat`. Jazyk runs in the ACP Client panel, separately from
+Copilot Chat and the Claude Code extension. `/agent NAME` in this Jazyk chat
+selects the downstream agent for new conversations.
+
 ## Requirements
 
 A built `jazyk` binary. With no setting, the extension looks for

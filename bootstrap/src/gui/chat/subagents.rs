@@ -147,6 +147,8 @@ pub(super) fn child_update(st: &SharedState, root: &str, mut update: Value) {
     }
     let sess = match st.chat.by_agent(agent_id) {
         Some(sess) => sess,
+        // Only a sub-agent the agent still holds carries its tree fields.
+        None if agent["parentId"].is_null() => return,
         None => {
             let parent = agent["parentId"]
                 .as_str()
@@ -199,11 +201,12 @@ pub(super) fn child_update(st: &SharedState, root: &str, mut update: Value) {
             s.result = None;
             s.stopped = false;
         }
-        append(
-            st,
-            &sess,
-            json!({"sessionUpdate":"user_message","text":text}),
-        );
+        let mut message = json!({"sessionUpdate":"user_message","text":text});
+        // A turn a person started names the input that started it.
+        if !agent["messageId"].is_null() {
+            message["messageId"] = agent["messageId"].clone();
+        }
+        append(st, &sess, message);
         set_state(st, &sess, "running");
     } else if let Some(end) = agent.get("turnEnd") {
         let stop = end["stop"].as_str().unwrap_or("error");
@@ -264,8 +267,9 @@ fn root_handle(
     Some((handle, agent))
 }
 
-// Text for a sub-agent's running turn. An idle sub-agent takes no prompt of its
-// own: its parent starts its turns.
+// Text for a sub-agent: steering for its running turn, or the next turn of an idle
+// one, which its parent did not request
+// (docs/frontends/subagents.md#prompting-a-sub-agent).
 pub(super) async fn child_input(
     st: &SharedState,
     sess: &Arc<Mutex<ChatSession>>,
@@ -276,12 +280,15 @@ pub(super) async fn child_input(
         return super::super::api::err(StatusCode::BAD_REQUEST, "text is required");
     }
     let running = sess.lock().unwrap().state == "running";
-    let Some((handle, agent)) = root_handle(st, sess).filter(|_| running) else {
+    let Some((handle, agent)) = root_handle(st, sess) else {
         return super::super::api::err(
             StatusCode::CONFLICT,
-            "a sub-agent conversation takes input only while it runs; message it through its parent",
+            "the agent session that ran this sub-agent has ended; prompt its root conversation instead",
         );
     };
+    if !running {
+        return child_prompt(st, sess, handle, agent, body["messageId"].as_str(), text).await;
+    }
     let message_id = body["messageId"]
         .as_str()
         .map(str::to_string)
@@ -335,6 +342,115 @@ pub(super) async fn child_input(
         ),
     }
     (StatusCode::ACCEPTED, Json(input)).into_response()
+}
+
+// A person's prompt to an idle sub-agent: the agent starts its next turn, whose
+// updates arrive like any of its turns.
+async fn child_prompt(
+    st: &SharedState,
+    sess: &Arc<Mutex<ChatSession>>,
+    handle: SessionHandle,
+    agent: String,
+    message_id: Option<&str>,
+    text: String,
+) -> Response {
+    let message_id = message_id.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "native-{}-{}",
+            crate::sys::process_id(),
+            st.chat.seq.fetch_add(1, Ordering::Relaxed)
+        )
+    });
+    if let Some(existing) = sess
+        .lock()
+        .unwrap()
+        .inputs
+        .iter()
+        .find(|i| i["messageId"] == message_id)
+    {
+        return if existing["text"] == text {
+            (StatusCode::ACCEPTED, Json(existing.clone())).into_response()
+        } else {
+            super::super::api::err(StatusCode::CONFLICT, "messageId has different text")
+        };
+    }
+    let meta = json!({"agentId": agent, "messageId": message_id});
+    let steer_text = text.clone();
+    let reply = tokio::task::spawn_blocking(move || handle.steer(&steer_text, meta)).await;
+    let turn = match reply {
+        Ok(Ok(reply)) if reply["outcome"] == "started" => reply["turn"].clone(),
+        Ok(Ok(reply)) => {
+            return super::super::api::err(
+                StatusCode::CONFLICT,
+                format!("the sub-agent did not start a turn: {reply}"),
+            )
+        }
+        Ok(Err(error)) => return super::super::api::err(StatusCode::CONFLICT, error),
+        Err(_) => {
+            return super::super::api::err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the prompt did not reach the agent",
+            )
+        }
+    };
+    let input = {
+        let mut s = sess.lock().unwrap();
+        let input = json!({"messageId":message_id,"text":text,"sequence":s.inputs.len()+1,
+            "state":"delivered","turnId":turn,"deliveryMode":"turn"});
+        s.turn_id = turn.as_str().map(str::to_string);
+        s.inputs.push(input.clone());
+        input
+    };
+    append(st, sess, json!({"sessionUpdate":"input","input":input}));
+    (StatusCode::ACCEPTED, Json(input)).into_response()
+}
+
+// The sessions of `id`'s sub-agents and their descendants, nearest first.
+pub(super) fn descendants(st: &SharedState, id: &str) -> Vec<Arc<Mutex<ChatSession>>> {
+    let sessions: Vec<_> = st.chat.sessions.lock().unwrap().values().cloned().collect();
+    let parents: Vec<(String, Option<String>)> = sessions
+        .iter()
+        .map(|s| {
+            let s = s.lock().unwrap();
+            let parent = s
+                .tree
+                .as_ref()
+                .and_then(|t| t["parentId"].as_str().map(str::to_string));
+            (s.id.clone(), parent)
+        })
+        .collect();
+    let mut ids = vec![id.to_string()];
+    let mut next = 0;
+    while next < ids.len() {
+        for (child, parent) in &parents {
+            if parent.as_deref() == Some(ids[next].as_str()) && !ids.contains(child) {
+                ids.push(child.clone());
+            }
+        }
+        next += 1;
+    }
+    ids.iter()
+        .skip(1)
+        .filter_map(|id| {
+            sessions
+                .iter()
+                .find(|s| s.lock().unwrap().id == *id)
+                .cloned()
+        })
+        .collect()
+}
+
+// Delete a sub-agent in its agent: it stops with its descendants and leaves the
+// tree (docs/frontends/acp.md#sub-agent-updates).
+pub(super) fn delete_child(st: &SharedState, sess: &Arc<Mutex<ChatSession>>) {
+    let Some((handle, agent)) = root_handle(st, sess) else {
+        return;
+    };
+    sess.lock().unwrap().stopped = true;
+    let meta = json!({"agentId": agent, "deleteAgent": true});
+    tokio::task::spawn_blocking(move || {
+        let _ = handle.steer("delete", meta);
+    });
 }
 
 // Stop a sub-agent and its descendants; its parent keeps running.

@@ -312,7 +312,16 @@ the same additions, updates, deletions, and goal movements the audit trail recor
 Diagnostic locations, navigation, and traceability include every source location
 of a requirement. Multi-sentence quotes use their full located range.
 
-### Opening agent chat
+## Multiple anchors of one obligation
+
+A requirement hover highlights the source under the cursor, including a later
+anchor in the same document. Its card lists every source link. Definition requests
+from recorded product sites return all live source ranges. Redirected requirement
+ids in older ledger rows resolve to the surviving requirement. Opening a requirement
+skips missing source quotes when choosing a navigation fallback. Offline viewer
+cards display every attached source.
+
+## Opening agent chat
 
 The VS Code extension contributes `Jazyk: Open Chat`. It activates ACP Client and
 connects to the registered Jazyk agent and opens its chat panel. If ACP Client is missing, it offers its extension page

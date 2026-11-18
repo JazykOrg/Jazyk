@@ -388,6 +388,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "field": {"type": "string"},
                     "value": {},
                     "note": {"type": "string"},
+                    "source": {"type":"object", "required":["doc","section","quote"],"properties":{"doc":{"type":"string"},"section":{"type":"string"},"quote":{"type":"string"}}},
                     "provenance": derived_schema(),
                     "decision": {"type": "string", "description": "The explicit human decision being recorded. Never use for model inference."}
                 }),

@@ -1267,23 +1267,21 @@ pub fn render(store: &Store, gs: &GenSettings) -> String {
             "<p><span class=\"k\">entities</span> {}</p>",
             links.join(" ")
         );
-        match r.sources.first() {
-            Some(src) => {
-                let _ = write!(
-                    body,
-                    "<p class=\"q\">{}#{} \u{201c}{}\u{201d}</p>",
-                    esc(&src.doc),
-                    esc(&src.section),
-                    esc(&truncate(&src.quote, 160))
-                );
-            }
-            None => {
-                let _ = write!(
-                    body,
-                    "<p class=\"q\">{}</p>",
-                    esc(&crate::session::provenance_line(r))
-                );
-            }
+        for src in &r.sources {
+            let _ = write!(
+                body,
+                "<p class=\"q\">{}#{} \u{201c}{}\u{201d}</p>",
+                esc(&src.doc),
+                esc(&src.section),
+                esc(&truncate(&src.quote, 160))
+            );
+        }
+        if r.sources.is_empty() {
+            let _ = write!(
+                body,
+                "<p class=\"q\">{}</p>",
+                esc(&crate::session::provenance_line(r))
+            );
         }
         if !r.edges.is_empty() {
             let edges: Vec<String> = r

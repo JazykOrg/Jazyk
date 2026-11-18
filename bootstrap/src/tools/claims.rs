@@ -6,7 +6,13 @@ impl ToolSession {
     }
 
     fn untouched_stale(&self, anchors: &[String]) -> Vec<String> {
-        crate::goals::untouched_stale(&self.snapshot, &self.staged, anchors)
+        let scopes: Vec<_> = self
+            .scope
+            .reconcile_scopes()
+            .into_iter()
+            .filter_map(|g| g.doc.as_deref().map(|doc| (doc, g.sections.as_slice())))
+            .collect();
+        crate::goals::untouched_stale(&self.snapshot, &self.staged, anchors, &scopes)
     }
 
     // A name that starts with an article is a proper name when a document writes it

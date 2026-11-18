@@ -20,6 +20,7 @@ impl Lsp {
             for (rid, row) in Ledger::load(out).requirements {
                 let rid =
                     set.map_or_else(|| rid.clone(), |id| crate::webapi::sets::qualify(&rid, id));
+                let rid = self.store.resolve_id(&rid).to_string();
                 if !self.store.graph.requirements.contains_key(&rid) {
                     continue;
                 }
@@ -88,7 +89,7 @@ impl Lsp {
                 let mut locations = Vec::new();
                 if let Some(r) = self.store.graph.requirements.get(&rid) {
                     for source in &r.sources {
-                        if let Some(range) = crate::md::locate(&self.doc_text(&source.doc), &source.quote) {
+                        if let Some(range) = crate::md::locate_in_section(&self.doc_text(&source.doc), &source.section, &source.quote) {
                             locations.push(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}));
                         }
                     }

@@ -302,12 +302,111 @@ impl Tree {
         .unwrap_or(false)
     }
 
-    /// Stop a sub-agent; its token's children stop with it.
-    pub fn cancel(&self, id: &str) -> bool {
-        self.update(id, |n| n.cancel.cancel()).is_some()
+    /// `id` and every sub-agent below it, `id` first.
+    pub fn subtree(&self, id: &str) -> Vec<String> {
+        let nodes = self.0.lock().unwrap();
+        if !nodes.contains_key(id) {
+            return Vec::new();
+        }
+        let mut ids = vec![id.to_string()];
+        let mut next = 0;
+        while next < ids.len() {
+            let parent = ids[next].clone();
+            for node in nodes.values() {
+                if node.parent == parent && !ids.contains(&node.id) {
+                    ids.push(node.id.clone());
+                }
+            }
+            next += 1;
+        }
+        ids
     }
 
-    fn finish(&self, id: &str, turn: &str, outcome: SubagentOutcome) {
+    /// Stop a sub-agent and its descendants (docs/frontends/subagents.md#cancellation).
+    pub fn cancel(&self, id: &str) -> bool {
+        let ids = self.subtree(id);
+        let nodes = self.0.lock().unwrap();
+        for id in &ids {
+            if let Some(node) = nodes.get(id) {
+                node.cancel.cancel();
+            }
+        }
+        !ids.is_empty()
+    }
+
+    /// Stop every sub-agent of the tree rooted at the top-level conversation `root`.
+    pub fn cancel_root(&self, root: &str) {
+        for node in self.0.lock().unwrap().values() {
+            if node.root == root {
+                node.cancel.cancel();
+            }
+        }
+    }
+
+    /// Stop a sub-agent and its descendants and take them out of the tree. Answers
+    /// the ids removed.
+    pub fn remove(&self, id: &str) -> Vec<String> {
+        self.cancel(id);
+        let ids = self.subtree(id);
+        let mut nodes = self.0.lock().unwrap();
+        for id in &ids {
+            nodes.remove(id);
+        }
+        ids
+    }
+
+    /// Stop and remove every sub-agent of the tree rooted at `root`.
+    pub fn remove_root(&self, root: &str) -> Vec<String> {
+        self.cancel_root(root);
+        let mut nodes = self.0.lock().unwrap();
+        let ids: Vec<String> = nodes
+            .values()
+            .filter(|n| n.root == root)
+            .map(|n| n.id.clone())
+            .collect();
+        for id in &ids {
+            nodes.remove(id);
+        }
+        ids
+    }
+
+    /// Start the next turn of an idle sub-agent that a person prompted, within the
+    /// limits. Answers its node and the turn's id
+    /// (docs/frontends/subagents.md#prompting-a-sub-agent).
+    pub fn begin_turn(&self, id: &str) -> Result<(Node, String), String> {
+        let mut nodes = self.0.lock().unwrap();
+        let Some(node) = nodes.get(id) else {
+            return Err(format!("no sub-agent {id}"));
+        };
+        if node.state == AgentState::Running {
+            return Err(format!("sub-agent {id} is already running"));
+        }
+        let running = |n: &&Node| n.state == AgentState::Running;
+        if nodes
+            .values()
+            .filter(running)
+            .filter(|n| n.parent == node.parent)
+            .count()
+            >= crate::limits::AGENT_MAX_CHILDREN
+        {
+            return Err(
+                limit("AGENT_MAX_CHILDREN", crate::limits::AGENT_MAX_CHILDREN).unwrap_err(),
+            );
+        }
+        if nodes.values().filter(running).count() >= crate::limits::AGENT_MAX_RUNNING {
+            return Err(limit("AGENT_MAX_RUNNING", crate::limits::AGENT_MAX_RUNNING).unwrap_err());
+        }
+        let node = nodes.get_mut(id).expect("checked above");
+        node.turns += 1;
+        node.state = AgentState::Running;
+        node.cancel = CancellationToken::new();
+        node.inbox.clear();
+        let turn = node.turn_id(node.turns);
+        Ok((node.clone(), turn))
+    }
+
+    /// Record a turn's outcome on its sub-agent.
+    pub fn finish(&self, id: &str, turn: &str, outcome: SubagentOutcome) {
         self.update(id, |n| {
             n.state = match &outcome {
                 SubagentOutcome::Completed(_) => AgentState::Idle,
@@ -868,6 +967,23 @@ pub fn owed(conversation: &Conversation) -> Vec<String> {
         }
     }
     pending
+}
+
+/// The message a turn's result becomes for its parent, as the GDK's sub-agent
+/// operation words it (docs/frontends/subagents.md#results).
+pub fn result_text(turn: &str, outcome: &SubagentOutcome) -> String {
+    match outcome {
+        SubagentOutcome::Completed(text) => format!("Subagent {turn} completed: {text}"),
+        SubagentOutcome::Failed(text) => format!("Subagent {turn} failed: {text}"),
+        SubagentOutcome::Cancelled => format!("Subagent {turn} was cancelled before it finished."),
+    }
+}
+
+/// The input that delivers a turn its parent did not request: the result message
+/// with `source: {agentId}`.
+pub fn result_input(id: &str, turn: &str, outcome: &SubagentOutcome) -> Value {
+    json!({"messageId": format!("agent-result-{turn}"), "text": result_text(turn, outcome),
+        "source": {"agentId": id, "turns": [turn]}})
 }
 
 /// The transcript input a delivered result becomes, with `source: {agentId}`.

@@ -251,8 +251,11 @@ travels on the parent's session:
 - Every `session/update` of a sub-agent is sent on the root session with
   `_meta.jazyk.agent`: `{id, parentId, depth, title, task, write}`. `id` is the
   sub-agent's id in the agent process. `parentId` is the root session's id or a
-  parent sub-agent's id. A sub-agent's turn always ends inside its parent's turn,
-  so its updates arrive while the root session's prompt is active.
+  parent sub-agent's id. A turn its parent started ends inside the parent's turn,
+  so its updates arrive while the root session's prompt is active. A turn a person
+  started ([prompting a sub-agent](./subagents.md#prompting-a-sub-agent)) can run
+  while the root session has no prompt, and its updates arrive between prompts. A
+  client reads the root session's updates between prompts too.
 - A turn starts with a `user_message_chunk` carrying the turn's prompt and
   `_meta.jazyk.agent.turn: "started"`.
 - A turn ends with a `usage_update` carrying `_meta.jazyk.agent.turnEnd`:
@@ -260,14 +263,22 @@ travels on the parent's session:
   `max_turn_requests`, or `error`.
 - A result delivered to a parent is a `user_message_chunk` with
   `_meta.jazyk.input` carrying `source: {agentId}`, like any
-  [delivered input](#steering-active-turns).
+  [delivered input](#steering-active-turns). A result delivered to an idle parent
+  is sent between prompts. When the parent is a sub-agent, the update also carries
+  the parent's `_meta.jazyk.agent`.
 
 The client talks to a sub-agent through `_session/steering` on the root session,
 with `_meta.jazyk.agentId` naming the sub-agent:
 
-- Text steers the running sub-agent turn. An idle sub-agent answers
-  `promptRequired`: only its parent starts a new turn.
+- Text steers the running sub-agent turn and answers `injected`.
+- Text to an idle sub-agent starts its next turn and answers
+  `{"outcome": "started", "turn": "<id>#<n>"}`. A [limit](./subagents.md#limits)
+  answers an error that names it.
 - `_meta.jazyk.cancelAgent: true` stops the sub-agent and its descendants.
+- `_meta.jazyk.deleteAgent: true` stops the sub-agent and its descendants and
+  removes them from the tree.
+
+Cancelling or closing the root session stops every running sub-agent of its tree.
 
 The [GUI](./gui.md#agents) shows each sub-agent as a chat session with its tree
 fields and routes the session's inputs and stop through these requests.

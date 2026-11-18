@@ -70,7 +70,11 @@ impl AcpChildren {
         agent
     }
 
+    // A deleted sub-agent's last updates go nowhere: the client removed it.
     fn send(&self, id: &str, update: SessionUpdate, extra: Value) {
+        if self.tree.get(id).is_none() {
+            return;
+        }
         (self.notify)(with_agent(update, self.agent(id, extra)));
     }
 
@@ -82,7 +86,84 @@ impl AcpChildren {
         );
     }
 
+    // A turn a person started on an idle sub-agent, on its own thread. Its result
+    // goes to the parent, which did not request it
+    // (docs/frontends/subagents.md#prompting-a-sub-agent).
+    pub(super) fn prompt(
+        &self,
+        root: &SessionEntry,
+        id: &str,
+        text: String,
+        message_id: Value,
+    ) -> Result<Value, String> {
+        let (node, turn) = self.tree.begin_turn(id)?;
+        let spec = RunSpec::of(&node, self.tree.clone());
+        let host = self.clone();
+        let root = root.clone();
+        let reply = json!({"outcome": "started", "turn": turn});
+        std::thread::spawn(move || {
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                host.turn_with(spec, text, message_id)
+            }))
+            .unwrap_or_else(|p| {
+                SubagentOutcome::Failed(format!(
+                    "the sub-agent panicked: {}",
+                    crate::sys::panic_text(p.as_ref())
+                ))
+            });
+            host.tree.finish(&node.id, &turn, outcome.clone());
+            host.deliver(&root, &node, &turn, &outcome);
+        });
+        Ok(reply)
+    }
+
+    // The parent of a turn it did not request receives the result: as steering
+    // while it runs, otherwise appended to its conversation for its next turn.
+    fn deliver(
+        &self,
+        root: &SessionEntry,
+        node: &agents::Node,
+        turn: &str,
+        outcome: &SubagentOutcome,
+    ) {
+        // A deleted sub-agent reports to no one.
+        if self.tree.get(&node.id).is_none() {
+            return;
+        }
+        let input = agents::result_input(&node.id, turn, outcome);
+        let text = input["text"].as_str().unwrap_or_default().to_string();
+        let update = event_update(AgentEvent::Input(input.clone()), &mut 0);
+        if node.parent == self.root {
+            {
+                let mut inbox = root.inbox.lock().unwrap();
+                if inbox.0 && !root.cancelled.load(Ordering::Relaxed) {
+                    inbox.1.push(input);
+                    return;
+                }
+            }
+            let mut state = root.state.lock().unwrap_or_else(|p| p.into_inner());
+            harness::push_user_text(&mut state.history, &text);
+            drop(state);
+            (self.notify)(update);
+            return;
+        }
+        if self.tree.steer(&node.parent, input) {
+            return;
+        }
+        let slot = self.children.lock().unwrap().get(&node.parent).cloned();
+        if let Some(slot) = slot {
+            if let Some(state) = slot.lock().unwrap_or_else(|p| p.into_inner()).as_mut() {
+                harness::push_user_text(&mut state.history, &text);
+            }
+        }
+        self.send(&node.parent, update, json!({}));
+    }
+
     fn turn(&self, spec: RunSpec, text: String) -> SubagentOutcome {
+        self.turn_with(spec, text, Value::Null)
+    }
+
+    fn turn_with(&self, spec: RunSpec, text: String, message_id: Value) -> SubagentOutcome {
         let id = spec.id.clone();
         let slot = self
             .children
@@ -95,7 +176,7 @@ impl AcpChildren {
         self.send(
             &id,
             SessionUpdate::UserMessageChunk(ContentChunk::new(ContentBlock::from(text.clone()))),
-            json!({"turn": "started"}),
+            json!({"turn": "started", "messageId": message_id}),
         );
         if slot.is_none() {
             let context = Some(crate::agent_context::native(&self.cwd));
@@ -202,11 +283,28 @@ impl ChildHost for AcpChildren {
     }
 }
 
-/// Steering for a sub-agent of `root`: text for its running turn, or its stop.
-pub(super) fn steer(tree: &Tree, root: &str, jazyk: &Value, text: String) -> Result<Value, String> {
+/// Steering for a sub-agent of `root`: text for its running turn or the next turn
+/// of an idle one, its stop, or its removal (docs/frontends/acp.md#sub-agent-updates).
+pub(super) fn steer(
+    tree: &Tree,
+    root: &str,
+    jazyk: &Value,
+    text: String,
+    session: Option<(&AcpChildren, &SessionEntry)>,
+) -> Result<Value, String> {
     let id = jazyk["agentId"].as_str().unwrap_or_default();
     if !tree.get(id).is_some_and(|node| node.root == root) {
         return Err(format!("no sub-agent {id} in this session"));
+    }
+    if jazyk["deleteAgent"] == true {
+        let removed = tree.remove(id);
+        if let Some((host, _)) = session {
+            let mut children = host.children.lock().unwrap();
+            for id in &removed {
+                children.remove(id);
+            }
+        }
+        return Ok(json!({"outcome":"deleted","agents":removed}));
     }
     if jazyk["cancelAgent"] == true {
         tree.cancel(id);
@@ -227,11 +325,13 @@ pub(super) fn steer(tree: &Tree, root: &str, jazyk: &Value, text: String) -> Res
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
     }
-    Ok(if tree.steer(id, input) {
-        json!({"outcome":"injected"})
-    } else {
-        json!({"outcome":"promptRequired","reason":"noRunningTurn"})
-    })
+    if tree.steer(id, input.clone()) {
+        return Ok(json!({"outcome":"injected"}));
+    }
+    match session {
+        Some((host, entry)) => host.prompt(entry, id, text, input["messageId"].clone()),
+        None => Ok(json!({"outcome":"promptRequired","reason":"noRunningTurn"})),
+    }
 }
 
 #[cfg(test)]
@@ -300,9 +400,9 @@ mod tests {
             inbox: Vec::new(),
             cancel: Default::default(),
         });
-        assert!(steer(&tree, "sess-2", &json!({"agentId": id}), "hi".into()).is_err());
+        assert!(steer(&tree, "sess-2", &json!({"agentId": id}), "hi".into(), None).is_err());
         assert_eq!(
-            steer(&tree, "sess-1", &json!({"agentId": id}), "hi".into()).unwrap()["outcome"],
+            steer(&tree, "sess-1", &json!({"agentId": id}), "hi".into(), None).unwrap()["outcome"],
             "injected"
         );
         assert_eq!(
@@ -310,7 +410,8 @@ mod tests {
                 &tree,
                 "sess-1",
                 &json!({"agentId": id, "cancelAgent": true}),
-                String::new()
+                String::new(),
+                None
             )
             .unwrap()["outcome"],
             "cancelled"

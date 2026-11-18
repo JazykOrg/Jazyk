@@ -59,6 +59,10 @@ struct Chat {
     // (docs/frontends/subagents.md#prompting-a-sub-agent).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     queued: Vec<Value>,
+    // Steering a parent sent this sub-agent's running turn, kept until the turn takes
+    // it so a suspension does not lose it (docs/frontends/subagents.md#checkpoints).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    steering: Vec<Value>,
 }
 
 #[derive(Default, serde::Serialize, serde::Deserialize)]
@@ -458,6 +462,7 @@ pub fn create(body: &Value) -> Value {
                 tree: None,
                 result: None,
                 queued: Vec::new(),
+                steering: Vec::new(),
             },
         );
         id
@@ -1263,6 +1268,17 @@ fn deliver_unrequested(id: &str, turn: &str, outcome: &goose_agent::subagent::Su
     }
 }
 
+// The steering a sub-agent's running turn takes.
+fn take_steering(id: &str) -> Vec<Value> {
+    BOOK.with(|b| {
+        b.borrow_mut()
+            .chats
+            .get_mut(id)
+            .map(|c| std::mem::take(&mut c.steering))
+            .unwrap_or_default()
+    })
+}
+
 // The queued results a running turn takes as steering.
 fn take_queued(id: &str) -> Vec<Value> {
     BOOK.with(|b| {
@@ -1414,6 +1430,21 @@ impl harness::agents::ChildHost for BookChildren {
         )))
     }
 
+    // Steering waits in the book, which every checkpoint saves with the turn's frame
+    // (docs/frontends/subagents.md#checkpoints).
+    fn steer(&self, tree: &harness::agents::Tree, id: &str, input: Value) -> bool {
+        if !tree.steerable(id) {
+            return false;
+        }
+        BOOK.with(|b| {
+            b.borrow_mut()
+                .chats
+                .get_mut(id)
+                .map(|c| c.steering.push(input))
+                .is_some()
+        })
+    }
+
     fn root_of(&self, id: &str) -> String {
         BOOK.with(|b| {
             b.borrow()
@@ -1443,6 +1474,7 @@ fn begin_child_turn(
         let message_id = format!("{id}-turn-{n}");
         c.turn_id = Some(message_id.clone());
         c.result = None;
+        c.steering.clear();
         Some(message_id)
     });
     let Some(message_id) = message_id else {
@@ -1543,7 +1575,11 @@ async fn child_turn(
     let mut emit = chat_emit(id.clone());
     let tree = spec.tree.clone();
     let inbox = id.clone();
-    let mut inputs = move || tree.take_inbox(&inbox);
+    let mut inputs = move || {
+        let mut taken = tree.take_inbox(&inbox);
+        taken.extend(take_steering(&inbox));
+        taken
+    };
     let token = spec.cancel.clone();
     let cancelled = move || token.is_cancelled() || crate::portable::cancel_requested();
     let run = harness::agents::AgentRun::new(spec, std::rc::Rc::new(BookChildren));
@@ -1613,6 +1649,7 @@ async fn child_turn(
             server.pause_open_work();
             c.serving = Some((server, tools, instructions, extras));
             c.result = Some(harness::agents::outcome_value(&outcome));
+            c.steering.clear();
         }
     });
     append(&id, update);
@@ -1750,6 +1787,7 @@ pub(crate) fn stop_recovered() {
             BOOK.with(|b| {
                 if let Some(c) = b.borrow_mut().chats.get_mut(&id) {
                     c.result = Some(json!({"status":"cancelled","text":""}));
+                    c.steering.clear();
                 }
             });
             set_state(&id, "cancelled");

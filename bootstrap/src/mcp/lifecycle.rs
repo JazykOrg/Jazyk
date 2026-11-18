@@ -1,6 +1,22 @@
 use super::*;
 
 impl McpServer {
+    pub(crate) fn unfinished_work(&self) -> Option<Value> {
+        if !self.modes.iter().any(|mode| mode == "compile") {
+            return None;
+        }
+        let open = self.open.lock().unwrap();
+        let batch = open.as_ref()?;
+        if batch.goals.is_empty() || batch.session.done.is_some() {
+            return None;
+        }
+        Some(json!({
+            "batch":batch.id,
+            "stagedMutations":batch.session.staged.len(),
+            "unfinishedGoals":batch.session.unfinished_goals().iter().map(|goal| json!({"id":goal.goal,"kind":goal.kind,"target":goal.target})).collect::<Vec<_>>()
+        }))
+    }
+
     // ---- the compilation lifecycle ----
 
     // The serving's identity in leases: the running build's token when this serving

@@ -45,7 +45,11 @@ fn unfinished_in_process_workers_preserve_staging_for_explicit_resume() {
             .unwrap();
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            2,
+            if ending == "end-turn" {
+                2 + crate::limits::GRAPH_FINISH_REMINDERS as usize
+            } else {
+                2
+            },
             "{ending}: {}",
             String::from_utf8_lossy(&result.body)
         );
@@ -189,4 +193,74 @@ fn staged_work_replays_when_host_dies_before_workspace_checkpoint_and_compacts_a
             assert!(data.values().all(|(meta, _)| meta["payload"].is_null()));
         }
     }
+}
+
+#[test]
+fn graph_worker_continues_the_same_staged_batch_after_a_prose_reply() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let mut initial = Snapshot::new();
+    initial.insert(".jazyk/jazyk.toml".into(), b"version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nroots=['docs/a.md']\nsource=[]\n".to_vec());
+    initial.insert("docs/a.md".into(), b"# A\n\nNavigation index.\n".to_vec());
+    initial.insert(
+        ".jazyk/ds_main/local/control.yaml".into(),
+        b"compile: auto\n".to_vec(),
+    );
+    let records = Arc::new(MemoryRecords::default());
+    let calls = Arc::new(AtomicUsize::new(0));
+    let seen = calls.clone();
+    let execution = Execution {
+        model: "scripted-continue".into(),
+        records: Some(records.clone()),
+        transport: Some(Arc::new(move |body| {
+            let n = seen.fetch_add(1, Ordering::SeqCst);
+            if n == 1 {
+                return Ok(model_reply("The navigation review is complete."));
+            }
+            let (name, args) = if n == 0 {
+                (
+                    "set_coverage",
+                    json!({"section":"docs/a.md#/a","state":"non-normative","note":"Navigation index."}),
+                )
+            } else {
+                assert_eq!(n, 2, "no extraction retry is needed");
+                let request: Value = serde_json::from_str(body).unwrap();
+                let messages = request["messages"].to_string();
+                assert!(messages.contains("assigned graph batch is still open"));
+                assert!(messages.contains("set_coverage"));
+                assert!(messages.contains("stagedMutations"));
+                (
+                    "done",
+                    json!({"summary":"Commit the completed navigation review.","goals":[{"goal":"g:reconcile-section:docs/a.md#/a","justification":"The navigation index is explicitly non-normative."}]}),
+                )
+            };
+            Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":format!("step-{n}"),"type":"function","function":{"name":name,"arguments":args.to_string()}}]},"finish_reason":"tool_calls"}]}).to_string())
+        })),
+        ..Default::default()
+    };
+    let mut workspace = Workspace::new(initial).unwrap();
+    let result = value(
+        &mut workspace,
+        "POST",
+        "/api/jobs",
+        json!({"kind":"compile","sessions":1}),
+        &execution,
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 3, "{result}");
+    let rows = records.0.lock().unwrap();
+    let work = rows
+        .iter()
+        .filter(|((stream, _), _)| stream == "open-work")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        work.len(),
+        1,
+        "the original work is committed, not restarted"
+    );
+    assert_eq!(work[0].1 .0["state"], "committed", "{result}");
+    let files = workspace.snapshot();
+    let _scope = crate::vfs::Scope::enter(&files);
+    let project = crate::project::Project::load(std::path::Path::new("/project"));
+    assert!(crate::store::Store::load(&project.out).docs["docs/a.md"]
+        .coverage
+        .contains_key("/a"));
 }

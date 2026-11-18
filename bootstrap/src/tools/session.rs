@@ -349,6 +349,14 @@ impl ToolSession {
         Ok(())
     }
 
+    pub(crate) fn unfinished_goals(&self) -> Vec<&GoalScope> {
+        self.scope
+            .goals
+            .iter()
+            .filter(|goal| !self.outcomes.contains_key(&goal.goal))
+            .collect()
+    }
+
     // The goals the session failed, with their reasons, for the serving to record.
     pub fn failed_goals(&self) -> Vec<(String, String)> {
         self.outcomes

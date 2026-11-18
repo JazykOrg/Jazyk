@@ -513,6 +513,9 @@ impl<'a> McpTools<'a> {
     }
 }
 impl ToolHost for McpTools<'_> {
+    fn unfinished_work(&self) -> Option<Value> {
+        self.0.unfinished_work()
+    }
     fn catalog(
         &mut self,
     ) -> LocalFuture<'_, Result<Option<Vec<crate::harness::GenericTool>>, String>> {

@@ -41,6 +41,10 @@ const SYSTEM: &str = include_str!(concat!(
     env!("OUT_DIR"),
     "/payloads/goals/prompts/runtime/embedded-agent.md"
 ));
+const GRAPH_CONTINUATION: &str = include_str!(concat!(
+    env!("OUT_DIR"),
+    "/payloads/goals/prompts/runtime/graph-continuation.md"
+));
 const LEDGER_CONTINUATION: &str = include_str!(concat!(
     env!("OUT_DIR"),
     "/payloads/goals/prompts/runtime/ledger-continuation.md"
@@ -715,6 +719,29 @@ async fn drive(
         // sub-agent operation waits for the next one (docs/frontends/subagents.md#results).
         let owed = agents.is_some_and(|_| !super::agents::owed(&state.conversation).is_empty());
         if turn_ended(&state.conversation) && !owed {
+            if !args.conversation
+                && state.graph_finish_reminders < crate::limits::GRAPH_FINISH_REMINDERS
+            {
+                if let Some(work) = tools_host
+                    .as_ref()
+                    .and_then(|tools| tools.unfinished_work())
+                {
+                    state.graph_finish_reminders += 1;
+                    state.conversation.push(
+                        Message::user()
+                            .with_text(format!("{GRAPH_CONTINUATION}\n\n```json\n{work}\n```")),
+                    );
+                    advance(state);
+                    if let Err(error) =
+                        checkpoint(recovery, state, CheckpointPhase::Transition, None).await
+                    {
+                        return Stop::Error(error);
+                    }
+                    // The saved reminder and transition keep the same inference identities
+                    // and correction budget through suspension or recovery.
+                    continue;
+                }
+            }
             let ledger_worker = !args.conversation
                 && args.tools.iter().any(|tool| tool.name == "done")
                 && args.tools.iter().any(|tool| {
@@ -1551,6 +1578,7 @@ fn initial_state(history: &[Value]) -> Result<HarnessState, String> {
         compacted_at_round: None,
         compacted_size: None,
         ledger_finish_reminded: false,
+        graph_finish_reminders: 0,
         model_output_limited: false,
     })
 }

@@ -142,9 +142,28 @@ with its own conversation, its own serving, and so its own
   model, so they progress together, and their commits are serial by construction.
   Each sub-agent is a conversation of the engine, with its own `chat` serving.
 
-A sub-agent turn is not checkpointed. A hosted turn that resumes after a suspension,
-or a parent whose sub-agents were lost with their process, receives
-`Subagent <id> failed: ...` for each result it was still waiting for.
+## Checkpoints
+
+A hosted sub-agent turn is checkpointed with its parent, in the same
+[execution checkpoint](../compiler/agent-runtime.md#checkpoints):
+
+- Each running sub-agent turn has its own frame. The parent's continuation records
+  each turn it started, with the turn's opening text, and the result of each turn
+  that ended.
+- A suspension stops every running turn at its next durable boundary. The parent and
+  its sub-agents suspend together. A suspended turn reports no result.
+- A resumed parent continues each turn it still waits for: from the turn's frame, or
+  from its opening when the turn saved no frame. A turn that had ended reports its
+  recorded result. Saved model responses are reused, not requested again.
+- Each result is delivered to the parent once, as in [results](#results).
+- Stopping a suspended execution ends its sub-agent conversations as `cancelled`.
+  Each parent conversation records the recorded results and `cancelled` for its
+  other sub-agents, so its next turn does not wait for them.
+- A turn the execution kept no record of, such as one lost with its process, is
+  delivered as `Subagent <id> failed: ...`.
+
+The browser engine takes no checkpoints. A tab that closes during a turn interrupts
+the turn's sub-agents with it.
 
 ## Following agents
 

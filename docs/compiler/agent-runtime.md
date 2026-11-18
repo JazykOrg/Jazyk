@@ -96,8 +96,14 @@ delivery. The host supplies how a sub-agent turn runs: a thread of the
 - A sub-agent's calls pass its [write scope](../frontends/subagents.md#write-scope)
   before dispatch. A scope of `none` also removes the tools that are not read-only
   from its catalog.
-- Sub-agent turns are not checkpointed. A turn that a resumed run still waits for
-  is delivered as failed.
+- A hosted run checkpoints each running sub-agent turn in its own frame of the
+  execution capsule. The run's continuation records each started turn's opening and
+  each ended turn's result. A resumed run continues the turns it still waits for
+  ([sub-agent checkpoints](../frontends/subagents.md#checkpoints)). A turn without a
+  record is delivered as failed.
+- An interruption (a suspension or a checkpoint failure) does not cancel the run's
+  token. Its sub-agents stop at their next durable boundary, and their turns stay
+  owed to the run.
 
 ## Compaction
 
@@ -137,9 +143,13 @@ An execution checkpoint is protected operational state. It is separate from the
 committed graph (`store.yaml`, node files, decisions, sources), diagnostic exports, and
 project files, and like a build's progress it is never committed
 ([a build's progress](./graph.md#a-builds-progress)). Its format has its own version.
-The `jazyk-gdk-3` operation set requires the complete generation contract in every
+Operation sets from `jazyk-gdk-3` require the complete generation contract in every
 owned generation opening. Earlier operation sets may lack that contract and cannot
-resume under this guarantee. Release preflight refuses incompatible active capsules.
+resume under this guarantee. `jazyk-gdk-4` adds sub-agent turn frames and turn
+records ([sub-agents](#sub-agents)). The engine writes `jazyk-gdk-4` and resumes
+`jazyk-gdk-3` capsules. Those hold no sub-agent records, so a sub-agent turn such a
+capsule still waits for is delivered as failed. An engine older than `jazyk-gdk-4`
+refuses its capsules, so a rollback waits for those jobs to finish. Release preflight refuses incompatible active capsules.
 Those jobs must finish under their compatible engine before the upgrade. Their
 capsules are preserved, never silently rewritten or discarded.
 
@@ -213,7 +223,9 @@ Their already published model prefix is added to the active request receipt, so
 replaying a saved complete response does not append that prefix again.
 Stopping a suspended job retains its already committed workspace changes. The
 host publishes those saved bytes under a fresh ownership fence, closes its running
-conversation and discards the staged MCP changeset without running the model.
+conversations and discards the staged MCP changeset without running the model.
+A closed parent records each sub-agent turn it still waited for: the turn's recorded
+result, or `cancelled`.
 It replays retained job chat events after the saved cursor before closing the
 conversation. Published partial text keeps its original position and appears once.
 Stop discards the stopped execution's open batches and ends its run. Earlier

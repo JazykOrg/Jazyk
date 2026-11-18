@@ -2,7 +2,8 @@
 
 Status: implemented in the engine and specifications, 2026-11-17. Validation
 uses cargo tests and scripted fixtures. No dogfood build or paid model session
-is run for this change. The Cloud editor UI remains follow-up work.
+is run for this change. The authored diagram editor in `../jazyk-cloud` is in scope
+for this delivery, with its specifications under `docs/editor/` in that repository.
 
 ## Decisions
 
@@ -22,9 +23,9 @@ is run for this change. The Cloud editor UI remains follow-up work.
   No analysis rule creates a view, even as a temporary placeholder.
 - Containment defines levels and navigation independently of views. Cards and
   level pages exist without diagrams. There is no mandatory primary diagram.
-- Store version becomes 6. Upgrade only version 6. Drop untouched defaults;
+- Store version becomes 7. Upgrade only version 6. Drop untouched defaults;
   preserve every curated view and its ID. Never relabel automatic output as human
-  or model authorship. Version 4 follows the older-store archive policy.
+  or model authorship. Version 5 and older follow the older-store archive policy.
 - Keep the current exemption from sentence ratification for presentation nodes.
   Require provenance on every authored diagram and its authored content. Semantic
   claims still require entities and requirements with their ordinary provenance
@@ -134,7 +135,7 @@ wording is not treated as another domain requirement.
 `{member, target, views: [id]}` for drawn members with children. `views` can be
 empty. The target identifies the member's containment level. Return plural lists
 because several authored diagrams can explain one area. This is a deliberate API
-change coordinated with Cloud later, not an invented fallback diagram.
+change coordinated with the Cloud editor, without a fallback diagram.
 
 ## Tool surface and gates
 
@@ -691,23 +692,28 @@ or retrace requests repair when needed.
   consume the same computed topology and diagram lists. No dangling SVG links when
   rendering fails; link to the definition and `.puml` with failure status.
 
-Portable API contract for the later editor:
+Portable API contract for the editor:
 
-- List/get views expose definition, effective members, ordered drawing data,
-  relationship selection, annotations, fragments, links, provenance, `factHash`,
-  renderer status, and coverage. Tree nodes expose `area`, `children`, and `views: []`.
-- Mutation requests use the same validated operations and expected snapshot/hash
-  concurrency contract as graph tools. Return changed IDs, current hashes, goal
-  preview, and validation errors. Implement native dispatch and portable webapi
-  support together; no browser-only mutation logic.
-- Suppression list/get/suppress/unsuppress returns reasons, provenance, active or
-  expired status, baseline/current measures, and re-fire explanation. Coverage
-  finding reads expose thresholds and missing candidates even below goal threshold.
-- Update `webapi/views.rs`, `webapi/card.rs`, shared `card.rs`, and GUI adapters.
-  Inspect the current dispatch/edit_graph surface before selecting HTTP route
-  spellings; reuse it rather than adding a competing mutation service.
-- Document breaking `children` and tree payload changes for Cloud. This repository
-  can build and test without Cloud. No editor deployment is part of implementation.
+- `GET /api/views` pages authored definitions with effective member counts, edge
+  counts, intent, provenance and limit state. `GET /api/views/{id}` also resolves
+  drawing data, drill-down links and renderer status. The editor fetches every
+  page independently for each document set.
+- `POST /api/diagrams/edit` accepts one human view or suppression operation.
+  It reuses gated atomic graph edits, with no model session. The editor sends
+  changed fields only, so unrelated concurrent field edits remain intact.
+  Human creates and updates carry an explicit decision note.
+- `clear_excluded: true` clears prior exclusions before applying `exclude`.
+  Empty collections clear authored presentation fields. `query: null` removes
+  automatic membership selection.
+- `GET /api/diagram-coverage` exposes current findings above their soft threshold,
+  their measures and suggested kinds, current area hashes, covered or suppressed
+  status, and mandatory status. `GET /api/diagram-suppressions` includes active
+  and expired decisions. Human suppression uses the current area hash and reason.
+- Native, WASM and hosted transports share these operations. Cloud owns the
+  gallery, forms, member ordering, presentation controls, confirmation, and
+  suppression management. Engine builds and tests remain independent of Cloud.
+- The coordinated release verifies the engine and Cloud revisions, builds the
+  native and WASM artifacts, and publishes the API and editor together.
 
 ## Migration and persistence
 
@@ -771,7 +777,9 @@ run the migration on the dogfood to test it.
    with a working migration and all changed readers, never as a standalone release.
 8. Update fixtures and recorded tool sessions, run validation, commit coherent
    work, merge locally with `git merge --no-ff`, and push master. Use local-only
-   work branches. Do not publish artifacts, deploy Cloud/site, or dispatch CI.
+   work branches. Hand verified engine and Cloud revisions to the coordinated
+   release owner for API, editor and schema publication. Do not run paid model
+   sessions without per-action approval.
 
 Each implementation commit must compile with its applicable tests. Steps 3 to 7
 can be combined when needed to avoid exposing an incomplete persistent schema.
@@ -909,12 +917,12 @@ commit. Stage and commit in one command chain, never amend, stash, or rebase.
 The implementation is complete only with saved specs, passing local checks,
 version-6 fixture migration, explicit tool-session coverage for every catalog
 kind, integration into local master, and verified remote master SHA. Report
-local validation, push, artifact publication, and deployment separately. No
-publication or deployment is requested by this plan.
+local validation, push, artifact publication, and deployment separately. Publication uses the coordinated release handoff after both repositories pass
+validation.
 
 Implementation choices remaining are mechanical: exact Rust module factoring,
 HTTP route spelling within the existing dispatcher, and support of optional
 layout hints by each emitter. Unsupported hints must be rejected explicitly;
 required catalog tooling must not be deferred. The thresholds above are concrete
 initial defaults to revisit with fixture evidence, not unresolved parameters.
-Cloud UI adaptation is a separate follow-up with the documented API break.
+Cloud UI adaptation is included and validated against the shared portable API.

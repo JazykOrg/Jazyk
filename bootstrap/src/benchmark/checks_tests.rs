@@ -19,6 +19,7 @@ fn a_split_view_claim_needs_the_parent_under_its_limit() {
     // Collapsing requirements hides nothing in a flow view.
     let collapse = crate::store::Op::UpdateView {
         clear_query: false,
+        clear_excluded: false,
         authored: BTreeMap::new(),
         id: goal.target.clone(),
         title: None,
@@ -34,6 +35,7 @@ fn a_split_view_claim_needs_the_parent_under_its_limit() {
     // One member per phase brings the parent under.
     let coarse = crate::store::Op::UpdateView {
         clear_query: false,
+        clear_excluded: false,
         authored: BTreeMap::new(),
         id: goal.target.clone(),
         title: None,

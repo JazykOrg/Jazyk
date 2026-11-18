@@ -872,6 +872,7 @@ impl ToolSession {
             self.check_view_members(&v.kind, &members, &v.collapse)?;
             self.stage(Op::UpdateView {
                 clear_query: false,
+                clear_excluded: false,
                 authored: BTreeMap::new(),
                 id: vid.clone(),
                 title: None,

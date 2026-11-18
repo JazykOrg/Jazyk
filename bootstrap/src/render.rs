@@ -42,6 +42,13 @@ use structural::{
 pub use text::card_link;
 use text::empty_diagram;
 
+// Shared renderer preparation for editors that convert the deterministic emission
+// in a browser worker. Native conversion uses the same adapters.
+pub fn browser_source(store: &Store, view_id: &str, view: &View) -> serde_json::Value {
+    let (plain, links) = renderer::strip_element_links(&emit(store, view_id, view));
+    serde_json::json!({"puml": renderer::adapt_component_for_crate(&plain), "links": links})
+}
+
 // ---- dispatch ----
 
 // The PlantUML text of a view over the snapshot. Deterministic: the same snapshot and
@@ -70,20 +77,17 @@ pub fn emit(store: &Store, view_id: &str, view: &View) -> String {
         });
     }
     let mut annotations = String::new();
-    for (i, note) in view
+    let mut legend = Vec::new();
+    for note in view
         .authored
         .get("notes")
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .enumerate()
     {
         if let Some(t) = note["text"].as_str() {
-            annotations.push_str(&format!(
-                "note {} as annotation_{}\n",
-                text::quoted(&text::inert(t)),
-                i
-            ));
+            let text = text::inert(&text::oneline(t));
+            let mut attached = false;
             for target in note["targets"]
                 .as_array()
                 .into_iter()
@@ -103,13 +107,29 @@ pub fn emit(store: &Store, view_id: &str, view: &View) -> String {
                     .contains(&view.kind.as_str())
                 {
                     annotations.push_str(&format!(
-                        "annotation_{} .. {}\n",
-                        i,
-                        text::alias_of(target)
+                        "note bottom of {} : {}\n",
+                        text::alias_of(target),
+                        text
                     ));
+                    attached = true;
                 }
             }
+            if !attached {
+                // A note is text even when it spells the legend's closing marker.
+                let text = if matches!(
+                    text.to_ascii_lowercase().as_str(),
+                    "end legend" | "endlegend"
+                ) {
+                    format!("\u{200B}{text}")
+                } else {
+                    text
+                };
+                legend.push(text);
+            }
         }
+    }
+    if !legend.is_empty() {
+        annotations.push_str(&format!("legend\n{}\nend legend\n", legend.join("\n")));
     }
     puml = puml.replacen("@enduml", &format!("{}@enduml", annotations), 1);
     puml = puml.replacen("@startuml\n", &format!("@startuml\n{}", extras), 1);

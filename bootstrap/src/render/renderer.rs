@@ -246,7 +246,6 @@ pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
 // «actor» stereotype, and without an interface each link converts to `-->` (`..>` for the
 // dotted forms) in its stated direction, its label kept.
 // Mirrors docs/compiler/diagrams.md#the-renderer.
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn adapt_component_for_crate(puml: &str) -> String {
     let lines: Vec<&str> = puml.lines().collect();
     let is_component = lines
@@ -287,7 +286,6 @@ pub(super) fn adapt_component_for_crate(puml: &str) -> String {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
     let mut plain = String::with_capacity(puml.len());
     let mut links: Vec<(String, String)> = Vec::new();
@@ -375,7 +373,11 @@ pub(super) fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
         let Some(key) = attr_value(tag, "data-qualified-name") else {
             continue;
         };
-        let Some(href) = hrefs.get(key.as_str()) else {
+        // Presentation packages qualify otherwise unique element aliases.
+        let Some(href) = hrefs
+            .get(key.as_str())
+            .or_else(|| key.rsplit_once('.').and_then(|(_, alias)| hrefs.get(alias)))
+        else {
             continue;
         };
         let Some(end) = group_end(svg, start) else {

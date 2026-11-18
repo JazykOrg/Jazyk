@@ -297,6 +297,7 @@ impl ToolSession {
                     }
                     self.stage(Op::UpdateView {
                         clear_query: false,
+                        clear_excluded: false,
                         authored: authored.clone(),
                         id: id.clone(),
                         title: None,
@@ -413,8 +414,8 @@ impl ToolSession {
                 crate::diagrams::validate_fields(&self.diagram_snapshot(), &current.kind, &merged)
                     .map_err(|message| ToolError::new("diagram-fields", message))?;
                 let title = Self::opt_str(args, "title");
-                // Empty means absent: [] (or [""]) is a filled-in blank, not
-                // "replace the membership with nothing".
+                // A supplied list replaces the whole ordered membership, including
+                // an explicitly empty list.
                 let members = if args.get("members").is_some() {
                     Some(self.canon_members(&Self::str_list(args, "members"), "member")?)
                 } else {
@@ -430,6 +431,7 @@ impl ToolSession {
                     None
                 };
                 let exclude = self.parse_exclusions(&args["exclude"])?;
+                let clear_excluded = args["clear_excluded"].as_bool().unwrap_or(false);
                 let query = if Self::present(&args["query"]) {
                     self.parse_query(&args["query"])?
                 } else {
@@ -483,6 +485,9 @@ impl ToolSession {
                     } else if let Some(query) = &query {
                         v.query = Some(query.clone());
                     }
+                    if clear_excluded {
+                        v.excluded.clear();
+                    }
                     for exclusion in &exclude {
                         v.excluded.retain(|x| x.id != exclusion.id);
                         v.excluded.push(exclusion.clone());
@@ -493,6 +498,7 @@ impl ToolSession {
                 }
                 self.stage(Op::UpdateView {
                     clear_query: args.get("query").is_some_and(Value::is_null),
+                    clear_excluded,
                     authored,
                     id: id.clone(),
                     title,

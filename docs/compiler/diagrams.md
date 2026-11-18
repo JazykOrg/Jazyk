@@ -421,7 +421,7 @@ hints are refused. Direction hints remain relative, with renderer-owned geometry
 
 Labels target entities or requirements. Relationship groups use their canonical
 labels. Notes target graph IDs; structural entity targets receive connectors.
-Other notes are diagram-wide annotations. Their sources remain inspectable in
+Other notes appear in the diagram legend. Their sources remain inspectable in
 the definition. Sequence `ref` fragments name a sequence in `view` and identify
 its replaced member interval through operands. Nested fragment placement follows
 member order. Explicit overview phase links render in their authored order.

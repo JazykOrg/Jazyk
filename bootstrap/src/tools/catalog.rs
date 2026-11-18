@@ -364,6 +364,7 @@ pub fn catalog() -> Vec<ToolDef> {
                     "query": {"anyOf":[query_schema(),{"type":"null"}]},
                     "collapse": {"type": "array", "items": {"type": "string"}},
                     "exclude": {"anyOf": [exclusion_schema(), {"type": "array", "items": exclusion_schema()}]},
+                    "clear_excluded": {"type": "boolean"},
                     "reasoning": {"type": "string"}
                 }),
                 &["id", "reasoning"],

@@ -355,10 +355,11 @@ editable and deletable. Mutations stage behind the normal session gates.
   record quoted authorship; model choices record derived sources and reasoning.
   Human decision provenance is available on the explicit writable chat path.
 - `update_view({id, title?, members?, add_members?, remove_members?, query?,
-  collapse?, exclude?, purpose?, description?, area?, relationships?, labels?,
+  collapse?, exclude?, clear_excluded?, purpose?, description?, area?, relationships?, labels?,
   notes?, groups?, layout?, fragments?, links?, reasoning})` edits the authored
   definition. Empty lists clear collections. Replacement and membership deltas
-  cannot be combined. Omitted fields remain unchanged.
+  cannot be combined. `clear_excluded: true` clears prior exclusions before applying
+  `exclude`, so an empty list can remove all exclusions. Omitted fields remain unchanged.
 - `delete_view({id, reason})` deletes the definition and its rendering, never its
   semantic facts. No recomputation recreates it.
 - `list_views({entity?, area?, kind?, offset?, limit?})` returns bounded summaries
@@ -372,6 +373,9 @@ Diagram review receives view mutations and suppression tools for its area.
 Curation, splitting and retrace retain their view mutation slices. Diagram reads
 are available in every read surface and never expand mutation authority. Loading
 `diagrams` supplies selection guidance, not permission to edit.
+
+The editor exposes these same gated operations through the explicit human
+[`POST /api/diagrams/edit`](../frontends/gui.md#api) endpoint. It does not call a model.
 
 ## Goal tools
 
@@ -903,6 +907,12 @@ and a model then fills the ones it means to omit.
   on a replacement takes the hash the serving last returned for that path
   ([file tools](./goals/generate.md#file-and-command-tools)), never none.
 - `write_document` preserves supplied `text` and `old_text` the same way.
+- Diagram writes preserve explicitly empty membership, collapse, exclusion and
+  authored presentation lists. These lists express deliberate replacements. An
+  empty `members` beside nonempty membership deltas counts as absent; the deltas
+  determine that edit. Nonempty replacement and delta lists cannot be combined.
+  `update_view` uses `clear_excluded: true` to clear old exclusions before its
+  additive `exclude` entries are applied.
 - A `transition` that names no state (`from` and `to` both empty) is a filled-in blank
   and counts as absent.
 - A fact that arrives with its quote and a derivation both (an entity's `mention`, a

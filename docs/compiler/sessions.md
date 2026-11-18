@@ -447,6 +447,17 @@ the compaction threshold, another compaction requires growth of one fifth of the
 context budget. Reopening the same package cannot consume the request budget in
 repeated compactions.
 
+An embedded graph worker that ends a model turn with an open batch receives up
+to three continuation reminders in the same session. Each reminder names the
+remaining goals from its current staged state. It directs the worker to repair
+refused evidence and finish with explicit `done`, without restarting extraction
+or repeating accepted mutations. A lack of inspected evidence is unfinished work,
+not an observed blocker. Only an observed blocker justifies `mark_goal_failed`.
+The reminder count is checkpointed and survives recovery and compaction. It does
+not reset request budgets or bypass any gate. Stop, suspension, transport errors
+and quota pauses do not trigger a new model request. Exhausting the reminders
+leaves the staged changeset recoverable and reports an unfinished batch.
+
 The embedded ledger worker receives one continuation reminder when it ends a model
 turn without a successful `done`. The reminder asks it to finish all assigned rows
 or report the observed blocker in `done.summary`. The reminder is checkpointed

@@ -48,13 +48,7 @@ impl McpServer {
         {
             let mut s = Store::load(&self.out);
             let quiet = crate::session::Trace::stderr(crate::session::TraceLevel::Quiet);
-            crate::reconcile::finalize(
-                &mut s,
-                &self.current_project(),
-                Vec::new(),
-                &crate::model::Costs::default(),
-                &quiet,
-            );
+            crate::reconcile::finalize(&mut s, &self.current_project(), Vec::new(), None, &quiet);
             board = crate::board::Board::compute(&self.current_project(), &self.out);
         }
         board.mark_own(&self.worker_id());
@@ -430,7 +424,7 @@ impl McpServer {
                 &mut s2,
                 &self.current_project(),
                 Vec::new(),
-                &crate::model::Costs::default(),
+                None,
                 &quiet,
             );
             reply["verdict"] = json!(report.verdict);

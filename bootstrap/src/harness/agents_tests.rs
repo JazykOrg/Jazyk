@@ -480,3 +480,68 @@ fn write_scopes_parse_nest_and_judge_path_arguments() {
     assert!(WriteScope::None.admits("spawn_agent", &json!({})));
     assert!(!WriteScope::None.admits("edit_doc_prose", &json!({"path":"docs/a.md"})));
 }
+
+fn node(id: &str, parent: &str, state: AgentState) -> Node {
+    Node {
+        id: id.into(),
+        parent: parent.into(),
+        root: "root".into(),
+        depth: if parent == "root" { 1 } else { 2 },
+        title: id.into(),
+        task: "look".into(),
+        write: WriteScope::None,
+        state,
+        turns: 1,
+        results: Default::default(),
+        inbox: Vec::new(),
+        cancel: Default::default(),
+    }
+}
+
+// A person's prompt starts an idle sub-agent's next turn within the limits; a
+// cancel or a removal reaches every descendant
+// (docs/frontends/subagents.md#prompting-a-sub-agent, #cancellation).
+#[test]
+fn a_person_starts_an_idle_turn_and_stops_or_removes_a_whole_subtree() {
+    let tree = Tree::default();
+    tree.adopt(node("a", "root", AgentState::Idle));
+    tree.adopt(node("b", "a", AgentState::Running));
+    tree.adopt(node("c", "root", AgentState::Idle));
+    assert_eq!(tree.subtree("a"), ["a", "b"]);
+    let (started, turn) = tree.begin_turn("a").unwrap();
+    assert_eq!(turn, "a#2");
+    assert_eq!(started.state, AgentState::Running);
+    assert!(tree
+        .begin_turn("a")
+        .unwrap_err()
+        .contains("already running"));
+    assert!(tree.begin_turn("missing").is_err());
+    tree.finish("a", &turn, SubagentOutcome::Completed("done".into()));
+    assert_eq!(tree.get("a").unwrap().state, AgentState::Idle);
+    assert_eq!(
+        result_text(&turn, tree.get("a").unwrap().last_result().unwrap()),
+        "Subagent a#2 completed: done"
+    );
+    let grandchild = tree.get("b").unwrap().cancel;
+    assert!(tree.cancel("a"));
+    assert!(grandchild.is_cancelled());
+    assert!(!tree.get("c").unwrap().cancel.is_cancelled());
+    assert_eq!(tree.remove("a"), ["a", "b"]);
+    assert!(tree.get("b").is_none());
+    let other = tree.get("c").unwrap().cancel;
+    assert_eq!(tree.remove_root("root"), ["c"]);
+    assert!(other.is_cancelled());
+}
+
+#[test]
+fn a_person_turn_over_a_limit_is_refused_naming_it() {
+    let tree = Tree::default();
+    for n in 0..crate::limits::AGENT_MAX_CHILDREN {
+        tree.adopt(node(&format!("r{n}"), "root", AgentState::Running));
+    }
+    tree.adopt(node("idle", "root", AgentState::Idle));
+    assert!(tree
+        .begin_turn("idle")
+        .unwrap_err()
+        .contains("AGENT_MAX_CHILDREN"));
+}

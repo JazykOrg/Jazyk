@@ -125,11 +125,11 @@ fn edit_fact_dual_writes_a_quoted_fact_and_decrees_otherwise() {
     assert_eq!(v["path"], "dual-write");
     assert_eq!(v["prose"]["old_text"], old);
     assert_eq!(v["prose"]["new_text"], new);
-    assert!(matches!(
-        t.staged.last(),
-        Some(Op::UpdateRequirement { statement: Some(s), source: Some(src), provenance: None, .. })
-            if s == new && src.quote == new
-    ));
+    assert!(t.staged.iter().any(|op| matches!(op,
+        Op::UpdateRequirement {statement:Some(s),source:None,provenance:None,..} if s == new)));
+    assert!(
+        matches!(t.staged.last(), Some(Op::PlaceAnchor {from,to,..}) if from.quote == old && to.quote == new)
+    );
     let v = t
         .dispatch("edit_fact", &json!({"id": "req:shop-1", "field": "transition", "value": {"subject":"ent:customer","from":"ready","to":"done","trigger":"purchase"}, "decision": "Treat this as a behavior."}))
         .unwrap();

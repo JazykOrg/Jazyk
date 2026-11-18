@@ -71,6 +71,10 @@ struct SessionEntry {
     cancelled: Arc<AtomicBool>,
     inbox: Arc<Mutex<(bool, Vec<Value>)>>,
     children: subagents::Children,
+    // How this session's sub-agents run, as its last prompt set it up. A person's
+    // prompt to an idle sub-agent runs through it
+    // (docs/frontends/subagents.md#prompting-a-sub-agent).
+    host: Arc<Mutex<Option<subagents::AcpChildren>>>,
 }
 
 type Sessions = Arc<Mutex<HashMap<String, SessionEntry>>>;
@@ -358,7 +362,9 @@ pub fn run() -> i32 {
     // Every sub-agent of this agent process (docs/frontends/subagents.md#limits).
     let tree = crate::harness::agents::Tree::default();
     let prompt_tree = tree.clone();
-    let steering_tree = tree;
+    let steering_tree = tree.clone();
+    let close_tree = tree.clone();
+    let cancel_tree = tree;
 
     let init_sessions = sessions.clone();
     let new_sessions = sessions.clone();
@@ -424,6 +430,7 @@ pub fn run() -> i32 {
                             cancelled: Arc::new(AtomicBool::new(false)),
                             inbox: Arc::new(Mutex::new((false, Vec::new()))),
                             children: Default::default(),
+                            host: Default::default(),
                         },
                     );
                     let options = model_options(&new_llm, &model);
@@ -516,6 +523,9 @@ pub fn run() -> i32 {
                                 tree: tree.clone(),
                             }
                         });
+                        if let Some(children) = &children {
+                            *entry.host.lock().unwrap() = Some(children.clone());
+                        }
                         let args = LoopArgs {
                             llm: &llm,
                             history: &mut state.history,
@@ -586,7 +596,8 @@ pub fn run() -> i32 {
                     // (docs/frontends/acp.md#sub-agent-updates).
                     if let Some(jazyk) = req.meta.as_ref().and_then(|m| m.get("jazyk")).filter(|j| j["agentId"].is_string()) {
                         let text = req.prompt.iter().filter_map(|b| match b { ContentBlock::Text(t) => Some(t.text.as_str()), _ => None }).collect::<Vec<_>>().join("\n");
-                        return match subagents::steer(&steering_tree, &req.session_id, jazyk, text) {
+                        let host = entry.host.lock().unwrap().clone();
+                        return match subagents::steer(&steering_tree, &req.session_id, jazyk, text, host.as_ref().map(|host| (host, &entry))) {
                             Ok(reply) => responder.respond(reply),
                             Err(error) => responder.respond_with_internal_error(error),
                         };
@@ -650,6 +661,7 @@ pub fn run() -> i32 {
                     match entry {
                         Some(e) => {
                             e.cancelled.store(true, Ordering::Relaxed);
+                            close_tree.remove_root(req.session_id.0.as_ref());
                             // Dropping the state closes each MCP server's stdin and
                             // waits for it to exit, so an ephemeral jazyk serving has
                             // run its implicit finish before this response goes out.
@@ -671,6 +683,9 @@ pub fn run() -> i32 {
                         e.cancelled.store(true, Ordering::Relaxed);
                         e.inbox.lock().unwrap().1.clear();
                     }
+                    // Stopping a conversation stops its sub-agents, including turns
+                    // a person started (docs/frontends/subagents.md#cancellation).
+                    cancel_tree.cancel_root(n.session_id.0.as_ref());
                     Ok(())
                 },
                 agent_client_protocol::on_receive_notification!(),

@@ -788,7 +788,13 @@ fn a_goal_resolved_and_reopened_with_the_same_change_parks_at_its_second_cycle()
 
     // The tail persists the parked goal whole in status.yaml, like any parked
     // goal; the next derivation resumes it parked and explain shows it so.
-    let _ = finalize(&mut s, &proj, run.parked, &run.costs, &trace);
+    let _ = finalize(
+        &mut s,
+        &proj,
+        run.parked,
+        Some(("test", &run.costs)),
+        &trace,
+    );
     let status = Store::load(&out).status;
     let entry = status
         .parked
@@ -941,7 +947,7 @@ fn a_cancelled_build_keeps_the_goals_it_parked() {
         goal.clone(),
         "left open after 4 attempts in session b1-1",
     )];
-    let report = finalize(&mut store, &project, parked, &Costs::default(), &trace);
+    let report = finalize(&mut store, &project, parked, None, &trace);
     assert!(
         report.verdict.starts_with("incomplete"),
         "{}",
@@ -998,7 +1004,7 @@ fn a_refused_verdict_write_is_reported() {
         }),
         Default::default(),
     );
-    let report = finalize(&mut store, &project, Vec::new(), &Costs::default(), &trace);
+    let report = finalize(&mut store, &project, Vec::new(), None, &trace);
     let why = report
         .unsaved
         .clone()

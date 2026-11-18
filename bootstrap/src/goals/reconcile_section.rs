@@ -365,8 +365,12 @@ pub(crate) fn linked_subjects_scan(store: &Store, doc: &str) -> Vec<(String, Str
             }
         }
     }
-    for r in store.graph.requirements.values() {
-        let Some(s) = r.sources.first() else { continue };
+    for (r, s) in store
+        .graph
+        .requirements
+        .values()
+        .flat_map(|r| r.sources.iter().map(move |s| (r, s)))
+    {
         if s.doc == doc
             || !crate::md::doc_links(&s.quote, &s.doc)
                 .iter()
@@ -650,30 +654,35 @@ impl GoalKind for ReconcileSection {
         for doc in store.docs.keys() {
             let (stale, _) = store.stale_extras(doc);
             for rid in stale {
-                let Some(src) = store
-                    .graph
-                    .requirements
-                    .get(&rid)
-                    .and_then(|r| r.sources.first())
-                else {
+                let Some(requirement) = store.graph.requirements.get(&rid) else {
                     continue;
                 };
-                if !store
-                    .docs
-                    .get(&src.doc)
-                    .is_some_and(|r| r.sections.contains_key(&src.section))
+                for src in requirement
+                    .sources
+                    .iter()
+                    .filter(|source| source.doc == *doc)
                 {
-                    continue;
-                }
-                let sec = owning_section(store, &src.doc, &src.section);
-                let full = format!("{}#{}", src.doc, sec);
-                let w = work.entry(full).or_default();
-                if w.stale.insert(rid) && w.causes.is_empty() {
-                    w.causes.push(Cause {
-                        generation: store.status.generation,
-                        mutation: 0,
-                        via: "quote".into(),
-                    });
+                    if store.quote_locates(&src.doc, &src.section, &src.quote)
+                        && !store.status.reevaluate.contains(&rid)
+                    {
+                        continue;
+                    }
+                    if !store
+                        .docs
+                        .get(&src.doc)
+                        .is_some_and(|r| r.sections.contains_key(&src.section))
+                    {
+                        continue;
+                    }
+                    let sec = owning_section(store, &src.doc, &src.section);
+                    let w = work.entry(format!("{}#{}", src.doc, sec)).or_default();
+                    if w.stale.insert(rid.clone()) && w.causes.is_empty() {
+                        w.causes.push(Cause {
+                            generation: store.status.generation,
+                            mutation: 0,
+                            via: "quote".into(),
+                        });
+                    }
                 }
             }
         }
@@ -759,7 +768,12 @@ impl GoalKind for ReconcileSection {
                             "\"{}\" was quoted \"{}\"",
                             truncate(&r.statement, 80),
                             truncate(
-                                r.sources.first().map(|s| s.quote.as_str()).unwrap_or(""),
+                                r.sources
+                                    .iter()
+                                    .find(|s| s.doc == doc
+                                        && owning_section(store, &s.doc, &s.section) == sec_ref)
+                                    .map(|s| s.quote.as_str())
+                                    .unwrap_or(""),
                                 60
                             )
                         )
@@ -1024,7 +1038,7 @@ impl GoalKind for ReconcileSection {
                     }
                 }
                 Op::CreateRequirement { id, requirement } => {
-                    if let Some(s) = requirement.sources.first() {
+                    for s in &requirement.sources {
                         if !store.quote_locates(&s.doc, &s.section, &s.quote) {
                             out.push(Violation::new(
                                 "quote-not-found",
@@ -1057,7 +1071,12 @@ impl GoalKind for ReconcileSection {
     // The goal's stale anchors are addressed, its sections carry a coverage mark, and
     // every covered claim is honest. Mirrors docs/compiler/goals/reconcile-section.md#gate.
     fn goal_gate(&self, cx: &GateContext) -> Option<Violation> {
-        let untouched = untouched_stale(cx.store, cx.staged, &cx.goal.stale_anchors);
+        let untouched = untouched_stale(
+            cx.store,
+            cx.staged,
+            &cx.goal.stale_anchors,
+            &[(cx.goal.doc.as_deref().unwrap_or(""), &cx.goal.sections)],
+        );
         if !untouched.is_empty() {
             return Some(Violation::new(
                 "stale-anchor",

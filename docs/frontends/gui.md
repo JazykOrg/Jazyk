@@ -872,9 +872,12 @@ appears, changes state, or leaves.
 A chat session snapshot (`GET /api/chat/sessions`, `GET /api/chat/sessions/{id}`)
 carries `parentId`, `rootId`, `depth`, `task`, and `write`. A sub-agent's transcript
 is an ordinary conversation. A result delivered to a parent is an `input` and a
-`user_message` with `source: {agentId}`. In the native server a sub-agent's session
-takes inputs only while it runs ([sub-agent updates](./acp.md#sub-agent-updates));
-stopping it stops that sub-agent and its descendants.
+`user_message` with `source: {agentId}`. A prompt to an idle sub-agent's session
+starts its next turn ([prompting a sub-agent](./subagents.md#prompting-a-sub-agent)),
+and input to a running one steers it. In the native server both travel through
+[sub-agent updates](./acp.md#sub-agent-updates). Stopping a sub-agent's session stops
+that sub-agent and its descendants. `DELETE /api/chat/sessions/{id}` deletes the
+conversation and every sub-agent session below it, stopping running ones first.
 
 The browser engine serves the same route and event for its
 [conversations](./wasm.md#chat). Its builds run inside the request, so it lists no
@@ -1019,3 +1022,11 @@ an actual native or virtual file symlink. It is exclusive and cannot combine wit
 `GET /api/project/files` includes `entryType: symlink` and `symlinkTarget` for links,
 including dangling links. File reads resolve target bytes. Deleting a file link
 removes the link, including a dangling link, and never deletes its target.
+
+## Requirement source selection
+
+Requirement reads expose every source location. A fact-edit request for a quoted
+requirement accepts `source: {doc, section, quote}`. When several sources exist and
+none is selected, the endpoint returns `sources` and commits nothing. Acceptance
+revalidates the selected source and changes only its prose anchor. Other locations
+remain attached. A graph-only decree remains an explicit separate choice.

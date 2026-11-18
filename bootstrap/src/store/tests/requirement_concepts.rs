@@ -107,6 +107,22 @@ fn requirement_each_location_participates_in_staleness_and_sweep() {
         .unwrap()
         .raw = "The background is red.".into();
     assert_eq!(s.stale_extras("b.md").0, vec!["req:background"]);
+    let goals = crate::goals::kind("reconcile-section")
+        .unwrap()
+        .derive_goals(&s, &crate::gen::GenSettings::from_out(&s.out));
+    let scopes: Vec<_> = goals
+        .iter()
+        .map(crate::tools::GoalScope::from_goal)
+        .collect();
+    assert!(scopes
+        .iter()
+        .any(|g| g.doc.as_deref() == Some("b.md")
+            && g.stale_anchors.contains(&"req:background".into())));
+    assert!(!scopes
+        .iter()
+        .any(|g| g.doc.as_deref() == Some("a.md")
+            && g.stale_anchors.contains(&"req:background".into())));
+
     s.docs.remove("b.md");
     s.gc();
     assert_eq!(s.graph.requirements["req:background"].sources.len(), 1);
@@ -218,4 +234,30 @@ fn requirement_obligation_edit_invalidates_review_hash_without_source_edit() {
     s.graph.requirements.get_mut("req:color").unwrap().statement =
         "The background uses red.".into();
     assert_ne!(hash, v5::entity_fact_hash(&s, "ent:cart"));
+}
+
+#[test]
+fn reconciling_one_stale_source_does_not_owe_other_documents() {
+    let mut s = concept_store();
+    let mut r = concept();
+    let b = mention("b.md", "/b", "The background uses #1E40AF.");
+    r.sources.push(b.clone());
+    s.graph.requirements.insert("req:background".into(), r);
+    for doc in ["a.md", "b.md"] {
+        for sec in s.docs.get_mut(doc).unwrap().sections.values_mut() {
+            sec.raw = "Removed.".into();
+        }
+    }
+    let anchors = vec!["req:background".into()];
+    let ops = vec![Op::RemoveRequirementSource {
+        id: "req:background".into(),
+        source: b,
+        reason: "gone".into(),
+    }];
+    let sections = vec!["/b".into()];
+    assert!(crate::goals::untouched_stale(&s, &ops, &anchors, &[("b.md", &sections)]).is_empty());
+    assert_eq!(
+        crate::goals::untouched_stale(&s, &ops, &anchors, &[]),
+        anchors
+    );
 }

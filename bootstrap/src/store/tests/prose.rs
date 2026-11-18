@@ -653,3 +653,66 @@ fn retracting_a_derived_grouping_dissolves_it_onto_its_parent() {
         .join(format!("g{}.yaml", before + 1))
         .vexists());
 }
+
+#[test]
+fn a_prose_edit_reanchors_each_overlapping_source_and_keeps_siblings() {
+    let root = own_dir("multi-anchor-prose");
+    crate::vfs::create_dir_all(&root).unwrap();
+    let text = "# Pay\n\nAn Order is paid within 30 days. Retain the receipt.\n";
+    crate::vfs::write(root.join("pay.md"), text).unwrap();
+    let mut s = Store {
+        out: root.join(".jazyk"),
+        ..Default::default()
+    };
+    seed_doc(&mut s, "pay.md", text);
+    s.graph
+        .entities
+        .insert("ent:cart".into(), Entity::default());
+    let mut requirement = seeded_req("pay.md", "An Order is paid within 30 days.");
+    requirement.sources = vec![
+        mention("pay.md", "/pay", "An Order is paid within 30 days."),
+        mention(
+            "pay.md",
+            "/pay",
+            "An Order is paid within 30 days. Retain the receipt.",
+        ),
+        mention("pay.md", "/pay", "Retain the receipt."),
+    ];
+    s.graph.requirements.insert("req:pay".into(), requirement);
+    let edit = ProseEdit::locate(
+        "pay.md",
+        "/pay",
+        Some(&s.docs["pay.md"].sections["/pay"].raw),
+        text,
+        "within 30 days",
+        "within 21 days",
+    )
+    .unwrap();
+    let report = s
+        .dual_write(
+            &root,
+            &edit,
+            vec![Op::UpdateRequirement {
+                id: "req:pay".into(),
+                statement: Some("An Order is paid within 21 days.".into()),
+                entities: None,
+                edges: None,
+                transition: None,
+                source: None,
+                provenance: None,
+            }],
+            &Commit::store("dual-write"),
+            None,
+        )
+        .unwrap();
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let req = &s.graph.requirements["req:pay"];
+    assert_eq!(req.sources.len(), 3);
+    assert_eq!(req.sources[0].quote, "An Order is paid within 21 days.");
+    assert_eq!(
+        req.sources[1].quote,
+        "An Order is paid within 21 days. Retain the receipt."
+    );
+    assert_eq!(req.sources[2].quote, "Retain the receipt.");
+    crate::vfs::remove_dir_all(root).ok();
+}

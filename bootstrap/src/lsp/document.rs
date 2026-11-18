@@ -69,7 +69,10 @@ impl Lsp {
         section: Option<&str>,
     ) -> (usize, usize, usize, usize) {
         let text = self.doc_text(doc);
-        if let Some(r) = md::locate(&text, quote) {
+        if let Some(r) = section.map_or_else(
+            || md::locate(&text, quote),
+            |section| md::locate_in_section(&text, section, quote),
+        ) {
             return r;
         }
         if !name.is_empty() {

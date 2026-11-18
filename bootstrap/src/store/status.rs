@@ -70,6 +70,8 @@ pub(super) struct BuildFile {
     pub(super) verdict: Verdict,
     #[serde(default, skip_serializing_if = "Costs::is_empty")]
     pub(super) costs: Costs,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) run_costs: BTreeMap<String, Costs>,
     #[serde(default)]
     pub(super) spent: Spent,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -77,6 +79,17 @@ pub(super) struct BuildFile {
     // Document path to the content hash of the source file at last reconcile.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub(super) docs: BTreeMap<String, String>,
+}
+
+// The spend counters only grow, and a commit adds to them after loading the disk's: the
+// larger of each is the current one, so a store loaded before another build added its
+// spend never writes the older value back.
+fn shared_spent(disk: &Spent, mine: &Spent) -> Spent {
+    Spent {
+        sessions: disk.sessions.max(mine.sessions),
+        rounds: disk.rounds.max(mine.rounds),
+        tokens: disk.tokens.max(mine.tokens),
+    }
 }
 
 // The highest generation the committed status names: change records and lookalike
@@ -375,6 +388,55 @@ impl Store {
         Ok(())
     }
 
+    // A status write that lands one build's spend. Under the lock, the build's entry
+    // replaces its own line of `run_costs` on disk (a build that opened alone clears
+    // the others first), `costs` becomes their sum, and `tokens` adds to the spend on
+    // disk. Builds running at once never reset or overwrite each other's spend.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    pub fn write_status_costs(
+        &mut self,
+        what: &str,
+        run: Option<(&str, &Costs)>,
+        fresh: bool,
+        tokens: u64,
+    ) -> Result<(), String> {
+        let _flock = FileLock::acquire(&self.out);
+        if let Some(why) = self.refuse(what) {
+            return Err(why);
+        }
+        let path = crate::layout::build_file(&self.out);
+        let mut disk = yaml_read::<BuildFile>(&path).ok().flatten();
+        let mut runs = match &disk {
+            Some(d) => d.run_costs.clone(),
+            None => self.status.run_costs.clone(),
+        };
+        if fresh {
+            runs.clear();
+        }
+        if let Some((id, costs)) = run {
+            runs.insert(id.to_string(), costs.clone());
+        }
+        if fresh || !runs.is_empty() {
+            self.status.costs = Costs::sum(runs.values());
+        } else if let Some(d) = &disk {
+            self.status.costs = d.costs.clone();
+        }
+        self.status.run_costs = runs;
+        if let Some(d) = &disk {
+            self.status.spent = shared_spent(&d.spent, &self.status.spent);
+        }
+        self.status.spent.tokens += tokens;
+        // The disk copy first: the status save below reads its shared totals there.
+        if let Some(d) = disk.as_mut() {
+            d.costs = self.status.costs.clone();
+            d.run_costs = self.status.run_costs.clone();
+            d.spent = self.status.spent.clone();
+            report_write(&path, write_yaml(&path, d));
+        }
+        self.save_status();
+        Ok(())
+    }
+
     pub(super) fn save_status_files(&self) {
         // store.yaml, the decisions, this machine's build progress, then build.yaml:
         // the generation there is the commit point.
@@ -392,11 +454,29 @@ impl Store {
         );
         super::v5::save_decisions(&self.out, &self.decisions, &status.lookalikes);
         super::v5::save_run(&self.out, status);
+        // The shared totals come from disk: another build may have landed its spend
+        // since this store loaded, and only `write_status_costs` changes them.
+        // Mirrors docs/compiler/graph.md#storage-layout.
+        let path = crate::layout::build_file(&self.out);
+        let disk = yaml_read::<BuildFile>(&path).ok().flatten();
+        let (costs, run_costs, spent) = match &disk {
+            Some(d) => (
+                d.costs.clone(),
+                d.run_costs.clone(),
+                shared_spent(&d.spent, &status.spent),
+            ),
+            None => (
+                status.costs.clone(),
+                status.run_costs.clone(),
+                status.spent.clone(),
+            ),
+        };
         let build = BuildFile {
             generation: status.generation,
             verdict: status.verdict.clone(),
-            costs: status.costs.clone(),
-            spent: status.spent.clone(),
+            costs,
+            run_costs,
+            spent,
             diagnostics: status.diagnostics.clone(),
             docs: self
                 .docs
@@ -407,7 +487,6 @@ impl Store {
         };
         // Every file the commit point covers is on disk before it moves.
         sync_touched_dirs();
-        let path = crate::layout::build_file(&self.out);
         report_write(&path, write_yaml(&path, &build));
         sync_touched_dirs();
     }

@@ -198,6 +198,25 @@ pub(crate) fn edit_fact_core(
     let note = body["note"].as_str().map(str::trim).map(String::from);
     let proposal = body["proposal"].as_object().cloned();
 
+    let store = Store::load(out);
+    let source = body
+        .get("source")
+        .filter(|v| !v.is_null())
+        .cloned()
+        .or_else(|| {
+            proposal
+                .as_ref()
+                .map(|p| json!({"doc":p["doc"], "section":p["section"], "quote":p["old_text"]}))
+        });
+    if !decree && source.is_none() {
+        if let Some(requirement) = store.graph.requirements.get(store.resolve_id(id)) {
+            if requirement.sources.len() > 1 {
+                return Ok(
+                    json!({"id":store.resolve_id(id), "field":field, "sources":requirement.sources}),
+                );
+            }
+        }
+    }
     // Phase 1: a quote-provenanced fact without a proposal answers with the
     // proposed sentence rewrite; nothing commits.
     if !decree && proposal.is_none() {
@@ -215,7 +234,7 @@ pub(crate) fn edit_fact_core(
             let reply = session
                 .dispatch(
                     "edit_fact",
-                    &json!({ "id": id, "field": field, "value": value, "note": sentence }),
+                    &json!({ "id": id, "field": field, "value": value, "note": sentence, "source": source }),
                 )
                 .map_err(|e| {
                     bad(e.to_value()["error"]["message"]
@@ -247,7 +266,7 @@ pub(crate) fn edit_fact_core(
         .and_then(|p| p.get("new_text"))
         .and_then(|v| v.as_str())
         .map(String::from);
-    let mut args = json!({ "id": id, "field": field, "value": value });
+    let mut args = json!({ "id": id, "field": field, "value": value, "source": source });
     if let Some(n) = accepted.as_ref().filter(|_| !decree) {
         args["note"] = json!(n);
     } else {
@@ -463,6 +482,70 @@ mod tests {
         // The commit absorbed the new hash: the document is not dirty against the graph.
         let rec = store.docs.get("docs/shop.md").unwrap();
         assert_eq!(rec.content_hash, crate::model::hash_hex(&text));
+        crate::vfs::remove_dir_all(&proj.root).ok();
+    }
+
+    #[test]
+    fn multi_source_edit_requires_selection_and_preserves_other_anchors() {
+        let (proj, out) = fixture("multi-anchor");
+        let rid = shop_req(&out);
+        let mut seed = session_for(&proj, &out, "attach");
+        seed.dispatch(
+            "add_requirement_source",
+            &json!({
+                "id":rid, "section":"docs/shop.md#/shop", "quote":"The shop is small."
+            }),
+        )
+        .unwrap();
+        let mut store = Store::load(&out);
+        let report = store.apply(std::mem::take(&mut seed.staged), &Commit::store("attach"));
+        assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+        let sources = Store::load(&out).graph.requirements[&rid].sources.clone();
+        assert_eq!(sources.len(), 2);
+        let generation = crate::store::read_generation(&out);
+        let value = "The shop is compact.";
+        let choices = edit_fact_core(
+            &proj,
+            &out,
+            &rid,
+            &json!({"field":"statement", "value":value}),
+        )
+        .unwrap();
+        assert_eq!(choices["sources"], json!(sources));
+        assert_eq!(crate::store::read_generation(&out), generation);
+        let source = sources
+            .iter()
+            .find(|s| s.quote == "The shop is small.")
+            .unwrap();
+        let proposed = edit_fact_core(
+            &proj,
+            &out,
+            &rid,
+            &json!({"field":"statement", "value":value, "source":source}),
+        )
+        .unwrap();
+        assert_eq!(proposed["proposal"]["old_text"], source.quote);
+        let accepted = edit_fact_core(&proj, &out, &rid, &json!({"field":"statement", "value":value, "source":source, "proposal":proposed["proposal"]})).unwrap();
+        assert_eq!(accepted["committed"], true);
+        let after = Store::load(&out);
+        let req = &after.graph.requirements[&rid];
+        assert_eq!(req.sources.len(), 2);
+        assert!(req
+            .sources
+            .iter()
+            .any(|s| s.quote == "The shop stores orders."));
+        assert!(req.sources.iter().any(|s| s.quote == value));
+        assert!(crate::vfs::read_to_string(proj.root.join("docs/shop.md"))
+            .unwrap()
+            .contains("The shop stores orders. The shop is compact."));
+        let err = edit_fact_core(
+            &proj,
+            &out,
+            &rid,
+            &json!({"field":"statement", "value":"Stale edit.", "source":source}),
+        )
+        .unwrap_err();
+        assert!(err.1.contains("source"));
         crate::vfs::remove_dir_all(&proj.root).ok();
     }
 

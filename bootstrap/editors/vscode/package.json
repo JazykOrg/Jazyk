@@ -2,7 +2,7 @@
   "name": "jazyk",
   "displayName": "Jazyk",
   "description": "Language support for Jazyk: natural language compiled into a semantic graph.",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "publisher": "jazyk",
   "engines": {
     "vscode": "^1.82.0"
@@ -17,6 +17,10 @@
   ],
   "contributes": {
     "commands": [
+      {
+        "command": "jazyk.openChat",
+        "title": "Jazyk: Open Chat"
+      },
       {
         "command": "jazyk.restartServer",
         "title": "Jazyk: Restart Language Server"

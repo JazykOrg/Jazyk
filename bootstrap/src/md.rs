@@ -34,6 +34,25 @@ pub fn locate(text: &str, needle: &str) -> Option<(usize, usize, usize, usize)> 
     Some((sl, sc, el, ec))
 }
 
+// Source identity includes its section. Repeated quotes in other sections must
+// not capture an anchor; current parsing also accounts for unsaved heading moves.
+pub fn locate_in_section(
+    text: &str,
+    section: &str,
+    quote: &str,
+) -> Option<(usize, usize, usize, usize)> {
+    let sections = parse_sections(text);
+    let section = sections.get(section)?;
+    let body = text
+        .lines()
+        .skip(section.lines[0])
+        .take(section.lines[1] - section.lines[0])
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (sl, sc, el, ec) = locate(&body, quote)?;
+    Some((sl + section.lines[0], sc, el + section.lines[0], ec))
+}
+
 // Match the needle's whitespace-separated tokens in order, any whitespace between.
 // Returns the matched byte range.
 fn locate_tokens(text: &str, needle: &str) -> Option<(usize, usize)> {
@@ -596,6 +615,23 @@ mod crlf_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn source_locations_stay_within_their_section() {
+        let text = "# Rules\n\n## First\n\nUse blue. Use #1E40AF.\n\n## Second\n\nUse blue.\nUse #1E40AF.\n";
+        assert_eq!(
+            super::locate_in_section(text, "/rules/second", "Use blue. Use #1E40AF."),
+            Some((8, 0, 9, 12))
+        );
+        assert_eq!(
+            super::locate_in_section(text, "/rules/missing", "Use blue."),
+            None
+        );
+        assert_eq!(
+            super::locate_in_section(text, "/rules/first", "Not present."),
+            None
+        );
+    }
+
     #[test]
     fn locate_wrapped_quote() {
         let text = "intro text\nAn Order shall be paid within 21 days of placement; otherwise the system shall\ncancel it.\nmore";

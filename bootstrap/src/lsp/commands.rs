@@ -205,9 +205,14 @@ impl Lsp {
             return Value::Null;
         };
         let target = self.requirement_document_location(&resolved).or_else(|| {
-            let source = r.sources.first()?;
-            let range = crate::md::locate(&self.doc_text(&source.doc), &source.quote)?;
-            Some(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}))
+            r.sources.iter().find_map(|source| {
+                let range = crate::md::locate_in_section(
+                    &self.doc_text(&source.doc),
+                    &source.section,
+                    &source.quote,
+                )?;
+                Some(json!({"uri": self.doc_to_uri(&source.doc), "range": self.range(range)}))
+            })
         });
         let Some(target) = target else {
             return Value::Null;

@@ -2705,6 +2705,9 @@
         "value"
       ],
       "properties": {
+        "source": {
+          "$ref": "graph.json#/definitions/sourceRef"
+        },
         "id": {
           "type": "string"
         },

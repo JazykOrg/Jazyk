@@ -56,8 +56,10 @@ Some profiles are built in, so naming them is enough (`[acp] agent = "claude"`):
 | `opencode` | OpenCode | `opencode acp` |
 
 The adapters are pinned to the versions whose steering contract the host knows
-([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table in the
-project or the global config shadows the built-in profile of the same name. A
+([steering](#steering-adapter-compatibility)). An `[acp.agents.<name>]` table with a `command` in
+the project or the global config shadows the built-in profile of the same name. A
+table without `command` (e.g. one that sets only `max_sessions`) keeps the built-in
+launch ([ACP settings](../compiler/project-settings.md#acp)). A
 shadowed built-in is easy to forget (an old adapter, a forced model the account no
 longer serves), so the [launcher](./cli.md#jazyk), [`jazyk init`](./cli.md#jazyk-init),
 and `jazyk acp` at startup (on standard error, into the IDE's agent log) name the file
@@ -67,9 +69,11 @@ whose table shadows it.
 
 The IDE proxy holds one downstream connection per agent, spawned the first time a
 conversation needs it. A conversation stays on the agent it opened on for its whole
-life; only new conversations follow a switch. `/agent <name>` in a chat records the
+life; only new conversations follow a switch. `/agent <name>` in Jazyk's ACP chat records the
 name in `[acp] agent` and makes it the agent new conversations open on, at once,
-without restarting the IDE's Jazyk agent. The reply names both agents: the one new
+without restarting the IDE's Jazyk agent. This command is intercepted by Jazyk's
+proxy before it reaches the downstream agent. It does not control the standalone
+Claude Code, Codex, or Copilot chat. The reply names both agents: the one new
 conversations run on and the one the current conversation stays on. The IDE's
 `initialize` request is replayed to each agent spawned after the first; the
 capabilities the IDE saw are the first agent's. A reopened conversation
@@ -249,8 +253,11 @@ travels on the parent's session:
 - Every `session/update` of a sub-agent is sent on the root session with
   `_meta.jazyk.agent`: `{id, parentId, depth, title, task, write}`. `id` is the
   sub-agent's id in the agent process. `parentId` is the root session's id or a
-  parent sub-agent's id. A sub-agent's turn always ends inside its parent's turn,
-  so its updates arrive while the root session's prompt is active.
+  parent sub-agent's id. A turn its parent started ends inside the parent's turn,
+  so its updates arrive while the root session's prompt is active. A turn a person
+  started ([prompting a sub-agent](./subagents.md#prompting-a-sub-agent)) can run
+  while the root session has no prompt, and its updates arrive between prompts. A
+  client reads the root session's updates between prompts too.
 - A turn starts with a `user_message_chunk` carrying the turn's prompt and
   `_meta.jazyk.agent.turn: "started"`.
 - A turn ends with a `usage_update` carrying `_meta.jazyk.agent.turnEnd`:
@@ -258,14 +265,22 @@ travels on the parent's session:
   `max_turn_requests`, or `error`.
 - A result delivered to a parent is a `user_message_chunk` with
   `_meta.jazyk.input` carrying `source: {agentId}`, like any
-  [delivered input](#steering-active-turns).
+  [delivered input](#steering-active-turns). A result delivered to an idle parent
+  is sent between prompts. When the parent is a sub-agent, the update also carries
+  the parent's `_meta.jazyk.agent`.
 
 The client talks to a sub-agent through `_session/steering` on the root session,
 with `_meta.jazyk.agentId` naming the sub-agent:
 
-- Text steers the running sub-agent turn. An idle sub-agent answers
-  `promptRequired`: only its parent starts a new turn.
+- Text steers the running sub-agent turn and answers `injected`.
+- Text to an idle sub-agent starts its next turn and answers
+  `{"outcome": "started", "turn": "<id>#<n>"}`. A [limit](./subagents.md#limits)
+  answers an error that names it.
 - `_meta.jazyk.cancelAgent: true` stops the sub-agent and its descendants.
+- `_meta.jazyk.deleteAgent: true` stops the sub-agent and its descendants and
+  removes them from the tree.
+
+Cancelling or closing the root session stops every running sub-agent of its tree.
 
 The [GUI](./gui.md#agents) shows each sub-agent as a chat session with its tree
 fields and routes the session's inputs and stop through these requests.
@@ -451,12 +466,14 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
   deletes the requirement, one changeset. The deletion writes its
   [change records](../compiler/graph.md#change-records), so a view or instance that
   referenced the requirement gets a `retrace` goal on the next build.
-- `edit_fact({id, field, value, note?, provenance?, decision?})`: any authored field on any node (an
+- `edit_fact({id, field, value, note?, source?, provenance?, decision?})`: any authored field on any node (an
   entity's `definition` or `parent`, an attribute value, a requirement's `edges`, a
   view's members). When the fact is quote-provenanced, the agent proposes the
   sentence rewrite in conversation, the person accepts it, and the call carries the
   accepted sentence as `note`: the serving locates the quote and commits the prose
-  replacement with the graph mutation as one dual write. Without an accepted
+  replacement with the graph mutation as one dual write. A requirement with
+  several sources requires `source: {doc, section, quote}`. The rewrite replaces
+  that exact source and preserves every other location. Without an accepted
   sentence, or when the fact is `derived` or `decree`, the edit lands graph-only
   with explicit derived `provenance` or an explicit human `decision`. A model's
   inference never implicitly becomes a human decree. A

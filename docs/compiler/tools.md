@@ -516,13 +516,15 @@ so a chat edit moves the prose and the graph together, or not at all:
 - `retract_requirement({id, reason})`: remove the requirement's sentence from the prose
   and delete the requirement, one changeset. `retrace` derives where a view or instance
   referenced it.
-- `edit_fact({id, field, value, note?})`: set one authored field on one node
+- `edit_fact({id, field, value, note?, source?})`: set one authored field on one node
   (`statement`, `edges`, `transition`, `definition`, `stereotype`, `parent`,
   an attribute's `type` or `value` as `attributes.<name>.type` or
   `attributes.<name>.value`, a view's `members`). When the fact is
   quote-provenanced and the person accepted a sentence rewrite in conversation, the
   call carries the accepted sentence as `note`: the serving locates the quote and
-  commits the prose replacement with the graph mutation as one dual write. Without an
+  commits the prose replacement with the graph mutation as one dual write. A
+  requirement with several sources requires the exact `source: {doc, section, quote}`.
+  The rewrite replaces only that source. Other sources remain attached. Without an
   accepted sentence, or on a derived or decreed fact, the edit lands graph-only with
   `decree` provenance (`note` becomes the decree's note), the decreed fact is a
   `provenance-pending` finding, and the blocked [`ratify`](./goals/ratify.md) goal derives

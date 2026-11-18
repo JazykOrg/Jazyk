@@ -167,3 +167,63 @@ fn writers_that_reload_after_store_moved_all_land_in_turn() {
     }
     crate::vfs::remove_dir_all(&out).ok();
 }
+
+// Two builds running at once on one set: the second opens beside the first and keeps
+// its entry, a status write from a store loaded before either build landed its spend
+// writes none of it back, and the totals are the sum of both builds' own spend.
+// Mirrors docs/compiler/graph.md#storage-layout.
+#[test]
+fn concurrent_builds_keep_each_others_cost_totals() {
+    let out = fresh_dir("costs");
+    let seed = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    seed.save_for_test();
+    let spend = |kind: &str, tokens: u64| {
+        let mut c = Costs::default();
+        c.charge(kind, "compile", tokens);
+        c
+    };
+    // An earlier build's totals, cleared when the first build opens alone.
+    let mut earlier = Store::load(&out);
+    earlier
+        .write_status_costs(
+            "earlier",
+            Some(("old", &spend("reconcile-section", 99))),
+            true,
+            0,
+        )
+        .unwrap();
+    let mut a = Store::load(&out);
+    let mut stale = Store::load(&out);
+    a.write_status_costs("open a", Some(("a", &Costs::default())), true, 0)
+        .unwrap();
+    let mut b = Store::load(&out);
+    b.write_status_costs("open b", Some(("b", &Costs::default())), false, 0)
+        .unwrap();
+    a.write_status_costs(
+        "a tail",
+        Some(("a", &spend("reconcile-section", 10))),
+        false,
+        10,
+    )
+    .unwrap();
+    stale.status.verdict.state = "incomplete".into();
+    stale.write_status("stale status").unwrap();
+    b.write_status_costs("b tail", Some(("b", &spend("gc-entity", 5))), false, 5)
+        .unwrap();
+    stale.write_status("stale status").unwrap();
+
+    let disk = Store::load(&out).status;
+    assert_eq!(
+        disk.run_costs.keys().cloned().collect::<Vec<_>>(),
+        vec!["a".to_string(), "b".to_string()]
+    );
+    assert_eq!((disk.costs.sessions, disk.costs.tokens), (2, 15));
+    assert_eq!(disk.costs.by_kind["reconcile-section"].tokens, 10);
+    assert_eq!(disk.costs.by_kind["gc-entity"].tokens, 5);
+    assert_eq!(disk.costs.by_class["compile"].sessions, 2);
+    assert_eq!(disk.spent.tokens, 15);
+    crate::vfs::remove_dir_all(&out).ok();
+}

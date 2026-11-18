@@ -95,7 +95,7 @@ pub const CHOICES: &[Choice] = &[
         "RubyMine",
         "https://www.jetbrains.com/ruby",
     ),
-    c("paseo", Kind::Ide, "Paseo", "https://paseo.sh"),
+    c("paseo", Kind::Agent, "Paseo", "https://paseo.sh"),
     c(
         "claude",
         Kind::Agent,
@@ -163,6 +163,8 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
             return 1;
         }
     };
+    let mut launch_opts = opts.clone();
+    launch_opts.paseo_home = Some(selected_paseo_home(opts, &prefs));
     let id = match picked {
         Some(id) => id.to_string(),
         None => {
@@ -178,8 +180,13 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
                 prefs.target.clone()
             } else {
                 let groups = menu_groups();
-                let Some((g, r)) = crate::menu::pick_preview(&groups, (0, 0), &target_preview)
-                else {
+                let Some((g, r)) = crate::menu::pick_preview(&groups, (0, 0), &|id| {
+                    if id == "paseo" {
+                        paseo_preview(launch_opts.paseo_home.as_deref().unwrap())
+                    } else {
+                        target_preview(id)
+                    }
+                }) else {
                     return 0;
                 };
                 groups[g].rows[r].key.clone()
@@ -213,7 +220,7 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
     } else {
         None
     };
-    if let Err(e) = setup(choice, &root, opts, tty).and_then(|_| {
+    if let Err(e) = setup(choice, &root, &launch_opts, tty).and_then(|_| {
         agent
             .as_deref()
             .map_or(Ok(()), |agent| configure_ide(choice, &root, agent))
@@ -224,6 +231,10 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
     // Setup succeeds before preferences are saved, including failures in the IDE installer.
     if program(choice.id, &root).is_some() && root.join(crate::document_sets::CONFIG).is_file() {
         prefs.target = choice.id.to_string();
+        if choice.id == "paseo" {
+            prefs.agents.remove("paseo");
+            prefs.paseo_home = launch_opts.paseo_home.clone();
+        }
         if let Some(agent) = &agent {
             prefs.agents.insert(choice.id.to_string(), agent.clone());
         }
@@ -232,7 +243,7 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
             return 1;
         }
     }
-    start(choice, &root)
+    start(choice, &root, &launch_opts)
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -241,7 +252,22 @@ struct Preferences {
     target: String,
     #[serde(default)]
     agents: std::collections::BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    paseo_home: Option<PathBuf>,
 }
+fn selected_paseo_home(opts: &Options, prefs: &Preferences) -> PathBuf {
+    let home = opts
+        .paseo_home
+        .clone()
+        .or_else(|| prefs.paseo_home.clone())
+        .unwrap_or_else(crate::paseo::home);
+    if home.is_absolute() {
+        home
+    } else {
+        std::env::current_dir().unwrap_or_default().join(home)
+    }
+}
+
 impl Preferences {
     fn load(root: &Path) -> Result<Self, String> {
         let path = root.join(".jazyk/local/launcher.toml");
@@ -310,21 +336,17 @@ fn ide_agents(
     let mut out = vec![("embedded", "Jazyk")];
     let host = crate::setup::host_of(choice.id);
     for agent in crate::setup::AGENTS {
-        let supported = if choice.id == "paseo" {
-            matches!(agent.name, "claude" | "codex")
-        } else {
-            let supported_ui = match host {
-                Some("vscode" | "cursor") => !agent.exts.is_empty() || agent.host == host,
-                Some("zed" | "jetbrains") => {
-                    agent.host == host || matches!(agent.name, "claude" | "codex" | "opencode")
-                }
-                _ => false,
-            };
-            supported_ui
-                && agent.method == crate::setup::Method::Project
-                && machine.detects(agent, host)
+        let supported_ui = match host {
+            Some("vscode" | "cursor") => !agent.exts.is_empty() || agent.host == host,
+            Some("zed" | "jetbrains") => {
+                agent.host == host || matches!(agent.name, "claude" | "codex" | "opencode")
+            }
+            _ => false,
         };
-        if supported && (choice.id != "paseo" || agent.bins.iter().any(|b| which(b).is_some())) {
+        if supported_ui
+            && agent.method == crate::setup::Method::Project
+            && machine.detects(agent, host)
+        {
             out.push((agent.name, agent.label));
         }
     }
@@ -333,9 +355,6 @@ fn ide_agents(
 
 fn configure_ide(choice: &Choice, root: &Path, agent: &str) -> Result<(), String> {
     if agent == "embedded" {
-        if choice.id == "paseo" {
-            return crate::paseo::configure();
-        }
         let host = crate::setup::host_of(choice.id).ok_or("unsupported IDE")?;
         jazyk_agent_extension(host)?;
         // Pin the built-in agent in this registration; project executor settings stay independent.
@@ -399,6 +418,7 @@ fn configure_ide(choice: &Choice, root: &Path, agent: &str) -> Result<(), String
 fn target_preview(id: &str) -> String {
     match id {
         "gui" => "Open Jazyk Web".into(),
+        "paseo" => paseo_preview(&crate::paseo::home()),
         id if choice(id).is_some_and(|c| c.kind == Kind::Ide) => {
             format!("Choose an agent and open {}", choice(id).unwrap().name)
         }
@@ -410,6 +430,13 @@ fn target_preview(id: &str) -> String {
             choice(id).map(|c| c.name).unwrap_or(id)
         ),
     }
+}
+
+fn paseo_preview(home: &Path) -> String {
+    format!(
+        "Register Jazyk ACP in {}; reload existing Paseo",
+        display_path(&crate::paseo::config_path_at(home))
+    )
 }
 
 fn display_path(path: &Path) -> String {
@@ -424,21 +451,6 @@ fn display_path(path: &Path) -> String {
 
 fn ide_preview(choice: &Choice, agent: &str, root: &Path) -> String {
     let lsp = match choice.id {
-        "paseo" => {
-            return if agent == "embedded" {
-                format!(
-                    "Register Jazyk ACP in {} and open Paseo",
-                    display_path(&crate::paseo::config_path())
-                )
-            } else {
-                format!(
-                    "Configure MCP in {} and open Paseo",
-                    crate::setup::agent_by_name(agent)
-                        .map(|a| a.file)
-                        .unwrap_or("agent configuration")
-                )
-            }
-        }
         "vscode" | "cursor" => display_path(&crate::editor_lsp::vscode_settings(choice.id)),
         "zed" => ".zed/settings.json".into(),
         _ => ".jazyk/local/ide.json".into(),
@@ -564,9 +576,12 @@ fn init_here(cwd: &Path) -> Result<(), String> {
 }
 
 // Set one choice up: idempotent, correcting stale entries in place.
-pub fn setup(choice: &Choice, root: &Path, _opts: &Options, _tty: bool) -> Result<(), String> {
+pub fn setup(choice: &Choice, root: &Path, opts: &Options, _tty: bool) -> Result<(), String> {
     match choice.id {
-        "gui" | "paseo" => Ok(()),
+        "gui" => Ok(()),
+        "paseo" => {
+            crate::paseo::configure_at(opts.paseo_home.as_deref().unwrap_or(&crate::paseo::home()))
+        }
         "vscode" => jazyk_extension("code").and_then(|_| crate::editor_lsp::vscode("vscode")),
         "cursor" => jazyk_extension("cursor").and_then(|_| crate::editor_lsp::vscode("cursor")),
         "zed" => crate::editor_lsp::zed(root),
@@ -832,7 +847,8 @@ fn program(id: &str, root: &Path) -> Option<(PathBuf, Vec<String>)> {
             .ok()
             .map(|e| (e, vec!["gui".to_string()])),
         "vscode" => which("code").map(|p| (p, vec![here])),
-        "cursor" | "zed" | "paseo" => which(id).map(|p| (p, vec![here])),
+        "cursor" | "zed" => which(id).map(|p| (p, vec![here])),
+        "paseo" => which(id).map(|p| (p, crate::paseo::reload_args())),
         id if is_jetbrains(id) => jetbrains(id, &here),
         id => which(id).map(|p| (p, vec![])),
     }
@@ -882,22 +898,16 @@ fn jetbrains(id: &str, root: &str) -> Option<(PathBuf, Vec<String>)> {
 
 // Start the choice in the project root. The program inherits the terminal and its
 // exit code is ours.
-fn start(choice: &Choice, root: &Path) -> i32 {
+fn start(choice: &Choice, root: &Path, opts: &Options) -> i32 {
     if choice.id == "paseo" {
-        let prefs = Preferences::load(root).unwrap_or_default();
-        let id = prefs
-            .agents
-            .get("paseo")
-            .map(String::as_str)
-            .unwrap_or("embedded");
-        let label = if id == "embedded" {
-            "Jazyk"
-        } else {
-            crate::setup::agent_by_name(id)
-                .map(|a| a.label)
-                .unwrap_or(id)
-        };
-        println!("jazyk: in Paseo's project chat, choose {label}");
+        println!(
+            "jazyk: Jazyk ACP is configured in {}; choose Jazyk in your existing Paseo client",
+            crate::paseo::config_path_at(
+                opts.paseo_home.as_deref().unwrap_or(&crate::paseo::home())
+            )
+            .display()
+        );
+        return 0;
     }
     let Some((prog, args)) = program(choice.id, root) else {
         eprintln!(
@@ -1065,8 +1075,8 @@ mod tests {
             );
             if c.id != "gui" {
                 assert!(
-                    crate::launcher::command_shape(c.id)
-                        .is_some_and(|(n, extra)| n == Some(0) && extra.is_empty()),
+                    crate::launcher::command_shape(c.id).is_some_and(|(n, extra)| n == Some(0)
+                        && (extra.is_empty() || (c.id == "paseo" && extra == ["--paseo-home"]))),
                     "`{}` is not a choice command",
                     c.id
                 );
@@ -1089,12 +1099,12 @@ mod tests {
         let mut prefs = Preferences::load(dir.path()).unwrap();
         prefs.target = "paseo".into();
         prefs.agents.insert("vscode".into(), "claude".into());
-        prefs.agents.insert("paseo".into(), "embedded".into());
+        prefs.agents.insert("zed".into(), "embedded".into());
         prefs.save(dir.path()).unwrap();
         let restored = Preferences::load(dir.path()).unwrap();
         assert_eq!(restored.target, "paseo");
         assert_eq!(restored.agents["vscode"], "claude");
-        assert_eq!(restored.agents["paseo"], "embedded");
+        assert_eq!(restored.agents["zed"], "embedded");
         assert_eq!(
             std::fs::read_to_string(dir.path().join(".jazyk/jazyk.toml")).unwrap(),
             "version = 1\n"
@@ -1117,6 +1127,31 @@ mod tests {
             std::fs::read(dir.path().join(".codex/config.toml")).unwrap()
         );
         assert!(target_preview("codex").contains(".codex/config.toml"));
+    }
+
+    #[test]
+    fn paseo_server_selection_prefers_explicit_or_saved_home_over_control_environment() {
+        let mut prefs = Preferences {
+            paseo_home: Some(PathBuf::from("/gui server")),
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_paseo_home(&Options::default(), &prefs),
+            PathBuf::from("/gui server")
+        );
+        let options = Options {
+            paseo_home: Some(PathBuf::from("/explicit server")),
+            ..Default::default()
+        };
+        assert_eq!(
+            selected_paseo_home(&options, &prefs),
+            PathBuf::from("/explicit server")
+        );
+        prefs.paseo_home = None;
+        assert_eq!(
+            selected_paseo_home(&options, &prefs),
+            PathBuf::from("/explicit server")
+        );
     }
 
     // Home is never initialized as a project: `.jazyk/` there is the global config.

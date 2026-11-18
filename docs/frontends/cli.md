@@ -20,7 +20,7 @@ which target to open. `jazyk --setup` repeats the original selection. Every run
 prints `Choose again: jazyk --setup`.
 
 The launcher has two sections. IDEs start with Jazyk Web, followed by installed
-editors and Paseo. Coding agents contain installed agent CLIs. Rows show names
+editors. Coding agents contain installed agent CLIs and ACP clients such as Paseo. Rows show names
 only. One line below the menu describes the highlighted action and the files it
 will configure. Moving the cursor updates that line. Earlier choices remain in
 terminal scrollback; there is no selected-items panel.
@@ -55,14 +55,6 @@ for that IDE. Jazyk Web uses its own agent chooser inside the web app.
 - A supported external agent installs the LSP adapter and configures Jazyk MCP in
   that agent's own project file. VS Code and Cursor install the agent's extension
   when one is available. The user opens that agent's normal IDE interface.
-- Paseo registers Jazyk under `agents.providers.jazyk` in
-  `$PASEO_HOME/config.json` (default `~/.paseo/config.json`), with `extends: "acp"`
-  and the installed binary's absolute path. It reloads provider configuration and
-  opens the project without submitting a prompt. The user selects the registered
-  provider in Paseo's chat picker; its CLI has no empty-chat provider-selection
-  command.
-  Claude and Codex instead use their existing Paseo providers and project MCP.
-  Paseo does not configure an LSP adapter.
 
 Editor [LSP settings](./lsp.md#editor-setup) and ACP registration are independent.
 The bottom preview names both files when needed. `jazyk --setup` selects again;
@@ -70,8 +62,8 @@ The bottom preview names both files when needed. `jazyk --setup` selects again;
 
 ### Coding agents
 
-Choosing a coding agent configures its Jazyk MCP entry and runs its CLI in the
-project. It installs no IDE adapter. The managed files are:
+Choosing an agent CLI configures its Jazyk MCP entry and runs it in the project.
+It installs no IDE adapter. The managed files are:
 
 - Claude Code: `.mcp.json`, with approval in `.claude/settings.local.json`.
 - Codex: `.codex/config.toml`.
@@ -79,6 +71,23 @@ project. It installs no IDE adapter. The managed files are:
 - OpenCode: `opencode.json`, or existing `opencode.jsonc`.
 - Pi: `.pi/mcp.json`.
 - Factory Droid: `.factory/mcp.json`.
+
+Paseo is an ACP client in Coding agents, with no IDE-agent selection step. Choosing
+it registers the built-in Jazyk provider under `agents.providers.jazyk` in
+`$PASEO_HOME/config.json` (default `~/.paseo/config.json`). Its command is the
+installed binary's absolute path followed by `acp --agent embedded`. Setup reloads
+only that existing daemon with `paseo --home <home> reload`, then returns to the
+terminal after verifying that server's provider list contains enabled Jazyk.
+It does not invoke `paseo <project>`, open Desktop, or start a daemon.
+For multiple local servers, `jazyk paseo --paseo-home PATH` selects a server
+explicitly. The selected home is stored in `.jazyk/local/launcher.toml` and reused
+on later starts. Selection precedence is the explicit flag, the saved project
+preference, `PASEO_HOME`, then `~/.paseo`. A control server's inherited environment
+does not override a saved GUI-server preference.
+The user selects Jazyk in that server's provider picker. A daemon
+that cannot be reached produces a clear reload error. No prompt is submitted and
+no model inference starts. The launcher ignores and removes obsolete Paseo IDE
+agent preferences after successful setup. Paseo configures no LSP adapter.
 
 Setup preserves other entries and comments. Repeated setup is idempotent.
 Missing programs and failed configuration writes exit nonzero and name the

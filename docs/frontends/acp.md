@@ -890,3 +890,10 @@ credentials are inference-only grants with an expiry, not browser session cookie
 The next message in the existing IDE chat uses the saved provider. Expired Cloud
 grants ask the user to `/login` again. Explicit CLI, environment, project and global
 endpoint configuration continues to work without sign-in.
+
+## Paseo client setup
+
+`jazyk paseo` registers the built-in Jazyk ACP provider and reloads the existing
+Paseo daemon for the configured local home. It returns without starting Paseo
+Desktop or another daemon. The launcher lists Paseo under Coding agents. The
+provider is selected in the existing Paseo client.

@@ -44,7 +44,14 @@ elif args[:1]==['installPlugins']:
     (plugins/'lsp4ij').mkdir(parents=True,exist_ok=True)
     (plugins/'jazyk/lib').mkdir(parents=True,exist_ok=True)
     shutil.copyfile(pathlib.Path(os.environ['JAZYK_EDITOR_ARTIFACT_DIR'])/'adapter.jar',plugins/'jazyk/lib/jazyk-jetbrains.jar')
-elif name=='paseo' and args==['reload']:pass
+elif name=='paseo':
+    prefix=['--home',os.environ.get('TEST_EXPECTED_PASEO_HOME',os.environ['PASEO_HOME'])]
+    assert args[:2]==prefix, 'Paseo must target the selected existing daemon'
+    if args[2:]==['reload']:
+        if os.environ.get('TEST_PASEO_FAIL_RELOAD'):sys.exit(1)
+    elif args[2:]==['provider','ls','--json']:
+        print(json.dumps([] if os.environ.get('TEST_PASEO_OMIT_REGISTRATION') else [{'provider':'jazyk','enabled':'Enabled'}]))
+    else:raise AssertionError('Paseo must never start Desktop or a daemon')
 else:(home/'launched.json').write_text(json.dumps({'program':name,'args':args,'cwd':os.getcwd()}))
 '''
     for name in ['code','cursor','zed','paseo','claude','codex','gemini','opencode','pi','droid']:
@@ -52,8 +59,8 @@ else:(home/'launched.json').write_text(json.dumps({'program':name,'args':args,'c
     env={k:v for k,v in os.environ.items() if not k.startswith(('JAZYK_','PASEO_'))}
     env |= {'PASEO_HOME':str(home/'.paseo'),'HOME':str(home),'PATH':f'{programs}:/usr/bin:/bin','XDG_DATA_HOME':str(home/'data'),
             'APPDATA':str(home/'roaming'),'LOCALAPPDATA':str(home/'local'),'JAZYK_EDITOR_ARTIFACT_DIR':str(artifacts)}
-    def launch(*args):
-        result=subprocess.run([str(binary),*args],cwd=project,env=env,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60)
+    def launch(*args,overrides=None):
+        result=subprocess.run([str(binary),*args],cwd=project,env=env|(overrides or {}),stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=60)
         assert result.returncode==0,(args,result.stdout,result.stderr)
         assert 'Choose again: jazyk --setup' in result.stdout
         assert (project/'.jazyk/jazyk.toml').read_text()==shared
@@ -93,16 +100,37 @@ else:(home/'launched.json').write_text(json.dumps({'program':name,'args':args,'c
         calls=(home/'calls.jsonl').read_text().count('installPlugins');launch(choice)
         assert calls==(home/'calls.jsonl').read_text().count('installPlugins')
     print('All nine JetBrains launchers, native installer, LSP and idempotent setup passed')
-    launch('paseo','--agent','embedded')
+    # Migrate an old IDE-specific Paseo preference without asking for an IDE agent.
+    prefs_path=project/'.jazyk/local/launcher.toml'
+    prefs_path.write_text(prefs_path.read_text()+'paseo = "claude"\n')
+    assert tomllib.loads(prefs_path.read_text())['agents']['paseo']=='claude'
+    before_launch=(home/'launched.json').read_bytes()
+    before_calls=(home/'calls.jsonl').read_text().splitlines()
+    launch('paseo')
     config=json.loads((home/'.paseo/config.json').read_text())
     assert config['agents']['providers']['jazyk']['command']==[str(binary),'acp','--agent','embedded']
-    launched=json.loads((home/'launched.json').read_text());assert launched['program']=='paseo' and launched['args']==[str(project)]
-    assert '["paseo", ["reload"]]' in (home/'calls.jsonl').read_text()
+    assert (home/'launched.json').read_bytes()==before_launch,'Paseo selection must not launch a GUI'
+    calls=[json.loads(line) for line in (home/'calls.jsonl').read_text().splitlines()[len(before_calls):]]
+    assert calls==[['paseo',['--home',str(home/'.paseo'),'reload']],['paseo',['--home',str(home/'.paseo'),'provider','ls','--json']]],calls
+    prefs=tomllib.loads(prefs_path.read_text())
+    assert prefs['target']=='paseo' and 'paseo' not in prefs['agents']
+    assert prefs['agents']['vscode']=='claude'
+    # The user's control server and GUI server can have different local homes.
+    gui_home=home/'paseo-gui'
+    launch('paseo','--paseo-home',str(gui_home),overrides={'TEST_EXPECTED_PASEO_HOME':str(gui_home)})
+    assert (gui_home/'config.json').is_file()
+    assert tomllib.loads(prefs_path.read_text())['paseo_home']==str(gui_home)
+    env['TEST_EXPECTED_PASEO_HOME']=str(gui_home)
+    # PASEO_HOME still points at the control server; the saved GUI target must win.
+    launch('paseo')
+    assert json.loads((home/'calls.jsonl').read_text().splitlines()[-2])==['paseo',['--home',str(gui_home),'reload']]
     before=(home/'calls.jsonl').read_text();output=launch()
     assert (home/'calls.jsonl').read_text()==before,'nonterminal bare jazyk must not start an app'
     assert 'IDEs:' in output and 'Coding agents:' in output and 'Jazyk Web' in output
+    ide_section,coding_section=output.split('IDEs:',1)[1].split('Coding agents:',1)
+    assert 'Paseo' not in ide_section and 'Paseo' in coding_section
     assert 'Orca' not in output and 'acpx' not in output
-    print('Paseo ACP registration/reload/project opening and noninteractive catalog passed')
+    print('Paseo appears in Coding agents, reloads only the selected daemon, never starts Desktop, and migrates old preferences')
     # A real terminal distinguishes remembered startup from explicit reselection.
     if os.name == 'posix':
         import pty, select, time, fcntl, termios, struct
@@ -143,4 +171,13 @@ else:(home/'launched.json').write_text(json.dumps({'program':name,'args':args,'c
         assert prefs['target']=='vscode' and prefs['agents']['vscode']=='claude'
         assert 'Selected:' not in selection and 'vscode    Visual Studio Code' not in selection
         print('Interactive remembered startup, --setup, names-only menus and changing action preview passed')
+    before=prefs_path.read_bytes()
+    failed=subprocess.run([str(binary),'paseo'],cwd=project,env=env|{'TEST_PASEO_FAIL_RELOAD':'1'},stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30)
+    assert failed.returncode==1 and 'existing Paseo daemon' in failed.stderr
+    assert prefs_path.read_bytes()==before,'failed reload must not replace remembered choices'
+    print('An unavailable Paseo daemon reports an error without launching or changing preferences')
+    missing=subprocess.run([str(binary),'paseo'],cwd=project,env=env|{'TEST_PASEO_OMIT_REGISTRATION':'1'},stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=30)
+    assert missing.returncode==1 and 'did not register enabled Jazyk' in missing.stderr
+    assert prefs_path.read_bytes()==before,'a missing runtime provider must not be reported as successful setup'
+    print('Successful reload alone is insufficient: missing runtime registration is rejected')
 print('All launcher smoke checks passed')

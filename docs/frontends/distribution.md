@@ -167,3 +167,12 @@ The [site](../site.md) offers npm commands, named platform download links throug
 GitHub's latest-release URLs, checksums and all releases. These URLs advance on
 stable releases. Site deployment remains independent. See [CLI](cli.md),
 [GUI](gui.md) and [WASM](wasm.md) for execution surfaces.
+
+## Editor adapters
+
+A manually dispatched editor release publishes the VS Code VSIX, JetBrains plugin
+ZIP, Zed development source archive, `updatePlugins.xml`, and `SHA256SUMS` to a
+GitHub Release tagged `editors-v<version>`. Adapter versions are independent of the
+native binary. The launcher uses the editor release version embedded at build
+time. Published assets are immutable; corrections require a new version.
+The release contains no Jazyk runtime. It is not published by a normal master push.

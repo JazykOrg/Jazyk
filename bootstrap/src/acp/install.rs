@@ -38,7 +38,7 @@ pub const IDES: [&str; 9] = [
     "neovim",
     "emacs",
     "obsidian",
-    "acpx",
+    "paseo",
     "marimo",
 ];
 
@@ -143,12 +143,11 @@ pub fn ide(id: &str, cmd: &str) -> Option<Ide> {
                 ),
             },
         },
-        "acpx" => Ide {
-            id: "acpx",
-            label: "acpx (scripting client)",
+        "paseo" => Ide {
+            id: "paseo", label: "Paseo",
             registry: Registry::Snippet {
-                where_: "a shell".into(),
-                text: format!("acpx --agent '{} acp' \"your prompt\"", cmd),
+                where_: crate::paseo::config_path().display().to_string(),
+                text: json!({"agents":{"providers":{"jazyk":{"extends":"acp","label":"Jazyk","command":[cmd,"acp","--agent","embedded"]}}}}).to_string(),
             },
         },
         // marimo speaks ACP over a WebSocket, so the agent runs behind a bridge.
@@ -170,7 +169,7 @@ fn vscode_settings(home: &std::path::Path) -> PathBuf {
 }
 
 // A VS Code-family editor's user settings, by its application folder name.
-fn editor_settings(home: &std::path::Path, app: &str) -> PathBuf {
+pub(crate) fn editor_settings(home: &std::path::Path, app: &str) -> PathBuf {
     if cfg!(target_os = "macos") {
         home.join("Library/Application Support")
             .join(app)
@@ -211,6 +210,21 @@ pub fn spawn_command() -> String {
 use crate::setup::which;
 
 pub fn install(ide_id: &str) -> i32 {
+    if ide_id == "paseo" {
+        return match crate::paseo::configure() {
+            Ok(()) => {
+                println!(
+                    "jazyk: registered Jazyk in {}",
+                    crate::paseo::config_path().display()
+                );
+                0
+            }
+            Err(error) => {
+                eprintln!("jazyk: {error}");
+                1
+            }
+        };
+    }
     let cmd = spawn_command();
     let Some(ide) = ide(ide_id, &cmd) else {
         eprintln!(

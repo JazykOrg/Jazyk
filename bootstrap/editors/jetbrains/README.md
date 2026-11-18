@@ -18,9 +18,10 @@ minimum; other versions require validation against their installed LSP4IJ.
 
 The output is `build/libs/jazyk-jetbrains.jar` and an installable ZIP under
 `build/distributions/`. Run `jazyk idea` (or the other IDE's launcher choice).
-It records the executable in `.jazyk/local/ide.json` and installs the built JAR into
-that product's plugin directory when the product can be identified. Otherwise,
-use Settings → Plugins → Install Plugin from Disk and select the ZIP.
+It records the executable in `.jazyk/local/ide.json` and invokes the IDE's native
+plugin installer with LSP4IJ and the GitHub-hosted Jazyk plugin repository. A
+versioned release contains the plugin ZIP and `updatePlugins.xml`.
+`JAZYK_EDITOR_ARTIFACT_DIR` can point to locally packaged release assets.
 Restart an already running IDE after installation.
 
 The adapter activates only when the IDE project base directory is inside a

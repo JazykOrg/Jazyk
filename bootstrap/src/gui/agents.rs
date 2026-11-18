@@ -164,6 +164,7 @@ pub async fn select(
         }
         let id = super::state::mint_token()?;
         let mut llm = st.llm();
+        let mut expires_in = None;
         match source {
             "configured" => {}
             "endpoint" => llm = endpoint(&body, llm)?,
@@ -197,6 +198,7 @@ pub async fn select(
                     .json()
                     .await
                     .map_err(|_| "Invalid Cloud authorization response.")?;
+                expires_in = Some(grant["expires_in"].as_u64().unwrap_or(3600));
                 llm.api_key = grant["token"]
                     .as_str()
                     .ok_or("Invalid Cloud credential.")?
@@ -220,6 +222,17 @@ pub async fn select(
                 llm.reasoning_summary = None;
             }
             _ => return Err("Unknown model source.".into()),
+        }
+        if std::env::var_os("JAZYK_CHAT_SETUP").is_some()
+            && agent.name == "embedded"
+            && matches!(source, "cloud" | "endpoint")
+        {
+            crate::chat_provider::save(source, &llm, expires_in)?;
+            let shutdown = st.shutdown.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                shutdown.notify_one();
+            });
         }
         let selected = Arc::new(Selection {
             id: id.clone(),

@@ -31,8 +31,8 @@ fn load_dotenv() {
 // spawn last, in the order docs/frontends/cli.md#help lists them.
 pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("start here", &[
-        ("", "the launcher: status, then pick a web UI, IDE, or coding agent to set up and start"),
-        ("<choice> [--agent NAME]", "set up and start one launcher choice: vscode, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
+        ("", "open the remembered target; jazyk --setup chooses an IDE or coding agent again"),
+        ("<choice> [--agent NAME]", "set up and start one launcher choice: code, vscode, paseo, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
         ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "initialize a project here: an empty .jazyk/jazyk.toml and the jazyk section of AGENTS.md"),
         ("setup [ide] [--list] [--remove NAMES]", "check, add, or remove jazyk in IDEs and coding agents"),
         ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
@@ -102,6 +102,7 @@ pub(crate) fn top_usage() -> String {
     s.push_str("         --quiet, -q     only the board summary, gc bursts, and the verdict\n");
     s.push_str("         --help, -h      print help and exit\n");
     s.push_str("         --version, -V   print the version and exit\n");
+    s.push_str("         --setup         choose a launcher target and agent again\n");
     s.push_str(
         "\n`jazyk <command> --help` prints that command's arguments, options, and exit codes.\n",
     );
@@ -130,6 +131,7 @@ fn usage_error(cmd: &str, msg: &str) -> ! {
 // The options every command accepts: the common options and the trace levels.
 const COMMON_OPTIONS: &[&str] = &[
     "--set",
+    "--setup",
     "--help",
     "-h",
     "--out",
@@ -264,7 +266,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
                  stale entry in place. Outside a project the working directory is\n\
                  initialized first.\n\n\
                  options:\n  \
-                 --agent NAME   for an IDE: the coding agent the Jazyk agent drives, recorded in [acp] agent\n\n\
+                 --agent NAME   for an IDE: select its agent, saved in .jazyk/local/launcher.toml\n\n\
                  exit: the started program's code; 1 when it is not installed or a setup step failed\n",
                 c, ch.name
             )
@@ -589,7 +591,7 @@ pub(crate) fn cmd_usage(cmd: &str) -> Option<String> {
              build status. Outside a jazyk project it is a transparent passthrough.\n\
              Not meant to be run by hand.\n\n\
              jazyk acp install --ide <client> registers Jazyk with an ACP client:\n\
-             zed, jetbrains, vscode, neovim, emacs, obsidian, acpx, marimo. The\n\
+             zed, jetbrains, vscode, neovim, emacs, obsidian, paseo, marimo. The\n\
              client may also be given positionally (jazyk acp install zed). A config\n\
              jazyk writes is merged in place, leaving comments and other agents\n\
              alone; for the rest, the snippet to paste is printed.\n\n\
@@ -741,6 +743,7 @@ pub fn run() {
             continue;
         }
         match arg {
+            "--setup" => opts.launcher_setup = true,
             "--help" | "-h" => want_help = true,
             "help" if cmd.is_empty() => want_help = true,
             "--back" => opts.back = true,
@@ -781,6 +784,9 @@ pub fn run() {
 
     // The --agent flag rides the environment so every resolver on the ladder sees it
     // (docs/compiler/project-settings.md#acp).
+    if opts.base_url.is_some() || opts.model.is_some() {
+        std::env::set_var("JAZYK_CHAT_CONFIGURED", "true");
+    }
     if let Some(a) = &opts.agent {
         std::env::set_var("JAZYK_ACP_AGENT", a);
     }

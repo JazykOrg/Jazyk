@@ -40,12 +40,23 @@ An ACP registration does not connect the language server.
   Markdown only in a Jazyk project. Each launcher records the executable in
   `.jazyk/local/ide.json`. ACP settings remain separate.
 
-Source checkouts build the editor adapters using their README instructions.
-The launcher installs available local artifacts. A missing adapter or dependency
-produces an explicit setup instruction, never a claim that LSP is connected.
-JetBrains plugin installation requires an IDE restart when it is already running.
-The LSP4IJ installer uses temporary IDE configuration and cache directories, so
-installing the client does not take the open IDE's profile lock.
+Adapters depend on an installed `jazyk` binary. They contain no compiler or LSP
+runtime. The launcher downloads adapters from a versioned GitHub editor release,
+verifies their SHA-256 checksums, and caches them outside the project. Marketplace
+publication is optional. Source checkouts can use built local artifacts.
+
+VS Code and Cursor record `jazyk.server.path` in their user settings. On macOS
+these are `~/Library/Application Support/Code/User/settings.json` and
+`~/Library/Application Support/Cursor/User/settings.json`. Linux uses
+`~/.config/<Code|Cursor>/User/settings.json`; Windows uses
+`%APPDATA%/<Code|Cursor>/User/settings.json`.
+
+Zed uses the supported Install Dev Extension action for a downloaded source
+adapter before public gallery publication. The launcher prepares the directory
+and prints the action and path. It does not write Zed's private extension state.
+JetBrains installs the adapter through a GitHub-hosted custom plugin repository
+and its native plugin installer, including LSP4IJ. A running IDE needs a restart.
+Missing release assets or failed downloads are errors, with an actionable path.
 An installed adapter is setup evidence. A successful LSP initialize exchange and
 document diagnostics are connection evidence.
 

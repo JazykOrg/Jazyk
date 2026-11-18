@@ -1,7 +1,7 @@
 <idea-plugin>
   <id>org.jazyk.lsp</id>
   <name>Jazyk</name>
-  <version>0.1.0</version>
+  <version>0.2.4</version>
   <vendor email="matus@matus.io" url="https://jazyk.org">Matus Faro</vendor>
   <description>Jazyk language support for prose documentation through LSP4IJ.</description>
   <idea-version since-build="242"/>

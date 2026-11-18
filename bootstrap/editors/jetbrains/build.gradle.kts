@@ -1,7 +1,7 @@
 plugins { java }
 
 group = "org.jazyk"
-version = "0.1.0"
+version = "0.2.4"
 
 // Compile against an installed IDE and LSP4IJ, without downloading another IDE.
 val ideHome = providers.gradleProperty("ideHome")

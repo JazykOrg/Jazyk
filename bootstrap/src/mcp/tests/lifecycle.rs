@@ -1,6 +1,71 @@
 use super::*;
 
 #[test]
+fn deferred_skills_are_only_marked_delivered_after_their_payload_is_read() {
+    let dir = bare_dir("deferred-skill-delivery");
+    crate::vfs::write(
+        dir.join("docs/a.md"),
+        format!("# A\n\n{}\n", "Navigation index. ".repeat(3000)),
+    )
+    .unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let mut control = crate::control::Control::load(&project, &project.out);
+    control.compile = "auto".into();
+    control.save(&project.out);
+    let server = McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        vec!["compile".into()],
+        true,
+        BridgeFlags {
+            ephemeral: true,
+            ..Default::default()
+        },
+    );
+    let call = |name: &str, args: Value| {
+        let value = server
+            .handle("tools/call", &json!({"name":name,"arguments":args}))
+            .unwrap();
+        assert_ne!(value["isError"], true, "{value}");
+        serde_json::from_str::<Value>(value["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let opening = call("begin_goals", json!({}));
+    let instructions = opening["instructions"].as_str().unwrap();
+    assert!(
+        instructions.contains("Skills not inlined"),
+        "{instructions}"
+    );
+    assert!(!instructions.contains("extraction (active; delivered earlier)"));
+    assert!(!server
+        .delivered
+        .lock()
+        .unwrap()
+        .skills
+        .contains("extraction"));
+    let read = call("load_skill", json!({"name":"extraction"}));
+    assert!(read["payload"].as_str().is_some_and(|p| p.len() > 100));
+    assert!(server
+        .delivered
+        .lock()
+        .unwrap()
+        .skills
+        .contains("extraction"));
+    let again = call("load_skill", json!({"name":"extraction"}));
+    assert!(again["payload"].is_null());
+    let next = call("begin_goals", json!({}));
+    assert!(next["instructions"]
+        .as_str()
+        .unwrap()
+        .contains("extraction (active; delivered earlier)"));
+    server.pause_open_work();
+    drop(server);
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn checkpoint_restores_staged_batch_and_its_gate_state() {
     let dir = bare_dir("checkpoint-batch");
     crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();

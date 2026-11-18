@@ -492,6 +492,9 @@ The serving is a worker among workers, and says so:
 
 ## Compilation over MCP
 
+A skill omitted because of the inline limit is not delivered. `load_skill`
+delivers it before the serving labels it as delivered earlier.
+
 Binding and generation discovery report a missing document-set `source` selection
 as setup work. They direct an explicitly requested generation workflow to
 `list_document_sets`, then `update_document_set` with its configuration hash, then

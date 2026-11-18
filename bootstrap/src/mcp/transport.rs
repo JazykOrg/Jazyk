@@ -153,8 +153,8 @@ impl McpServer {
         })
     }
 
-    // The serving's end, on any transport: an ephemeral serving with an open batch
-    // runs the implicit finish, and the transcript closes.
+    // The serving's end, on any transport: unfinished staging remains recoverable,
+    // and the transcript closes.
     pub fn finish(&self) {
         for child in self.children.lock().unwrap().values() {
             child.finish();
@@ -168,8 +168,9 @@ impl McpServer {
             .finish_transcript("done", &json!({"modes": self.modes}));
     }
 
-    /// Cancellation discards staged work, including children, without EOF commit.
+    /// Cancellation releases live attachments without discarding durable staging.
     pub(crate) fn cancel_owned(&self) {
+        self.pause_open_work();
         for child in self.children.lock().unwrap().values() {
             child.cancel_owned();
         }

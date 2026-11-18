@@ -1,6 +1,117 @@
 use super::*;
 
 #[test]
+fn unfinished_in_process_workers_preserve_staging_for_explicit_resume() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    for ending in ["end-turn", "model-error", "stop"] {
+        let mut initial = Snapshot::new();
+        initial.insert(".jazyk/jazyk.toml".into(), b"version=1\n[[sets]]\nid='ds_main'\nname='Main'\ndocs=['docs/**']\nroots=['docs/a.md']\nsource=[]\n".to_vec());
+        initial.insert("docs/a.md".into(), b"# A\n\nNavigation index.\n".to_vec());
+        initial.insert(
+            ".jazyk/ds_main/local/control.yaml".into(),
+            b"compile: auto\n".to_vec(),
+        );
+        let records = Arc::new(MemoryRecords::default());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let stop = cancelled.clone();
+        let execution = Execution {
+            model: "scripted-unfinished".into(),
+            records: Some(records.clone()),
+            cancel: cancelled,
+            transport: Some(Arc::new(move |_| {
+                if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+                    return Ok(json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"stage","type":"function","function":{"name":"set_coverage","arguments":json!({"section":"docs/a.md#/a","state":"non-normative","note":"Navigation index."}).to_string()}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":10}}).to_string());
+                }
+                if ending == "model-error" {
+                    return Err("fixture model failure".into());
+                }
+                if ending == "stop" {
+                    stop.store(true, Ordering::SeqCst);
+                }
+                Ok(json!({"choices":[{"message":{"role":"assistant","content":"Finished."},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":10}}).to_string())
+            })),
+            ..Default::default()
+        };
+        let mut workspace = Workspace::new(initial).unwrap();
+        let result = workspace
+            .request_test(
+                "POST",
+                "/api/jobs",
+                r#"{"kind":"compile","sessions":1}"#,
+                &execution,
+            )
+            .unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "{ending}: {}",
+            String::from_utf8_lossy(&result.body)
+        );
+        let record: crate::open_work::Record = {
+            let data = records.0.lock().unwrap();
+            let rows = data
+                .iter()
+                .filter(|((stream, _), _)| stream == "open-work")
+                .collect::<Vec<_>>();
+            assert_eq!(rows.len(), 1, "{ending}");
+            serde_json::from_value(rows[0].1 .0.clone()).unwrap()
+        };
+        assert_eq!(record.state, "open", "{ending}");
+        assert!(
+            !record.payload["session"]["staged"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "{ending}"
+        );
+        let files = workspace.snapshot();
+        let _fs = crate::vfs::Scope::enter(&files);
+        let _execution = crate::hosted::test_execution_scope(Execution {
+            records: Some(records),
+            ..Default::default()
+        });
+        let project = crate::project::Project::load(std::path::Path::new("/project"));
+        let out = project.out.clone();
+        let before = crate::store::Store::load(&out);
+        assert!(
+            !before.docs["docs/a.md"].coverage.contains_key("/a"),
+            "{ending}"
+        );
+        let server = crate::mcp::McpServer::with_bridge(
+            project,
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            crate::mcp::BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        );
+        let call = |name: &str, args: Value| {
+            let value = server
+                .handle("tools/call", &json!({"name":name,"arguments":args}))
+                .unwrap();
+            assert_ne!(value["isError"], true, "{ending}: {value}");
+            serde_json::from_str::<Value>(value["content"][0]["text"].as_str().unwrap()).unwrap()
+        };
+        let resumed = call(
+            "begin_goals",
+            json!({"workId":record.receipt.id,"ownerToken":record.receipt.owner}),
+        );
+        assert_eq!(resumed["resumed"], true, "{ending}: {resumed}");
+        let claims = record.goals.iter().map(|goal| json!({"goal":goal,"justification":"The navigation index is marked non-normative."})).collect::<Vec<_>>();
+        let done = call(
+            "done",
+            json!({"summary":"Commit explicitly resumed navigation work.","goals":claims}),
+        );
+        assert_eq!(done["committed"], true, "{ending}: {done}");
+        assert!(crate::store::read_generation(&out) > before.status.generation);
+    }
+}
+
+#[test]
 fn staged_work_replays_when_host_dies_before_workspace_checkpoint_and_compacts_after_ack() {
     let mut initial = Snapshot::new();
     initial.insert(".jazyk/jazyk.toml".into(),b"version = 1\n[[sets]]\nid = \"ds_main\"\nname = \"Main\"\ndocs = [\"docs/**/*.md\"]\nroots = [\"docs/a.md\"]\nsource = []\n".to_vec());

@@ -3,7 +3,6 @@ use crate::vfs::VPathExt;
 // the view, producing PlantUML text; lifting and collapse over the containment tree;
 // over-limit auto-collapse; the render seam; the files under <out>/diagrams/.
 // Mirrors docs/compiler/diagrams.md.
-use crate::ids::entity_slug;
 use crate::model::*;
 use crate::store::Store;
 use std::collections::BTreeSet;
@@ -48,8 +47,72 @@ use text::empty_diagram;
 // The PlantUML text of a view over the snapshot. Deterministic: the same snapshot and
 // view produce byte-identical output. Mirrors docs/compiler/diagrams.md#the-emitters.
 pub fn emit(store: &Store, view_id: &str, view: &View) -> String {
-    let scene = scene(store, view_id, view);
-    let puml = emit_kind(&scene);
+    let projected = crate::diagrams::projection(store, view);
+    let scene = scene(&projected, view_id, view);
+    let mut puml = text::authored_groups(&emit_kind(&scene), view);
+    let mut extras = String::new();
+    if view.authored.contains_key("purpose") {
+        extras.push_str(&format!(
+            "title {}\n",
+            text::inert(&text::oneline(&view.title))
+        ));
+    }
+    if let Some(direction) = view
+        .authored
+        .get("layout")
+        .and_then(|x| x.get("direction"))
+        .and_then(|x| x.as_str())
+    {
+        extras.push_str(if direction == "left-to-right" {
+            "left to right direction\n"
+        } else {
+            "top to bottom direction\n"
+        });
+    }
+    let mut annotations = String::new();
+    for (i, note) in view
+        .authored
+        .get("notes")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        if let Some(t) = note["text"].as_str() {
+            annotations.push_str(&format!(
+                "note {} as annotation_{}\n",
+                text::quoted(&text::inert(t)),
+                i
+            ));
+            for target in note["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|t| t.as_str())
+            {
+                if view.members.iter().any(|m| m == target)
+                    && store.graph.entities.contains_key(target)
+                    && [
+                        "class",
+                        "component",
+                        "object",
+                        "package",
+                        "composite",
+                        "deployment",
+                    ]
+                    .contains(&view.kind.as_str())
+                {
+                    annotations.push_str(&format!(
+                        "annotation_{} .. {}\n",
+                        i,
+                        text::alias_of(target)
+                    ));
+                }
+            }
+        }
+    }
+    puml = puml.replacen("@enduml", &format!("{}@enduml", annotations), 1);
+    puml = puml.replacen("@startuml\n", &format!("@startuml\n{}", extras), 1);
     // A diagram with nothing in it is not a diagram: draw the fact instead.
     let blank = puml
         .lines()
@@ -90,24 +153,6 @@ fn render_targets(store: &Store) -> Vec<(String, View)> {
         .iter()
         .map(|(id, v)| (id.clone(), v.clone()))
         .collect();
-    for m in store.graph.state_machines.values() {
-        let id = format!("view:state/{}", entity_slug(&m.subject));
-        if store.graph.views.contains_key(&id) {
-            continue;
-        }
-        let Some(subject) = store.graph.entities.get(&m.subject) else {
-            continue;
-        };
-        out.push((
-            id,
-            View {
-                kind: "state".to_string(),
-                title: subject.name.clone(),
-                members: vec![m.subject.clone()],
-                ..Default::default()
-            },
-        ));
-    }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
 }

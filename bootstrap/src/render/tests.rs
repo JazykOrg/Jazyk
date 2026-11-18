@@ -1,7 +1,7 @@
 use super::text::oneline;
 use super::*;
 use crate::derive::recompute;
-use crate::derive::tests::showcase_store;
+use crate::derive::tests::authored_showcase_store;
 use crate::store::RecordBatch;
 use regex::Regex;
 
@@ -11,7 +11,7 @@ mod renderer;
 mod scene;
 
 fn showcase() -> Store {
-    let mut s = showcase_store();
+    let mut s = authored_showcase_store();
     let mut batch = RecordBatch::new(1);
     recompute(&mut s, "g1", &mut batch);
     for (id, kind, members) in [
@@ -153,6 +153,7 @@ fn tree_store() -> Store {
             },
         );
     }
+    crate::derive::tests::author_fixture_diagrams(&mut s);
     s
 }
 
@@ -184,6 +185,7 @@ fn level_tree() -> Store {
     let mut s = tree_store();
     add_req(&mut s, "req:t-1", "ent:a1", "ent:b1", "dependency");
     recompute(&mut s, "g1", &mut RecordBatch::new(1));
+    crate::derive::tests::author_fixture_diagrams(&mut s);
     s
 }
 

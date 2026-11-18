@@ -166,7 +166,7 @@ fn renders_and_prunes() {
     .ok();
     // The document, the card, and the three reports: five pages.
     let n = write_all(&s, &gs(&out));
-    assert_eq!(n, 5);
+    assert_eq!(n, 6);
     let doc = crate::vfs::read_to_string(crate::layout::derived_dir(&out).join("docsgen/cart.md"))
         .unwrap();
     assert!(doc.contains("# Cart"));
@@ -175,7 +175,11 @@ fn renders_and_prunes() {
         crate::layout::derived_dir(&out).join("docsgen/entities/cart.md"),
     )
     .unwrap();
-    assert!(card.contains("## Sits in\n\nPublic › Cart\n"), "{}", card);
+    assert!(
+        card.contains("## Sits in\n\n[Public](../levels/scope-public.md) › Cart\n"),
+        "{}",
+        card
+    );
     assert!(doc.contains("req:shop-1"));
     assert!(
         doc.contains("> holds items"),
@@ -226,7 +230,7 @@ fn showcase_page_embeds_images_and_cross_links() {
     ));
     crate::vfs::remove_dir_all(&out).ok();
     crate::vfs::create_dir_all(&out).unwrap();
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.out = out.clone();
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
@@ -331,7 +335,7 @@ fn level_pages_nest_as_the_containment_tree() {
         std::env::temp_dir().join(format!("jazyk-docsgen-levels-{}", crate::sys::process_id()));
     crate::vfs::remove_dir_all(&out).ok();
     crate::vfs::create_dir_all(&out).unwrap();
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.out = out.clone();
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
@@ -351,7 +355,7 @@ fn level_pages_nest_as_the_containment_tree() {
     assert!(levels.join("scope-public.md").vexists());
     assert!(levels.join("shop.md").vexists());
     assert!(levels.join("order-service.md").vexists());
-    assert!(!levels.join("inventory-service.md").vexists());
+    assert!(levels.join("inventory-service.md").vexists());
     assert!(!levels.join("checkout-api.md").vexists());
     assert!(!levels.join("ghost.md").vexists());
 
@@ -408,7 +412,7 @@ fn level_pages_nest_as_the_containment_tree() {
         shop
     );
     assert!(
-        shop.contains("- [Inventory Service](../entities/inventory-service.md) · «service»\n"),
+        shop.contains("- [Inventory Service](../entities/inventory-service.md) · «service» · [level](./inventory-service.md) (1 children)"),
         "{}",
         shop
     );
@@ -471,7 +475,7 @@ fn cards_and_diagram_pages_walk_the_graph() {
     let out = std::env::temp_dir().join(format!("jazyk-docsgen-walk-{}", crate::sys::process_id()));
     crate::vfs::remove_dir_all(&out).ok();
     crate::vfs::create_dir_all(&out).unwrap();
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.out = out.clone();
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);

@@ -191,7 +191,7 @@ The goal exists exactly while the row is absent or stale and disappears the mome
 current row lands. A requirement that left the graph derives nothing: its row is
 [pruned](./gen.md#deletion-prunes-the-ledger), never bound.
 
-A `bind` goal sits in the ledger tier (tier 3): it becomes ready when no goal of the
+A `bind` goal sits in the ledger tier (tier 4): it becomes ready when no goal of the
 earlier tiers is open in the requirement's cone, so the statement is final before a test
 encodes it ([readiness](../compiler/reconciler.md#readiness)). Batches group by locality:
 the requirements of one entity, and under containment the entities of one component

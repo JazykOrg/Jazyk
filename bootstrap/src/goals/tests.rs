@@ -47,7 +47,7 @@ fn goal_gate_of(
 
 #[test]
 fn registry_covers_seventeen_kinds_with_pages_and_prompts() {
-    assert_eq!(REGISTRY.len(), 18);
+    assert_eq!(REGISTRY.len(), 19);
     let mut names: BTreeSet<&str> = BTreeSet::new();
     for k in REGISTRY.iter() {
         assert!(names.insert(k.kind()), "duplicate kind {}", k.kind());
@@ -76,7 +76,10 @@ fn registry_covers_seventeen_kinds_with_pages_and_prompts() {
                 !record_kinds(k.kind()).is_empty()
                     || matches!(
                         k.kind(),
-                        "bind" | "derive-criteria" | "consolidate-requirements"
+                        "bind"
+                            | "derive-criteria"
+                            | "consolidate-requirements"
+                            | "diagram-coverage"
                     )
             );
         }

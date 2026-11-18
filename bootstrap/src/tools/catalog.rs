@@ -321,6 +321,10 @@ pub fn catalog() -> Vec<ToolDef> {
                 &["section", "state"],
             ),
         },
+        ToolDef { name: "list_views", description: "List authored diagram definitions and summaries.", parameters: obj(json!({"entity":{"type":"string"},"kind":{"type":"string"},"area":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}}), &[]) },
+        ToolDef { name: "list_diagram_suppressions", description: "Read diagram suppression baselines and reasons.", parameters: obj(json!({}), &[]) },
+        ToolDef { name: "suppress_diagram_coverage", description: "Record a reasoned suppression of this area finding.", parameters: obj(json!({"decision":{"type":"string"},"id":{"type":"string"},"reason":{"type":"string"},"expectedAreaHash":{"type":"string"}}), &["id","reason","expectedAreaHash"]) },
+        ToolDef { name: "unsuppress_diagram_coverage", description: "Remove a diagram suppression and reconsider its area.", parameters: obj(json!({"id":{"type":"string"},"reason":{"type":"string"}}), &["id","reason"]) },
         ToolDef {
             name: "upsert_view",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/create-a-view-the-stored-half-of-b30f5.md")),
@@ -328,10 +332,16 @@ pub fn catalog() -> Vec<ToolDef> {
                 json!({
                     "kind": {"type": "string", "enum": VIEW_KINDS},
                     "title": {"type": "string"},
+                    "purpose": {"type":"string"}, "description":{"type":"string"},
+                    "area":{"type":"object"}, "perspective":{"type":"string"},
+                    "relationships":{"type":"object"}, "labels":{"type":"array"},
+                    "notes":{"type":"array"}, "groups":{"type":"array"},
+                    "layout":{"type":"object"}, "fragments":{"type":"array"}, "links":{"type":"array"},
                     "members": {"type": "array", "items": {"type": "string"}},
                     "query": query_schema(),
                     "collapse": {"type": "array", "items": {"type": "string"}},
                     "excluded": {"type": "array", "items": exclusion_schema()},
+                    "section":{"type":"string"},"quote":{"type":"string"},"decision":{"type":"string"},
                     "reasoning": {"type": "string"}
                 }),
                 &["kind", "title", "reasoning"],
@@ -339,11 +349,17 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "update_view",
-            description: "Update a view. members replaces the whole ordered list; add_members and remove_members edit it; exclude adds one {id, note} pair or a list of them (each member leaves the list and stays out). Any field on a default view makes it curated from then on.",
+            description: "Update a view. members replaces the whole ordered list; add_members and remove_members edit it; exclude adds one {id, note} pair or a list of them (each member leaves the list and stays out). All diagrams are authored and remain editable.",
             parameters: obj(
                 json!({
+                    "decision":{"type":"string"},
                     "id": {"type": "string"},
                     "title": {"type": "string"},
+                    "purpose": {"type":"string"}, "description":{"type":"string"},
+                    "area":{"type":"object"}, "perspective":{"type":"string"},
+                    "relationships":{"type":"object"}, "labels":{"type":"array"},
+                    "notes":{"type":"array"}, "groups":{"type":"array"},
+                    "layout":{"type":"object"}, "fragments":{"type":"array"}, "links":{"type":"array"},
                     "members": {"type": "array", "items": {"type": "string"}},
                     "add_members": {"type": "array", "items": {"type": "string"}},
                     "remove_members": {"type": "array", "items": {"type": "string"}},
@@ -357,7 +373,7 @@ pub fn catalog() -> Vec<ToolDef> {
         },
         ToolDef {
             name: "delete_view",
-            description: "Delete a curated view. Refused on a default view, which the next commit would derive again: exclude its members or collapse them instead.",
+            description: "Delete an authored diagram without deleting its semantic facts.",
             parameters: obj(json!({"id": {"type": "string"}, "reason": {"type": "string"}}), &["id", "reason"]),
         },
         ToolDef {
@@ -679,7 +695,7 @@ pub fn catalog() -> Vec<ToolDef> {
     ]
 }
 
-pub const READ_TOOLS: [&str; 10] = [
+pub const READ_TOOLS: [&str; 12] = [
     "load",
     "expand",
     "unload",
@@ -690,6 +706,8 @@ pub const READ_TOOLS: [&str; 10] = [
     "get_view",
     "diagnostics",
     "inspect_input",
+    "list_views",
+    "list_diagram_suppressions",
 ];
 
 // The calls without side effects whose answer the repeated-call guard recomputes before
@@ -710,7 +728,9 @@ pub(super) const REANSWERABLE_TOOLS: [&str; 11] = [
 
 // The graph write tools, each all or nothing at staging.
 // Mirrors docs/compiler/tools.md#write-tools.
-pub const GRAPH_WRITE_TOOLS: [&str; 26] = [
+pub const GRAPH_WRITE_TOOLS: [&str; 28] = [
+    "suppress_diagram_coverage",
+    "unsuppress_diagram_coverage",
     "upsert_entity",
     "update_entity",
     "delete_entity",

@@ -478,3 +478,136 @@ pub(crate) fn synthetic_store(entities: usize, requirements: usize) -> Store {
     }
     s
 }
+
+// Explicit fixture authoring is separate from production recomputation.
+pub(crate) fn authored_showcase_store() -> Store {
+    let mut s = showcase_store();
+    author_fixture_diagrams(&mut s);
+    s
+}
+pub(crate) fn author_fixture_diagrams(s: &mut Store) {
+    let mut batch = RecordBatch::new(1);
+    recompute(s, "g1", &mut batch);
+    let ix = Indices::build(s);
+    let flow_areas: BTreeMap<String, String> = level_flow_views(s, &ix)
+        .iter()
+        .map(|(target, v)| (v.id.clone(), target.clone()))
+        .collect();
+    for w in fixture_definitions(s, &ix) {
+        let target = if let Some(target) = flow_areas.get(&w.id) {
+            target.clone()
+        } else if w.id.ends_with("/public")
+            || w.id == "view:usecase/shop"
+            || w.id == "view:sequence/shop"
+        {
+            "scope:public".to_string()
+        } else {
+            format!("ent:{}", w.id.rsplit('/').next().unwrap_or("shop"))
+        };
+        s.graph.views.insert(
+            w.id,
+            View {
+                kind: w.kind.into(),
+                title: w.title,
+                members: w.members,
+                authored: BTreeMap::from([(
+                    "area".into(),
+                    serde_json::json!({"target":target,"extent":"selection"}),
+                )]),
+                provenance: Some(Provenance::Derived {
+                    from: w.from,
+                    reasoning: "Authored test-fixture explanation".into(),
+                }),
+                ..Default::default()
+            },
+        );
+    }
+}
+fn fixture_definitions(store: &Store, ix: &Indices) -> Vec<FlowClusterSpec> {
+    let instances = instance_types(store);
+    let mut out = Vec::new();
+
+    // One structural level view per level of two or more, the scope root included, and
+    // the flow views of the requirements lifted into it.
+    let lv = ix.levels(store);
+    for level in lv.held.iter().map(|i| &lv.levels[*i]) {
+        let direct = crate::board::level_members(store, &level.target);
+        if direct.len() < 2
+            && !direct
+                .first()
+                .and_then(|id| store.graph.entities.get(id))
+                .is_some_and(|e| !e.attributes.is_empty())
+        {
+            continue;
+        }
+
+        let members = lv.members[&level.target].clone();
+        let mut from: Vec<String> = level.node.iter().cloned().collect();
+        from.extend(members.iter().cloned());
+        out.push(FlowClusterSpec {
+            id: level_id(store, ix, level),
+            kind: level_kind(store, ix, level),
+            title: level
+                .node
+                .as_ref()
+                .and_then(|id| store.graph.entities.get(id))
+                .map(|e| e.name.clone())
+                .unwrap_or_else(|| {
+                    let s = &level.scope;
+                    let mut c = s.chars();
+                    c.next()
+                        .map(|x| x.to_uppercase().collect::<String>() + c.as_str())
+                        .unwrap_or_default()
+                }),
+            members: members.clone(),
+            query: None,
+            from,
+            rule: if level.node.is_some() {
+                "level view of a node"
+            } else {
+                "level view of the scope root"
+            },
+        });
+    }
+    out.extend(level_flow_views(store, ix).iter().map(|(_, w)| w.clone()));
+
+    // A state view per derived machine.
+    for m in store.graph.state_machines.values() {
+        let Some(subject) = store.graph.entities.get(&m.subject) else {
+            continue;
+        };
+        out.push(FlowClusterSpec {
+            id: format!("view:state/{}", entity_slug(&m.subject)),
+            kind: "state",
+            title: subject.name.clone(),
+            members: vec![m.subject.clone()],
+            query: None,
+            from: vec![m.subject.clone()],
+            rule: "state per state machine",
+        });
+    }
+
+    // An object view per type: an entity that is `b` of an instantiation group.
+    let mut by_type: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for (inst, ty) in &instances {
+        by_type.entry(ty.clone()).or_default().push(inst.clone());
+    }
+    for (ty, mut insts) in by_type {
+        let Some(t) = store.graph.entities.get(&ty) else {
+            continue;
+        };
+        insts.sort();
+        let mut from = vec![ty.clone()];
+        from.extend(insts.iter().cloned());
+        out.push(FlowClusterSpec {
+            id: format!("view:object/{}", entity_slug(&ty)),
+            kind: "object",
+            title: t.name.clone(),
+            members: insts,
+            query: None,
+            from,
+            rule: "object per type",
+        });
+    }
+    out
+}

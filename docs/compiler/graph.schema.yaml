@@ -2,7 +2,7 @@ $schema: http://json-schema.org/draft-07/schema#
 $id: https://jazyk.org/schemas/graph.json
 title: Jazyk Graph Store
 description: |-
-  Definitions for the files of one set directory (.jazyk/<set-id>/), store version 6.
+  Definitions for the files of one set directory (.jazyk/<set-id>/), store version 7.
   Committed, at the top of the set directory: the current graph, its decisions, its
   sources, and the ledger. No work, history, or generation is committed.
   - store.yaml is one status object (the store version)
@@ -22,7 +22,6 @@ description: |-
   - local/build.yaml is one buildState object
   - local/journal/g<generation>.yaml is one journalEntry per generation
   Derived, under derived/ (never committed, rebuilt from the committed files):
-  - derived/graph/default-views/<file id>.yaml is one default view
   - derived/graph/relationships/<file id>.yaml is one relationship
   - derived/graph/state-machines/<file id>.yaml is one stateMachine
   Every file starts with two comment lines naming its kind and its schema. Every node
@@ -537,8 +536,7 @@ definitions:
 
   view:
     description: >-
-      One node file under graph/views/ (a default view under graph/default-views/). The stored half of a diagram: what it includes,
-      never how it looks
+      An explicitly authored diagram definition under graph/views/
     type: object
     required:
       - kind
@@ -553,6 +551,43 @@ definitions:
       title:
         type: string
         description: Part of the natural key with kind
+      purpose:
+        type: string
+        minLength: 1
+      description:
+        type: string
+      area:
+        type: object
+        required: [target, extent]
+        properties:
+          target: {type: string}
+          extent: {enum: [area, selection]}
+          document: {type: string}
+      perspective:
+        enum: [context, container, component]
+      relationships:
+        type: object
+        properties:
+          mode: {enum: [all, selected]}
+          include: {type: array, items: {type: object}}
+          exclude: {type: array, items: {type: object}}
+      labels:
+        type: array
+        items: {type: object}
+      notes:
+        type: array
+        items: {type: object}
+      groups:
+        type: array
+        items: {type: object}
+      layout:
+        type: object
+      fragments:
+        type: array
+        items: {type: object}
+      links:
+        type: array
+        items: {type: object}
       members:
         description: >-
           Ordered node ids. Entities for structural views, requirements for flow
@@ -573,14 +608,6 @@ definitions:
           type: string
       provenance:
         $ref: '#/definitions/provenance'
-      default:
-        type: boolean
-        const: true
-        description: >-
-          Set by the store on the default views it recomputes every commit. Absent on
-          curated views. Any mutation that names the view clears it (update_view with
-          any field, edit_fact, a decree, a limit bump). The deriving rule rides in
-          provenance.derived.reasoning
       limits:
         $ref: '#/definitions/limits'
       created:
@@ -1267,11 +1294,11 @@ definitions:
     properties:
       version:
         description: >-
-          The store version. A version 5 store loads and the next build opening rewrites
+          The store version. A version 6 store loads and the next build opening rewrites
           it in this layout. A newer version is never archived: the store is read-only.
           An older version, or none, is archived and the store starts empty
         type: integer
-        const: 6
+        const: 7
       reevaluate:
         description: >-
           Anchors a place-anchors session placed with reevaluate, listed as stale

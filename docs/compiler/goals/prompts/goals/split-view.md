@@ -21,7 +21,7 @@ Then split along the structure the documents state: for a structural view, one s
 
 Every member and every arrow of the original survives somewhere: in the parent, in a sub-view, or lifted into a collapsed node; never satisfy a limit by silently omitting an edge or a step, never hide an entity to hide an arrow, and never split along a structure the documents do not state or a flow the documents present as one.
 
-Never delete a default view.
+Delete an authored diagram only when its explanation and references are preserved elsewhere.
 
 When the members have no containment or stated break to split along, the pressure is the container's, not the view's: fail the goal naming the entity, and abstract-entity on it is the resolution; when the count is honest and every split would invent structure, fail the goal recommending a decree on the view's own limit, which is a human's to write.
 

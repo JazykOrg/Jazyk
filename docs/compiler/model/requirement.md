@@ -129,7 +129,7 @@ sharpen.
   state machine is what a curated [`timing` view](./view.md#kinds) reads. Nothing
   derives a timing view; there is no default one.
 
-Consumers read facets: the default flow views, the flow placement checks, and test shaping
+Consumers read facets: authored flow diagrams, the flow placement checks, and test shaping
 in [generation](../../consumers/gen.md).
 
 ## Identity

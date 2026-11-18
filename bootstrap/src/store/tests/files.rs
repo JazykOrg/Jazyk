@@ -856,10 +856,10 @@ fn parallel_branches_merge_the_whole_store_through_git() {
 
 // The immediately previous format preserves identity while rewriting singleton sources.
 #[test]
-fn a_version_5_store_upgrades_in_place_when_a_build_opens_it() {
+fn a_version_6_store_upgrades_in_place_when_a_build_opens_it() {
     let out = own_dir("v5-upgrade");
     crate::vfs::create_dir_all(out.join("graph/requirements")).unwrap();
-    crate::vfs::write(out.join("store.yaml"), "version: 5\n").unwrap();
+    crate::vfs::write(out.join("store.yaml"), "version: 6\n").unwrap();
     crate::vfs::write(out.join("graph/requirements/req~shop-1.yaml"), "id: req:shop-1\nstatement: An order holds items.\nentities: []\nsource: {doc: shop.md, section: /shop, quote: An order holds items.}\n").unwrap();
     let loaded = Store::load(&out);
     assert!(loaded.load_errors.is_empty(), "{:?}", loaded.load_errors);
@@ -976,7 +976,7 @@ fn a_newer_store_stays_byte_identical_and_read_only() {
         crate::vfs::create_dir_all(p.parent().unwrap()).unwrap();
         crate::vfs::write(p, text).unwrap();
     };
-    w("store.yaml", "version: 7\n");
+    w("store.yaml", "version: 8\n");
     w(
         "graph/entities/ent~x.yaml",
         "id: ent:x\nname: X\nfuture: true\n",
@@ -1064,7 +1064,7 @@ fn sections_a_merge_left_read_as_changed_until_the_next_save() {
 // a local build file, and optionally a `status.yaml` carrying only the version.
 fn newer_fixture(out: &Path, sentinel: bool) -> Vec<(PathBuf, Vec<u8>)> {
     let mut files = vec![
-        (out.join("store.yaml"), b"version: 7\n".to_vec()),
+        (out.join("store.yaml"), b"version: 8\n".to_vec()),
         (
             out.join("graph/entities/x.yaml"),
             b"# Jazyk entity\nid: ent:x\nname: X\n".to_vec(),
@@ -1072,7 +1072,7 @@ fn newer_fixture(out: &Path, sentinel: bool) -> Vec<(PathBuf, Vec<u8>)> {
         (out.join("local/build.yaml"), b"generation: 9\n".to_vec()),
     ];
     if sentinel {
-        files.push((out.join("status.yaml"), b"version: 7\n".to_vec()));
+        files.push((out.join("status.yaml"), b"version: 8\n".to_vec()));
     }
     for (p, b) in &files {
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -1111,13 +1111,14 @@ fn a_build_never_archives_or_writes_a_newer_store() {
         let out = base.join(".jazyk").join("main");
         newer_fixture(&out, sentinel);
         let before = tree(&base);
-        assert_eq!(crate::store::newer_version(&out), Some(7));
+        assert_eq!(crate::store::newer_version(&out), Some(8));
 
         let mut s = Store::open_for_build(&out);
         assert!(s.graph.entities.is_empty());
         let why = s.write_status("build opening").unwrap_err();
         assert!(
-            why.starts_with("store-newer:") && why.contains("version 6"),
+            why.starts_with("store-newer:")
+                && why.contains(&format!("version {}", STORE_VERSION + 1)),
             "{why}"
         );
         let r = s.apply(vec![create("ent:y", "Y")], &session());
@@ -1265,4 +1266,50 @@ fn every_writer_beside_the_store_refuses_a_newer_store() {
 
     assert_eq!(tree(&out), before, "every byte of the set stays");
     std::fs::remove_dir_all(&base).ok();
+}
+
+#[test]
+fn version_six_preserves_authored_diagrams_and_drops_automatic_projections() {
+    let out = own_dir("authored-diagram-upgrade");
+    let mut s = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    s.apply(vec![create("ent:a", "A")], &session());
+    s.graph.views.insert(
+        "view:class/curated".into(),
+        View {
+            kind: "class".into(),
+            title: "Curated".into(),
+            members: vec!["ent:a".into()],
+            ..Default::default()
+        },
+    );
+    s.save();
+    let header = crate::vfs::read_to_string(out.join("store.yaml"))
+        .unwrap()
+        .replace("version: 7", "version: 6");
+    crate::vfs::write(out.join("store.yaml"), header).unwrap();
+    let defaults = out.join("derived/graph/default-views");
+    crate::vfs::create_dir_all(&defaults).unwrap();
+    crate::vfs::write(defaults.join("view~class__automatic.yaml"),"id: view:class/automatic\nkind: class\ntitle: Automatic\nmembers: [ent:a]\ndefault: true\n").unwrap();
+    let diagrams = out.join("derived/diagrams/class");
+    crate::vfs::create_dir_all(&diagrams).unwrap();
+    crate::vfs::write(diagrams.join("automatic.puml"), "stale").unwrap();
+    let before = Store::load(&out);
+    assert_eq!(before.status.version, 6);
+    assert_eq!(before.graph.views.len(), 1);
+    let upgraded = Store::open_for_build(&out);
+    assert_eq!(upgraded.status.version, 7);
+    let v = &upgraded.graph.views["view:class/curated"];
+    assert_eq!(v.members, vec!["ent:a"]);
+    assert_eq!(v.authored["purpose"], "Curated");
+    assert_eq!(v.authored["area"]["target"], "scope:public");
+    assert!(matches!(v.provenance, Some(Provenance::Derived { .. })));
+    assert!(!defaults.join("view~class__automatic.yaml").vexists());
+    assert!(!diagrams.join("automatic.puml").vexists());
+    let bytes = tree(&out);
+    Store::open_for_build(&out);
+    assert_eq!(tree(&out), bytes, "Repeated opening is a no-op");
+    crate::vfs::remove_dir_all(&out).ok();
 }

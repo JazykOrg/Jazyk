@@ -90,185 +90,33 @@ shows a stored stale flag.
 
 ## Diagrams on entity pages
 
-Every view renders on every commit to `<out>/derived/diagrams/<kind>/<slug>.svg` beside its
-`.puml` ([output layout](../compiler/diagrams.md#output-layout)). An entity page embeds
-the renderings of the views relevant to the entity as relative image links from
-`<out>/derived/docsgen/` into `<out>/derived/diagrams/` (`../diagrams/<kind>/<slug>.svg`), so the whole
-out directory can be copied or served anywhere and the links still resolve. Docsgen uses
-the `.svg`; it never requests a `.png`. E.g.:
-
-```markdown
-## Diagrams
-
-![Commerce](../diagrams/class/commerce.svg)
-
-`view:class/commerce` (class, 12 members): [Customer](./entities/customer.md),
-[Shopping Cart](./entities/shopping-cart.md), [Order Item](./entities/order-item.md), ... · [source](../diagrams/class/commerce.puml) · [page](./diagrams/class/commerce.md)
-
-![Order](../diagrams/state/order.svg)
-
-`view:state/order` (state, 3 states: placed, paid, held) · [source](../diagrams/state/order.puml) · [page](./diagrams/state/order.md)
-
-![Customer: Orders](../diagrams/sequence/customer-orders.svg)
-
-`view:sequence/customer-orders` (sequence, 2 steps): [Customer](./entities/customer.md),
-[Order Service](./entities/order-service.md), [Inventory Service](./entities/inventory-service.md) · [source](../diagrams/sequence/customer-orders.puml) · [page](./diagrams/sequence/customer-orders.md)
-```
-
-The views an entity page embeds, in this order
-([default views](../compiler/model/view.md#default-views)):
-
-- The level neighborhood: the [level view](../compiler/diagrams.md#level-views) of
-  the entity's parent (`view:class/<parent-slug>` or `view:component/<parent-slug>`),
-  or of the scope root (`view:class/<scope>` or `view:component/<scope>`)
-  when the entity has no parent, and the entity's own level view when it has two or
-  more children.
-- The entity's state machine: `view:state/<entity-slug>`, when any `transition` names
-  the entity as subject ([state machine](../compiler/model/state-machine.md#rendering)).
-  The caption lists the states.
-- The flows it appears in: every `use-case`, `activity`, `sequence`, and
-  `communication` view whose member requirements name the entity, default and curated,
-  as a `Flows` list of links (title, kind, step count, the diagram page) rather than
-  embedded images: an Order that takes part in five flows would otherwise open with
-  eleven pictures before its first requirement, and the [card](#entity-cards) and the
-  [diagram pages](#diagram-pages) carry the renderings.
-- The object view of its type (`view:object/<type-slug>`), when the entity is an
-  instance or a type with instances.
-- Every other curated view that lists the entity in `members` or `collapse`.
-
-Each image carries a caption line: the view id, its kind and member count, the drawn
-entities as links to their [cards](#entity-cards) (a flow view's participants as the
-diagram lifts them), a link to the `.puml` source, and a link to the view's
-[diagram page](#diagram-pages). The caption is the same on every page that embeds a
-view (a requirements document, a level page, a card, the index), and its links all
-point into the walk: a reader moves from one entity to its neighbors through the views
-they share. The [LSP](../frontends/lsp.md#capabilities) hover shows one view, the most
-relevant by its own deterministic rule, and links to the card.
-
-An over-limit view renders with auto-collapse and the renderer's note in its title
-([over-limit views](../compiler/diagrams.md#over-limit-views)); the caption names the
-`split-view` goal the view carries. Docsgen never omits a view for size. A view whose
-`.svg` is missing (the renderer failed on its `.puml`) renders as its caption line with
-the `.puml` link and no image; nothing is invented.
-
-The rendering is the third layer of a diagram, build output: the page embeds it, never
-reads it back ([rendering](../compiler/diagrams.md#rendering)).
+Entity pages embed relevant authored diagrams only. Captions name the view ID,
+kind, purpose, members and sources. Missing SVGs link to the definition and
+PlantUML with rendering status. Flow lists link to diagrams that actually exist.
+The output does not infer a diagram ID from an entity name or scope.
 
 ## Level pages
 
-A [level](../compiler/concepts/levels.md#levels) is a node's direct children. Every
-node with at least two children has a level page, and so does the
-[scope root](../compiler/concepts/levels.md#the-scope-root), the parentless entities of a
-scope. The pages nest as the containment tree does: a reader starts at the scope root,
-reads one level, and digs into a member to read the level below it
-([drill-down](../compiler/concepts/levels.md#drill-down)). The pages render with the
-entity pages, on every commit and on `jazyk docsgen`, into
-`<out>/derived/docsgen/levels/<slug>.md` with the node's slug; the scope root's page is
-`levels/scope-<scope>.md` (`levels/scope-public.md` for the default scope). A level
-page whose node lost its level (fewer than two children, or the node dissolved) is
-pruned like an entity page.
-
-The page, in order:
-
-- The breadcrumb: the chain from the scope root down to the node, each ancestor a link
-  to its level page (an ancestor with one child has no level page and links to its
-  [card](#entity-cards) instead), the node itself last and unlinked. This is the link
-  up.
-- The header: the node's name, `stereotype`, and `definition` (the scope root: the
-  scope name), with a link to the node's card and one to its requirements document. A
-  node with `derived` provenance (a grouping) says so and links to its ratification
-  proposal.
-- `## Diagrams`: the node's [level views](../compiler/diagrams.md#level-views)
-  embedded as on entity pages: the structural level view first, then the flow views
-  per level (`use-case` and `sequence`), each with the caption line described above.
-  The embedded `.svg` carries the renderer's drill-down anchors to the cards
-  ([drill-down](../compiler/diagrams.md#drill-down)); the links between level pages
-  are the members list below.
-- `## Members`: the direct children in document order, one line each: the name as a
-  link to its card, its `stereotype`, its `definition`, and, when the member has a
-  level of its own, a link to its level page with its child count. This is the link
-  down. An outside entity a level view includes through a lifted edge is not a member;
-  it appears in the diagram and its caption only.
-
-Only the entity page carries requirements. A grouping holds no requirements of its own;
-its level page shows what its members relate to through lifting, and each member's
-entity page shows the statements.
+Every nonempty containment level has a page, including one-child levels. Its
+breadcrumb, definition and direct child links remain useful with no diagram.
+The page lists zero or more authored diagrams by area. Diagrams do not create
+or remove containment levels.
 
 ## Entity cards
 
-The requirements document is the long read. The card is where a reader lands: one
-small page per entity at `<out>/derived/docsgen/entities/<entity-slug>.md`, rendered with the
-other pages on every commit and on `jazyk docsgen`, pruned with the entity. Every link
-from a diagram, a hover, or another card points at a card, and the card lets the reader
-pick a direction: up, down, sideways, or into the detail. The card carries no
-requirement blocks; it links to them. The shared model behind it (`card.rs`) is the one
-the [LSP hover](../frontends/lsp.md#capabilities) and the
-[GUI explorer](../frontends/gui.md#explore) read, so the three surfaces walk the same
-graph.
-
-The card, in order:
-
-- The header: the name, the `stereotype`, and the `definition` in one paragraph. A
-  derived or decreed entity says so in one line with a link to its proposal.
-- `Sits in`: the breadcrumb from the scope root down to the parent, each a link to its
-  card (the scope root links to its [level page](#level-pages) when one exists; a
-  one-member scope has no page and names the root plain), the entity itself last and
-  unlinked. This is the link up.
-- `In context`: the structural [level view](../compiler/diagrams.md#level-views) of the
-  parent's level (the scope root's for a parentless entity), embedded as an image, with
-  the caption line under it: every drawn entity linked to its card, and a link to the
-  view's [diagram page](#diagram-pages). The entity is one of the boxes; this is where
-  it is used.
-- `Inside`: when the entity has a level of its own, its level view embedded the same
-  way, and the flows of that level, one line per flow cluster: the cluster's title,
-  its `use-case` and `sequence` pages as links, and the step count. A leaf says
-  `a leaf` and nothing more. This is the link down.
-- `Relationships`: one line per other entity: the relationship type as the
-  [relationship](../compiler/model/relationship.md) summarizes it, the direction, the
-  other entity as a link to its card, and the number of contributing requirements.
-  The lines are lifted as the in-context diagram lifts its arrows: a grouping's card
-  lists the relationships its subtree carries, each other end lifted to the member
-  of the parent's level it sits under, so a grouping is never `none` while its box
-  has arrows. This is the link sideways along the edges.
-- `Flows`: the flow clusters at the parent's level in which the entity is a drawn
-  participant, one line per cluster: the title, the `use-case` and `sequence` pages
-  as links, and the step count. A cluster is one line, never one per kind.
-- `Siblings`: the other children of the same parent, each a link to its card, with a
-  child count where one has a level. This is the link sideways along the level.
-- `Children`: the direct children, each a link, with child counts. Absent on a leaf.
-- `More`: the requirements document (with the requirement count), the level page of
-  the parent's level, the entity's own level page when it has one, and the proposal
-  when it is pending.
-
-Every list is short by construction: a level is under its
-[children limit](../compiler/graph.md#limits), and the card lists one level in each
-direction. A reader who wants the next level clicks; nothing is inlined two levels
-deep.
+Cards provide Sits in, In context, Inside, Relationships, Flows, Siblings,
+Children and More. Context and inside diagrams are optional. A node with children
+and no diagram says that no authored diagram is available and retains child and
+level links. Only a node with no children is a leaf. Relationship summaries remain
+available without a picture. The card lists related authored diagram references
+with their purpose, not a synthesized primary view.
 
 ## Diagram pages
 
-Every view has a page at `<out>/derived/docsgen/diagrams/<kind>/<view-slug>.md`, rendered and
-pruned with the view. A diagram page is the same size as a card and is the other node
-of the walk: cards link to diagrams, diagrams link to cards.
-
-The page, in order:
-
-- The title and the view id, with the kind and the member count.
-- `Level`: for a level view or a lifted flow view, the breadcrumb of the level it
-  belongs to, each ancestor a link to its card, ending in a link to the level page.
-  This is the link up. A view with no level (a curated view, an object or state view)
-  says which entity or machine it belongs to instead.
-- The image, embedded as on every page, with the source link.
-- `Drawn`: one line per drawn entity in drawing order: a link to its card, its
-  `stereotype`, and, when it has a level view, a link to that view's page marked
-  `level below`. This is the legend: the image does not click inside a markdown
-  preview, the legend does.
-- `Steps` (flow kinds only): the members in order, each the statement with its id
-  linked to its heading in the requirements document, and `initiator → receiver` as
-  links to their cards, lifted as the diagram draws them.
-- `Around`: the other views of the same level (`use-case`, `sequence`, the structural
-  view), the level view of the level above, and the level views of the drawn entities
-  that have one. This is the link sideways and down.
+A page exists for each authored diagram. It carries purpose, description,
+provenance, rendering, member legend and explicit links to detail or phases.
+Entity links open their cards. Deleting a view prunes its page and rendering.
+Standalone output uses relative links under the output directory.
 
 ## Ratification proposals
 
@@ -320,30 +168,10 @@ matches. The compiler never writes a source document without an accepted proposa
 
 ## Relationships view
 
-The index (`<out>/derived/docsgen/index.md`) opens with the walk: for each scope, a `Start
-here` line linking the scope root's [level page](#level-pages) (when the root has one,
-two or more members; a one-member scope starts at that member's card) and listing the
-top level's members as links to their [cards](#entity-cards), each with its child count
-where it has a level. Then it lists every entity with a link to its requirements
-document, then embeds the level views rendered from the graph, each scope's top level first (the
-scope root's level view, `view:class/<scope>` or `view:component/<scope>` by the kind
-rule) and the deeper levels after it, each with the caption line described above,
-default or curated ([default views](../compiler/model/view.md#default-views)). The scope root's level view
-is the per-scope view ([level views](../compiler/diagrams.md#level-views)), so the
-index's picture of a scope is its top level, and its caption links to the scope root's
-[level page](#level-pages). An edit turns a
-default view curated without changing its id, so the index never drops a scope's view
-over an edit. The images are generated on
-every run like everything else here, so they cannot drift from the graph the way a
-hand-drawn architecture diagram drifts from the code. A scope over its member or edge
-limit renders collapsed with the renderer's note and carries a `split-view` goal on the
-board; the index never omits a scope. Each entity's own Relationships section carries the
-detail either way.
-
-Below the class views the index lists every view in the graph, default and curated: the
-id, the kind, the title, the member count, links to its `.svg` and `.puml`, and the goal
-it carries when it is over a limit. The index ends with one line linking the glossary
-and the two reports below, each a file of its own beside it.
+The index starts with containment navigation and entity cards for each scope.
+It lists authored diagrams with kind, purpose, member counts and output links.
+A scope with no diagrams still lists its entities and relationships. Counts and
+links come from stored view nodes, never from default ID conventions.
 
 ## Glossary
 
@@ -396,3 +224,10 @@ within the same graph output remain relative to that set's store.
 ## Obligation locations
 
 Render each requirement once and list all its source locations.
+
+## Navigation without diagrams
+
+Containment pages and entity cards exist independently of diagrams. Every nonempty
+level has navigation, including single-child levels. Diagram sections list only
+actual authored nodes. Empty diagram lists retain parent, children and relationship
+links. Rendering failures retain links to definitions and source, not dead images.

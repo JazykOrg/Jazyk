@@ -464,7 +464,7 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
   follows. The compiler never rewrites a source document without an accepted
   sentence. An `edit_fact` that names a default view makes it curated: the view
   stops being default and survives recomputes
-  ([default views](../compiler/model/view.md#default-views)).
+  ([default views](../compiler/model/view.md#membership)).
 - The prose edit surfaces to the ACP client as a file write plus a diff on the tool
   call, so an IDE shows it in the buffer and the review UI. See
   [doc edit delegation](#doc-edit-delegation) and [edit effects](#edit-effects).

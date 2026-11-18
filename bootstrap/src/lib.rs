@@ -28,6 +28,7 @@ pub mod costs;
 pub mod decompile;
 pub mod derive;
 pub mod diagnostic_locations;
+pub mod diagrams;
 pub mod docsgen;
 pub mod document_sets;
 #[cfg(all(feature = "native-documents", not(target_arch = "wasm32")))]

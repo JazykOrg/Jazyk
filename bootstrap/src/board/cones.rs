@@ -129,6 +129,7 @@ fn referents(store: &Store, id: &str) -> Vec<String> {
         }
         out.extend(from_of(&r.provenance));
     } else if let Some(v) = store.graph.views.get(id) {
+        out.extend(crate::diagrams::authored_references(v));
         out.extend(v.members.iter().map(|m| store.resolve_id(m).to_string()));
         out.extend(v.collapse.iter().map(|m| store.resolve_id(m).to_string()));
         out.extend(

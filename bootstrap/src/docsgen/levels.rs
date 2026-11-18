@@ -31,12 +31,12 @@ pub(super) fn level_targets(store: &Store) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for scope in scopes {
         let target = crate::store::scope_root_target(scope);
-        if crate::derive::level_view_id(store, &target).is_some() {
+        if !crate::board::level_members(store, &target).is_empty() {
             out.push(target);
         }
     }
     for id in store.graph.entities.keys() {
-        if crate::derive::level_view_id(store, id).is_some() {
+        if !crate::board::level_members(store, id).is_empty() {
             out.push(id.clone());
         }
     }
@@ -52,7 +52,9 @@ pub(super) fn level_href(target: &str, from: &str) -> String {
 // "[Name](<page>)" for a target's level page, from a page in `from`. None when the
 // target holds no level.
 pub(super) fn level_link(store: &Store, target: &str, from: &str) -> Option<String> {
-    crate::derive::level_view_id(store, target)?;
+    if crate::board::level_members(store, target).is_empty() {
+        return None;
+    }
     Some(format!(
         "[{}]({})",
         level_name(store, target),
@@ -112,13 +114,7 @@ fn breadcrumb(store: &Store, target: &str) -> String {
 // the children first, then the outside entities the lifted edges bring in, and only
 // the children are members of the page.
 fn level_children(store: &Store, target: &str) -> Vec<String> {
-    let direct: BTreeSet<String> = crate::board::level_members(store, target)
-        .into_iter()
-        .collect();
-    crate::derive::level_view_members(store, target)
-        .into_iter()
-        .filter(|m| direct.contains(m))
-        .collect()
+    crate::board::level_members(store, target)
 }
 
 // The level's views in the order the page embeds them: the structural level view,
@@ -208,7 +204,7 @@ fn level_page_text(store: &Store, target: &str) -> String {
         if let Some(d) = &e.definition {
             line.push_str(&format!(" · {}", d));
         }
-        if crate::derive::level_view_id(store, &c).is_some() {
+        if !crate::board::level_members(store, &c).is_empty() {
             let n = crate::board::level_members(store, &c).len();
             line.push_str(&format!(
                 " · [level]({}) ({} children)",

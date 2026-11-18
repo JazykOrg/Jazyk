@@ -109,5 +109,5 @@ fn derive_criteria_goals_follow_the_leading_entity_and_the_deliverable() {
         skills_for("derive-criteria", &s, "ent:sort"),
         vec!["criteria"]
     );
-    assert_eq!(tier("derive-criteria"), Some(3));
+    assert_eq!(tier("derive-criteria"), Some(4));
 }

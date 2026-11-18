@@ -1,9 +1,8 @@
 # Authored diagrams
 
-Status: implementation plan, 2026-11-17. This change commits the plan only.
-The specification, engine, store migration, and editor contracts below are planned
-work, not implemented behavior. No dogfood build or paid model session is needed
-to prepare this plan.
+Status: implemented in the engine and specifications, 2026-11-17. Validation
+uses cargo tests and scripted fixtures. No dogfood build or paid model session
+is run for this change. The Cloud editor UI remains follow-up work.
 
 ## Decisions
 
@@ -23,7 +22,7 @@ to prepare this plan.
   No analysis rule creates a view, even as a temporary placeholder.
 - Containment defines levels and navigation independently of views. Cards and
   level pages exist without diagrams. There is no mandatory primary diagram.
-- Store version becomes 6. Upgrade only version 5. Drop untouched defaults;
+- Store version becomes 6. Upgrade only version 6. Drop untouched defaults;
   preserve every curated view and its ID. Never relabel automatic output as human
   or model authorship. Version 4 follows the older-store archive policy.
 - Keep the current exemption from sentence ratification for presentation nodes.
@@ -86,11 +85,11 @@ Add these fields to `View`, graph schema, read models, and mutation schemas:
 | `area` | `{target, extent: area \| selection, document?}`. Target is an entity or `scope:<scope>`. A flow may additionally name its source document. An area view claims to explain its area; a selection view intentionally shows a subset. |
 | `perspective` | Optional `context`, `container`, or `component` for C4 framing. This is intent metadata, not a new kind or a fixed global tree depth. |
 | `relationships` | `{mode: all \| selected, include: [selector], exclude: [{selector, reason}]}`. Default is all. Each selector is canonical `{a, b, type}` over a derived directional relationship group before lifting. Include is used only in selected mode. |
-| `labels` | Ordered `{target, text}` entries for member entities, requirements, or relationship selectors. Overrides display text only. Canonical names and source IDs remain in read data and captions. |
-| `notes` | Ordered `{id, targets, text, sources}` entries. Targets resolve to drawn elements or relationship selectors; a diagram-wide note has no targets. Sources cite graph facts or document sections. |
+| `labels` | Ordered `{target, text}` entries for member entities or requirements. Overrides display text only. Canonical names and source IDs remain in read data and captions. |
+| `notes` | Ordered `{id, targets, text, sources}` entries. Structural entity targets receive note connectors; other notes remain diagram-wide; a diagram-wide note has no targets. Sources cite graph facts or document sections. |
 | `groups` | Ordered `{id, title, members, parent?}` entries. Local presentation groups have no semantic containment effect. Groups form an acyclic forest; an element belongs to at most one group. |
-| `layout` | `{direction?: left-to-right \| top-to-bottom, together?: [[entity id]]}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
-| `fragments` | Sequence-only ordered tree of `{id, operator, operands}`. Operators are `alt`, `opt`, `loop`, `par`, `break`, `critical`, `ref`. Operands carry sourced guard text and ordered requirement IDs or nested fragments; `ref` names an existing sequence view. |
+| `layout` | `{direction?: left-to-right \| top-to-bottom}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
+| `fragments` | Sequence-only ordered tree of `{id, operator, operands}`. Operators are `alt`, `opt`, `loop`, `par`, `break`, `critical`, `ref`. Operands carry sourced guard text and ordered requirement IDs or nested fragments; `ref` names an existing sequence view in `view`. |
 | `links` | Ordered `{view, relation: detail \| phase, member?}`. Explicit sub-view and overview links, independent of title matching. |
 
 Example authored definition, omitting generation markers and optional fields:
@@ -264,15 +263,13 @@ and reject cached out-of-scope writes through the existing wrong-toolset gate.
 | `diagram-coverage` | All diagram and graph reads | Upsert/update/delete views and suppress/unsuppress for its area/findings, plus goal completion/failure and atomic done. |
 | `curate-view`, `split-view`, view `retrace` | All diagram and graph reads | Existing view mutation slice, extended to authored fields and linked details. No suppression tool unless a coverage goal is also in the batch. |
 | `abstract-entity` | All diagram and graph reads | Existing upsert/update view slice for affected coarse/detail diagrams. No diagram deletion or suppression from abstraction alone. |
-| `reconcile-section` on source PlantUML `diagram` input | All diagram and graph reads | Upsert/update/delete source-anchored views in the section's scope, alongside its existing semantic extraction tools. No coverage suppression. |
+| Source PlantUML `diagram` input | Existing semantic extraction tools first; full diagram reads in the subsequent mandatory source review | `diagram-coverage` authors the quoted definition after semantic extraction, without heuristic suppression. |
 | Explicit human diagram request in writable chat/editor | All diagram and graph reads | Validated graph-edit mutations needed for the request, including suppression only when requested or otherwise authorized. No compiler batch required. |
 
 Source-diagram reconciliation may author the diagram stated by its input; this
-is an explicit ingest goal, not automatic default-view derivation. Select that
-extra write slice deterministically from the source section type when opening
-the batch. Ordinary prose reconciliation does not receive diagram writes merely
-because it mentions entities. Changes to or removal of the source block use the
-same provenance and retrace rules as other quoted facts.
+is an explicit source-backed review after semantic extraction. The source section
+opens a mandatory diagram-coverage finding without broadening ordinary prose
+ingest writes. Quoted provenance must locate in that source block.
 
 The `diagrams` domain skill guides judgment and does not grant tools. Automatically
 activate it for diagram-coverage and diagram-targeted curate/split/retrace work,
@@ -720,32 +717,32 @@ Portable API contract for the later editor:
 
 ## Migration and persistence
 
-Set `STORE_VERSION = 6`, `UPGRADABLE_VERSION = 5`. Upgrade at the next writable
+Set `STORE_VERSION = 7`, `UPGRADABLE_VERSION = 6`. Upgrade at the next writable
 build opening, preserving the current read-only behavior before upgrade. Never
 run the migration on the dogfood to test it.
 
-- Untouched defaults live in version 5's derived/default-view projection. Discard
+- Untouched defaults live in version 6's derived/default-view projection. Discard
   them and their stale rendering outputs. Do not promote them into graph/views.
 - Preserve all curated views, including views converted by a previous edit to a
   default. Preserve provenance, identity, membership, query, exclusions, collapse,
   and limit bumps. Missing provenance receives derived migration provenance citing
-  surviving members and stating preservation of a curated version-5 view.
+  surviving members and stating preservation of a curated version-6 view.
 - Fill missing purpose with the existing title as a visibly migration-supplied
-  intent. Infer an area only when version-5 level association or query.parent is
+  intent. Infer an area only when version-6 level association or query.parent is
   unambiguous. Otherwise choose the members' common scope with extent selection;
   use the first subject for state/timing. Never guess a whole-area coverage claim.
 - Migrate explicit split links where existing exclusions or containment identify
   them unambiguously. Leave ambiguous phase linkage for authored repair, surfaced
   through diagnostics; do not infer links from matching titles alone.
-- Version 6 writes no `default` field or default-view files. Rebuild derived
+- Version 7 writes no `default` field or default-view files. Rebuild derived
   relationships, machines, query membership, and coverage findings after upgrade.
   Do not run a model during migration. Opening a store can therefore expose new
   goals without creating diagrams.
-- Keep atomic persistence and failure recovery. A failed upgrade leaves version 5
+- Keep atomic persistence and failure recovery. A failed upgrade leaves version 6
   authoritative; retry is deterministic. A second successful opening is a no-op.
-- Version 4 and older archive/rebuild under the existing one-previous-version
+- Version 5 and older archive/rebuild under the existing one-previous-version
   policy. Newer stores stay read-only and are never archived. Document this
-  consequence explicitly because version 4 currently upgrades to version 5.
+  consequence explicitly because only version 6 upgrades to version 7.
 
 ## Implementation sequence
 
@@ -775,7 +772,7 @@ run the migration on the dogfood to test it.
    output; preserve size accounting and explicit omission visibility.
 7. Extend `context.rs`, entity reads, context packing, reverse association indexing,
    members-axis handles, and context/session specifications as defined above.
-   Implement version-5 migration, store round trips, output pruning, docsgen/card/
+   Implement version-6 migration, store round trips, output pruning, docsgen/card/
    viewer/LSP updates, webapi contracts, and native adapters. Version bump lands
    with a working migration and all changed readers, never as a standalone release.
 8. Update fixtures and recorded tool sessions, run validation, commit coherent
@@ -873,7 +870,7 @@ actual gated tool execution, not model output strings asserted in isolation.
   text, over-limit notes, render failure cleanup, and deleted-view file pruning.
   Use the in-process renderer locally; official native renderer parity only when
   available, with no unsolicited download or hosted validation dispatch.
-- Migration: a real version-5-shaped disk fixture with untouched defaults plus
+- Migration: a real version-6-shaped disk fixture with untouched defaults plus
   curated views, including a curated former default. Assert defaults disappear,
   IDs/provenance and edits survive, no models run, failed-write recovery, second
   opening no-op, older archive, newer read-only, and suppression round trips.
@@ -916,7 +913,7 @@ commit. Stage and commit in one command chain, never amend, stash, or rebase.
 ## Completion and open items
 
 The implementation is complete only with saved specs, passing local checks,
-version-5 fixture migration, explicit tool-session coverage for every catalog
+version-6 fixture migration, explicit tool-session coverage for every catalog
 kind, integration into local master, and verified remote master SHA. Report
 local validation, push, artifact publication, and deployment separately. No
 publication or deployment is requested by this plan.

@@ -1,6 +1,6 @@
 // Derived data, recomputed on every commit and never written by a tool: relationships
-// (per-direction contributions), state machines, default views (with the flow
-// clustering), query membership, and the limit counts that write threshold-crossed
+// (per-direction contributions), state machines, flow area analysis, query
+// membership, and the limit counts that write threshold-crossed
 // records. Mirrors docs/compiler/graph.md#derived-data.
 use crate::ids::entity_slug;
 use crate::limits;
@@ -19,31 +19,26 @@ pub(crate) mod tests;
 mod thresholds;
 mod views;
 
-use levels::{
-    entity_document_rank_with, flow_view_level_index, level_flow_views, level_id, level_kind,
-    level_title, Levels,
-};
+use levels::{entity_document_rank_with, flow_view_level_index, level_flow_views, Levels};
 pub use levels::{
     flow_view_level, flow_view_levels, level_view_id, level_view_id_with, level_view_members,
     level_view_members_with, lift_into, view_levels,
 };
 #[cfg(test)]
-use levels::{level_flow_views_scan, level_holds, level_members_of_scan, levels, Level};
+use levels::{
+    level_flow_views_scan, level_holds, level_id, level_kind, level_members_of_scan, levels, Level,
+};
 pub(crate) use order::doc_levels_in;
 pub use order::{doc_levels_from, document_order, Indices};
 use state_machines::recompute_state_machines_with;
 pub use state_machines::{normalize_state, recompute_state_machines};
 pub use thresholds::{
-    flow_participants, flow_view_participant_count, record_threshold_crossings,
-    threshold_crossings, view_edge_count, Crossing, FLOW_KINDS,
+    authored_view_edge_count, flow_participants, flow_view_participant_count,
+    record_threshold_crossings, threshold_crossings, view_edge_count, Crossing, FLOW_KINDS,
 };
 use thresholds::{live_members, record_threshold_crossings_with};
-#[cfg(test)]
-use views::default_view_rules;
-pub use views::{children_of_view, drawn_entities_of, query_matches, recompute_default_views};
-use views::{
-    doc_stem, doc_title, drawn_entities, recompute_default_views_with, title_case, DefaultView,
-};
+pub use views::{children_of_view, drawn_entities_of, query_matches, recompute_query_views};
+use views::{doc_stem, doc_title, drawn_entities, FlowClusterSpec};
 
 // Everything derived, in dependency order: relationships feed the level and object
 // rules, state machines feed the state rule, views feed the limit counts.
@@ -53,7 +48,7 @@ pub fn recompute(store: &mut Store, build: &str, batch: &mut RecordBatch) {
     // facts they index. Mirrors docs/compiler/graph.md#derived-data.
     let ix = Indices::build(store);
     recompute_state_machines_with(store, &ix);
-    recompute_default_views_with(store, &ix, build, batch);
+    recompute_query_views(store, build, batch);
     record_threshold_crossings_with(store, &ix, batch);
 }
 
@@ -182,4 +177,24 @@ pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
         // A refusal is reported on stderr; the next derivation records them again.
         store.write_status("ledger-stale records").ok();
     }
+}
+
+/// Existing topology and source grouping without creating diagrams.
+pub fn diagram_flow_areas(store: &Store) -> Vec<(String, String, Vec<String>)> {
+    let ix = Indices::build(store);
+    level_flow_views(store, &ix)
+        .iter()
+        .filter(|(_, v)| v.kind == "use-case")
+        .map(|(target, v)| {
+            let doc = v
+                .members
+                .iter()
+                .filter_map(|id| store.graph.requirements.get(id))
+                .flat_map(|r| r.sources.iter())
+                .map(|s| s.doc.clone())
+                .next()
+                .unwrap_or_else(|| "derived".into());
+            (target.clone(), doc, v.members.clone())
+        })
+        .collect()
 }

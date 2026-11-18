@@ -883,7 +883,7 @@ fn navigation_and_changelog_prose_stays_quiet() {
 
 #[test]
 fn justification_closure_finds_a_fact_without_provenance() {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.graph.requirements.insert(
         "req:x-1".into(),
         Requirement {
@@ -932,7 +932,7 @@ fn justification_closure_finds_a_fact_without_provenance() {
 
 #[test]
 fn flow_placement_flags_an_unplaced_behavior_and_feeds_curate_view() {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     // A lone behavior requirement in another document: its cluster has one member.
     let text = "# Returns\n\nreturns body\n";
     seed_doc(&mut s, "returns.md", text);
@@ -977,7 +977,7 @@ fn flow_placement_flags_an_unplaced_behavior_and_feeds_curate_view() {
 
 #[test]
 fn provider_check_names_missing_and_ambiguous_realizers() {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
     let f = checks(&s, &Project::default());
@@ -1125,7 +1125,7 @@ fn machine_checks_read_a_merged_arrow_as_one_arrow() {
 
 #[test]
 fn conformance_check_flags_an_attribute_the_type_does_not_declare() {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     let mut batch = crate::store::RecordBatch::new(1);
     crate::derive::recompute(&mut s, "g1", &mut batch);
     let f = checks(&s, &Project::default());
@@ -1196,33 +1196,12 @@ fn level_shape_is_silent_on_a_well_shaped_store() {
 // A level of two or more without its structural view fires, on a node and on the
 // scope root alike; a one-child node is not a level and needs no view.
 #[test]
-fn level_shape_fires_for_a_missing_level_view() {
+fn missing_diagrams_are_not_level_shape_errors() {
     let mut s = level_store();
-    s.graph.views.remove("view:class/backend");
-    let hits = level_shape(&s);
-    assert_eq!(hits.len(), 1, "{:?}", hits);
-    assert_eq!(hits[0].1, ["ent:backend"]);
-    assert!(
-        hits[0].3.contains("no structural level view"),
-        "{}",
-        hits[0].3
-    );
-    assert!(hits[0].3.contains("view:class/backend"), "{}", hits[0].3);
-
-    s.graph.views.remove("view:component/public");
-    let hits = level_shape(&s);
-    assert_eq!(hits.len(), 2, "{:?}", hits);
-    assert!(hits.iter().any(|h| h.1 == ["scope:public"]), "{:?}", hits);
-
-    // Down to one child, the backend is no level: nothing to show.
-    s.graph.entities.remove("ent:database");
-    let hits = level_shape(&s);
-    assert_eq!(hits.len(), 1, "{:?}", hits);
-    assert_eq!(hits[0].1, ["scope:public"]);
+    s.graph.views.clear();
+    assert!(level_shape(&s).is_empty());
 }
 
-// A level over the hard fan-out fires until the mandatory goal regroups it; the
-// node's own bump moves the threshold. Mirrors docs/compiler/graph.md#per-node-bumps.
 #[test]
 fn level_shape_fires_over_the_hard_fan_out() {
     use crate::limits::{CHILDREN_PER_ENTITY, CHILDREN_PER_ENTITY_HARD};

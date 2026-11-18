@@ -13,7 +13,7 @@ Decide every matched node exactly one way: add it with update_view add_members, 
 
 In a flow view, place an added member at its position in the flow: the default order is document order of the members, and you reorder only when the documents state the order (a "then", a numbered step, a trigger chain where one member's receiver acts as the next member's initiator, a state the next step requires), naming the ordering sentence in the justification; a failure-mode member sits immediately after the step whose failure it handles, and a statement that belongs to another intent is that flow's member: add it to that flow in the same session, creating a use-case view with upsert_view when no flow carries its intent, and exclude it here with a note naming that flow.
 
-A membership decision on one view of a flow applies to its twin views (the use-case and sequence views sharing the title): stage the same add or exclusion there in the same session.
+Update explicitly linked diagrams when the same decision affects their distinct purposes. Equal titles do not imply twins.
 
 An exclusion note that names another view must name one that actually lists the member, added there first when none does, and one view's exclusions batch into a single update_view call, since exclude takes a list.
 
@@ -21,9 +21,9 @@ In a structural view, an added member brings every relationship among the member
 
 Retitle with update_view when the derived title reads as a fragment.
 
-Never invent a member the documents do not state, never delete a default view (exclude or collapse instead), and never satisfy a limit here by dropping members: a view the decision pushes over its limit derives split-view at commit.
+Never invent a member the documents do not state, never satisfy a limit here by dropping members: a view the decision pushes over its limit derives split-view at commit.
 
-Editing a default view makes it curated, and its derived members keep arriving.
+Queries on authored diagrams continue to supply curation matches. Every model edit needs reasoning.
 
 ## Completion gate
 

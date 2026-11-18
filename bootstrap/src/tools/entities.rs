@@ -107,50 +107,6 @@ impl ToolSession {
         ids
     }
 
-    // The level view of one entity: `view:component/<slug>` or `view:class/<slug>`
-    // when the snapshot or this session's staged views hold it, or the id the kind
-    // rule mints at commit when the entity holds two or more children after the
-    // staged work (component when the node or any child carries a structural
-    // stereotype, class otherwise). Mirrors docs/compiler/model/view.md#level-views.
-    pub(super) fn level_view_of(&self, id: &str) -> Option<String> {
-        let slug = crate::ids::entity_slug(id);
-        for kind in ["component", "class"] {
-            let vid = format!("view:{}/{}", kind, slug);
-            if self.view_known(&vid).is_some() {
-                return Some(vid);
-            }
-        }
-        let children = self.level_after(id);
-        // One child with attributes holds a level too (view.md#level-views).
-        let lone_with_attributes = children.len() == 1
-            && self
-                .staged_entities
-                .get(&children[0])
-                .or_else(|| self.snapshot.graph.entities.get(&children[0]))
-                .is_some_and(|e| !e.attributes.is_empty());
-        if children.len() < 2 && !lone_with_attributes {
-            return None;
-        }
-        let structural = |x: &str| {
-            self.staged_entities
-                .get(x)
-                .or_else(|| self.snapshot.graph.entities.get(x))
-                .and_then(|e| e.stereotype.as_deref())
-                .is_some_and(|s| {
-                    matches!(
-                        s.trim().to_lowercase().as_str(),
-                        "system" | "component" | "service" | "interface" | "actor"
-                    )
-                })
-        };
-        let kind = if structural(id) || children.iter().any(|c| structural(c)) {
-            "component"
-        } else {
-            "class"
-        };
-        Some(format!("view:{}/{}", kind, slug))
-    }
-
     // The entities a view draws: a structural view's entity members, a flow view's
     // participants (its member requirements' entities), in member order, deduped.
     fn drawn_entities(&self, v: &View) -> Vec<String> {
@@ -179,9 +135,17 @@ impl ToolSession {
     pub(super) fn view_children(&self, v: &View) -> Vec<Value> {
         self.drawn_entities(v)
             .into_iter()
-            .filter_map(|m| {
-                self.level_view_of(&m)
-                    .map(|view| json!({"member": m, "view": view}))
+            .filter(|id| !crate::board::level_members(&self.snapshot, id).is_empty())
+            .map(|member| {
+                let views: Vec<String> = self
+                    .snapshot
+                    .graph
+                    .views
+                    .iter()
+                    .filter(|(_, v)| crate::diagrams::area(v) == Some(member.as_str()))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                json!({"member":member,"target":member,"view":views.first(),"views":views})
             })
             .collect()
     }

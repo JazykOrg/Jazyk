@@ -93,18 +93,21 @@ fn render_all_writes_paths_and_skips_unchanged() {
         .unwrap()
         .title = "Checkout flow".into();
     let third = render_all(&s, &out);
-    assert_eq!(third.removed, vec!["sequence/checkout".to_string()]);
+    assert_eq!(
+        third.removed,
+        vec!["state/order".to_string(), "sequence/checkout".to_string()]
+    );
     assert!(!crate::layout::derived_dir(&out)
         .join("diagrams/sequence/checkout.svg")
         .vexists());
-    assert!(crate::layout::derived_dir(&out)
+    assert!(!crate::layout::derived_dir(&out)
         .join("diagrams/state/order.svg")
         .vexists());
     assert!(third
         .rendered
         .contains(&"view:usecase/checkout".to_string()));
-    assert!(third.skipped.contains(&"view:state/order".to_string()));
-    assert!(png.vexists());
+    assert!(!third.skipped.contains(&"view:state/order".to_string()));
+    assert!(!png.vexists());
     s.graph
         .requirements
         .get_mut("req:shop-7")
@@ -115,7 +118,7 @@ fn render_all_writes_paths_and_skips_unchanged() {
         .trigger = Some("payment cleared".into());
     recompute(&mut s, "g3", &mut RecordBatch::new(3));
     let fourth = render_all(&s, &out);
-    assert!(fourth.rendered.contains(&"view:state/order".to_string()));
+    assert!(!fourth.rendered.contains(&"view:state/order".to_string()));
     assert!(!png.vexists());
     let _ = crate::vfs::remove_dir_all(&out);
 }

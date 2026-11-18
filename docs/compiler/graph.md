@@ -60,7 +60,7 @@ got there: the [graph](./model.md) under `graph/`, its decisions under
 `graph/decisions/`, the sources under `sources/`, the ledger under `gen/`, and
 `store.yaml`. Work to do is never stored ([what needs building](#what-needs-building)).
 
-- `store.yaml`: `version`, the store version, `5`.
+- `store.yaml`: `version`, the store version, `7`.
 - `graph/decisions/<kind>/<file id>.yaml`: one judgment made on purpose so no later
   build asks again: two similar entities kept apart (`lookalikes/`), two requirements
   judged against each other (`pairs/`), an entity reviewed (`reviews/`), an instance
@@ -137,12 +137,9 @@ different nodes touch different files and git merges them without a conflict.
 - A save writes the files whose bytes changed and deletes the files of nodes that left
   the graph. A file whose name does not decode, or whose content does not parse, makes
   the store read-only ([writes and unreadable files](#writes-and-unreadable-files)).
-- Derived kinds (`derived/graph/default-views/`, `derived/graph/relationships/`,
-  `derived/graph/state-machines/`) are rebuilt ([committed and local state](#committed-and-local-state)).
-  A load that finds any of these directories missing recomputes all three from the facts
-  in memory. The next commit writes them. A view stops being derived the moment a
-  mutation names it ([default views](./model/view.md#default-views)): it moves from
-  `derived/graph/default-views/` to the committed `graph/views/`.
+- Relationships and state machines are rebuilt under `derived/graph/`.
+  Missing derived files are recomputed from current facts. Views remain authored
+  files under `graph/views/`; a query expands only an existing view.
 
 ### Committed and local state
 
@@ -241,11 +238,12 @@ and the sweep would collect the requirements of a document whose record did not 
 
 ### Store version
 
-`store.yaml` carries `version: 6`. The current layout keeps graph, decisions,
+`store.yaml` carries `version: 7`. The current layout keeps graph, decisions,
 sources, and ledger committed; machine state remains local.
 
-- Version 5 loads with each requirement `source` converted to `sources: [source]`.
-  The next build opening rewrites the store under the lock, preserving ids.
+- Version 6 loads its authored graph without untouched default views.
+  The next writable build opening rewrites the store under the lock, preserving
+  curated view IDs, provenance and content.
   Older versions archive and rebuild. No earlier layout migration is supported.
 - A store whose version is newer than the binary's is never archived and never
   written. Jazyk refuses to work on it:
@@ -264,7 +262,7 @@ sources, and ledger committed; machine state remains local.
   A project compiled in two places with different releases loses nothing, and neither
   does an older Jazyk left running against a newer project, e.g. after a rollback.
   Version 4 releases that carry the newer-store guard read a `store.yaml` the same way.
-- A store of an older version than 4, or with no version (no `store.yaml` and no
+- A store of an older version than 6, or with no version (no `store.yaml` and no
   `status.yaml`), is archived whole to
   `.jazyk/local/archive/<set-id>-v<N>/` at the start of a build (an existing archive of
   the same set and version is replaced), and the store starts empty. The next build
@@ -297,7 +295,7 @@ Sessions reach the first six groups as [write tools](./tools.md#write-tools) and
 [chat tools](./tools.md#chat-tools) and the GUI inspector stage them. `mark_goal_done` and
 `mark_goal_failed` are not mutations: they record goal resolutions in the journal and
 clear or keep change records ([goal tools](./tools.md#goal-tools)). Relationships, state
-machines, and default views have no mutation at all: they are
+machines have no mutation at all: they are
 [derived data](#derived-data).
 
 Their semantics:
@@ -340,17 +338,9 @@ Their semantics:
   `distinct_from` (minus the pair itself), and `limits` (the higher bump stands on a
   clash), and writes a redirect from the absorbed id to the survivor. Downstream consumers holding the old id
   follow the redirect. A merge that would make the survivor its own ancestor is rejected.
-- `upsert_view` creates or refreshes a view by `kind` and `title`. `update_view` sets
-  `title`, `members` (the whole ordered list), `add_members`, `remove_members`, `query`,
-  `collapse`, and `exclude` (an `{id, note}` pair). A default view carries the boolean
-  field `default: true`, and any mutation that names the view clears it: `update_view`
-  with any field, `edit_fact`, a decree, `bump_limit`, or an `upsert_view` that lands
-  on the default's `kind` and `title`. From then on the recompute leaves the view
-  alone. On a still-default view the recompute rewrites `title`, `members` (its
-  exclusions kept out), `query`, and `provenance`; its `excluded`, `collapse`, and
-  `limits` survive it. `delete_view` requires a
-  `reason`; on a default view it is refused, because the next commit would derive the
-  view again. See [default views](./model/view.md#default-views).
+- `upsert_view` creates an authored diagram by kind and title. `update_view` edits
+  its membership and presentation intent. `delete_view` requires a reason and
+  never causes automatic recreation. See [view tools](./tools.md#view-tools).
 - `place_anchor` rewrites one anchor's `doc` and `section` (and `quote` when given).
   An anchor whose quote does not locate in its new section stays stale, and its section
   reconciles. With `reevaluate`, it drops the target section's hash in `sources/`, so the
@@ -374,7 +364,7 @@ Their semantics:
   way and the inserted text takes CRLF.
 - `edit_fact` sets one field on one node (`statement`, `edges`, `transition`, `facets`,
   `definition`, `stereotype`, `parent`, an attribute's `type` or `value`, a view's
-  `members`). On a default view it clears `default`. Paired with `edit_doc_prose` it
+  `members`). Paired with `edit_doc_prose` it
   is a dual write: the fact stays quoted,
   the quote pointing at the rewritten sentence. A graph-only edit requires explicit
   derived provenance (`from` and `reasoning`) or an explicit human `decision`.
@@ -390,7 +380,7 @@ Their semantics:
   value and source recorded in the decree's journal entry. The open `ratify` goal closes
   with the record it stood on.
 - `bump_limit` sets `limits.<limit>` on one entity or view to a value, recorded with
-  decree provenance in the journal. On a default view it clears `default`. See
+  decree provenance in the journal. See
   [per-node bumps](#per-node-bumps).
 
 ## Changesets
@@ -593,25 +583,8 @@ from the facts because it is a function of them.
   [derivation](./model/state-machine.md#derivation).
   The [checks](./model/state-machine.md#checks) run on the derived machine at the end of
   the build.
-- Default views derive by rule, six kinds with stable ids: a structural level view per
-  node with at least two children, the scope root included (`view:class/<slug>` or
-  `view:component/<slug>` by the stereotypes present; the scope root's view is the
-  per-scope view, see [level views](./diagrams.md#level-views)), a use-case view and a
-  sequence view per flow cluster of a level (`view:usecase/<node-slug>-<doc-slug>`,
-  `view:sequence/<node-slug>-<doc-slug>`), a state view per derived state machine
-  (`view:state/<entity-slug>`), and an object view per type (`view:object/<type-slug>`,
-  an entity that is `b` of an `instantiation` group). Flow clustering is deterministic:
-  a `behavior` or `failure-mode` requirement is keyed by its document, each entity
-  lifted to its nearest ancestor in the level, the cluster slug is the document stem,
-  members are in document order, and a cluster of fewer than two members derives no
-  view. A default view is stored under `default-views/`
-  (local) under its stable id with the boolean field `default: true` and provenance
-  `{derived: {from: [...], reasoning: "default view: <rule>"}}`. On every commit the
-  store creates the views whose rule holds, rewrites `title`, `members`, `query`, and
-  `provenance` on the ones still marked `default` (their `excluded`, `collapse`, and `limits` survive), removes
-  the ones whose rule stopped holding, and leaves a view without `default` alone. A
-  view with a `query` recomputes its members from the query whether or not it is
-  default. See [default views](./model/view.md#default-views).
+- Query membership expands existing authored diagrams and supplies curation work.
+  No default diagram definition is created, rewritten or removed by recomputation.
 - A committed requirement adds its source as a mention on every entity it references
   (deduplicated). An entity reused by reference accumulates cross-document presence
   without an explicit `upsert_entity` call. These mentions are derived: an entity file
@@ -896,7 +869,7 @@ commit swept. Nothing waits for the next build: the graph is honest between buil
   entity a document states holds children in role, not in provenance, and the rule
   never touches it.
 - A deleted requirement takes its edges and its transition with it: relationships and
-  state machines recompute; default and query views recompute. A curated view keeps its
+  state machines recompute; authored queries re-match. An authored view keeps its
   member list, and a `view-member-gone` record opens [`retrace`](./goals/retrace.md) on
   it. A derived node whose `from` names the dead node gets a `node-deleted` record and a
   `retrace` of its own. Apart from the dissolve rule, the sweep never deletes derived
@@ -1095,3 +1068,11 @@ The quote gate requires a non-empty verbatim contiguous passage within one secti
 it does not count sentences. Every source participates independently in alignment,
 stale-anchor checks, change records, and the sweep. A missing section removes only
 its sources. Statement hashes exclude sources; review fact hashes include them.
+
+## Authored diagram persistence
+
+Only relationships, machines, query membership and indexes are computed at commit.
+Views are authored graph nodes. Store version 7 upgrades version 6 at the next
+writable opening. Untouched defaults are discarded. Curated views preserve IDs,
+provenance and content. Older stores archive; newer stores remain read-only.
+Diagram suppression decisions live in `graph/decisions/diagram-coverage/`.

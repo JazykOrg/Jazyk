@@ -298,7 +298,7 @@ fn entity_hover_on_a_derived_grouping_names_its_proposal() {
     crate::vfs::remove_dir_all(&tmp).ok();
     let out = tmp.join(".jazyk");
     crate::vfs::create_dir_all(&out).unwrap();
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.out = out.clone();
     s.graph.entities.insert(
         "ent:promotions".into(),

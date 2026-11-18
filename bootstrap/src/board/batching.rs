@@ -479,6 +479,15 @@ pub(super) fn locality_keys(store: &Store, g: &Goal) -> Vec<String> {
     let mut entity_keys = |ids: &[String]| entity_keys_into(store, &mut keys, ids);
     let mut own: Vec<String> = Vec::new();
     match g.kind.as_str() {
+        "diagram-coverage" => {
+            if let Some(target) = g.change["target"].as_str() {
+                if let Some(scope) = scope_target(target) {
+                    own.push(format!("scope {}", scope));
+                } else {
+                    entity_keys(&[target.to_string()]);
+                }
+            }
+        }
         "place-anchors" => own.push(format!("doc {}", g.target)),
         "reconcile-section" => {
             if let Some(d) = target_doc(&g.target) {

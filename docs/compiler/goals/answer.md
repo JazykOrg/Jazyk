@@ -242,3 +242,5 @@ The tools that create the goal belong to sessions and workers:
 ([write tools](../tools.md#write-tools)), `record_generation`'s invented choices
 ([generation tools](../tools.md#generation-tools)), and the checks that attach prompts
 mechanically.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

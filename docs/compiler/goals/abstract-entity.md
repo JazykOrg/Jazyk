@@ -222,11 +222,9 @@ any alternative the requirements support), `freeform: true`. The commit writes
   ([`rejudge-pair`](./rejudge-pair.md)), and the ledger comparison flags the target's
   changed fact set for [`generate`](./generate.md)
   ([compile and garbage collection](../compilation.md#compile-and-garbage-collection)).
-- Derived data recomputes at commit: relationships regroup around the sub-entities, the
-  target's machine shrinks to the transitions still on it, a level view derives for the
-  target once it has two children ([level views](../diagrams.md#level-views)), and the
-  scope root's level view keeps showing the target with the sub-entities lifted into it
-  ([default views](../model/view.md#default-views)).
+- Relationships and state machines recompute at commit. Containment navigation
+  exposes the new levels without a diagram. Diagram review considers the area
+  after structural and requirement reviews settle.
 - Lifting keeps the coarse views true: a relationship touching a sub-entity lifts to the
   target wherever a view shows the target collapsed
   ([lifting and collapse](../diagrams.md#lifting-and-collapse)). The session collapses
@@ -392,7 +390,7 @@ limit reopens it.
   level (`g:abstract-entity:scope:public` for the default scope). The cone is the node's
   subtree, the whole scope for the root form; the goal is ready when no compile goal is
   open in it, the existing GC rule ([GC gating](../reconciler.md#gc-gating)). Leaves
-  reconcile first, groupings form cone by cone, and each new level's views derive after.
+  reconcile first, groupings form cone by cone, and each new level becomes eligible for diagram review after.
 - Minimum membership is not a limit row: a derived grouping with fewer than two children
   dissolves in [the sweep](../graph.md#the-sweep) at commit, so nothing derives for it.
 
@@ -541,10 +539,10 @@ relationships, and `expand` reaches a member's statements when a boundary needs 
   sibling with `update_entity` `parent`; dissolve a grouping that lost its reason with
   `dissolve_entity`. Higher levels carry no requirements of their own: lifting covers
   edges and flows ([lifting and collapse](../diagrams.md#lifting-and-collapse)).
-- After the commit, a level view derives for each grouping with two or more children and
-  the diagrams link down into it ([drill-down](../concepts/levels.md#drill-down),
-  [drill-down rendering](../diagrams.md#drill-down)); the ancestor's goal re-derives
-  from the counts the commit leaves ([batching](#batching)).
+- After the commit, containment navigation exposes each grouping's children.
+  Authored diagrams keep their identities. Diagram review considers the changed
+  area after semantic reviews settle. The ancestor's goal is recomputed from the
+  counts the commit leaves ([batching](#batching)).
 
 ### Fan-out tools
 
@@ -567,3 +565,5 @@ view tools, and `report_feedback` apply as in [tools](#tools). No `delete_entity
 `merge_entities`.
 
 Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

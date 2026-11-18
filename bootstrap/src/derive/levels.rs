@@ -3,7 +3,8 @@ use super::*;
 // ---- levels ----
 
 // The stereotypes that make a level's view a component view.
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
+#[cfg(test)]
 const STRUCTURAL_STEREOTYPES: [&str; 5] = ["system", "component", "service", "interface", "actor"];
 
 // One level: a node's direct children, or the parentless entities of a scope for the
@@ -20,7 +21,7 @@ pub(super) struct Level {
 // Entities ranked in document order: the earliest position among an entity's mentions
 // and the sources of the requirements naming it (document link level, then path, then
 // section line), entities no document places last, ties by id.
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
 pub(super) fn entity_document_rank_with(
     store: &Store,
     levels: &BTreeMap<String, usize>,
@@ -114,15 +115,9 @@ pub(super) fn levels(store: &Store, ix: &Indices) -> Vec<Level> {
 
 // Whether a level derives a view: two or more children, or one child that carries
 // attributes, since the class box is the only place an attribute is drawn.
-// Mirrors docs/compiler/model/view.md#level-views.
-pub(super) fn level_holds(store: &Store, level: &Level) -> bool {
-    level.children.len() >= 2
-        || (level.children.len() == 1
-            && store
-                .graph
-                .entities
-                .get(&level.children[0])
-                .is_some_and(|e| !e.attributes.is_empty()))
+// Mirrors docs/compiler/model/view.md#membership.
+pub(super) fn level_holds(_store: &Store, level: &Level) -> bool {
+    !level.children.is_empty()
 }
 
 // The level a target names, when it derives a view: a node id (redirects followed)
@@ -140,7 +135,8 @@ fn level_of_target<'a>(store: &Store, target: &str, ix: &'a Indices) -> Option<&
 
 // The kind rule: component when the node, any child, or any descendant below a
 // child carries a structural stereotype (a grouping of components is a component
-// level), class otherwise. Mirrors docs/compiler/model/view.md#level-views.
+// level), class otherwise. Mirrors docs/compiler/model/view.md#membership.
+#[cfg(test)]
 pub(super) fn level_kind(store: &Store, ix: &Indices, level: &Level) -> &'static str {
     fn structural(store: &Store, id: &str) -> bool {
         store
@@ -175,6 +171,7 @@ pub(super) fn level_kind(store: &Store, ix: &Indices, level: &Level) -> &'static
 }
 
 // The slug segment of a level view id: the node's slug, the scope's for the root form.
+#[cfg(test)]
 fn level_slug(level: &Level) -> String {
     match level.node.as_deref() {
         Some(node) => entity_slug(node).to_string(),
@@ -183,12 +180,6 @@ fn level_slug(level: &Level) -> String {
 }
 
 // The title of a level view: the node's name, the scope's name title-cased for the root.
-pub(super) fn level_title(store: &Store, level: &Level) -> String {
-    match level.node.as_deref() {
-        Some(node) => store.graph.entities[node].name.clone(),
-        None => title_case(&level.scope),
-    }
-}
 
 // The nearest ancestor of `id` (itself included) among `members`: the renderer's
 // lifting applied at derivation. None when no ancestor is a member.
@@ -268,7 +259,7 @@ pub(super) struct Levels {
     // The members of every held level, by target.
     pub(super) members: BTreeMap<String, Vec<String>>,
     // Every level's flow views with the level each belongs to.
-    pub(super) flow_views: Vec<(String, DefaultView)>,
+    pub(super) flow_views: Vec<(String, FlowClusterSpec)>,
 }
 
 impl Levels {
@@ -326,7 +317,7 @@ impl Levels {
         // lifts to nothing and is not the node), each group in document order. An
         // instantiation contribution does not count: instances live in object views,
         // so the reference graph's shop level lists the customer and not Ana's cart.
-        // Mirrors docs/compiler/model/view.md#level-views.
+        // Mirrors docs/compiler/model/view.md#membership.
         let frames: Vec<Vec<String>> = levels.iter().map(|l| frame_of(store, l)).collect();
         let mut outside: Vec<Vec<String>> = vec![Vec::new(); levels.len()];
         for rel in store.graph.relationships.values() {
@@ -367,7 +358,7 @@ impl Levels {
         // requirements whose entities lift to at least one member, clustered by
         // document (the author's own cut of the subject into flows; the actors are
         // read off the members at render time, never baked into the key).
-        // Mirrors docs/compiler/model/view.md#level-views.
+        // Mirrors docs/compiler/model/view.md#membership.
         let mut clusters: Vec<BTreeMap<String, Vec<String>>> = vec![BTreeMap::new(); levels.len()];
         for rid in &ix.document_order {
             let r = &store.graph.requirements[rid];
@@ -436,8 +427,8 @@ impl Levels {
 
 // Whether a flow view's participants all lift to groupings: boxes no document states
 // messaging each other, so the view is dropped.
-// Mirrors docs/compiler/model/view.md#level-views.
-fn flow_view_all_groupings(store: &Store, members: &[String], w: &DefaultView) -> bool {
+// Mirrors docs/compiler/model/view.md#membership.
+fn flow_view_all_groupings(store: &Store, members: &[String], w: &FlowClusterSpec) -> bool {
     let drawn: BTreeSet<String> = flow_participants(store, &w.members)
         .into_iter()
         .map(|p| lift_into(store, members, &p).unwrap_or(p))
@@ -488,7 +479,7 @@ pub(super) fn level_members_of_scan(store: &Store, level: &Level, ix: &Indices) 
 
 // The members of a target's level view: the direct children plus the outside entities
 // with a lifted edge into the level, in document order. Empty for a target that has
-// no level view. Mirrors docs/compiler/model/view.md#level-views.
+// no level view. Mirrors docs/compiler/model/view.md#membership.
 pub fn level_view_members(store: &Store, target: &str) -> Vec<String> {
     level_view_members_with(store, &Indices::build(store), target)
 }
@@ -503,17 +494,27 @@ pub fn level_view_members_with(store: &Store, ix: &Indices, target: &str) -> Vec
 // The structural level view a target has: `view:<kind>/<node-slug>` for a node with
 // two or more children, `view:<kind>/<scope>` for a scope root with two or more
 // parentless entities, the kind by the kind rule. None otherwise.
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
 pub fn level_view_id(store: &Store, target: &str) -> Option<String> {
     level_view_id_with(store, &Indices::build(store), target)
 }
 
 pub fn level_view_id_with(store: &Store, ix: &Indices, target: &str) -> Option<String> {
-    let level = level_of_target(store, target, ix)?;
-    Some(level_id(store, ix, level))
+    let _ = ix;
+    store
+        .graph
+        .views
+        .iter()
+        .find(|(_, v)| {
+            ["class", "component", "package", "composite"].contains(&v.kind.as_str())
+                && (crate::diagrams::area(v) == Some(target)
+                    || v.query.as_ref().and_then(|q| q.parent.as_deref()) == Some(target))
+        })
+        .map(|(id, _)| id.clone())
 }
 
 // The id of a level's structural view: the kind by the kind rule, then the slug.
+#[cfg(test)]
 pub(super) fn level_id(store: &Store, ix: &Indices, level: &Level) -> String {
     format!(
         "view:{}/{}",
@@ -522,24 +523,23 @@ pub(super) fn level_id(store: &Store, ix: &Indices, level: &Level) -> String {
     )
 }
 
-// The level every default level view and lifted flow view belongs to: a lifted flow
+// The explicit area every authored structural or flow view belongs to: a flow
 // view's level first, then the target whose structural level view the id is (an
 // entity, or `scope:<scope>` for a top level; a node ahead of a scope root when two
 // targets slug alike). A curated, object, or state view is absent.
 // Mirrors docs/compiler/reconciler.md#gc-gating.
 pub fn view_levels(store: &Store, ix: &Indices) -> BTreeMap<String, String> {
-    let mut out = flow_view_level_index(store, ix);
-    let lv = ix.levels(store);
-    let held: Vec<&Level> = lv.held.iter().map(|i| &lv.levels[*i]).collect();
-    for l in held.iter().filter(|l| l.node.is_some()) {
-        out.entry(level_id(store, ix, l))
-            .or_insert_with(|| l.target.clone());
-    }
-    for l in held.iter().filter(|l| l.node.is_none()) {
-        out.entry(level_id(store, ix, l))
-            .or_insert_with(|| l.target.clone());
-    }
-    out
+    let _ = ix;
+    store
+        .graph
+        .views
+        .iter()
+        .filter(|(_, v)| {
+            ["class", "component", "package", "composite"].contains(&v.kind.as_str())
+                || FLOW_KINDS.contains(&v.kind.as_str())
+        })
+        .filter_map(|(id, v)| crate::diagrams::area(v).map(|t| (id.clone(), t.to_string())))
+        .collect()
 }
 
 // The flow rule instances of one level by the scan over every requirement: the
@@ -550,7 +550,7 @@ fn flow_view_rules_scan(
     ix: &Indices,
     level: &Level,
     members: &[String],
-) -> Vec<DefaultView> {
+) -> Vec<FlowClusterSpec> {
     let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for rid in &ix.document_order {
         let r = &store.graph.requirements[rid];
@@ -592,15 +592,15 @@ fn flow_view_rules_scan(
     flow_views_of_clusters(store, level, clusters)
 }
 
-// The flow views of one level's clusters: a cluster of two or more derives a use-case
-// view and, when two or more of its members carry an edge, a sequence view. The root
+// Candidate flow clusters for analysis and fixture authoring. These specifications
+// never create graph nodes. The root
 // form keeps the unprefixed ids; a node prefixes its slug.
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
 fn flow_views_of_clusters(
     store: &Store,
     level: &Level,
     clusters: BTreeMap<String, Vec<String>>,
-) -> Vec<DefaultView> {
+) -> Vec<FlowClusterSpec> {
     let mut out = Vec::new();
     let prefix = match level.node.as_deref() {
         Some(node) => format!("{}-", entity_slug(node)),
@@ -633,7 +633,7 @@ fn flow_views_of_clusters(
             .collect();
         let mut uc_from = from.clone();
         uc_from.extend(cluster.iter().cloned());
-        out.push(DefaultView {
+        out.push(FlowClusterSpec {
             id: format!("view:usecase/{}", slug),
             kind: "use-case",
             title: title.clone(),
@@ -644,7 +644,7 @@ fn flow_views_of_clusters(
         });
         if with_edges.len() >= 2 {
             from.extend(with_edges.iter().cloned());
-            out.push(DefaultView {
+            out.push(FlowClusterSpec {
                 id: format!("view:sequence/{}", slug),
                 kind: "sequence",
                 title,
@@ -660,15 +660,18 @@ fn flow_views_of_clusters(
 
 // Every level's flow views with the level each belongs to. A view whose participants
 // all lift to groupings is dropped: boxes no document states messaging each other.
-// Mirrors docs/compiler/model/view.md#level-views.
-pub(super) fn level_flow_views<'a>(store: &Store, ix: &'a Indices) -> &'a [(String, DefaultView)] {
+// Mirrors docs/compiler/model/view.md#membership.
+pub(super) fn level_flow_views<'a>(
+    store: &Store,
+    ix: &'a Indices,
+) -> &'a [(String, FlowClusterSpec)] {
     &ix.levels(store).flow_views
 }
 
 // Every level's flow views by the scans over every level: the reference the level
 // index is checked against.
 #[cfg(test)]
-pub(super) fn level_flow_views_scan(store: &Store, ix: &Indices) -> Vec<(String, DefaultView)> {
+pub(super) fn level_flow_views_scan(store: &Store, ix: &Indices) -> Vec<(String, FlowClusterSpec)> {
     let mut out = Vec::new();
     for l in levels(store, ix)
         .into_iter()
@@ -685,7 +688,7 @@ pub(super) fn level_flow_views_scan(store: &Store, ix: &Indices) -> Vec<(String,
     out
 }
 
-// The level a default flow view was derived for: the node id, or `scope:<scope>` for
+// The explicit area of an authored flow view: the node id, or `scope:<scope>` for
 // the root form. None for a flow view no level's rule names (a curated flow).
 pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
     let ix = Indices::build(store);
@@ -695,19 +698,20 @@ pub fn flow_view_level(store: &Store, view_id: &str) -> Option<String> {
 // The level of every lifted flow view, the first rule instance naming an id winning,
 // as `flow_view_level` reads it. Built once for a walk over every view.
 pub(super) fn flow_view_level_index(store: &Store, ix: &Indices) -> BTreeMap<String, String> {
-    let mut out = BTreeMap::new();
-    for (t, w) in level_flow_views(store, ix) {
-        out.entry(w.id.clone()).or_insert_with(|| t.clone());
-    }
-    out
+    view_levels(store, ix)
+        .into_iter()
+        .filter(|(id, _)| {
+            store
+                .graph
+                .views
+                .get(id)
+                .is_some_and(|v| FLOW_KINDS.contains(&v.kind.as_str()))
+        })
+        .collect()
 }
 
 // Every lifted flow view with the level it belongs to, computed once for a walk over
 // the whole project. Mirrors docs/consumers/docsgen.md#entity-cards.
 pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
-    let ix = Indices::build(store);
-    level_flow_views(store, &ix)
-        .iter()
-        .map(|(t, w)| (w.id.clone(), t.clone()))
-        .collect()
+    flow_view_level_index(store, &Indices::build(store))
 }

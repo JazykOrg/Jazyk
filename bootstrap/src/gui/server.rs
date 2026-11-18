@@ -173,6 +173,10 @@ fn api_routes() -> Router<SharedState> {
         .route("/explain", get(board_api::explain))
         .route("/ripple", get(board_api::ripple))
         .route("/views", get(views_api::views))
+        .route(
+            "/diagram-suppressions",
+            get(views_api::diagram_suppressions),
+        )
         .route("/views/{id}", get(views_api::view))
         .route("/views/{id}/page", get(card_api::view_page_handler))
         .route("/tree", get(views_api::tree))

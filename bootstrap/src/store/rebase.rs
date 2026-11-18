@@ -37,7 +37,14 @@ const ENTITY_REWRITES: [&str; 8] = [
     "set_attributes",
     "provenance",
 ];
-const VIEW_REWRITES: [&str; 5] = ["title", "members", "query", "collapse", "reasoning"];
+const VIEW_REWRITES: [&str; 6] = [
+    "title",
+    "members",
+    "query",
+    "collapse",
+    "reasoning",
+    "authored",
+];
 
 // Whether a mutation commutes with any other: creates reconcile by natural key, an
 // additive entity or view update unions, a finding's id is its natural key.

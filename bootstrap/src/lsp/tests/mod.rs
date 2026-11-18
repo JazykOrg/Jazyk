@@ -34,7 +34,7 @@ fn lsp_at(root: std::path::PathBuf, out: std::path::PathBuf, store: Store) -> Ls
 
 // The showcase graph with its derived data, its out directory under `tmp`.
 fn shop_at(out: &std::path::Path) -> Store {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     s.out = out.to_path_buf();
     s.graph
         .entities

@@ -12,7 +12,9 @@ pub const TOOLS: [&str; 2] = ["list_jazyk_skills", "read_jazyk_skill"];
 // What a skill-gated chat catalog always lists; each workflow skill's front
 // matter lists the rest under `tools`.
 // Mirrors docs/frontends/agent-workflows.md#skill-gated-tools.
-pub const CORE_TOOLS: [&str; 23] = [
+pub const CORE_TOOLS: [&str; 25] = [
+    "list_views",
+    "list_diagram_suppressions",
     "project_context",
     // Served only where no project exists, as the way to create one.
     "init_project",

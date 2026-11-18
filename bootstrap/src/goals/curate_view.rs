@@ -123,18 +123,12 @@ impl GoalKind for CurateView {
     }
 }
 
-pub(super) fn view_gates(store: &Store, staged: &[Op]) -> Vec<Violation> {
+pub(super) fn view_gates(_store: &Store, staged: &[Op]) -> Vec<Violation> {
     let mut out = Vec::new();
     const PLACEHOLDERS: [&str; 5] = ["none", "n/a", "na", "-", "null"];
     for op in staged {
         match op {
             Op::DeleteView { id, reason } => {
-                if store.graph.views.get(id).is_some_and(|v| v.default) {
-                    out.push(Violation::new(
-                        "default-view",
-                        format!("{} is a default view; exclude members or curate it instead of deleting", id),
-                    ));
-                }
                 if reason.trim().is_empty() {
                     out.push(Violation::new(
                         "reason-required",

@@ -565,8 +565,8 @@ fn real_extraction_commits_graph_identity_and_survives_snapshot_reload() {
         .keys()
         .any(|p| p.starts_with(".jazyk/ds_main/local/journal/")));
     assert!(
-        snapshot.keys().any(|p| p.ends_with(".svg")),
-        "hosted compilation should retain diagram output"
+        !snapshot.keys().any(|p| p.ends_with(".svg")),
+        "a graph without authored diagrams has no diagram output"
     );
     let mut restored = Workspace::new(snapshot).unwrap();
     assert_eq!(
@@ -639,7 +639,7 @@ fn hosted_image_upload_survives_projection_and_workspace_reload() {
 fn a_hosted_compile_never_writes_a_newer_store() {
     let mut w = workspace("Alpha");
     for (path, bytes) in [
-        (".jazyk/ds_main/store.yaml", &b"version: 7\n"[..]),
+        (".jazyk/ds_main/store.yaml", &b"version: 8\n"[..]),
         (
             ".jazyk/ds_main/graph/entities/x.yaml",
             &b"# Jazyk entity\nid: ent:x\nname: X\n"[..],
@@ -683,10 +683,10 @@ fn a_hosted_compile_never_writes_a_newer_store() {
 
 // The previous format upgrades without model execution and preserves requirement ids.
 #[test]
-fn a_hosted_compile_without_sessions_upgrades_a_version_5_store() {
+fn a_hosted_compile_without_sessions_upgrades_a_version_6_store() {
     let mut w = workspace("Alpha");
     w.files
-        .insert(".jazyk/ds_main/store.yaml".into(), b"version: 5\n".to_vec());
+        .insert(".jazyk/ds_main/store.yaml".into(), b"version: 6\n".to_vec());
     w.files.insert(".jazyk/ds_main/graph/requirements/req~alpha.yaml".into(), b"id: req:alpha\nstatement: Alpha exists.\nentities: []\nsource: {doc: docs/main.md, section: /alpha, quote: Navigation index.}\n".to_vec());
     let calls = Arc::new(AtomicUsize::new(0));
     let seen = calls.clone();
@@ -702,7 +702,7 @@ fn a_hosted_compile_without_sessions_upgrades_a_version_5_store() {
     assert_eq!(calls.load(Ordering::SeqCst), 0, "{result}");
     let files = w.snapshot();
     let store = String::from_utf8_lossy(&files[".jazyk/ds_main/store.yaml"]);
-    assert!(store.contains("version: 6"), "{store}");
+    assert!(store.contains("version: 7"), "{store}");
     let req = String::from_utf8_lossy(&files[".jazyk/ds_main/graph/requirements/req~alpha.yaml"]);
     assert!(req.contains("id: req:alpha"), "{req}");
     assert!(req.contains("sources:"), "{req}");

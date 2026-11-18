@@ -29,9 +29,7 @@ the goal:
   as the query says, so the diagram is current meanwhile; the finding asks whether it
   belongs. `detail` names the matched ids and the query clause each matched. Resolving
   the goal keeps the node or excludes it with a note, and writes the decision with
-  every node the query matches now, so only a later match asks again. A default view
-  has no such finding: the harness owns its membership and a match joins silently. Any mutation on a default view makes it curated
-  ([default views](../model/view.md#default-views)).
+  every node the query matches now, so only a later match asks again.
 - `flow-unplaced` (`via: flow-placement`): the flow placement
   [check](../compilation.md#checks) at the end of a build found a `behavior` requirement
   in no flow view and excluded from none (`unplaced-behavior`), or a `failure-mode`
@@ -42,14 +40,15 @@ the goal:
 The check matches a requirement to a view deterministically:
 
 - the flow view of the requirement's own cluster, its document's flow at the root level
-  ([flow clusters](../model/view.md#default-views)), when one exists;
+  ([flow clusters](../model/view.md#membership)), when one exists;
 - else the flow view sharing the most entities with the requirement, ties broken by the
   same document first, then by document order of the views' first members;
 - the rest of the ranking rides in `detail` as alternatives.
 
-A cluster of one member derives no default view, which is the common way a requirement
-ends up unplaced: its actor's other statements live in another document. The check runs
-only where flow views exist; a project with no flow view has no such finding. E.g.:
+When no suitable flow diagram exists, coverage analysis opens diagram review.
+The placement check does not report an error merely because no flow diagram has
+been authored. Curation places new statements into existing authored diagrams.
+E.g.:
 
 ```yaml
 - kind: flow-unplaced
@@ -99,13 +98,13 @@ What the gate does not check is placement quality: whether the step sits where t
 documents put it. The justification names the sentence that orders it (a "then", a
 numbered step, a trigger chain, a state the next step requires), and document order
 stands unless the documents state otherwise
-([flow order](../model/view.md#default-views)).
+([flow order](../model/view.md#membership)).
 
 Bounds:
 
 - A decision that pushes the view over a limit is correct here and derives
   [`split-view`](./split-view.md) at commit. Never satisfy a limit by dropping a member.
-- `delete_view` on a default view is rejected; exclusion is the move. A query that
+- `delete_view` requires a reason. A query that
   matches wrongly is narrowed (`scope`, `parent`, `stereotype`, `depth`) rather than
   replaced by a list, so later matches keep arriving as `query-match`.
 - A missing arrow in a structural view is a missing edge
@@ -115,7 +114,7 @@ Bounds:
   flow kinds ([validation gates](../graph.md#validation-gates)).
 
 At `done`, the per-mutation gates hold and a clean batch commits
-([commit](../sessions.md#commit)). Any mutation on a default view clears its `default`;
+([commit](../sessions.md#commit)). Every saved diagram remains authored;
 the view is curated from then on, its `query` (when it has one) keeps matching, and its
 `excluded` and `collapse` lists stand. The flow placement check at the end of the build
 resolves the diagnostics whose requirement is placed or excluded.
@@ -153,7 +152,7 @@ line, the gate in one line, and the hints. E.g.:
   position in the flow, or exclude it with update_view exclude and a note naming the
   sentence or the rule that keeps it out. Document order stands unless the documents
   state the order; a failure-mode member sits right after the step whose failure it
-  handles. Never invent a member, never delete a default view.
+  handles. Never invent a member, delete a diagram only with a reason.
   Change: req:returns-2 (behavior) in no flow view (g419); shares ent:customer.
   Gate: every matched node is a member, or excluded with a note.
   Hints: load view:usecase/customer-shop; load req:returns-2 (unplaced behavior);
@@ -214,3 +213,5 @@ facet the session disagrees with is excluded with a note ("constraint, not flow"
 re-judged by the compile goals that own the statement, and a missing edge is
 `declare-edges` work. `delete_view` serves one case: a curated view this session
 created and left empty. See [write tools](../tools.md#write-tools).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

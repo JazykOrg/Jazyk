@@ -8,7 +8,7 @@ stands until one does: the owner accepts the proposed sentence and the fact flip
 build with open ratifications is `converged, 2 blocked`, never silently done. See
 [provenance](../model.md#provenance).
 
-- Class: compile. Readiness tier 3 ([the catalog](../reconciler.md#the-catalog),
+- Class: compile. Readiness tier 4 ([the catalog](../reconciler.md#the-catalog),
   [readiness](../reconciler.md#readiness)). Blocked on a human: it is never ready for
   a session, it never blocks convergence, and it rides in the verdict as a count.
 - Unit: one fact: an entity, a requirement, or an attribute. Goal id
@@ -47,7 +47,7 @@ E.g.:
 
 What derives no goal:
 
-- Views. Default views are derived data recomputed at commit, and a curated view's
+- Views. Every view is authored, and its
   justification closes through its members; there is no sentence for a view to gain.
 - Per-node limit bumps (`limits` with decree provenance,
   [the limits registry](../graph.md#limits)): a compiler setting, not a fact about
@@ -208,3 +208,5 @@ No session tools. The human's tools: the `edit` and `answer` options of the prop
 through the LSP, the GUI, chat's `answer_diagnostic`, or `jazyk answer`; `edit_fact` and
 `retract_requirement` in chat ([chat tools](../tools.md#chat-tools)); the GUI
 inspector's decree edits. Every path lands the same `ratify` journal entry.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

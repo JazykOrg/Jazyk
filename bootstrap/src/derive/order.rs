@@ -70,7 +70,7 @@ pub(crate) fn doc_levels_in(
 // Requirement ids in document order: document link level (from the roots the build
 // stamped into the status), then path, then the source section's position, then id.
 // Requirements with no quote source sort last, by id.
-// Mirrors docs/compiler/model/view.md#default-views.
+// Mirrors docs/compiler/model/view.md#membership.
 pub fn document_order(store: &Store) -> Vec<String> {
     document_order_with(store, &doc_levels_from(store, &store.status.roots))
 }

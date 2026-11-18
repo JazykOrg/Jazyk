@@ -117,3 +117,5 @@ The `derive-criteria` toolset ([toolsets](../tools.md#toolsets)):
 - `update_criterion({id, statement?, kind?, measure?, given?, when?, then?, entities?, section?, quote?})`.
 - `delete_criterion({id, reason})`.
 - `report_diagnostic` (`invented-choice`, `ambiguity`).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

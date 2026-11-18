@@ -313,7 +313,7 @@ The `reconcile-section` toolset ([toolsets](../tools.md#toolsets)):
 
 Deliberately absent: `report_diagnostic` (extraction records, judgment judges),
 `merge_entities` (a lookalike met here becomes an alias on the existing entity or a
-finding for `review-entity`), the view tools (default views derive from what is
+finding for `review-entity`), the view tools (diagrams are reviewed after semantic facts are
 written; curation is [GC](../graph.md#garbage-collection)), `place_anchor` and
 `orphan_anchor` (alignment's, decided before this goal is ready).
 
@@ -354,3 +354,5 @@ the requirement only after its last source is gone. Coverage and stale-anchor
 justification inspect every source in the reconciled section.
 
 Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

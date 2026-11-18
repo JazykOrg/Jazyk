@@ -1,19 +1,12 @@
 # Diagrams
 
-A diagram has three layers. The graph stores the first two:
+A diagram has semantic facts, an authored view, and disposable rendering files.
+Entities and requirements supply facts. Relationships and machines are computed
+from them. A view records the question, membership and presentation intent chosen
+by a session or human. Geometry remains renderer-owned.
 
-- The semantic facts: [entities](./model/entity.md),
-  [requirements](./model/requirement.md), and what derives from them
-  ([relationships](./model/relationship.md), [state machines](./model/state-machine.md)).
-  The only editable truth.
-- The [view](./model/view.md): which facts one diagram includes, never how it looks.
-- The rendering: build output under `<out>/derived/diagrams/`, diffable, never hand-edited,
-  never read back. Deleting it loses nothing.
-
-There are no diagram elements in the graph. Geometry, layout, and styling are stored
-nowhere. A rendering cannot drift from the graph because every build recomputes it from
-the graph. The catalog of view kinds is in [view kinds](./model/view.md#kinds); the
-renderer covers every kind in it.
+The catalog is in [view kinds](./model/view.md#kinds). Nothing renders without an
+authored view, including a state machine with no state diagram.
 
 ## Rendering
 
@@ -97,9 +90,7 @@ The kinds, with what each reads from the graph:
 
 - `class`: the member entities, each `attributes` entry as `name : type` (the type when
   stated), the stereotype, and every relationship among the members with type and
-  cardinality. The default is the [level view](#level-views) of a node whose level
-  carries no structural stereotype; the scope root's level view is the per-scope class
-  view ([default views](./model/view.md#default-views)). E.g.:
+  cardinality. A class view is authored for a specific structural question. E.g.:
 
   ```
   @startuml
@@ -120,8 +111,7 @@ The kinds, with what each reads from the graph:
 - `object`: the member instances. An instance is an entity with an `instantiation` edge
   toward its type (`a` the instance, `b` the type). Each renders as
   `object "<name> : <Type>"` with its attribute values as `name = value`; links come
-  from the relationships among the instances. The default is one per type, holding the
-  type's instances.
+  from the relationships among the instances. An object view selects known instances of the type.
 - `package`: the member entities that contain other members render as packages holding
   those children as classes; a member with no shown children renders as the one-line
   form `package "X" as X`, never an empty body. Arrows are the lifted cross-package
@@ -133,9 +123,7 @@ The kinds, with what each reads from the graph:
   became still renders on the element (`component "Ledger" as ledger <<backend>>`),
   so the top diagram keeps saying what each box is. A `realization` toward an interface draws
   the lollipop; a `dependency` from a component toward an interface draws the socket; a
-  dependency from an actor draws a dashed arrow. The default is the
-  [level view](#level-views) of a node whose level carries a structural stereotype,
-  over its direct children and the outside entities their lifted edges reach. E.g.:
+  dependency from an actor draws a dashed arrow. The authored area controls the abstraction boundary. E.g.:
 
   ```
   @startuml
@@ -164,7 +152,7 @@ The kinds, with what each reads from the graph:
   members.
 - `use-case`: the view itself is the `usecase`, titled by the view; the actors are the
   «actor» entities among the members' `entities`, each linked `Actor -- UseCase`. The
-  default is one per flow cluster. A view whose members name no «actor» draws a note
+  membership and intent are authored for the question being explained. A view whose members name no «actor» draws a note
   under the bubble saying so (`no actor: none of the N member statement(s) names an
   «actor» entity`), since a bare bubble reads as a rendering defect where it is a
   curation gap (an erp session placed "Manage the ACME warehouse" with no actor in the
@@ -257,81 +245,11 @@ the model's judgment make it; nothing here fixes a depth.
 
 ### Level views
 
-Derivation emits, for every node with at least two children (the scope root included),
-and for a node with one child that carries attributes, one structural level view,
-recomputed on every commit like every default
-([default views](./model/view.md#default-views)):
+Containment defines levels without requiring diagrams. An authored view names
+its area and question. Multiple diagrams may explain one level. No renderer
+synthesizes state diagrams or other kinds when a view is absent.
 
-- Members: the node's direct children plus every outside entity with a lifted edge into
-  the level, in document order. The top diagram shows User beside Frontend and Backend.
-  The node itself is not a member, nor is any ancestor of it: they are the frame the
-  level sits in.
-- Kind: `component` when the node, any child, or any descendant below a child carries
-  a structural stereotype (`system`, `component`, `service`, `interface`, `actor`),
-  `class` otherwise: a grouping of components is a component level.
-- Id: `view:component/<node-slug>` or `view:class/<node-slug>`. The root form takes the
-  scope's slug: `view:component/public` is the top level of the default scope.
-- `default: true`. Any mutation naming the view clears the default, as for every
-  default view. The per-scope class view and the per-root component view of earlier
-  designs fold into this rule: the scope root's level view is the per-scope view.
-- Relationships lift at render time as in [lifting and collapse](#lifting-and-collapse):
-  an edge between two hidden descendants of two members draws as one arrow between the
-  members, an edge from an outside entity to a descendant draws toward the member that
-  contains it.
-
-Flow views derive per level, and lifting is applied at derivation, not at render time:
-
-- The harness takes the behavior-facet requirements whose entities lift to at least one
-  child of the level (an outside member is only ever the other end of a flow), maps
-  each requirement's entities to their nearest ancestor in the level, drops a
-  requirement from a level none of its entities reach, and dedupes the participants.
-  A requirement whose every entity lifts to one and the same child that has a level of
-  its own is internal to that child: it belongs to the child's level and is never
-  drawn here as a self-message (the top level's sequence shows Checkout talking to
-  Orders, not twelve messages from Checkout to itself). A self-message on a leaf
-  stays: lifting to a leaf is identity.
-- The lifted requirements cluster by document. A cluster of two or more derives a
-  `use-case` view and, when two or more members carry an edge, a `sequence` view whose
-  participants are the lifted members, ids `view:usecase/<node-slug>-<doc-slug>` and
-  `view:sequence/<node-slug>-<doc-slug>`. The actors drawn are the members' entities
-  labeled `actor`, lifted; a cluster without one draws no actor.
-- A leaf level keeps today's clustering unchanged: lifting to a leaf is identity.
-- At render, every message endpoint lifts to its nearest ancestor among the level's
-  members, so a flow among leaves draws between their groupings (the checkout level's
-  sequence shows Funds, not the gift card and the loyalty point under it). An endpoint
-  with no ancestor there (the node itself, when a flow starts at the frame) draws as
-  itself.
-- State and object views stay per machine and per instantiated type; they do not
-  derive per level.
-
-`members-per-structural-view` and `edges-per-view` bound every level view. A level view
-over a limit renders with its largest subtrees auto-collapsed and a visible note
-([over-limit views](#over-limit-views)). A level over its fan-out limit is the
-[fan-out](./reconciler.md#fan-out) variant of
-[`abstract-entity`](./goals/abstract-entity.md), never the renderer's problem: the view
-still draws every child until a session regroups them.
-
-E.g., the reference graph's «system» `shop` has two children, so it gets a level view.
-`order-service` and `inventory-service` carry «service», so the kind is `component`.
-`customer` is outside the level, and its dependency on `checkout-api` lifts to
-`order-service`, so `customer` is a member. `order-service`'s dependency on `stock-api`
-lifts to `inventory-service`:
-
-```
-@startuml
-actor Customer [[../../docsgen/entities/customer.md]]
-component "Order Service" as OS [[../../docsgen/entities/order-service.md]]
-component "Inventory Service" as IS [[../../docsgen/entities/inventory-service.md]]
-Customer ..> OS
-OS ..> IS
-@enduml
-```
-
-Every element links to its card ([drill-down](#drill-down)). `order-service` has four
-children, so its card's `Inside` section embeds its level view; `inventory-service` has
-one child without attributes, so its card says `a leaf`.
-
-### Drill-down
+## Drill-down
 
 Every rendered entity links to its [card](../consumers/docsgen.md#entity-cards):
 
@@ -346,8 +264,9 @@ Every rendered entity links to its [card](../consumers/docsgen.md#entity-cards):
   `Sits in` line the level above. One link per node, and the card decides the rest.
 - A participant of a flow view links the same way; a message does not.
 - The view carries a `children` list beside its members, in `get_view`
-  ([read tools](./tools.md#read-tools)) and in the GUI API: the level views reachable
-  from its drawn entities, one entry per entity with a level of its own.
+  ([read tools](./tools.md#read-tools)) and in the GUI API: the containment levels reachable
+  from its drawn entities. Each entry carries the target and zero or more authored
+  diagram IDs.
 
 What consumes the links:
 
@@ -484,3 +403,28 @@ exactly as far as the extraction did.
 
 Renderings under `<out>/derived/diagrams/` are never input. The out directory is excluded from the
 docs glob by construction, so a diagram the compiler drew cannot become a quote.
+
+## Authored intent
+
+Views store purpose, area, ordered members and relationship selection. Labels
+change display text only. Notes cite graph sources. Presentation groups form an
+acyclic forest and never change entity containment. Layout accepts relative
+direction and grouping hints, never raw renderer syntax or coordinates. Sequence
+fragments cite member requirements and sourced guards; each message occurs once.
+Explicit detail and phase links connect diagrams without matching titles.
+
+All catalog kinds are authored through the same tools. Text remains inert through
+the existing escaping pipeline. The same snapshot produces the same PlantUML.
+
+Presentation packages are supported for class, component and object diagrams.
+Other kinds retain their own semantic frames. Unsupported group and `together`
+hints are refused. Direction hints remain relative, with renderer-owned geometry.
+
+Labels target entities or requirements. Relationship groups use their canonical
+labels. Notes target graph IDs; structural entity targets receive connectors.
+Other notes are diagram-wide annotations. Their sources remain inspectable in
+the definition. Sequence `ref` fragments name a sequence in `view` and identify
+its replaced member interval through operands. Nested fragment placement follows
+member order. Explicit overview phase links render in their authored order.
+
+Relationship limit counts respect authored relationship selection before lifting.

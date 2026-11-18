@@ -15,7 +15,7 @@ the requirement: `verified` (the deliverable already behaves as stated),
 must clear), or `failing` (the deliverable contradicts the statement, a finding for
 the author). See [binding](../../consumers/bind.md).
 
-- Class: compile. Mandatory. Readiness tier 3.
+- Class: compile. Mandatory. Readiness tier 4.
 - Unit: one requirement. Goal id `g:bind:req:<stem>-<hash>`.
 - Skill: none. The contract rides the binding package (below).
 
@@ -198,3 +198,5 @@ does not contain the declared name, the same shape gate `record_generation` appl
 Its reply previews what the row opens ([bubbling](../reconciler.md#bubbling)): an
 `unimplemented` row opens `generate` on the owning entity. The session then marks the
 goal done with a one-line justification and ends with `done`.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

@@ -1826,7 +1826,7 @@ mod tests {
                 View {
                     kind: kind.into(),
                     title: id.into(),
-                    default: true,
+                    authored:BTreeMap::from([("area".into(),serde_json::json!({"target":if id.ends_with("/public") || id=="view:usecase/shop" {"scope:public"} else {"ent:backend"},"extent":"selection"}))]),
                     ..Default::default()
                 },
             );
@@ -1942,7 +1942,10 @@ mod tests {
             View {
                 kind: "class".into(),
                 title: "Public".into(),
-                default: true,
+                authored: BTreeMap::from([(
+                    "area".into(),
+                    serde_json::json!({"target":"scope:public","extent":"selection"}),
+                )]),
                 ..Default::default()
             },
         );
@@ -1953,7 +1956,7 @@ mod tests {
         assert!(!html.contains("href=\"#n-view:component/public\""));
         // The backend's derived id prints as text, not a link, until a commit stores it.
         assert!(
-            html.contains("<span class=\"id\">view:component/backend</span>"),
+            !html.contains("<span class=\"id\">view:component/backend</span>"),
             "{}",
             html
         );
@@ -2059,7 +2062,7 @@ mod tests {
             ),
         )
         .unwrap();
-        let mut s = crate::derive::tests::showcase_store();
+        let mut s = crate::derive::tests::authored_showcase_store();
         s.out = out.clone();
         let mut batch = crate::store::RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);

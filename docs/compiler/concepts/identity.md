@@ -32,19 +32,11 @@ that already have one.
 
 ## Identity of derived data and goals
 
-Derived data is the deliberate exception. Relationships, state machines, and default
-views are recomputed on every commit, and their ids are functions of their inputs:
-`rel:<a>~<b>` from the member pair, `sm:<entity-slug>` from the subject, and default
-views from their rule (`view:class/<node-slug>` or `view:component/<node-slug>` for a
-level view, `view:class/<scope>` or `view:component/<scope>` for the scope
-root's, `view:usecase/<node-slug>-<cluster-slug>`,
-`view:sequence/<node-slug>-<cluster-slug>`, `view:state/<entity-slug>`,
-`view:object/<type-slug>`), per
-[default views](../model/view.md#default-views). A curated view slugs its title once,
-at creation, and keeps that id like any authored node. Recomputation reproduces the
-same id without minting, so a consumer holding `rel:customer~shopping-cart` still lands
-on the same relationship after any number of commits. See
-[derived data](../graph.md#derived-data).
+Relationships and state machines are recomputed on every commit. Their IDs are
+functions of their inputs: `rel:<a>~<b>` from the entity pair and
+`sm:<entity-slug>` from the subject. Recomputation reproduces the same ID.
+Every diagram is authored and keeps its minted ID through edits and retitling.
+See [derived data](../graph.md#derived-data) and [views](../model/view.md).
 
 Goals are derived and never stored. `g:<kind>:<target>` names one, and its `change`
 record is its identity across re-derivations: the board recomputed from disk matches a

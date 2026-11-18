@@ -55,8 +55,8 @@ fn the_verdict_displays_its_counts() {
     assert_eq!(
         v.to_string(),
         format!(
-            "incomplete: {} open, 0 failed, {} blocked, 0 optional advised",
-            v.open, v.blocked
+            "incomplete: {} open, 0 failed, {} blocked, {} optional advised",
+            v.open, v.blocked, v.optional
         )
     );
     assert!(
@@ -66,7 +66,7 @@ fn the_verdict_displays_its_counts() {
     assert!(
         board
             .summary_line()
-            .starts_with(&format!("compile: {} goals (", v.open)),
+            .starts_with(&format!("compile: {} goals (", v.open + v.optional)),
         "{}",
         board.summary_line()
     );
@@ -84,7 +84,7 @@ fn the_verdict_displays_its_counts() {
 #[test]
 fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
     use crate::board::tests::{control_auto, project_for};
-    use crate::derive::{children_of_view, level_view_id};
+    use crate::derive::level_view_id;
     use crate::limits::{CHILDREN_PER_ENTITY, CHILDREN_PER_ENTITY_HARD, CHILDREN_PER_ENTITY_SOFT};
     use crate::store::{Commit, Op, CHANGE_THRESHOLD_CROSSED};
     use crate::tools::{ToolSession, WorkScope};
@@ -344,7 +344,12 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
     // Step 3: the board derives the optional fan-out goal with the document-shaped
     // partition, ready because no compile goal is open in its cone.
     let board = Board::derive(&s, &project_for(&s), &control_auto());
-    let open: Vec<&str> = board.open_goals().iter().map(|g| g.id.as_str()).collect();
+    let open: Vec<&str> = board
+        .open_goals()
+        .iter()
+        .filter(|g| g.kind != "diagram-coverage")
+        .map(|g| g.id.as_str())
+        .collect();
     assert_eq!(open, vec!["g:abstract-entity:ent:backend"]);
     let goal = board.goal("g:abstract-entity:ent:backend").unwrap().clone();
     assert!(!goal.mandatory);
@@ -432,7 +437,7 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
     assert!(t.done.is_some());
 
     // Step 5: the changeset commits; the groupings stand, the record clears, and the
-    // level views derive.
+    // graph navigation remains available without diagrams.
     let staged = std::mem::take(&mut t.staged);
     let commit = t.commit(2, None);
     assert_eq!(commit.resolved.len(), 1);
@@ -465,13 +470,8 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
                 id
             );
         }
-        let view_id = format!("view:class/{}", id.trim_start_matches("ent:"));
-        assert_eq!(level_view_id(&s, id).as_deref(), Some(view_id.as_str()));
-        let v = &s.graph.views[&view_id];
-        assert_eq!(v.kind, "class");
-        assert!(v.default);
-        let mut members = v.members.clone();
-        members.sort();
+        assert!(level_view_id(&s, id).is_none());
+        let members = crate::goals::level_members(&s, id);
         assert_eq!(json!(members), cands[i]);
     }
     assert_eq!(
@@ -482,34 +482,7 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
         Some(3)
     );
     assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
-    assert_eq!(
-        level_view_id(&s, "ent:backend").as_deref(),
-        Some("view:component/backend")
-    );
-    let top = &s.graph.views["view:component/backend"];
-    assert_eq!(top.kind, "component");
-    assert!(top.default);
-    assert_eq!(
-        top.members,
-        vec!["ent:fulfillment", "ent:ordering", "ent:platform"]
-    );
-    assert_eq!(
-        children_of_view(&s, "view:component/backend"),
-        vec![
-            (
-                "ent:fulfillment".to_string(),
-                "view:class/fulfillment".to_string()
-            ),
-            (
-                "ent:ordering".to_string(),
-                "view:class/ordering".to_string()
-            ),
-            (
-                "ent:platform".to_string(),
-                "view:class/platform".to_string()
-            ),
-        ]
-    );
+    assert!(s.graph.views.is_empty(), "Grouping never authors diagrams");
     assert!(level_shape(&s).is_empty(), "{:?}", level_shape(&s));
 
     // Step 6: a write moves all but one member of the smallest grouping under
@@ -551,21 +524,12 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
             Some("ent:fulfillment")
         );
     }
-    let top = &s.graph.views["view:component/backend"];
+    assert!(s.graph.views.is_empty());
     assert_eq!(
-        top.members,
+        crate::goals::level_members(&s, "ent:backend"),
         vec!["ent:cache", "ent:fulfillment", "ent:ordering"]
     );
-    assert!(!s.graph.views.contains_key("view:class/platform"));
-    // Anything holding the dissolved id resolves through the redirect to the
-    // parent's level.
-    assert_eq!(
-        level_view_id(&s, "ent:platform").as_deref(),
-        Some("view:component/backend")
-    );
-    // The fulfillment level lists its six children and the cache as the outside
-    // entity whose edge to the queue now lifts into the level.
-    let mut fulfillment = s.graph.views["view:class/fulfillment"].members.clone();
+    let mut fulfillment = crate::derive::level_view_members(&s, "ent:fulfillment");
     fulfillment.sort();
     assert_eq!(
         fulfillment,
@@ -579,19 +543,6 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
             "ent:tracking"
         ]
     );
-    assert_eq!(
-        children_of_view(&s, "view:component/backend"),
-        vec![
-            (
-                "ent:fulfillment".to_string(),
-                "view:class/fulfillment".to_string()
-            ),
-            (
-                "ent:ordering".to_string(),
-                "view:class/ordering".to_string()
-            ),
-        ]
-    );
     assert!(!s.status.has_change(CHANGE_THRESHOLD_CROSSED, "ent:backend"));
     assert!(level_shape(&s).is_empty(), "{:?}", level_shape(&s));
 
@@ -603,7 +554,13 @@ fn levels_loop_groups_a_wide_level_and_dissolves_a_thin_grouping() {
     // change the review goal reads; the moved children themselves are not, one
     // review per grouping instead of one per member. A model session resolves
     // those, none is a level goal.
-    let ids = |b: &Board| -> Vec<String> { b.open_goals().iter().map(|g| g.id.clone()).collect() };
+    let ids = |b: &Board| -> Vec<String> {
+        b.open_goals()
+            .iter()
+            .filter(|g| g.kind != "diagram-coverage")
+            .map(|g| g.id.clone())
+            .collect()
+    };
     let first = ids(&Board::derive(&s, &project_for(&s), &control_auto()));
     let second = ids(&Board::derive(&s, &project_for(&s), &control_auto()));
     assert_eq!(first, second);
@@ -744,6 +701,13 @@ fn a_goal_resolved_and_reopened_with_the_same_change_parks_at_its_second_cycle()
         .collect();
     s.clear_changes(&ingest);
 
+    for f in crate::diagrams::findings(&s) {
+        let mut d = f.value();
+        d["ruleVersion"] = json!(1);
+        d["reason"] = json!("This retry fixture deliberately uses textual structure");
+        s.decisions.diagram_coverage.insert(f.id, d);
+    }
+    s.apply(vec![], &Commit::store("fixture-review"));
     let events: Arc<Mutex<Vec<(String, String, String)>>> = Arc::new(Mutex::new(Vec::new()));
     let sink = events.clone();
     let trace = Trace::to_sink(

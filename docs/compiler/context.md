@@ -271,3 +271,13 @@ draws them.
 
 The [LSP](../frontends/lsp.md) hover and the GUI inspector render the same load for a
 target; [`jazyk context`](../frontends/cli.md#jazyk-context) prints it.
+
+## Available authored diagrams
+
+Every entity read lists available diagram references with kind, title, purpose,
+area, association reason, counts and fact hash. Associations include membership,
+flow participation, machine subject, collapsed ancestor, own area and immediate
+parent context. Deduplicate results and page them through `list_views` with the entity filter.
+Default entity loading includes summaries, not full diagram definitions. Explicit
+view loading reads a definition within the existing budget. Diagram goal targets
+load full; coverage review begins with summaries. No read creates a diagram.

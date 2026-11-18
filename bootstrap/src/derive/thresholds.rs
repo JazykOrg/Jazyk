@@ -33,7 +33,11 @@ pub(super) fn live_members(store: &Store, v: &View) -> Vec<String> {
 
 // Arrows a view renders: the ranked contribution groups among its members.
 pub fn view_edge_count(store: &Store, members: &[String]) -> u64 {
-    view_edge_count_with(&contributions_by_a(store), members)
+    view_edge_count_with(&contributions_by_a(store), members, None)
+}
+
+pub fn authored_view_edge_count(store: &Store, view: &View, members: &[String]) -> u64 {
+    view_edge_count_with(&contributions_by_a(store), members, Some(view))
 }
 
 // Every contribution by its `a` end, for the edge counts of many views at once.
@@ -50,11 +54,19 @@ fn contributions_by_a(store: &Store) -> BTreeMap<&str, Vec<&Contribution>> {
     out
 }
 
-fn view_edge_count_with(by_a: &BTreeMap<&str, Vec<&Contribution>>, members: &[String]) -> u64 {
+fn view_edge_count_with(
+    by_a: &BTreeMap<&str, Vec<&Contribution>>,
+    members: &[String],
+    view: Option<&View>,
+) -> u64 {
     let set: BTreeSet<&str> = members.iter().map(String::as_str).collect();
     set.iter()
         .flat_map(|a| by_a.get(*a).into_iter().flatten())
-        .filter(|c| c.r#type != INSTANTIATION && set.contains(c.b.as_str()))
+        .filter(|c| {
+            c.r#type != INSTANTIATION
+                && set.contains(c.b.as_str())
+                && view.is_none_or(|v| crate::diagrams::shows_relationship(v, c))
+        })
         .count() as u64
 }
 
@@ -180,7 +192,7 @@ fn threshold_crossings_with(store: &Store, ix: &Indices) -> Vec<Crossing> {
             check(
                 id,
                 "edges-per-view",
-                view_edge_count_with(&by_a, &members),
+                view_edge_count_with(&by_a, &members, Some(v)),
                 &v.limits,
             );
         }
@@ -194,7 +206,7 @@ fn threshold_crossings_with(store: &Store, ix: &Indices) -> Vec<Crossing> {
             check(
                 id,
                 "edges-per-view",
-                view_edge_count_with(&by_a, &members),
+                view_edge_count_with(&by_a, &members, Some(v)),
                 &v.limits,
             );
         }

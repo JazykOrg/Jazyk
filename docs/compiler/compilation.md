@@ -20,7 +20,8 @@ parse all documents → align section trees against sources/ → compute the wor
       tier 0  place-anchors        (a document's alignment proposals)
       tier 1  reconcile-section    (link levels, roots first)
       tier 2  rejudge-pair, review-entity, retrace, conform-instance
-      tier 3  derive-criteria, bind, generate, verify   (ratify and answer wait on a human)
+      tier 3  diagram-coverage (review and author diagrams)
+      tier 4  derive-criteria, bind, generate, verify   (ratify and answer wait on a human)
     every commit recomputes derived data and decisions, re-derives the board
     GC bursts fire as cones quiet: declare-edges, dedupe-candidates, curate-view,
       split-view, abstract-entity
@@ -47,7 +48,7 @@ makes zero LLM calls.
   loaded graph for their locality, and one summary line for the rest. Write tools stage
   mutations; `done` runs the batch gates; the changeset commits atomically
   ([changesets](./graph.md#changesets)).
-- Commit. Derived data recomputes (relationships, state machines, default views), a
+- Commit. Derived data recomputes (relationships, state machines, query membership), a
   resolved goal's decision lands in `graph/decisions/` when its kind has one, the
   journal entry records resolved goals with their justifications and
   opened goals with their causes ([journal](./graph.md#journal)), the deterministic sweep
@@ -216,7 +217,7 @@ Deletion runs the same paths in reverse. A removed section leaves its anchors ho
 without provenance and leaves tombstone redirects; the live nodes that referenced the
 dead ones are `node-deleted` and `view-member-gone` findings at the next derivation, and
 they derive [`retrace`](./goals/retrace.md) goals on the views, instances, and derived facts that
-depended on them. Derived data (relationships, state machines, default views) simply
+depended on them. Derived data (relationships, state machines, query membership) simply
 recomputes.
 
 Anything the deliverable needs that the documents do not state is an ambiguity.
@@ -310,17 +311,9 @@ Every check run journals a `checks` entry under its own generation.
   [`curate-view`](./goals/curate-view.md).
 - Containment consistency: `containment-mismatch` when a `composition` edge and the
   `parent` field disagree ([containment](./model/entity.md#containment)).
-- `level-shape`, wherever a node has children ([levels](./concepts/levels.md#levels)):
-  a node with two or more children (the scope root included) that has no structural
-  [level view](./diagrams.md#level-views); a node whose direct children exceed the hard
-  `children-per-entity` threshold ([limits](./graph.md#limits), or the node's own
-  [bump](./graph.md#per-node-bumps)); a derived
-  [grouping](./concepts/levels.md#groupings) with fewer than two children. The first
-  and the third name a store the commit did not settle: level views recompute on every
-  commit and the sweep dissolves an under-membered grouping
-  ([the sweep](./graph.md#the-sweep)). The second is the level the mandatory
-  [fan-out](./reconciler.md#fan-out) goal must regroup before the build converges; the
-  finding stands beside the goal and clears with it.
+- `level-shape` checks hard fan-out and derived groupings with fewer than two
+  children. It never checks for a diagram. Missing diagram coverage becomes
+  review work, not a structural consistency error.
 - Conformance, the mechanical part: `nonconformant-instance` when an instance carries an
   attribute name its type does not declare. Value and link conformance is
   [`conform-instance`](./goals/conform-instance.md)'s judgment.
@@ -478,3 +471,12 @@ on an existing requirement. Justification closure accounts for each stale source
 separately. `stale-provenance` reports each missing anchor. `duplicate-requirement`
 is a consolidation signal, never a reason to retain redundant obligation nodes.
 The sweep removes vanished locations before deleting a requirement with no sources.
+
+## Review and author diagrams
+
+The compilation sequence is extraction, requirement and structural review,
+diagram review, criteria and implementation, verification, final checks.
+Diagram review uses explicit authored nodes and existing semantic facts. Missing
+diagrams open review work, not level-shape or flow-placement errors. Level-shape
+still checks fan-out and invalid groupings. Existing diagrams still receive
+curation, split and retrace work. Reading entity context never starts a session.

@@ -47,6 +47,9 @@ typed edges declared, or the justification says the statement is not structural
 <!-- dedupe-candidates -->
 merged, or kept separate with the reasoning
 
+<!-- diagram-coverage -->
+every question covered by saved compatible diagrams or a current permitted suppression
+
 <!-- curate-view -->
 membership decided: one verdict per matched node in evidence, added, or excluded with a note
 

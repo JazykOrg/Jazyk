@@ -155,7 +155,10 @@ impl GoalKind for DeriveCriteria {
         }
         out
     }
-    fn ready(&self, _goal: &Goal, board: &Board) -> Ready {
+    fn ready(&self, goal: &Goal, board: &Board) -> Ready {
+        if let Some(id) = board.diagram_blocker(&goal.target) {
+            return Ready::Blocked(format!("Diagram review runs first: {}", id));
+        }
         tier3_ready(board)
     }
     fn pack(&self, store: &Store, batch: &[Goal]) -> String {

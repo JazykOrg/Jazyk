@@ -147,6 +147,7 @@ mod tests {
                 ("answer", &[]),
                 ("declare-edges", &[]),
                 ("dedupe-candidates", &[]),
+                ("diagram-coverage", &[]),
                 ("curate-view", &[]),
                 ("split-view", &[]),
                 ("abstract-entity", &[]),

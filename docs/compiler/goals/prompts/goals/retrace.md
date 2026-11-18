@@ -15,7 +15,7 @@ For a flow view, keep the order true: read the surviving members as a flow befor
 
 For an entity, keep only the definition, parent, stereotype, attributes, and edges a surviving statement supports.
 
-Default views, relationships, and state machines recompute at commit and are never retraced by hand.
+Relationships and state machines recompute at commit. Repair authored diagrams, including presentation references, through the view tools.
 
 Never re-create the dead node to make a reference valid, and never invent a replacement the documents do not state: a fact the documents still state comes back through reconcile-section under its natural key, not through this goal.
 

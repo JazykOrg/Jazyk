@@ -115,6 +115,11 @@ impl GoalKind for Bind {
             .collect()
     }
     fn ready(&self, goal: &Goal, board: &Board) -> Ready {
+        if let Some(id) =
+            board.diagram_blocker(goal.change["entity"].as_str().unwrap_or(&goal.target))
+        {
+            return Ready::Blocked(format!("Diagram review runs first: {}", id));
+        }
         if let Ready::Blocked(r) = tier3_ready(board) {
             return Ready::Blocked(r);
         }

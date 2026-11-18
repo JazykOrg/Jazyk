@@ -948,6 +948,19 @@ impl LoadedSet {
     }
 
     fn render_entity(&self, store: &Store, id: &str, e: &crate::model::Entity, b: &mut Builder) {
+        let available = crate::diagrams::references(store, id);
+        b.push(&format!(
+            "diagrams ({}): {}",
+            available.len(),
+            serde_json::to_string(&available.iter().take(8).collect::<Vec<_>>())
+                .unwrap_or_default()
+        ));
+        if available.len() > 8 {
+            b.push(&format!(
+                "More diagram references: list_views entity={} offset=8",
+                id
+            ));
+        }
         let st = e
             .stereotype
             .as_ref()

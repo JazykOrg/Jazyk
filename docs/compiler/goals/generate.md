@@ -6,7 +6,7 @@ and tests. The medium is decided once per
 deliverable before any generation runs (below); the session implements, it never
 re-decides. See [generation](../../consumers/gen.md).
 
-- Class: compile. Mandatory. Readiness tier 3.
+- Class: compile. Mandatory. Readiness tier 4.
 - Unit: one entity. Goal id `g:generate:ent:<slug>`.
 - Skill: none. The contract rides the opening prompt, or the package on a standalone serving (below).
 
@@ -391,3 +391,5 @@ goal done with a one-line justification and ends with `done`. A session that end
 without recording has failed the goal.
 
 `link_asset`, `inspect_asset_link`, and `remove_asset_link` manage native or virtual asset symlinks. See [asset links](../tools.md#asset-links).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

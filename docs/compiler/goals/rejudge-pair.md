@@ -283,3 +283,5 @@ sticky, and the next change on either side re-judges it.
 A `duplicate` verdict calls `merge_requirements`. Union all sources and reconcile
 criteria, edges, facets, and transitions. Keep one immutable id and redirect the
 loser. Cross-document repetition supplies another location on the same obligation.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

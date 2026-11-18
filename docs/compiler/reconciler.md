@@ -454,12 +454,13 @@ tools.
 | [`review-entity`](./goals/review-entity.md) | compile | 2 | M | entity | `entity-changed` |
 | [`retrace`](./goals/retrace.md) | compile | 2 | M | node | `view-member-gone`, `node-deleted` |
 | [`conform-instance`](./goals/conform-instance.md) | compile | 2 | M | instance | `instance-changed` |
-| [`derive-criteria`](./goals/derive-criteria.md) | compile | 3 | M | entity | a requirement with no criterion, or whose statement no longer matches the statement hash its derived criteria record, in a set with a nonempty `source` |
-| [`bind`](./goals/bind.md) | compile | 3 | M | requirement | `ledger-stale` (`goal: bind`: no current row) |
-| [`generate`](./goals/generate.md) | compile | 3 | M | entity | `ledger-stale` (`goal: generate`: facts differ from the ledger, `unimplemented` rows) |
-| [`verify`](./goals/verify.md) | compile | 3 | M | ledger row | `ledger-stale` (`goal: verify`: the derived status says action) |
-| [`ratify`](./goals/ratify.md) | compile | 3 | B | fact | `provenance-pending` |
-| [`answer`](./goals/answer.md) | compile | 3 | B | diagnostic | `prompt-unanswered` |
+| [`diagram-coverage`](./goals/diagram-coverage.md) | compile | 3 | O→M | area | unanswered diagram questions and source obligations |
+| [`derive-criteria`](./goals/derive-criteria.md) | compile | 4 | M | entity | a requirement with no criterion, or whose statement no longer matches the statement hash its derived criteria record, in a set with a nonempty `source` |
+| [`bind`](./goals/bind.md) | compile | 4 | M | requirement | `ledger-stale` (`goal: bind`: no current row) |
+| [`generate`](./goals/generate.md) | compile | 4 | M | entity | `ledger-stale` (`goal: generate`: facts differ from the ledger, `unimplemented` rows) |
+| [`verify`](./goals/verify.md) | compile | 4 | M | ledger row | `ledger-stale` (`goal: verify`: the derived status says action) |
+| [`ratify`](./goals/ratify.md) | compile | 4 | B | fact | `provenance-pending` |
+| [`answer`](./goals/answer.md) | compile | 4 | B | diagnostic | `prompt-unanswered` |
 | [`declare-edges`](./goals/declare-edges.md) | gc | | O | requirement | `edges-missing` |
 | [`dedupe-candidates`](./goals/dedupe-candidates.md) | gc | | O | entity pair | `lookalike` |
 | [`curate-view`](./goals/curate-view.md) | gc | | O | view | `query-match`, `flow-unplaced` |
@@ -470,7 +471,7 @@ tools.
 the instance that conformed to it, and the derived fact that cited it each surface as a
 `retrace` goal with the same cause, each hinting what to load to see the damage. Derived
 data needs no retrace: [relationships](./model/relationship.md#recompute), state
-machines, and [default views](./model/view.md#default-views) recompute at commit.
+machines and query membership recompute at commit.
 Decompilation stays outside the board: draft work is released per scope
 ([decompilation](../consumers/decompile.md#triggering)).
 
@@ -554,13 +555,14 @@ and wait for their cone instead.
 | 0 | `place-anchors` | always |
 | 1 | `reconcile-section` | no tier 0 goal is open or parked; the document's link level is reached; the document has no `alignment-pending` finding |
 | 2 | `rejudge-pair`, `review-entity`, `retrace`, `conform-instance` | no tier 0 or 1 goal is open or parked |
-| 3 | `derive-criteria`, `bind`, `generate`, `verify`, `ratify`, `answer` | no tier 0, 1, or 2 goal is open or parked |
+| 3 | `diagram-coverage` | upstream extraction, judgment and structural review in the area settled |
+| 4 | `derive-criteria`, `bind`, `generate`, `verify`, `ratify`, `answer` | no tier 0, 1, or 2 goal is open or parked |
 
 - Open and parked goals hold the later tiers. Blocked goals do not, a goal blocked on a
   `goal-failed` diagnostic included: a section the model could not reconcile, or a
   document awaiting a release, must not wedge every judgment behind it. They count in
   the [verdict](./compilation.md#convergence) instead.
-- Within tier 3, `bind` on a requirement waits until the requirement carries at least
+- Within tier 4, `bind` on a requirement waits until the requirement carries at least
   one [criterion](./model/criterion.md) and its entity owes no `derive-criteria` (the
   evidence must exist before a test encodes it; the goal is `blocked {on: criteria}`),
   `generate` waits for its entity's `derive-criteria`, but not for `bind`.
@@ -913,3 +915,17 @@ Any changed source section dirties its requirement. Pair judgment compares oblig
 text, independent of location. A duplicate verdict merges requirements and their sources.
 The [consolidate-requirements](./goals/consolidate-requirements.md) GC goal handles
 near-identical clusters after their compile cone settles.
+
+## Diagram review
+
+Review and author diagrams follows requirement judgment and structural review,
+before criteria and implementation. The `diagram-coverage` compile kind occupies
+tier 3; criteria and ledger work occupy tier 4. Optional diagram advice does not
+block downstream work. Mandatory review holds the affected area until diagrams
+answer its question or a permitted suppression is saved. It never waits for the
+criteria or implementation it precedes. Unrelated areas can proceed.
+
+A suppression stores its baseline candidate identities and semantic hashes.
+It expires at cumulative growth or churn of `max(1, ceil(baseline / 5))`, a changed
+boundary or rule, or human unsuppression. A failed review is not suppression.
+Explicit source or human diagram obligations cannot be suppressed heuristically.

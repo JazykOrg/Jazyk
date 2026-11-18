@@ -459,6 +459,15 @@ fn get_view_lists_the_members_level_views_as_children() {
         "view:class/server".into(),
         view("Server", "class", &["ent:model", "ent:controller"]),
     );
+    for (id, view) in &mut s.graph.views {
+        let target = if id.ends_with("/backend") {
+            "ent:backend"
+        } else {
+            "ent:server"
+        };
+        view.authored
+            .insert("area".into(), json!({"target":target,"extent":"selection"}));
+    }
     let mut t = ToolSession::new(s, WorkScope::serving("mcp-compile"), 64, 24_000);
     let r = t
         .dispatch("get_view", &json!({"id": "view:component/backend"}))
@@ -466,8 +475,8 @@ fn get_view_lists_the_members_level_views_as_children() {
     assert_eq!(
         r["children"],
         json!([
-            {"member": "ent:server", "view": "view:class/server"},
-            {"member": "ent:db", "view": "view:class/db"},
+            {"member": "ent:server", "target":"ent:server","view": "view:class/server","views":["view:class/server"]},
+            {"member": "ent:db", "target":"ent:db","view": null,"views":[]},
         ])
     );
     // A flow view links through its participants.
@@ -491,6 +500,6 @@ fn get_view_lists_the_members_level_views_as_children() {
         .unwrap();
     assert_eq!(
         r["children"],
-        json!([{"member": "ent:server", "view": "view:class/server"}])
+        json!([{"member": "ent:server", "target":"ent:server","view": "view:class/server","views":["view:class/server"]}])
     );
 }

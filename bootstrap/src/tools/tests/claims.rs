@@ -502,7 +502,7 @@ fn curate_view_decides_every_matched_node() {
     );
     t.dispatch(
         "update_view",
-        &json!({"id": "view:use-case/checkout", "exclude": [{"id": "req:b", "note": "belongs to view:use-case/returns."}]}),
+        &json!({ "reasoning": "Fixture diagram authoring","id": "view:use-case/checkout", "exclude": [{"id": "req:b", "note": "belongs to view:use-case/returns."}]}),
     )
     .unwrap();
     assert_eq!(
@@ -511,7 +511,7 @@ fn curate_view_decides_every_matched_node() {
     );
     t.dispatch(
         "update_view",
-        &json!({"id": "view:use-case/returns", "add_members": ["req:b"]}),
+        &json!({ "reasoning": "Fixture diagram authoring","id": "view:use-case/returns", "add_members": ["req:b"]}),
     )
     .unwrap();
     assert!(mark(&mut t, excluded).is_ok());

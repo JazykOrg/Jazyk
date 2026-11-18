@@ -16,7 +16,7 @@ node.
   [cone](../reconciler.md#cones) ([readiness](../reconciler.md#readiness)). The view is
   split once, over its final membership for the build, never over a stream of partial
   states.
-- Yields to the fan-out. A goal whose view is a [level view](../model/view.md#level-views)
+- Yields to the fan-out. A goal whose view is a [level view](../model/view.md#membership)
   or a lifted flow view of a level is blocked while an
   [`abstract-entity`](./abstract-entity.md) goal on that level is open or parked, with
   the readiness reason naming it (`fan-out first: g:abstract-entity:<target>`), and is
@@ -57,13 +57,9 @@ E.g.:
 - The finding is level-triggered: it stands while the count is over the threshold and
   ends when the count falls back under it by any path (a merge, an exclusion, a
   collapse, a delete). A goal resolved while the count is still over derives again.
-- Default views cross limits like any view: a scope of forty entities puts its default
-  class view over the limit, and the split makes the view curated
-  ([default views](../model/view.md#default-views)).
-- The view renders meanwhile: a structural view with its largest subtrees auto-collapsed,
-  a flow or object view with every member, both with a visible note in the title
-  ([over-limit views](../diagrams.md#over-limit-views)). A violation never truncates a
-  rendering silently.
+- Every authored view is measured. No view is automatically created to cross a
+  limit. Splitting preserves relevant facts through child diagrams or exclusions
+  with reasons.
 
 ### Escalation and dismissal
 
@@ -89,12 +85,10 @@ The trace prints the burst as it starts:
 
 ### Batching
 
-The twin views of one flow cross together: a use-case view and the sequence view derived
-from the same cluster share members and a title
-([default views](../model/view.md#default-views)), so their goals batch together and
-split along the same phases. A structural view's goal batches with the goals on its
-members ([batching](../reconciler.md#batching)); an
-[`abstract-entity`](./abstract-entity.md) goal on a member often resolves both.
+Authored diagrams of the same area batch by locality. A model can split related
+flow diagrams along the same phases when the facts support it. No twin diagram
+is created automatically. A structural review on a member can reduce the same
+counts. See [batching](../reconciler.md#batching).
 
 ## Gate
 
@@ -160,7 +154,7 @@ the bump. A failed mandatory goal blocks convergence and surfaces on the view
 
 At `done`, the per-mutation gates hold ([validation gates](../graph.md#validation-gates)):
 view members exist and match the kind, `query.parent` resolves, `delete_view` needs a
-reason and is rejected on a default view. A clean batch commits
+reason. A clean batch commits
 ([commit](../sessions.md#commit)). The commit recomputes the counts of every touched
 view, renders them ([diagrams](../diagrams.md)), and previews the goals the split opens:
 a sub-view over its own limit is a `split-view` goal of its own
@@ -251,3 +245,5 @@ The `split-view` [toolset](../tools.md#toolsets): the
 never edits a fact, and a pressure that is the entity's fails toward `abstract-entity`.
 `delete_view` serves one case: a curated sub-view this session created and left empty.
 See [write tools](../tools.md#write-tools).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

@@ -95,9 +95,17 @@ fn references_after(store: &Store, staged: &[Op]) -> Store {
                 remove_members,
                 collapse,
                 exclude,
+                authored,
                 ..
             } => {
                 if let Some(v) = g.views.get_mut(id) {
+                    for (k, value) in authored {
+                        if value.is_null() {
+                            v.authored.remove(k);
+                        } else {
+                            v.authored.insert(k.clone(), value.clone());
+                        }
+                    }
                     if let Some(ms) = members {
                         v.members = ms.clone();
                     }
@@ -141,6 +149,11 @@ pub fn dangling_references(store: &Store, id: &str) -> Vec<String> {
     };
     let mut out = Vec::new();
     if let Some(v) = store.graph.views.get(id) {
+        for reference in crate::diagrams::authored_references(v) {
+            if !crate::diagrams::reference_exists(store, &reference) {
+                out.push(format!("authored {}", reference));
+            }
+        }
         for (i, m) in v.members.iter().enumerate() {
             if !alive(m) {
                 out.push(format!("members[{}] {}", i, m));

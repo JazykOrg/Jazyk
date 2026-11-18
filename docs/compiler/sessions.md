@@ -548,7 +548,7 @@ goal state: the node's own limit is raised with decree provenance
 
 ## Commit
 
-Calling `done({summary, goals?})` runs the batch gates. `goals` is a list of final
+Calling `done({summary, goals?, checkpoint?})` runs the batch gates. `goals` is a list of final
 `{goal, justification, evidence?}` claims, validated by the same code as
 `mark_goal_done`. A session can claim its final resolutions and request commit in
 one call. Earlier claims can still use `mark_goal_done` when later work depends on
@@ -557,7 +557,7 @@ and staged effects, leaving earlier work intact for repair.
 
 The batch gates check:
 
-- every goal in the batch is resolved or failed,
+- every goal in the batch is resolved or failed, unless `checkpoint: true`,
 - every resolution's gate still holds over the final changeset,
 - the kinds' batch gates: the coverage contract for `reconcile-section` (every section
   in the batch carries a mark, staged in this session or already recorded, and every
@@ -575,13 +575,19 @@ the commit touched, and the board re-derives.
 
 An explicit `done` holds the model to its claims: a session that extracts requirements
 from a section and never marks it is sent back to set the mark, not committed around,
-and a `done` that leaves a goal open is rejected naming the goal. A batch that cannot be
+and a `done` without `checkpoint: true` that leaves a goal open is rejected naming the goal. A batch that cannot be
 repaired within its rounds remains persisted for resume or adoption.
 
 One thing the harness never commits around: an untouched stale anchor. Stale anchors are
 a contract only the model can honor. A `reconcile-section` goal whose section carries a
 stale anchor the session neither re-anchored, revised, nor deleted refuses
-completion. Staged mutations remain available for repair. No partial batch commits.
+completion. Staged mutations remain available for repair.
+
+An explicit `checkpoint: true` saves valid staged work and accepted outcomes while
+leaving unclaimed goals open. It does not require coverage marks for those open goals.
+All accepted resolutions, honest coverage claims, stale-anchor and proposal contracts,
+and store integrity gates still apply. A checkpoint cannot declare incomplete work done.
+An empty checkpoint with no mutations or recorded outcomes is refused.
 
 ## Budgets
 

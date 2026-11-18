@@ -1269,3 +1269,90 @@ fn mark_goal_done_on_ledger_goals_reads_the_ledger() {
     }
     crate::vfs::remove_dir_all(&dir).ok();
 }
+
+// A finding can name both an entity and a live document section. The review
+// must not force it to be resolved or refiled as though that section were deleted.
+#[test]
+fn review_keeps_findings_on_live_sections_and_criteria() {
+    for subject in ["shop.md#/shop/cart", "crit:cart"] {
+        let mut t = session();
+        t.snapshot
+            .graph
+            .criteria
+            .insert("crit:cart".into(), Criterion::default());
+        t.snapshot.graph.diagnostics.insert(
+            "diag:ambiguity-live".into(),
+            open_diag("ambiguity", &["ent:customer", subject]),
+        );
+        let goals = one_goal("review-entity", "ent:customer", Value::Null);
+        t.scope = WorkScope::for_batch("b0-1", &goals);
+        let claim = json!({
+            "goal": "g:review-entity:ent:customer", "justification": "Reviewed the finding against its subjects.",
+            "evidence": {"definition": "current", "diagnostics": [{"id": "diag:ambiguity-live", "verdict": "stands"}]}
+        });
+        t.dispatch("mark_goal_done", &claim).unwrap();
+        t.dispatch("done", &json!({"summary":"Finding stands."}))
+            .unwrap();
+        let mut missing = session();
+        missing.scope = WorkScope::for_batch("b0-1", &goals);
+        missing.snapshot.graph.diagnostics.insert(
+            "diag:ambiguity-live".into(),
+            open_diag("ambiguity", &["ent:customer", subject]),
+        );
+        missing.snapshot.docs.clear();
+        assert_eq!(
+            missing.dispatch("mark_goal_done", &claim).unwrap_err().rule,
+            "diagnostic-unbacked"
+        );
+    }
+}
+
+#[test]
+fn skill_batch_loads_valid_entries_around_an_unknown_name() {
+    let mut t = session();
+    let result = t
+        .dispatch(
+            "load_skill",
+            &json!({"names":["judgment","missing-skill","flow-views"]}),
+        )
+        .unwrap();
+    assert!(result["results"][0]["payload"].is_string());
+    assert_eq!(result["results"][1]["error"]["rule"], "unknown-skill");
+    assert!(result["results"][2]["payload"].is_string());
+    let repeated = t
+        .dispatch("load_skill", &json!({"names":["judgment","flow-views"]}))
+        .unwrap();
+    assert!(repeated["results"][0]["payload"].is_null());
+    assert!(repeated["results"][1]["payload"].is_null());
+}
+
+#[test]
+fn checkpoint_keeps_stale_anchor_integrity_and_refuses_empty_progress() {
+    let mut t = session();
+    assert_eq!(
+        t.dispatch("done", &json!({"summary":"Nothing", "checkpoint":true}))
+            .unwrap_err()
+            .rule,
+        "empty-checkpoint"
+    );
+    t.snapshot.graph.requirements.insert(
+        "req:stale".into(),
+        quoted_req(
+            "The Cart holds items.",
+            &["ent:customer"],
+            "The old missing quote.",
+        ),
+    );
+    t.scope = reconcile_scope("shop.md", &["/shop", "/shop/cart"], &["req:stale"]);
+    t.dispatch(
+        "set_coverage",
+        &json!({"section":"/shop", "state":"non-normative", "note":"Introduction only."}),
+    )
+    .unwrap();
+    assert_eq!(
+        t.dispatch("done", &json!({"summary":"Save intro", "checkpoint":true}))
+            .unwrap_err()
+            .rule,
+        "stale-anchor"
+    );
+}

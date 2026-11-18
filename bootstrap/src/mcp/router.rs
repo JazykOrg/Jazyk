@@ -88,6 +88,20 @@ impl McpServer {
         {
             if let Some(name) = params["arguments"]["name"].as_str() {
                 self.delivered.lock().unwrap().skills.insert(name.into());
+            } else if let Some(value) = reply
+                .as_ref()
+                .ok()
+                .and_then(|v| v["content"][0]["text"].as_str())
+                .and_then(|text| serde_json::from_str::<Value>(text).ok())
+            {
+                if let Some(results) = value["results"].as_array() {
+                    let mut delivered = self.delivered.lock().unwrap();
+                    for result in results.iter().filter(|r| r["error"].is_null()) {
+                        if let Some(name) = result["skill"].as_str() {
+                            delivered.skills.insert(name.into());
+                        }
+                    }
+                }
             }
         }
         // The skill tools name every skill's tools by design: no hint there.

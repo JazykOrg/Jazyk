@@ -2089,22 +2089,19 @@
       "additionalProperties": false
     },
     "loadSkill": {
-      "description": "Request payload of load_skill. Brings one skill into the session, under the per-session cap",
+      "description": "Request payload of load_skill. Loads one skill or a batch with independent results",
       "type": "object",
-      "required": [
-        "name"
-      ],
+      "required": [],
       "properties": {
         "name": {
-          "type": "string",
-          "enum": [
-            "extraction",
-            "judgment",
-            "flow-views",
-            "structural-views",
-            "abstraction",
-            "conformance"
-          ]
+          "type": "string"
+        },
+        "names": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
         }
       },
       "additionalProperties": false
@@ -2118,6 +2115,11 @@
       "properties": {
         "summary": {
           "type": "string"
+        },
+        "checkpoint": {
+          "type": "boolean",
+          "default": false,
+          "description": "Save valid partial progress while unclaimed goals remain open"
         },
         "goals": {
           "type": "array",

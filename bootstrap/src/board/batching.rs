@@ -143,15 +143,27 @@ impl Board {
                 .flatten()
         };
         let executor = |g: &Goal| proj.executors.resolve(&g.kind, &g.class).map(String::from);
-        // Group key: class, tier, executor. GC goals sit after the compile tiers,
+        // Group key: class, tier, executor, kind. GC goals sit after the compile tiers,
         // mandatory before optional.
-        let mut groups: BTreeMap<(u8, u8, Option<String>), Vec<&Goal>> = BTreeMap::new();
+        let mut groups: BTreeMap<(u8, u8, Option<String>, String), Vec<&Goal>> = BTreeMap::new();
         for g in ready {
             let key = match Class::parse(&g.class) {
                 Class::Compile => (0, goals::tier(&g.kind).unwrap_or(9), executor(g)),
                 Class::Gc => (1, if g.mandatory { 0 } else { 1 }, executor(g)),
             };
-            groups.entry(key).or_default().push(g);
+            groups
+                .entry((
+                    key.0,
+                    key.1,
+                    key.2,
+                    if LEDGER_KINDS.contains(&g.kind.as_str()) {
+                        String::new()
+                    } else {
+                        g.kind.clone()
+                    },
+                ))
+                .or_default()
+                .push(g);
         }
         let mut batches: Vec<Batch> = Vec::new();
         // A locality is where a batch starts, not where it must end: the document
@@ -187,7 +199,7 @@ impl Board {
                 .saturating_sub(skills_size(names))
                 .max(6_000)
         };
-        for ((class, tier, exec), members) in groups {
+        for ((class, tier, exec, _kind), members) in groups {
             let localities = self.localities(store, &members);
             let mut current: Vec<String> = Vec::new();
             let mut skills: Vec<&str> = Vec::new();

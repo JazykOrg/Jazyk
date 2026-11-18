@@ -20,6 +20,7 @@ fn goal_claim_parameters() -> Value {
 pub(crate) fn done_parameters(begin_next: bool) -> Value {
     let mut properties = json!({
         "summary": {"type": "string"},
+        "checkpoint": {"type": "boolean"},
         "goals": {"type": "array", "minItems": 1, "items": goal_claim_parameters()}
     });
     if begin_next {
@@ -685,7 +686,7 @@ pub fn catalog() -> Vec<ToolDef> {
         ToolDef {
             name: "load_skill",
             description: include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/tools-catalog/bring-one-skill-into-the-session-by-14eb3.md")),
-            parameters: obj(json!({"name": {"type": "string"}}), &["name"]),
+            parameters: obj(json!({"name": {"type": "string"}, "names": {"type": "array", "minItems": 1, "items": {"type": "string"}}}), &[]),
         },
         ToolDef {
             name: "done",

@@ -7,4 +7,4 @@ workflow: >-
 used_by:
   - "bootstrap/src/tools/catalog.rs"
 ---
-Bring one skill into the session by its name from the skills index. The reply renders the payload; at most eight skills render in one session.
+Load skills from the skills index. Use names for several independent lookups in one call, or name for one skill. Each batch entry returns its payload or its own error. Already delivered skill text is not repeated. The session skill budget limits how many distinct skills can render.

@@ -733,3 +733,73 @@ fn two_documents_never_share_a_batch() {
         assert!(batch.goals.len() <= 3, "{:?}", batch);
     }
 }
+
+#[test]
+fn mixed_judgment_and_retrace_work_has_separate_commit_boundaries() {
+    let mut store = settled_store();
+    store.status.generation += 1;
+    let generation = store.status.generation;
+    let ids: Vec<String> = store.graph.entities.keys().cloned().collect();
+    for id in ids {
+        record(
+            &mut store,
+            generation,
+            store::CHANGE_ENTITY,
+            &id,
+            "definition",
+            json!({}),
+        );
+    }
+    let reqs: Vec<String> = store.graph.requirements.keys().cloned().collect();
+    for id in reqs {
+        record(
+            &mut store,
+            generation,
+            store::CHANGE_REQ_REVISED,
+            &id,
+            "fields",
+            json!({}),
+        );
+    }
+    let mut board = derive(&store);
+    board.goals = [
+        ("rejudge-pair", "req:a~req:b"),
+        ("review-entity", "ent:a"),
+        ("retrace", "view:a"),
+        ("rejudge-pair", "req:c~req:d"),
+    ]
+    .into_iter()
+    .map(|(kind, target)| Goal {
+        id: format!("g:{kind}:{target}"),
+        kind: kind.into(),
+        target: target.into(),
+        class: "compile".into(),
+        mandatory: true,
+        ..Default::default()
+    })
+    .collect();
+    board.readiness = board
+        .goals
+        .iter()
+        .map(|g| (g.id.clone(), Ready::Ready))
+        .collect();
+    let batches = board.form_batches(&store, &project_for(&store));
+    assert_eq!(batches.len(), 3);
+    for batch in &batches {
+        let batch_kinds: BTreeSet<_> = batch
+            .goals
+            .iter()
+            .map(|id| board.goal(id).unwrap().kind.as_str())
+            .collect();
+        assert_eq!(
+            batch_kinds.len(),
+            1,
+            "mixed commit boundary: {:?}",
+            batch_kinds
+        );
+    }
+    assert!(
+        batches.iter().any(|b| b.goals.len() == 2),
+        "same-kind goals still batch"
+    );
+}

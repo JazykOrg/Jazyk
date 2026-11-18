@@ -116,12 +116,15 @@ evidence.
 
 A refused done preserves staged work: repair its named defect and retry.
 
-Every goal needs an outcome.
+Ordinary done requires an outcome for every goal. To save valid partial progress, call
+`done` with `checkpoint: true`. Completed goals and valid staged mutations commit;
+unclaimed goals stay open. Do not invent outcomes for work you have not inspected.
 
 When a staged graph goal cannot honestly be done, call mark_goal_failed with the observed blocker in
 one or two sentences.
 
-If the budget runs out, stop so the harness parks unfinished work.
+Before the budget runs out, checkpoint valid progress. If a checkpoint still fails an
+integrity or evidence gate, preserve the staged work for repair and report its blocker.
 
 Ledger workers (bind, generate, verify) commit through their recording tools.
 

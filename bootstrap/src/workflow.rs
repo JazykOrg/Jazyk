@@ -393,7 +393,30 @@ async fn run_step(
                 let store = Store::load(&proj.out);
                 let control = crate::control::Control::load(proj, &proj.out);
                 let board = crate::board::Board::derive(&store, proj, &control);
-                if let Err(error) = graph_complete(&board) {
+                if let Err(mut error) = graph_complete(&board) {
+                    match crate::open_work::list(&proj.out) {
+                        Ok(records) => {
+                            let saved: Vec<_> = records
+                                .iter()
+                                .filter(|r| r.state == "open")
+                                .map(|r| {
+                                    json!({
+                                        "workId": r.receipt.id, "batch": r.batch,
+                                        "mutations": r.mutations.len(), "goals": r.goals.len()
+                                    })
+                                })
+                                .collect();
+                            if !saved.is_empty() {
+                                error.push(' ');
+                                error.push_str(&format!(include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/workflow/unfinished-work-saved.md")), saved.len()));
+                            }
+                            result["unfinishedWork"] = json!(saved);
+                        }
+                        Err(reason) => {
+                            result["unfinishedWorkError"] = json!(reason);
+                            error.push_str(" Saved-work availability could not be checked; inspect the recovery records before retrying.");
+                        }
+                    }
                     result["error"] = json!(error);
                 }
             }
@@ -1031,6 +1054,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let observed = calls.clone();
         let execution = crate::hosted::Execution {
+            records: Some(Arc::new(crate::hosted::tests::MemoryRecords::default())),
             transport_async: Some(Arc::new(move |_| {
                 observed.fetch_add(1, Ordering::Relaxed);
                 Box::pin(async {
@@ -1067,6 +1091,15 @@ mod tests {
             !error.contains("Compile documents before continuing"),
             "{error}"
         );
+        assert!(
+            !report["unfinishedWork"].as_array().unwrap().is_empty(),
+            "{report}"
+        );
+        assert!(
+            error.contains("saved for recovery in project chat"),
+            "{error}"
+        );
+        assert!(error.contains("not committed graph changes"), "{error}");
         assert!(calls.load(Ordering::Relaxed) > 0);
     }
 

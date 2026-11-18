@@ -19,4 +19,7 @@ it failed merely to close the batch. Use `mark_goal_failed` only for an observed
 blocker, naming that blocker honestly.
 
 Finish with explicit `done({"summary":"..."})`. Do not stop after explaining what
-still needs to be done.
+still needs to be done. If you cannot finish the remaining goals, use
+`done({"summary":"Saved progress; remaining work stays open.","checkpoint":true})`
+to save valid work and accepted judgments. Repair any evidence or integrity gate
+it names. Do not discard useful work or repeat it in a new session.

@@ -484,14 +484,53 @@ pub fn get(id: &str) -> Option<Value> {
     })
 }
 
-// Remove a conversation (docs/frontends/acp.md#session-store). A turn cannot be running: the
-// worker answers nothing while it is inside one. Answers whether it existed.
+// Remove a conversation and its sub-agent conversations below it
+// (docs/frontends/acp.md#session-store, docs/frontends/subagents.md#cancellation). A
+// turn cannot be running: the worker answers nothing while it is inside one. A
+// sub-agent the tree still runs stops first. Answers whether it existed.
 pub fn remove(id: &str) -> bool {
-    let gone = BOOK.with(|b| b.borrow_mut().chats.remove(id).is_some());
-    if gone {
-        publish_sessions();
+    let doomed = BOOK.with(|b| {
+        let b = b.borrow();
+        if !b.chats.contains_key(id) {
+            return Vec::new();
+        }
+        let mut ids = vec![id.to_string()];
+        let mut next = 0;
+        while next < ids.len() {
+            for c in b.chats.values() {
+                let parent = c.tree.as_ref().and_then(|t| t["parentId"].as_str());
+                if parent == Some(ids[next].as_str()) && !ids.contains(&c.id) {
+                    ids.push(c.id.clone());
+                }
+            }
+            next += 1;
+        }
+        ids
+    });
+    if doomed.is_empty() {
+        return false;
     }
-    gone
+    AGENTS.with(|a| {
+        let tree = a.borrow();
+        for id in &doomed {
+            tree.remove(id);
+        }
+    });
+    BOOK.with(|b| {
+        let mut b = b.borrow_mut();
+        for id in &doomed {
+            b.chats.remove(id);
+        }
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    UNLOADED.with(|u| {
+        let mut u = u.borrow_mut();
+        for id in &doomed {
+            u.remove(id);
+        }
+    });
+    publish_sessions();
+    true
 }
 
 // The chat serving for one conversation, as a native chat session gets it: `chat`

@@ -126,6 +126,10 @@ enum Cmd {
     Cancel {
         session: String,
     },
+    Listen {
+        session: String,
+        on_update: OnUpdate,
+    },
     Close {
         session: String,
         reply: std::sync::mpsc::Sender<()>,
@@ -142,6 +146,9 @@ enum SessCmd {
     Answer {
         id: String,
         option: Option<String>,
+    },
+    Listen {
+        on_update: OnUpdate,
     },
     Close {
         reply: std::sync::mpsc::Sender<()>,
@@ -451,6 +458,16 @@ impl SessionHandle {
         });
     }
 
+    // Receive the updates the agent sends between prompts, such as those of a
+    // sub-agent turn a person started (docs/frontends/acp.md#sub-agent-updates).
+    // Updates during a prompt still go to that prompt's callback.
+    pub fn listen(&self, on_update: OnUpdate) {
+        let _ = self.cmd_tx.unbounded_send(Cmd::Listen {
+            session: self.id.clone(),
+            on_update,
+        });
+    }
+
     // Answer a forwarded permission request. `None` cancels it.
     pub fn answer_permission(&self, id: &str, option: Option<String>) {
         let _ = self.cmd_tx.unbounded_send(Cmd::Answer {
@@ -615,6 +632,11 @@ async fn main_loop(
                     let _ = entry.tx.unbounded_send(SessCmd::Answer { id, option });
                 }
             }
+            Cmd::Listen { session, on_update } => {
+                if let Some(entry) = sessions.get(&session) {
+                    let _ = entry.tx.unbounded_send(SessCmd::Listen { on_update });
+                }
+            }
             Cmd::Cancel { session } => {
                 if let Some(entry) = sessions.get(&session) {
                     entry.cancelled.store(true, Ordering::Relaxed);
@@ -665,13 +687,40 @@ async fn session_task(
     > = std::sync::Mutex::new(HashMap::new());
     let ask_seq = std::sync::atomic::AtomicU64::new(0);
     let mut queued: std::collections::VecDeque<SessCmd> = Default::default();
+    // Where updates go between prompts; without it they wait for the next prompt.
+    let mut listener: Option<OnUpdate> = None;
     loop {
-        let cmd = match queued.pop_front() {
-            Some(c) => Some(c),
-            None => rx.next().await,
+        let cmd = match (queued.pop_front(), &listener) {
+            (Some(c), _) => Some(c),
+            (None, None) => rx.next().await,
+            (None, Some(listen)) => loop {
+                let ev = futures::select! {
+                    m = session.read_update().fuse() => Err(m),
+                    c = rx.next() => Ok(c),
+                };
+                match ev {
+                    Ok(c) => break c,
+                    Err(Ok(SessionMessage::SessionMessage(dispatch))) => {
+                        handle_dispatch(HandleArgs {
+                            dispatch,
+                            on_update: listen,
+                            cancelled: &cancelled,
+                            root: &root,
+                            policy,
+                            pending: &pending,
+                            ask_seq: &ask_seq,
+                            session_id: &session.session_id().to_string(),
+                        })
+                        .await?;
+                    }
+                    Err(Ok(_)) => {}
+                    Err(Err(_)) => break None,
+                }
+            },
         };
         let Some(cmd) = cmd else { break };
         match cmd {
+            SessCmd::Listen { on_update } => listener = Some(on_update),
             SessCmd::Close { reply } => {
                 // session/close is capability-gated; an agent without it answers
                 // method-not-found, and dropping our handle is all there is to do.
@@ -699,8 +748,18 @@ async fn session_task(
                 let _ = reply.send(());
                 break;
             }
-            // No turn in flight: nothing to answer.
-            SessCmd::Answer { .. } => {}
+            // A request the agent sent between prompts.
+            SessCmd::Answer { id, option } => {
+                if let Some(r) = pending.lock().unwrap().remove(&id) {
+                    let outcome = match option {
+                        Some(oid) => {
+                            RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(oid))
+                        }
+                        None => RequestPermissionOutcome::Cancelled,
+                    };
+                    let _ = r.respond(RequestPermissionResponse::new(outcome));
+                }
+            }
             SessCmd::Prompt {
                 text,
                 on_update,

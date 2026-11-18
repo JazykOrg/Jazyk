@@ -189,14 +189,14 @@ impl McpServer {
 
     // Independent chat edits use compiler validators without claiming build goals.
     // All entries share one snapshot and changeset, including staging budgets.
-    pub(super) fn commit_graph_edits(&self, edits: &[(String, Value)]) -> Value {
+    pub(crate) fn commit_graph_edits(&self, edits: &[(String, Value)]) -> Value {
         let mut store = Store::load(&self.out);
         let (parsed, _) = crate::reconcile::parse_all(&self.project);
         let mut snapshot = store.clone();
         snapshot.sync_docs_in_memory(&parsed);
         let mut session = ToolSession::new(
             snapshot,
-            WorkScope::serving("mcp-write"),
+            WorkScope::serving("chat"),
             self.mutation_limit,
             self.context_budget,
         );

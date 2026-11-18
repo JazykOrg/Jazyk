@@ -42,6 +42,13 @@ use structural::{
 pub use text::card_link;
 use text::empty_diagram;
 
+// Shared renderer preparation for editors that convert the deterministic emission
+// in a browser worker. Native conversion uses the same adapters.
+pub fn browser_source(store: &Store, view_id: &str, view: &View) -> serde_json::Value {
+    let (plain, links) = renderer::strip_element_links(&emit(store, view_id, view));
+    serde_json::json!({"puml": renderer::adapt_component_for_crate(&plain), "links": links})
+}
+
 // ---- dispatch ----
 
 // The PlantUML text of a view over the snapshot. Deterministic: the same snapshot and

@@ -84,6 +84,7 @@ impl GoalKind for DiagramCoverage {
                     authored,
                     title,
                     clear_query,
+                    clear_excluded,
                     query,
                     collapse,
                     exclude,
@@ -110,6 +111,9 @@ impl GoalKind for DiagramCoverage {
                         }
                         if let Some(collapse) = collapse {
                             v.collapse = collapse.clone();
+                        }
+                        if *clear_excluded {
+                            v.excluded.clear();
                         }
                         for exclusion in exclude {
                             if let Some(old) = v.excluded.iter_mut().find(|x| x.id == exclusion.id)

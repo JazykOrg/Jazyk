@@ -88,6 +88,28 @@ pub fn views_value(store: &Store) -> Value {
     json!({ "views": views })
 }
 
+// The bounded tool list with editor-specific counts and limit state.
+pub fn list_value(store: &Store, args: &Value) -> Value {
+    let mut result = crate::diagrams::list(store, args);
+    if let Some(entries) = result["views"].as_array_mut() {
+        for entry in entries {
+            let Some(view) = entry["id"]
+                .as_str()
+                .and_then(|id| store.graph.views.get(id))
+            else {
+                continue;
+            };
+            let members = effective_members(store, view);
+            entry["members"] = json!(members.len());
+            entry["edges"] = json!(crate::derive::authored_view_edge_count(
+                store, view, &members
+            ));
+            entry["limits"] = json!(limits_state(store, view, &members));
+        }
+    }
+    result
+}
+
 // The entity members hidden by the collapse set: strict descendants of a collapsed
 // node. The collapsed node itself stays shown.
 fn hidden_by_collapse(
@@ -346,7 +368,7 @@ pub fn view_value(store: &Store, id: &str, detail: usize) -> Option<Value> {
     };
     let (puml, svg, render_error) = match crate::render::render_view(store, &id) {
         Ok((puml, svg)) => (Some(puml), Some(svg), None),
-        Err(e) => (None, None, Some(e.0)),
+        Err(e) => (Some(crate::render::emit(store, &id, view)), None, Some(e.0)),
     };
     Some(json!({
         "id": id,
@@ -367,6 +389,7 @@ pub fn view_value(store: &Store, id: &str, detail: usize) -> Option<Value> {
         "children": children_value(store, &id),
         "detail": applied,
         "deeper": deeper,
+        "renderSource": if svg.is_none() { Some(crate::render::browser_source(store, &id, view)) } else { None },
         "puml": puml,
         "svg": svg,
         "renderError": render_error,

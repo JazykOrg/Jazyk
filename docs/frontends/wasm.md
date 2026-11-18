@@ -364,18 +364,17 @@ gates held and nothing landed. A model of this size shows the machinery; the
 
 ## Diagrams
 
-Rendering stays native. `plantuml-little` links Graphviz as a prebuilt C archive, and
-there is no wasm build of it, so `render_svg` and `render_png` answer an error in a
-tab. Everything above them still runs: the emitters, the
-[lifting and collapse](../compiler/diagrams.md#lifting-and-collapse), the over-limit
-handling. Every view still emits its `.puml` on commit, and the `.svg` beside it is
-whatever the project was seeded with.
+The compiler's SVG and PNG converters stay native. Its PlantUML emission, lifting,
+collapse, over-limit handling and renderer preparation run on both targets.
+`GET /api/views/{id}` always carries the current PlantUML. It reuses a seeded SVG
+only when its adjacent PlantUML exactly matches current emission.
 
-This is why the demo ships a project whose diagrams are already rendered: the
-`.svg` files travel in the seed. A read of a view (`GET /api/views/{id}`) that cannot
-render serves the `.svg` on disk when the view's emission equals the `.puml` beside
-it, so the picture is exactly the view's. A view that changed since the seed, or one
-drawn at another level of detail, has no picture in a tab, and its page says why.
+When no matching SVG exists, `renderSource` carries prepared PlantUML and element
+link pairs. An editor can convert it through `plantuml-little-web` and
+`graphviz-anywhere-web` in a bounded worker. The editor restores those links on
+rendered elements, retains the document set on navigation, and sanitizes the SVG.
+This draws newly authored and edited diagrams without a model or a native server.
+The compiler does not persist the browser's SVG or rasterize PNG files.
 
 ## What a tab does not do
 
@@ -391,7 +390,8 @@ drawn at another level of detail, has no picture in a tab, and its page says why
   instead of an agent.
 - No binding, generation, or verification in chat, and no slash commands. See
   [chat](#chat).
-- No rendering to `.svg` or `.png`. See [diagrams](#diagrams).
+- No compiler conversion to `.svg` or `.png`. Editors can render supplied
+  PlantUML in a browser worker. See [diagrams](#diagrams).
 - No file watching. The only way onto the machine is a folder the person opened or
   saved to, or a download.
 - No [benchmark](../benchmark/benchmark.md).

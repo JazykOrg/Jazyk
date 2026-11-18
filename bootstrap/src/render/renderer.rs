@@ -246,7 +246,6 @@ pub fn render_png(svg: &str) -> Result<Vec<u8>, RenderError> {
 // «actor» stereotype, and without an interface each link converts to `-->` (`..>` for the
 // dotted forms) in its stated direction, its label kept.
 // Mirrors docs/compiler/diagrams.md#the-renderer.
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn adapt_component_for_crate(puml: &str) -> String {
     let lines: Vec<&str> = puml.lines().collect();
     let is_component = lines
@@ -287,7 +286,6 @@ pub(super) fn adapt_component_for_crate(puml: &str) -> String {
     out
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 pub(super) fn strip_element_links(puml: &str) -> (String, Vec<(String, String)>) {
     let mut plain = String::with_capacity(puml.len());
     let mut links: Vec<(String, String)> = Vec::new();

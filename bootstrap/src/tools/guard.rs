@@ -17,6 +17,35 @@ impl ToolSession {
                 }
             }
         }
+        // An explicitly empty diagram collection is a replacement, not an unfilled
+        // model argument. Keep it so human and model edits can clear the definition.
+        if matches!(name, "upsert_view" | "update_view") {
+            for key in [
+                "members",
+                "collapse",
+                "exclude",
+                "excluded",
+                "labels",
+                "notes",
+                "groups",
+                "fragments",
+                "links",
+            ] {
+                if key == "members"
+                    && ["add_members", "remove_members"]
+                        .iter()
+                        .any(|key| args.get(*key).is_some())
+                {
+                    continue;
+                }
+                if supplied
+                    .get(key)
+                    .is_some_and(|v| v.as_array().is_some_and(Vec::is_empty))
+                {
+                    args[key] = json!([]);
+                }
+            }
+        }
         let note = prefer_quote(name, &mut args);
         let result = self.dispatch_normalized(name, &args);
         match (result, note) {

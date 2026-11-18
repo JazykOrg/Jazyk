@@ -1134,6 +1134,9 @@ definitions:
       - id
       - reasoning
     properties:
+      clear_excluded:
+        type: boolean
+        description: Clear prior exclusions before applying exclude.
       decision: {type: string}
       id:
         type: string

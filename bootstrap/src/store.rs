@@ -182,6 +182,8 @@ pub enum Op {
         id: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         clear_query: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_excluded: bool,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         authored: BTreeMap<String, serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]

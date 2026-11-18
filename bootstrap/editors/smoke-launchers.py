@@ -69,7 +69,9 @@ else:(home/'launched.json').write_text(json.dumps({'program':name,'args':args,'c
         doc=json.loads(settings.read_text())
         assert doc['jazyk.server.path']==str(binary)
         assert doc['acp.agents']['Jazyk']['args']==['acp','--agent','embedded']
-        before=settings.read_bytes();launch(choice);assert before==settings.read_bytes()
+        before=settings.read_bytes();modified=settings.stat().st_mtime_ns
+        launch(choice)
+        assert before==settings.read_bytes() and modified==settings.stat().st_mtime_ns,'repeat setup must not rewrite current settings'
         launch(choice,'--agent','claude')
         assert 'anthropic.claude-code' in (home/(editor+'-extensions.txt')).read_text()
     print('VS Code alias, Cursor, LSP settings, ACP, native Claude extension and repeat setup passed')

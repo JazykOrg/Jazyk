@@ -611,9 +611,9 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     if !flagged.insert(key.clone()) {
                         continue;
                     }
-                    let (Some(sa), Some(sb)) = (ra.sources.first(), rb.sources.first()) else {
+                    if ra.sources.is_empty() || rb.sources.is_empty() {
                         continue;
-                    };
+                    }
                     // A pair a session judged is its finding, not the check's: a
                     // one-subject twin beside the two-subject diagnostic is the same
                     // finding twice (docs/compiler/compilation.md#checks).
@@ -626,29 +626,24 @@ pub fn checks(store: &Store, proj: &Project) -> Vec<Finding> {
                     if judged {
                         continue;
                     }
-                    if sa.doc == sb.doc {
-                        if sa.section == sb.section && norm(&sa.quote) == norm(&sb.quote) {
-                            f.push(finding(
-                                "duplicate-requirement",
-                                &key.0,
-                                "warning",
-                                format!(
-                                    "{} and {} extract the same sentence twice; keep one",
-                                    key.0, key.1
-                                ),
-                            ));
-                        }
-                    } else {
-                        f.push(finding(
-                            "duplicate-requirement",
-                            &key.0,
-                            "info",
-                            format!(
-                                "{} and {} state the same fact in different documents; both kept",
-                                key.0, key.1
-                            ),
-                        ));
+                    let shared = ra.sources.iter().any(|sa| {
+                        rb.sources.iter().any(|sb| {
+                            sa.doc == sb.doc
+                                && sa.section == sb.section
+                                && norm(&sa.quote) == norm(&sb.quote)
+                        })
+                    });
+                    let cross_document = ra
+                        .sources
+                        .iter()
+                        .any(|sa| rb.sources.iter().any(|sb| sa.doc != sb.doc));
+                    if !shared && !cross_document && norm(&ra.statement) != norm(&rb.statement) {
+                        continue;
                     }
+                    f.push(finding(
+                        "duplicate-requirement", &key.0, if shared {"warning"} else {"info"},
+                        format!("{} and {} have near-identical statements; consolidate their source locations into one requirement", key.0, key.1),
+                    ));
                 }
             }
         }

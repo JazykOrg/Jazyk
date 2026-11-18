@@ -674,3 +674,100 @@ fn source_traceability_qualifies_shared_sites_and_opens_each_sets_requirement() 
     }
     std::fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn multi_anchor_navigation_uses_sections_and_survives_requirement_merges() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().to_path_buf();
+    let out = root.join(".jazyk");
+    let mut store = Store {
+        out: out.clone(),
+        ..Default::default()
+    };
+    let source = |doc: &str, section: &str| SourceRef {
+        doc: doc.into(),
+        section: section.into(),
+        quote: "Use blue. Use #1E40AF.".into(),
+    };
+    let mut r = requirement();
+    r.sources = vec![
+        source("rules.md", "/rules/first"),
+        source("rules.md", "/rules/second"),
+        source("other.md", "/other"),
+    ];
+    store.graph.requirements.insert("req:color".into(), r);
+    store
+        .graph
+        .redirects
+        .insert("req:old".into(), "req:color".into());
+    let mut lsp = lsp_at(root, out.clone(), store);
+    lsp.gen.deliverable = lsp.root.join("product");
+    lsp.overlay.insert(
+        "rules.md".into(),
+        "# Rules\n\n## First\n\nUse blue. Use #1E40AF.\n\n## Second\n\nUse blue.\nUse #1E40AF.\n"
+            .into(),
+    );
+    lsp.overlay.insert(
+        "other.md".into(),
+        "# Other\n\nUse blue. Use #1E40AF.\n".into(),
+    );
+    lsp.overlay
+        .insert("product/style.rs".into(), "fn color() {}\n".into());
+    let mut ledger = Ledger::default();
+    ledger.requirements.insert(
+        "req:old".into(),
+        ReqRow {
+            entity: "ent:cart".into(),
+            files: vec!["style.rs".into()],
+            sites: vec![Site {
+                file: "style.rs".into(),
+                line: 1,
+                head: "fn color() {}".into(),
+            }],
+            tests: Default::default(),
+            test: TestRef {
+                kind: "programmatic".into(),
+                label: "unit".into(),
+                artifact: "tests.rs".into(),
+                name: "color".into(),
+                run: "test".into(),
+                cwd: ".".into(),
+            },
+            hashes: Default::default(),
+            verdict: "none".into(),
+            last_run: None,
+            exit_code: None,
+            evidence: None,
+        },
+    );
+    ledger.save(&out).unwrap();
+    let at = json!({"textDocument":{"uri":path_to_uri(&lsp.root.join("rules.md"))}, "position":{"line":8,"character":3}});
+    let hover = lsp.on_hover(&at);
+    assert_eq!(hover["range"]["start"]["line"], 8);
+    assert_eq!(hover["range"]["end"]["line"], 9);
+    let lenses = lsp.on_code_lens(&at);
+    let lines: Vec<_> = lenses
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|l| l["command"]["command"] == "jazyk.openRequirement")
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, vec![4, 8]);
+    assert_eq!(
+        lsp.code_requirements("product/style.rs"),
+        vec![("req:color".into(), 0)]
+    );
+    let definitions = lsp.code_definition("product/style.rs", 0).unwrap();
+    let lines: Vec<_> = definitions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(lines, vec![4, 8, 2]);
+    let card = lsp.requirement_card("req:color", &lsp.store.graph.requirements["req:color"]);
+    assert!(card.contains("rules.md#/rules/first"));
+    assert!(card.contains("rules.md#/rules/second"));
+    assert!(card.contains("other.md#/other"));
+}

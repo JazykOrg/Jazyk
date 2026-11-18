@@ -21,7 +21,8 @@ impl Lsp {
         let mut lenses: Vec<(usize, usize, Value)> = Vec::new();
         for (rid, r) in &self.store.graph.requirements {
             for src in r.sources.iter().filter(|s| s.doc == doc) {
-                let Some((sl, sc, _, _)) = md::locate(&text, &src.quote) else {
+                let Some((sl, sc, _, _)) = md::locate_in_section(&text, &src.section, &src.quote)
+                else {
                     continue;
                 };
                 let mut title = rid.clone();
@@ -201,7 +202,8 @@ impl Lsp {
                     .iter()
                     .filter(move |s| s.doc == doc)
                     .filter_map(move |src| {
-                        md::locate(text, &src.quote).map(|range| (rid.clone(), range))
+                        md::locate_in_section(text, &src.section, &src.quote)
+                            .map(|range| (rid.clone(), range))
                     })
             })
             .collect();

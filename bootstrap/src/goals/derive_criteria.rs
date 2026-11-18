@@ -111,7 +111,7 @@ impl GoalKind for DeriveCriteria {
             let docs: BTreeSet<String> = reqs
                 .iter()
                 .filter_map(|(rid, _)| store.graph.requirements.get(rid))
-                .filter_map(|r| r.sources.first().map(|s| s.doc.clone()))
+                .flat_map(|r| r.sources.iter().map(|s| s.doc.clone()))
                 .collect();
             let mut nearby: Vec<String> = Vec::new();
             for doc in &docs {
@@ -172,15 +172,12 @@ impl GoalKind for DeriveCriteria {
                 for r in g.change[key].as_array().into_iter().flatten() {
                     if let Some(id) = r.as_str() {
                         lines.push(format!("- {} full", id));
-                        if let Some(src) = store
-                            .graph
-                            .requirements
-                            .get(id)
-                            .and_then(|q| q.sources.first())
-                        {
-                            let sec = format!("{}#{}", src.doc, src.section);
-                            if !sections.contains(&sec) {
-                                sections.push(sec);
+                        if let Some(requirement) = store.graph.requirements.get(id) {
+                            for src in &requirement.sources {
+                                let sec = format!("{}#{}", src.doc, src.section);
+                                if !sections.contains(&sec) {
+                                    sections.push(sec);
+                                }
                             }
                         }
                     }

@@ -466,12 +466,14 @@ chat form of the [edit paths](../compiler/compilation.md#edit-paths):
   deletes the requirement, one changeset. The deletion writes its
   [change records](../compiler/graph.md#change-records), so a view or instance that
   referenced the requirement gets a `retrace` goal on the next build.
-- `edit_fact({id, field, value, note?, provenance?, decision?})`: any authored field on any node (an
+- `edit_fact({id, field, value, note?, source?, provenance?, decision?})`: any authored field on any node (an
   entity's `definition` or `parent`, an attribute value, a requirement's `edges`, a
   view's members). When the fact is quote-provenanced, the agent proposes the
   sentence rewrite in conversation, the person accepts it, and the call carries the
   accepted sentence as `note`: the serving locates the quote and commits the prose
-  replacement with the graph mutation as one dual write. Without an accepted
+  replacement with the graph mutation as one dual write. A requirement with
+  several sources requires `source: {doc, section, quote}`. The rewrite replaces
+  that exact source and preserves every other location. Without an accepted
   sentence, or when the fact is `derived` or `decree`, the edit lands graph-only
   with explicit derived `provenance` or an explicit human `decision`. A model's
   inference never implicitly becomes a human decree. A

@@ -316,7 +316,11 @@ impl Lsp {
                 .sources
                 .iter()
                 .filter(|s| s.doc == doc)
-                .find_map(|s| md::locate(&self.doc_text(&doc), &s.quote))
+                .filter_map(|s| md::locate_in_section(&self.doc_text(&doc), &s.section, &s.quote))
+                .find(|(sl, sc, el, ec)| {
+                    (line > *sl || (line == *sl && ch >= *sc))
+                        && (line < *el || (line == *el && ch <= *ec))
+                })
             {
                 hover["range"] = self.range(q);
             }
@@ -371,6 +375,19 @@ impl Lsp {
             word,
             r.statement
         ));
+        for source in &r.sources {
+            if let Some((line, _, _, _)) =
+                md::locate_in_section(&self.doc_text(&source.doc), &source.section, &source.quote)
+            {
+                s.push_str(&format!(
+                    "[{}#{}]({}#L{})\n\n",
+                    source.doc,
+                    source.section,
+                    self.doc_to_uri(&source.doc),
+                    line + 1
+                ));
+            }
+        }
         if let Some(link) = self.docsgen_link(rid, r) {
             s.push_str(&format!("[the requirement →]({})\n\n", link));
         }
@@ -545,7 +562,9 @@ impl Lsp {
         let text = self.doc_text(doc);
         for (rid, r) in &self.store.graph.requirements {
             for src in r.sources.iter().filter(|s| s.doc == doc) {
-                if let Some((sl, sc, el, ec)) = md::locate(&text, &src.quote) {
+                if let Some((sl, sc, el, ec)) =
+                    md::locate_in_section(&text, &src.section, &src.quote)
+                {
                     let after_start = line > sl || (line == sl && character >= sc);
                     let before_end = line < el || (line == el && character <= ec);
                     if after_start && before_end {

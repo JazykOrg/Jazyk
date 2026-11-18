@@ -413,8 +413,8 @@ atomically:
 Docsgen is not part of a commit: the requirements documents regenerate in the build tail
 ([a build](./compilation.md#a-build)).
 
-If the session is aborted, the changeset is dropped and the graph is untouched. A session
-that ends with valid staged work commits it ([commit](./sessions.md#commit)).
+A crash, disconnect, stopped session, or exhausted session preserves its changeset.
+Only explicit completion commits it. Explicit abandonment discards staged content.
 
 Sessions are not the only writers. A human save that dirties sections, alignment's
 mechanical moves, a dual write, a decree, a ratification, a triage, an answer, and a check run each
@@ -432,32 +432,30 @@ node, with mentions unioned.
 
 ### Commit conflicts
 
-A changeset staged against generation `g` may meet the store at a later generation
-`g'`: other sessions, builds, agents, or people committed meanwhile. The first commit
-wins. The later one rebases:
+Open changesets persist before accepted tool replies. Their runtime records live in
+`local/open/<work-id>/`, never in committed graph files. The manifest identifies
+the worker, client, conversation/session, host and PID where available, batch,
+goals, opening generation, ownership epoch, heartbeat and expiry. An append-only
+event log retains accepted staging and lifecycle changes. Reads derive node locks
+from these records. Expiry unlocks work without deleting it.
 
-- The store reads the journal entries `g+1` to `g'`: the nodes their mutations changed,
-  the goals they resolved.
-- Additive mutations commute and never conflict: creates (reconciled by natural key),
-  an entity update that only adds aliases, a mention, attributes, or word-match
-  verdicts, a view update that only adds or removes members or exclusions, and a
-  reported diagnostic (its id is its natural key).
-- Any other mutation of a node a mutation since `g` changed, other than an additive
-  one, is a node conflict. So is a mutation of a node deleted since `g`. A node merged
-  since `g` is followed through its redirect.
-- A section mutation (coverage, an anchor placement) on a section a mutation since `g`
-  covered or placed is a section conflict.
-- A goal the changeset resolves that a commit since `g` resolved, or that is no longer
-  open with the same `change` on the current board, is a goal conflict.
+Staging a mutation on another live changeset's target succeeds with a warning.
+The warning names the work and staged changes, and says that a later commit will
+report merge conflicts if the other work commits first. No override or review
+acknowledgment is required. Merely overlapping work opens no review goals.
 
-Without conflicts the changeset applies on `g'` and commits as usual; its journal entry
-records `rebased_from: g`. With conflicts nothing commits. The reply lists each
-conflict: the node, section, or goal, the generation that changed it, and that
-commit's kind and batch. The session stays open on the current generation: its reads
-now see `g'`, its conflicting mutations and resolutions are dropped, and the rest stay
-staged. The agent rereads what changed, restages what still applies, and finishes
-again. A conflict is a tool result, never a crash, and costs one of the session's
-attempts.
+Commits apply staged field patches to the current graph under the commit mutex.
+Disjoint fields survive. The later writer wins overlapping fields. Creates use
+natural keys and references follow redirects. Missing targets and invalid
+references retain the integrity gates and return a repair message.
+
+An overwrite of a field changed since the opening generation is reported with
+node, field, prior value, prior generation and prior author. The journal retains
+these details and `rebased_from`. An informational `concurrent-overwrite`
+diagnostic makes the overwrite visible to humans. Other open work touching a
+changed node receives a notice on its next reply and at `done`. Notices never
+drop staged work. Goal claims are revalidated on the current candidate graph;
+a previous resolution alone does not refuse a commit.
 
 ## Validation gates
 

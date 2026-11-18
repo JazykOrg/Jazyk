@@ -501,6 +501,7 @@ pub fn remove(id: &str) -> bool {
 // hands the model, and its instructions.
 fn open_serving(
     reader: bool,
+    conversation_id: &str,
 ) -> Result<
     (
         McpServer,
@@ -528,7 +529,7 @@ fn open_serving(
     let init = server
         .handle(
             "initialize",
-            &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm-chat"}}),
+            &json!({"protocolVersion": "2024-11-05", "clientInfo": {"name": "jazyk-wasm-chat"},"_meta":{"jazyk":{"conversationId":conversation_id,"sessionName":BOOK.with(|b|b.borrow().chats.get(conversation_id).map(|c|c.title.clone()))}}}),
         )
         .map_err(|e| e.1)?;
     let instructions = init["instructions"]
@@ -804,7 +805,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     let (serving, mut history, reader) = taken.unwrap_or((None, Vec::new(), false));
     let (server, tools, instructions, extras) = match serving {
         Some(s) => s,
-        None => match open_serving(reader) {
+        None => match open_serving(reader, id) {
             Ok(s) => s,
             Err(e) => {
                 BOOK.with(|b| {
@@ -964,6 +965,7 @@ pub async fn prompt(id: &str, body: &Value) -> (u16, Value) {
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(id) {
             c.history = history;
+            server.pause_open_work();
             c.serving = Some((server, tools, instructions, extras));
         }
     });
@@ -1228,7 +1230,7 @@ async fn child_turn(
     set_state(&id, "running");
     let (server, tools, instructions, extras) = match serving {
         Some(s) => s,
-        None => match open_serving(false) {
+        None => match open_serving(false, &id) {
             Ok(s) => s,
             Err(e) => {
                 let error = format!("the chat serving failed to start: {e}");
@@ -1312,6 +1314,7 @@ async fn child_turn(
     BOOK.with(|b| {
         if let Some(c) = b.borrow_mut().chats.get_mut(&id) {
             c.history = history;
+            server.pause_open_work();
             c.serving = Some((server, tools, instructions, extras));
             c.result = Some(harness::agents::outcome_value(&outcome));
         }

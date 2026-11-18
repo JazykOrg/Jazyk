@@ -1,13 +1,17 @@
 use super::*;
 
 impl McpServer {
-    pub(super) fn handle_local(
+    pub(super) fn handle_local_inner(
         &self,
         method: &str,
         params: &Value,
     ) -> Result<Value, (i64, String)> {
         match method {
             "initialize" => {
+                *self.identity.lock().unwrap() = params["_meta"]["jazyk"]
+                    .as_object()
+                    .map(|m| Value::Object(m.clone()))
+                    .unwrap_or(json!({}));
                 self.watch_edits();
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
                     *self.client.lock().unwrap() = Some(name.to_string());
@@ -102,7 +106,7 @@ impl McpServer {
                     tools.push(json!({
                         "name": "begin_goals",
                         "description": "Claim the named batch (batch, an id from goals), the named goals as one batch (goals, when one scheduled batch holds them all), or the next ready batch. Opens the changeset and returns the assembled session prompt as instructions and the initially loaded set as package. One batch open at a time.",
-                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string", "description": "a batch id from goals, e.g. b412-1"}, "goals": {"type": "array", "items": {"type": "string"}, "description": "goal ids sharing one locality and one executor"}, "full": {"type": "boolean", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/repeat-the-agent-contract-and-the-skills-8b332.md"))}}, "additionalProperties": false}
+                        "inputSchema": {"type": "object", "properties": {"batch": {"type": "string", "description": "a batch id from goals, e.g. b412-1"}, "goals": {"type": "array", "items": {"type": "string"}, "description": "goal ids sharing one locality and one executor"}, "workId":{"type":"string"},"ownerToken":{"type":"string"},"full": {"type": "boolean", "description": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-dispatch/repeat-the-agent-contract-and-the-skills-8b332.md"))}}, "additionalProperties": false}
                     }));
                     tools.push(json!({
                         "name": "done",

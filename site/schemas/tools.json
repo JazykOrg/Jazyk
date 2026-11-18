@@ -84,6 +84,225 @@
         }
       ]
     },
+    "openWorkRequest": {
+      "type": "object",
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "goal": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "active",
+            "expired",
+            "all"
+          ]
+        },
+        "cursor": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "additionalProperties": false
+    },
+    "readOpenWorkRequest": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "adoptOpenWorkRequest": {
+      "type": "object",
+      "required": [
+        "id",
+        "expectedEpoch",
+        "reason"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "expectedEpoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "ownerToken": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "discardOpenWorkRequest": {
+      "$ref": "#/definitions/adoptOpenWorkRequest"
+    },
+    "unstageRequest": {
+      "type": "object",
+      "required": [
+        "mutationIds"
+      ],
+      "properties": {
+        "mutationIds": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "openWorkSummary": {
+      "type": "object",
+      "required": [
+        "workId",
+        "epoch",
+        "identity",
+        "batch",
+        "goals",
+        "snapshotGeneration",
+        "createdAt",
+        "lastActivity",
+        "heartbeatAt",
+        "expiresAt",
+        "state",
+        "targets"
+      ],
+      "properties": {
+        "setId": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "workId": {
+          "type": "string"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "identity": {
+          "type": "object"
+        },
+        "batch": {
+          "type": "string"
+        },
+        "goals": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "snapshotGeneration": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lastActivity": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "heartbeatAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "open",
+            "expired",
+            "committed",
+            "discarded"
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "uniqueItems": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "openWorkWarning": {
+      "type": "object",
+      "required": [
+        "work",
+        "mutations",
+        "message"
+      ],
+      "properties": {
+        "work": {
+          "$ref": "#/definitions/openWorkSummary"
+        },
+        "mutations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "fieldOverwrite": {
+      "type": "object",
+      "required": [
+        "node",
+        "field",
+        "baseValue",
+        "priorValue",
+        "value",
+        "priorGeneration",
+        "priorAuthor"
+      ],
+      "properties": {
+        "node": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        },
+        "baseValue": {},
+        "priorValue": {},
+        "value": {},
+        "priorGeneration": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "priorAuthor": {}
+      },
+      "additionalProperties": false
+    },
     "toolError": {
       "description": "A rejected call. Names the violated rule and how to repair the call",
       "type": "object",
@@ -1660,6 +1879,21 @@
         "committed"
       ],
       "properties": {
+        "workId": {
+          "type": "string"
+        },
+        "overwrites": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/fieldOverwrite"
+          }
+        },
+        "conflictNotices": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
         "committed": {
           "type": "boolean"
         },
@@ -1845,6 +2079,16 @@
         ]
       },
       "properties": {
+        "workId": {
+          "type": "string"
+        },
+        "ownerToken": {
+          "type": "string"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
         "batch": {
           "description": "A batch id from the goals reply. One the current board does not hold is refused",
           "$ref": "#/definitions/batchId"
@@ -1875,6 +2119,16 @@
         "package"
       ],
       "properties": {
+        "workId": {
+          "type": "string"
+        },
+        "ownerToken": {
+          "type": "string"
+        },
+        "epoch": {
+          "type": "integer",
+          "minimum": 1
+        },
         "batch": {
           "description": "The batch id, the target of the worker protocol line",
           "$ref": "#/definitions/batchId"

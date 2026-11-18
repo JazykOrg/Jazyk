@@ -3,6 +3,11 @@ name: recover-workflow
 description: "Diagnose failed tools, conflicts, interrupted work, or missing prerequisites."
 requiredCapabilities: "relevant inspection and repair tools"
 tools:
+  - open_work
+  - read_open_work
+  - adopt_open_work
+  - discard_open_work
+  - unstage
   - goals
   - begin_goals
   - done

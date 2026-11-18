@@ -7,6 +7,7 @@ mod journal;
 mod lock;
 mod mutations;
 mod neighbors;
+mod open_work;
 mod prose;
 mod requirement_concepts;
 mod sync;

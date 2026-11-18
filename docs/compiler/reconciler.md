@@ -913,3 +913,10 @@ Any changed source section dirties its requirement. Pair judgment compares oblig
 text, independent of location. A duplicate verdict merges requirements and their sources.
 The [consolidate-requirements](./goals/consolidate-requirements.md) GC goal handles
 near-identical clusters after their compile cone settles.
+
+## Open work visibility
+
+Board `openBy` derives from live persisted work and carries its stable work ID and
+owner identity. It never hides goals or changes readiness. Expired work remains
+available through open-work discovery. Staging overlap creates no review goal.
+Normal dirtiness and goal derivation follow actual committed changes.

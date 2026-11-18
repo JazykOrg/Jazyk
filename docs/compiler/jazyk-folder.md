@@ -578,3 +578,11 @@ required. See [asset classification](parsing.md#asset-classification).
 Version 6 stores requirement `sources` as a non-empty list. Version 5 loads with
 `source` converted to a singleton list and rewrites at the next build opening.
 Older stores archive and rebuild. Requirement ids and ledger bindings are preserved.
+
+## Open changeset records
+
+`local/open/<work-id>/manifest.yaml` identifies persisted work and its owner epoch,
+opening generation, heartbeat and expiry. `events.jsonl` appends accepted staged
+calls and lifecycle events. Runtime snapshots remain local. These records never
+enter Git or source/delivery exports. Expiry unlocks work and never deletes it.
+Explicit discard removes staged payload and retains a small lifecycle audit receipt.

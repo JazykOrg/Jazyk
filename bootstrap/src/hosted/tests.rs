@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::Ordering;
 
 mod chat;
+mod open_work;
 mod recovery;
 mod tasks;
 mod workspace;
@@ -49,6 +50,27 @@ impl Drop for WithoutRecords {
     }
 }
 impl crate::hosted::records::RecordStore for MemoryRecords {
+    fn compare_open_work(
+        &self,
+        key: &str,
+        expected: Option<u64>,
+        record: &Value,
+    ) -> Result<(), String> {
+        let mut data = self.0.lock().unwrap();
+        let key = ("open-work".into(), key.into());
+        if data.get(&key).and_then(|(m, _)| m["sequence"].as_u64()) != expected {
+            return Err("open-work-moved".into());
+        }
+        let n = record["sequence"].as_u64().ok_or("sequence required")?;
+        let row = data.entry(key).or_default();
+        if record["state"] != "open" {
+            row.1.clear();
+        }
+        row.1.push((n, record.clone()));
+        row.0 = record.clone();
+        Ok(())
+    }
+
     fn keys(&self, s: crate::hosted::records::Stream) -> Result<Vec<(String, Value)>, String> {
         Ok(self
             .0

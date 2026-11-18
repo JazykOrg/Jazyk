@@ -19,6 +19,7 @@ mod neighbors;
 mod prose;
 mod read_scope;
 mod rebase;
+mod recovery;
 mod status;
 mod sync;
 mod v5;
@@ -29,7 +30,6 @@ pub use self::journal::*;
 pub use self::lock::*;
 pub use self::neighbors::*;
 pub use self::read_scope::*;
-pub use self::rebase::*;
 pub use self::status::*;
 
 // One staged mutation. Serialized into the journal as written.
@@ -459,8 +459,20 @@ pub const ENTITY_REVIEW_KINDS: [&str; 2] = [CHANGE_ENTITY, CHANGE_NODE_DELETED];
 
 // What a changeset lands as: the journal kind, the goals it served, the goals it
 // resolved, and its cost. Mirrors docs/compiler/graph.md#journal.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Default)]
+pub struct CommitProgress {
+    pub clear_records: Vec<String>,
+    pub failed: Vec<FailedGoal>,
+    pub finished: BTreeSet<String>,
+}
+
+#[derive(Clone, Default)]
 pub struct Commit {
+    pub base: Option<Box<Store>>,
+    pub actor: Option<serde_json::Value>,
+    pub work_id: Option<String>,
+    pub validation: Option<serde_json::Value>,
+    pub progress: Option<CommitProgress>,
     pub kind: String,
     pub batch: Vec<String>,
     pub resolved: Vec<Resolved>,
@@ -502,6 +514,7 @@ impl Commit {
             tokens_source: None,
             all_or_nothing: false,
             rebased_from: None,
+            ..Default::default()
         }
     }
 }

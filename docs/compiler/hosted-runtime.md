@@ -211,11 +211,14 @@ stores records in named streams, each record a JSON value.
 - Streams: `chat-updates` (a conversation's numbered timeline), `chat-history` (the
   messages the model reads, in generations), `feedback` (one set's feedback log), and
   `trace` (reserved for a host that stores run transcripts as records; the engine
-  writes none). A stream is keyed by conversation id, set id, or run.
+  writes none), and `open-work` (persisted uncommitted changesets). A stream is
+  keyed by conversation id, set id, run, or stable work ID.
 - Operations: list a stream's keys with their metadata, read one key's metadata, write
   it, append records from a given number (idempotent: a number already stored is
   skipped), replace a key's records under the next generation (dropping older
   generations), read records after a number up to a limit, and delete a key.
+  Open work additionally requires atomic compare-and-append of its metadata
+  sequence and recovery event. The host refuses staging without that capability.
 - A conversation is read lazily: a request reads the conversation index, and loads one
   conversation's records when it touches it. A save appends what is new since the load,
   or replaces the history under the next generation when compaction or a stop
@@ -232,7 +235,8 @@ stores records in named streams, each record a JSON value.
   writes no record into the snapshot. A chat request, or a job request that names a
   `conversationId`, answers `501` with the error `this host keeps no conversation
   records`. A `report_feedback` entry is dropped, since feedback is best effort. Every
-  other request works and loads no conversations. Stop recovery restores nothing and
+  other read works and loads no conversations. Graph staging requires a durable
+  open-work record store and does not fall back to project files. Stop recovery restores nothing and
   succeeds. A version 4 `.jazyk/conversations.json` stays where it is until a request
   with a store saves.
 - Files an earlier version wrote under `.jazyk/local/records/` stay in the snapshot as
@@ -277,3 +281,9 @@ Text delivery projections carry `symlinks`, the candidate paths whose text is a
 relative link target. Git consumers use mode `120000` for those entries. Ordinary
 text maps keep their existing shape. This is entry metadata in the projection,
 not a project manifest file.
+
+A hosted graph commit retains its recovery payload until a durable workspace proves
+its journal receipt. Checkpoint acknowledgment compacts that payload after the host
+save succeeds. Other host writers call `confirm_open_work` with a loaded durable
+snapshot. A crash between a tool commit and the host workspace save can replay the
+retained changeset. A candidate snapshot is never evidence of durable publication.

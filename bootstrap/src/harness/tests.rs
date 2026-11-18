@@ -2598,3 +2598,152 @@ fn reads_after_a_failed_call_in_the_same_reply_still_run() {
     );
     assert!(matches!(stop, Stop::Error(error) if error.contains("consecutive")));
 }
+
+struct OpenGraphTools {
+    committed: bool,
+    calls: usize,
+}
+impl ToolHost for OpenGraphTools {
+    fn unfinished_work(&self) -> Option<Value> {
+        (!self.committed).then(||json!({"batch":"same-batch","unfinishedGoals":[{"id":"g:review-entity:ent:graph"}],"stagedMutations":1}))
+    }
+    fn call<'a>(
+        &'a mut self,
+        name: &'a str,
+        _args: &'a Value,
+    ) -> LocalFuture<'a, Result<String, String>> {
+        Box::pin(async move {
+            assert_eq!(name, "done");
+            self.calls += 1;
+            self.committed = true;
+            Ok(json!({"committed":true}).to_string())
+        })
+    }
+}
+fn graph_completion_run(
+    host: &mut dyn ModelHost,
+    store: &mut dyn Recovery,
+    history: &mut Vec<Value>,
+    tools: &mut OpenGraphTools,
+) -> Stop {
+    runtime::run_with_hosts(
+        LoopArgs {
+            llm: &llm(),
+            history,
+            tools: &[GenericTool {
+                name: "done".into(),
+                description: "Commit".into(),
+                parameters: json!({"type":"object"}),
+            }],
+            dispatch: &mut |_, _| unreachable!(),
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "graph-completion".into(),
+            conversation: false,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        host,
+        tools,
+        store,
+    )
+}
+#[test]
+fn graph_continuations_are_bounded_and_do_not_restart_after_recovery() {
+    let mut host = Host::new(vec![
+        response("I still need to finish.");
+        crate::limits::GRAPH_FINISH_REMINDERS as usize + 1
+    ]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Review all assigned goals"})];
+    let mut tools = OpenGraphTools {
+        committed: false,
+        calls: 0,
+    };
+    assert_eq!(
+        graph_completion_run(&mut host, &mut store, &mut history, &mut tools),
+        Stop::EndTurn
+    );
+    assert_eq!(
+        host.requests.borrow().len(),
+        crate::limits::GRAPH_FINISH_REMINDERS as usize + 1
+    );
+    assert_eq!(
+        store.saved.as_ref().unwrap().graph_finish_reminders,
+        crate::limits::GRAPH_FINISH_REMINDERS
+    );
+    let run = store.saved.as_ref().unwrap().run_id.clone();
+    let mut resumed = Host::new(vec![]);
+    assert_eq!(
+        graph_completion_run(&mut resumed, &mut store, &mut history, &mut tools),
+        Stop::EndTurn
+    );
+    assert!(resumed.requests.borrow().is_empty());
+    assert_eq!(tools.calls, 0);
+    assert_eq!(store.saved.as_ref().unwrap().run_id, run);
+    let mut legacy = serde_json::to_value(store.saved.as_ref().unwrap()).unwrap();
+    legacy
+        .as_object_mut()
+        .unwrap()
+        .remove("graph_finish_reminders");
+    assert_eq!(
+        serde_json::from_value::<HarnessState>(legacy)
+            .unwrap()
+            .graph_finish_reminders,
+        0
+    );
+}
+#[test]
+fn graph_continuation_checkpoints_before_another_model_request() {
+    struct SuspendReminder(Store);
+    impl Recovery for SuspendReminder {
+        fn load(&mut self) -> LocalFuture<'_, Result<Option<HarnessState>, String>> {
+            self.0.load()
+        }
+        fn checkpoint<'a>(
+            &'a mut self,
+            b: CheckpointBoundary,
+            s: &'a HarnessState,
+        ) -> LocalFuture<'a, Result<(), String>> {
+            Box::pin(async move {
+                self.0.checkpoint(b, s).await?;
+                if s.graph_finish_reminders > 0 {
+                    self.0.suspended = true;
+                }
+                Ok(())
+            })
+        }
+        fn suspend_requested(&self) -> bool {
+            self.0.suspended
+        }
+    }
+    let mut store = SuspendReminder(Store::default());
+    let mut tools = OpenGraphTools {
+        committed: false,
+        calls: 0,
+    };
+    let mut history = vec![json!({"role":"user","content":"Review all assigned goals"})];
+    let mut host = Host::new(vec![response("Finished a subset.")]);
+    assert_eq!(
+        graph_completion_run(&mut host, &mut store, &mut history, &mut tools),
+        Stop::Suspended
+    );
+    assert_eq!(host.requests.borrow().len(), 1);
+    assert_eq!(store.0.saved.as_ref().unwrap().graph_finish_reminders, 1);
+    let run = store.0.saved.as_ref().unwrap().run_id.clone();
+    store.0.suspended = false;
+    let mut resumed = Host::new(vec![done_response(false)]);
+    assert_eq!(
+        graph_completion_run(&mut resumed, &mut store.0, &mut history, &mut tools),
+        Stop::EndTurn
+    );
+    assert_eq!(tools.calls, 1);
+    assert_eq!(resumed.requests.borrow().len(), 1);
+    assert_eq!(store.0.saved.as_ref().unwrap().run_id, run);
+    assert_eq!(store.0.saved.as_ref().unwrap().graph_finish_reminders, 1);
+    let request = resumed.requests.borrow()[0].body.to_string();
+    assert!(request.contains("same-batch"));
+    assert!(request.contains("unfinishedGoals"));
+}

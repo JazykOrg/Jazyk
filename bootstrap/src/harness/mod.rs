@@ -123,6 +123,10 @@ pub trait ModelHost {
 }
 
 pub trait ToolHost {
+    /// Read-only domain state when a graph worker stops before its batch commits.
+    fn unfinished_work(&self) -> Option<Value> {
+        None
+    }
     /// Refresh model-visible definitions on the owner thread before a model step.
     /// None retains LoopArgs.tools; Some replaces it, including an empty catalog.
     fn catalog(&mut self) -> LocalFuture<'_, Result<Option<Vec<GenericTool>>, String>> {
@@ -207,6 +211,8 @@ pub struct HarnessState {
     pub compacted_size: Option<usize>,
     #[serde(default)]
     pub ledger_finish_reminded: bool,
+    #[serde(default)]
+    pub graph_finish_reminders: u32,
     #[serde(default)]
     pub model_output_limited: bool,
 }

@@ -157,6 +157,8 @@ pub const CONTEXT_BUDGET: usize = 96_000;
 // Provider context is tokens, not loaded graph characters.
 pub const MODEL_CONTEXT_TOKENS: usize = 131_072;
 pub const DEFAULT_MAX_COMPLETION_TOKENS: u64 = 65_536;
+// Same-session corrections for a graph worker that stops before its explicit commit.
+pub const GRAPH_FINISH_REMINDERS: u32 = 3;
 pub const GOAL_ATTEMPTS: u32 = 4;
 pub const ROUNDS_PER_SECTION: u32 = 8;
 pub const SKILLS_PER_SESSION: usize = 9;

@@ -138,7 +138,8 @@ model still works one batch at a time by resource choice). Readiness keeps its o
 a build opens a higher [tier](./reconciler.md#readiness) only after every lower-tier
 batch it opened has committed or ended ([scheduling](./reconciler.md#scheduling)).
 Two builds may run at once on one set: they share the board, race on commits, and
-each keeps its own run file. An external consumer over MCP works the same way:
+each keeps its own run file. Each records its own spend in `local/build.yaml`, and the
+shared totals are their sum ([storage layout](./graph.md#storage-layout)). An external consumer over MCP works the same way:
 `begin_goals` opens a batch, `done` commits it
 ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 

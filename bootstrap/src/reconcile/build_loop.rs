@@ -143,8 +143,19 @@ pub(crate) async fn compile_under(
     crate::document_sets::register_merge_driver(&proj.root);
     let mut store = Store::open_for_build(out);
     if !resuming {
-        store.status.costs = Costs::default();
-        write_status_traced(&mut store, "build opening", trace);
+        // The build's own cost entry opens empty; it clears the latest builds' entries
+        // only when no other build runs on the set (docs/compiler/graph.md#storage-layout).
+        let alone = !crate::control::builds(out)
+            .iter()
+            .any(|l| l.worker != _build.token());
+        if let Err(why) = store.write_status_costs(
+            "build opening",
+            Some((_build.token(), &Costs::default())),
+            alone,
+            0,
+        ) {
+            trace.line("build", &format!("build opening not saved: {}", why));
+        }
     }
     let (parsed, _links) = parse_all(proj);
     if !resuming {
@@ -191,7 +202,13 @@ pub(crate) async fn compile_under(
             run.costs.tokens,
         );
     }
-    let mut report = finalize(&mut store, proj, run.parked, &run.costs, trace);
+    let mut report = finalize(
+        &mut store,
+        proj,
+        run.parked,
+        Some((_build.token(), &run.costs)),
+        trace,
+    );
     // A standalone build sweeps under its own lease; a workflow sweeps once at its end.
     // A cancelled build leaves the task list as its sessions left it.
     if !crate::task_runtime::sweep_deferred() && !trace.is_cancelled() {
@@ -1078,9 +1095,19 @@ pub fn finalize(
     s: &mut Store,
     proj: &Project,
     parked: Vec<ParkedGoal>,
-    costs: &Costs,
+    costs: Option<(&str, &Costs)>,
     trace: &Trace,
 ) -> BuildReport {
+    // The tail lands the build's own spend beside the verdict; a tail with no build
+    // (an MCP consumer's) lands only the token delta.
+    // Mirrors docs/compiler/graph.md#storage-layout.
+    let own_tokens = costs.map(|(_, c)| c.tokens);
+    let write_tail = |s: &mut Store, what: &str| -> Option<String> {
+        let tokens = crate::llm::take_tokens_delta();
+        let why = s.write_status_costs(what, costs, false, tokens).err()?;
+        trace.line("build", &format!("{} not saved: {}", what, why));
+        Some(why)
+    };
     // Parked goals persist whole, deduplicated by id; a cancelled build keeps the
     // ones it parked before the stop. Mirrors docs/compiler/reconciler.md#parked-and-failed.
     let keep_parked = |s: &mut Store, parked: Vec<ParkedGoal>| {
@@ -1099,14 +1126,12 @@ pub fn finalize(
         let control = Control::load(proj, &s.out);
         s.status.verdict = Board::derive(s, proj, &control).verdict();
         s.status.verdict.state = "incomplete".into();
-        s.status.costs = costs.clone();
-        s.status.spent.tokens += crate::llm::take_tokens_delta();
-        let unsaved = write_status_traced(s, "stopped build", trace);
+        let unsaved = write_tail(s, "stopped build");
         trace.line("build", "stopped; completed commits retained");
         return BuildReport {
             unsaved,
             verdict: s.status.verdict.to_string(),
-            tokens: costs.tokens,
+            tokens: own_tokens.unwrap_or(s.status.costs.tokens),
             failed: s.status.verdict.failed as usize,
             blocked: s.status.verdict.blocked as usize,
             optional: s.status.verdict.optional as usize,
@@ -1136,18 +1161,6 @@ pub fn finalize(
     // blocked count and never keeps the build from converging.
     // Mirrors docs/compiler/compilation.md#convergence.
     s.status.verdict = board.verdict();
-    for (k, line) in &costs.by_kind {
-        let c = s.status.costs.by_kind.entry(k.clone()).or_default();
-        c.sessions += line.sessions;
-        c.tokens += line.tokens;
-    }
-    for (k, line) in &costs.by_class {
-        let c = s.status.costs.by_class.entry(k.clone()).or_default();
-        c.sessions += line.sessions;
-        c.tokens += line.tokens;
-    }
-    s.status.costs.sessions += costs.sessions;
-    s.status.costs.tokens += costs.tokens;
 
     let n = crate::docsgen::write_all(s, &crate::gen::GenSettings::resolve(proj));
     if n > 0 {
@@ -1168,12 +1181,11 @@ pub fn finalize(
             trace.line("build", &format!("render failed: {}: {}", id, e));
         }
     }
-    // Add this build's process delta: spent.tokens is cumulative across builds and
-    // processes, and llm::tokens_spent() is a process-lifetime counter, so an
-    // assignment would clobber the spend of builds this process did not run.
-    s.status.spent.tokens += crate::llm::take_tokens_delta();
+    // The tail adds this build's process delta: spent.tokens is cumulative across
+    // builds and processes, and llm::tokens_spent() is a process-lifetime counter, so
+    // an assignment would clobber the spend of builds this process did not run.
     s.status.diagnostics = s.open_diag_counts();
-    let unsaved = write_status_traced(s, "verdict", trace);
+    let unsaved = write_tail(s, "verdict");
     trace.line("build", &s.status.verdict.to_string());
 
     let (mut errors, mut warnings) = (0usize, 0usize);
@@ -1214,7 +1226,7 @@ pub fn finalize(
             .checked_div(total_secs)
             .map(|pct| pct as u32)
             .unwrap_or(100),
-        tokens: s.status.costs.tokens,
+        tokens: own_tokens.unwrap_or(s.status.costs.tokens),
         suspend_reason: None,
         retired_tasks: Vec::new(),
         unsaved,

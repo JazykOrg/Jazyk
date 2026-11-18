@@ -1000,3 +1000,11 @@ an actual native or virtual file symlink. It is exclusive and cannot combine wit
 `GET /api/project/files` includes `entryType: symlink` and `symlinkTarget` for links,
 including dangling links. File reads resolve target bytes. Deleting a file link
 removes the link, including a dangling link, and never deletes its target.
+
+## Requirement source selection
+
+Requirement reads expose every source location. A fact-edit request for a quoted
+requirement accepts `source: {doc, section, quote}`. When several sources exist and
+none is selected, the endpoint returns `sources` and commits nothing. Acceptance
+revalidates the selected source and changes only its prose anchor. Other locations
+remain attached. A graph-only decree remains an explicit separate choice.

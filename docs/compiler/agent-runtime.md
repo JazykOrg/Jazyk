@@ -93,6 +93,10 @@ delivery. The host supplies how a sub-agent turn runs: a thread of the
   all its passes, and each sub-agent's token is a child of it. On Stop, an error,
   or the round budget, the runtime cancels that token and appends the operation's
   `finalize_cancellation` messages after the interrupted turn is paired.
+- A turn a person starts by prompting a sub-agent is not requested by its parent.
+  The host delivers its result to the parent as an input with `source: {agentId}`:
+  steering for a running parent, or a message appended to an idle parent's
+  conversation ([prompting a sub-agent](../frontends/subagents.md#prompting-a-sub-agent)).
 - A sub-agent's calls pass its [write scope](../frontends/subagents.md#write-scope)
   before dispatch. A scope of `none` also removes the tools that are not read-only
   from its catalog.

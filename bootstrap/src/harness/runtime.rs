@@ -421,6 +421,11 @@ async fn run_inner_async(
         state.pending_tool = None;
     }
     let operation = agents.map(|run| Arc::new(AgentsOperation::new(run.spec.tree.clone())));
+    if let Some(run) = agents {
+        // A restored run continues the sub-agent turns it still waits for
+        // (docs/frontends/subagents.md#checkpoints).
+        run.resume_owed(&state.conversation);
+    }
     let result = {
         let driven = drive(
             &mut args,
@@ -446,12 +451,22 @@ async fn run_inner_async(
     };
     if let (Some(run), Some(operation)) = (agents, operation.as_ref()) {
         // A run that stops for any reason stops its sub-agents; their turns end
-        // before the run reports (docs/frontends/subagents.md#cancellation).
-        if result != Stop::EndTurn {
+        // before the run reports (docs/frontends/subagents.md#cancellation). An
+        // interrupted run halts them at their next durable boundary instead, so their
+        // turns stay owed (docs/frontends/subagents.md#checkpoints).
+        let interrupted = match &result {
+            Stop::Suspended => true,
+            Stop::Error(error) => crate::session_recovery::is_interruption(error),
+            _ => false,
+        } && crate::session_recovery::active();
+        if interrupted {
+            crate::session_recovery::halt();
+        } else if result != Stop::EndTurn {
             run.spec.cancel.cancel();
         }
         run.pool_drain().await;
         if !matches!(result, Stop::EndTurn | Stop::Suspended)
+            && !interrupted
             && !super::agents::owed(&state.conversation).is_empty()
         {
             preserve_interrupted_turn(&mut state);
@@ -547,11 +562,35 @@ fn preserve_interrupted_turn(state: &mut HarnessState) {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(all(test, not(target_arch = "wasm32")))]
 pub(crate) fn stopped_history(state: &HarnessState) -> Vec<Value> {
     let mut stopped = state.clone();
     preserve_interrupted_turn(&mut stopped);
     export_history(&stopped.conversation)
+}
+
+/// A stopped conversation's history with the sub-agent turns it still waited for
+/// closed: each recorded outcome, or `cancelled`. Also answers the transcript inputs
+/// those results become (docs/frontends/subagents.md#checkpoints).
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn stopped_history_settled(
+    state: &HarnessState,
+    outcomes: BTreeMap<String, goose_agent::subagent::SubagentOutcome>,
+) -> (Vec<Value>, Vec<Value>) {
+    let mut stopped = state.clone();
+    preserve_interrupted_turn(&mut stopped);
+    let mut inputs = Vec::new();
+    if !super::agents::owed(&stopped.conversation).is_empty() {
+        for message in async_io::block_on(super::agents::settle(
+            &stopped.run_id,
+            &stopped.conversation,
+            outcomes,
+        )) {
+            inputs.extend(super::agents::delivered_input(&message));
+            stopped.conversation.push(message);
+        }
+    }
+    (export_history(&stopped.conversation), inputs)
 }
 
 async fn checkpoint(
@@ -1010,7 +1049,17 @@ where
                 handle_action(action, args, host, tools_host, recovery, state, cancellation, live, agents).await?;
             },
             event = event => if let Some(event) = event { emit_gdk(args, event, live); },
-            _ = tick => if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); },
+            _ = tick => {
+                if (args.cancelled)() { cancellation.cancel(); return Err(Stop::Cancelled); }
+                // A run waiting for its sub-agents suspends with them
+                // (docs/frontends/subagents.md#checkpoints).
+                if agents.is_some() && recovery.suspend_requested() {
+                    checkpoint(recovery, state, CheckpointPhase::Suspended, None)
+                        .await
+                        .map_err(Stop::Error)?;
+                    return Err(Stop::Suspended);
+                }
+            },
         }
     }
 }

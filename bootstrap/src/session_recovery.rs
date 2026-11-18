@@ -6,7 +6,11 @@ use serde_json::{json, Value};
 use std::{cell::RefCell, collections::BTreeMap};
 
 const GDK_VERSION: &str = "0.1.0-alpha.13";
-const OPERATIONS: &str = "jazyk-gdk-3";
+// `jazyk-gdk-4` adds sub-agent turn frames and records. A `jazyk-gdk-3` capsule
+// holds neither and still resumes: its owed sub-agent turns fail as they did under
+// that set. Older engines refuse `jazyk-gdk-4` (docs/compiler/agent-runtime.md#checkpoints).
+const OPERATIONS: &str = "jazyk-gdk-4";
+const RESUMABLE: [&str; 2] = ["jazyk-gdk-3", OPERATIONS];
 
 #[derive(Clone, Serialize, Deserialize)]
 struct Frame {
@@ -24,6 +28,8 @@ struct State {
     inputs: BTreeMap<String, Value>,
     claims: Vec<crate::control::OwnedLease>,
     error: Option<String>,
+    // An interrupted run halts the execution's other runs at their next boundary.
+    halted: bool,
 }
 
 thread_local! { static STATE: RefCell<State> = RefCell::new(State::default()); }
@@ -87,7 +93,9 @@ fn incompatible(message: impl std::fmt::Display) -> String {
 fn decode(value: &Value) -> Result<State, String> {
     if value["version"] != 1
         || value["gdkVersion"] != GDK_VERSION
-        || value["operationSet"] != OPERATIONS
+        || !RESUMABLE
+            .iter()
+            .any(|set| value["operationSet"].as_str() == Some(set))
     {
         return Err(incompatible(
             "Unsupported execution capsule, GDK version or operation set",
@@ -113,6 +121,7 @@ fn decode(value: &Value) -> Result<State, String> {
         claims: serde_json::from_value(value.get("claims").cloned().unwrap_or_else(|| json!([])))
             .map_err(incompatible)?,
         error: None,
+        halted: false,
     })
 }
 
@@ -157,8 +166,10 @@ pub(crate) fn released(out: &std::path::Path, task: &str) {
 }
 
 /// Preserve accepted chat context and release claims without running MCP state.
+/// Answers, per conversation frame, the sub-agent results its stopped history
+/// recorded, for the transcript after retained events replay.
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn stop_owned(value: &Value) -> Result<(), String> {
+pub(crate) fn stop_owned(value: &Value) -> Result<Vec<(String, Vec<Value>)>, String> {
     if !crate::vfs::is_scoped() {
         return Err("Stop recovery requires a scoped workspace".into());
     }
@@ -166,15 +177,47 @@ pub(crate) fn stop_owned(value: &Value) -> Result<(), String> {
     for claim in state.claims {
         crate::control::release_owned_lease(&claim)?;
     }
+    // Ended sub-agent turns report their recorded results; the rest are cancelled.
+    let outcomes = state
+        .parent
+        .iter()
+        .filter_map(|(key, record)| {
+            let turn = key.strip_prefix(AGENT_TURN)?;
+            let result = record.get("result")?;
+            Some((
+                turn.to_string(),
+                crate::harness::agents::outcome_from_value(result),
+            ))
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut settled = Vec::new();
     for frame in state.frames {
         if frame.key.starts_with("chat:") {
-            crate::conversation::restore_stopped_history(
-                &frame.key,
-                crate::harness::stopped_history(&frame.harness),
-            );
+            let (history, inputs) =
+                crate::harness::stopped_history_settled(&frame.harness, outcomes.clone());
+            crate::conversation::restore_stopped_history(&frame.key, history);
+            if !inputs.is_empty() {
+                settled.push((frame.key, inputs));
+            }
         }
     }
-    Ok(())
+    Ok(settled)
+}
+
+const AGENT_TURN: &str = "agent:";
+
+/// The continuation key of sub-agent turn `turn`: its conversation, opening and,
+/// once it ended, its result (docs/frontends/subagents.md#checkpoints).
+pub(crate) fn agent_turn_key(turn: &str) -> String {
+    format!("{AGENT_TURN}{turn}")
+}
+
+/// Halt the execution's other runs at their next durable boundary, as a suspension
+/// does. An interrupted run calls it so its sub-agents stop with it.
+pub(crate) fn halt() {
+    if active() {
+        STATE.with(|s| s.borrow_mut().halted = true);
+    }
 }
 
 pub(crate) fn parent(key: &str) -> Result<Option<Value>, String> {
@@ -290,6 +333,9 @@ pub(crate) fn task_key(base: &str) -> String {
                     .harness
                     .pending_tool
                     .as_ref()
+                    // A parent waiting on its sub-agents holds an agent tool; the
+                    // task belongs to the run whose call submits it.
+                    .filter(|tool| !crate::harness::agents::is_agent_tool(&tool.name))
                     .map(|tool| format!("{command}:tool:{}:{}", frame.harness.run_id, tool.id))
             })
             .unwrap_or(command)
@@ -380,6 +426,9 @@ pub(crate) async fn checkpoint_parent() -> Result<(), String> {
 }
 
 pub(crate) fn suspension_requested() -> bool {
+    if STATE.with(|s| s.borrow().halted) {
+        return true;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         crate::hosted::suspension_requested()
@@ -621,6 +670,11 @@ mod tests {
         let saved = capsule().unwrap();
         assert!(saved["harness"].is_null());
         validate(&saved).unwrap();
+        assert_eq!(saved["operationSet"], "jazyk-gdk-4");
+        // A capsule without sub-agent records still resumes.
+        let mut previous = saved.clone();
+        previous["operationSet"] = json!("jazyk-gdk-3");
+        validate(&previous).unwrap();
         let mut legacy = saved.clone();
         legacy["operationSet"] = json!("jazyk-gdk-2");
         assert!(validate(&legacy)

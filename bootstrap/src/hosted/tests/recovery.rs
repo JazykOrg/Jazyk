@@ -1033,3 +1033,278 @@ fn stop_discards_staged_coverage_and_late_done_without_retry_then_build_resumes(
         "completed resume must be a no-op"
     );
 }
+
+// A hosted sub-agent turn suspends with its parent and resumes from its own frame:
+// its saved model response is not requested again, it finishes, and the parent
+// receives its result once. Stopping the suspended execution instead cancels the
+// sub-agent and records `cancelled` in the parent, whose next turn does not wait.
+// Mirrors docs/frontends/subagents.md#checkpoints.
+#[test]
+fn suspended_sub_agent_turn_resumes_or_stops_with_its_parent() {
+    for stop in [false, true] {
+        let mut w = workspace("Sub-agent recovery");
+        let chat = value(
+            &mut w,
+            "POST",
+            "/api/chat/sessions",
+            json!({}),
+            &Execution::default(),
+        );
+        assert_eq!(chat["id"], "chat-1");
+        let path = "/api/chat/sessions/chat-1/prompt";
+        let body =
+            json!({"text":"Delegate counting the sections.","messageId":"ask","turnId":"turn-1"});
+        let suspend = Arc::new(AtomicBool::new(false));
+        // Every provider call the model received: (request id, caller, reply).
+        let calls = Arc::new(std::sync::Mutex::new(Vec::<(String, &str, &str)>::new()));
+        let (raise, seen) = (suspend.clone(), calls.clone());
+        let model: ModelAsyncTransport = Arc::new(move |request| {
+            let (raise, seen) = (raise.clone(), seen.clone());
+            Box::pin(async move {
+                let request: Value = serde_json::from_str(&request).unwrap();
+                let id = request["_jazyk"]["requestId"].as_str().unwrap().to_string();
+                let messages = request["messages"].to_string();
+                let answered = request["messages"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m["role"] == "tool");
+                let tool_call = |id: &str, name: &str, args: Value| {
+                    json!({"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[
+                        {"id":id,"type":"function","function":{"name":name,"arguments":args.to_string()}}]}}],
+                        "usage":{"prompt_tokens":10,"completion_tokens":3,"total_tokens":13}})
+                    .to_string()
+                };
+                let (caller, step, reply) = if messages
+                    .contains("You are a sub-agent started by the conversation")
+                {
+                    if answered {
+                        ("child", "final", model_reply("The index has one section."))
+                    } else {
+                        // The host drains while the sub-agent's first response
+                        // is in flight; the response itself completes.
+                        raise.store(true, Ordering::SeqCst);
+                        (
+                            "child",
+                            "status",
+                            tool_call("status-1", "agent_status", json!({})),
+                        )
+                    }
+                } else if messages.contains("Subagent chat-2 completed: The index has one section.")
+                {
+                    (
+                        "parent",
+                        "final",
+                        model_reply("The sub-agent counted one section."),
+                    )
+                } else if answered {
+                    (
+                        "parent",
+                        "waiting",
+                        model_reply("Waiting for the sub-agent."),
+                    )
+                } else {
+                    let task = json!({"task":"Count the sections of docs/main.md","title":"Count sections"});
+                    ("parent", "spawn", tool_call("spawn-1", "spawn_agent", task))
+                };
+                let mut seen = seen.lock().unwrap();
+                assert!(seen.len() < 12, "runaway model calls: {seen:?}");
+                seen.push((id, caller, step));
+                Ok(reply)
+            })
+        });
+        type Records = BTreeMap<(String, String), (Value, Vec<(u64, Value)>)>;
+        let saved = Arc::new(std::sync::Mutex::new(None::<(Value, Snapshot, Records)>));
+        let checkpoint = saved.clone();
+        let host = host_records();
+        let sink: CheckpointSink = Arc::new(move |mut capsule, files| {
+            let checkpoint = checkpoint.clone();
+            let records = host.0.lock().unwrap().clone();
+            Box::pin(async move {
+                let next = capsule["sequence"].as_u64().unwrap() + 1;
+                capsule["sequence"] = json!(next);
+                *checkpoint.lock().unwrap() = Some((capsule, files, records));
+                Ok(next)
+            })
+        });
+        let execution = Execution {
+            model: "fixture".into(),
+            transport_async: Some(model.clone()),
+            checkpoint: Some(sink.clone()),
+            suspend: suspend.clone(),
+            ..Default::default()
+        };
+        let suspended = value(&mut w, "POST", path, body.clone(), &execution);
+        assert_eq!(suspended["stop"], "suspended", "{suspended}");
+        let (capsule, files, records) = saved.lock().unwrap().clone().unwrap();
+        crate::session_recovery::validate(&capsule).unwrap();
+        assert_eq!(capsule["operationSet"], "jazyk-gdk-4");
+        assert!(
+            capsule["frames"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|frame| frame["key"] == "chat:chat-2:chat-2-turn-1"),
+            "the running sub-agent turn has its own frame: {capsule}"
+        );
+        assert_eq!(capsule["parent"]["agent:chat-2"]["conversation"], "chat-2");
+        assert!(capsule["parent"]["agent:chat-2"].get("result").is_none());
+        let before: Vec<_> = calls.lock().unwrap().clone();
+        assert_eq!(
+            before
+                .iter()
+                .filter(|(_, caller, step)| (*caller, *step) == ("child", "status"))
+                .count(),
+            1
+        );
+        *host_records().0.lock().unwrap() = records;
+        let get = |w: &mut Workspace, id: &str| {
+            value(
+                w,
+                "GET",
+                &format!("/api/chat/sessions/{id}"),
+                Value::Null,
+                &Execution::default(),
+            )
+        };
+        let updates = |session: &Value, kind: &str| {
+            session["updates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|u| u["update"].clone())
+                .filter(|u| u["sessionUpdate"] == kind)
+                .collect::<Vec<_>>()
+        };
+
+        if stop {
+            let mut stopped = Workspace::new(files).unwrap();
+            stopped
+                .stop_recovery_with(&capsule, &[], &with_host(&Execution::default()))
+                .unwrap();
+            assert_eq!(
+                calls.lock().unwrap().len(),
+                before.len(),
+                "Stop ran a model"
+            );
+            let child = get(&mut stopped, "chat-2");
+            assert_eq!(child["state"], "cancelled", "{child}");
+            let ends = updates(&child, "turn_end");
+            assert_eq!(ends.len(), 1, "{child}");
+            assert_eq!(ends[0]["stop"], "cancelled");
+            let parent = get(&mut stopped, "chat-1");
+            assert_eq!(parent["state"], "idle", "{parent}");
+            let results: Vec<_> = updates(&parent, "user_message")
+                .into_iter()
+                .filter(|u| !u["source"].is_null())
+                .collect();
+            assert_eq!(results.len(), 1, "{parent}");
+            assert_eq!(results[0]["source"]["agentId"], "chat-2");
+            assert!(results[0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Subagent chat-2 was cancelled before it finished."));
+            // The parent's next turn reads the cancellation and does not wait.
+            let requests = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
+            let observed = requests.clone();
+            let followup = Execution {
+                model: "fixture".into(),
+                transport: Some(Arc::new(move |body| {
+                    observed
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::from_str(body).unwrap());
+                    Ok(model_reply("The sub-agent was stopped."))
+                })),
+                ..Default::default()
+            };
+            let next = value(
+                &mut stopped,
+                "POST",
+                path,
+                json!({"text":"What happened?","messageId":"next","turnId":"turn-2"}),
+                &followup,
+            );
+            assert_eq!(next["stop"], "end_turn", "{next}");
+            let requests = requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0]["messages"]
+                .to_string()
+                .contains("Subagent chat-2 was cancelled before it finished."));
+            continue;
+        }
+
+        let mut restored = Workspace::new(files).unwrap();
+        let resumed = Execution {
+            model: "fixture".into(),
+            transport_async: Some(model),
+            checkpoint: Some(sink),
+            resume: Some(capsule),
+            ..Default::default()
+        };
+        let complete = value(&mut restored, "POST", path, body, &resumed);
+        assert_eq!(complete["stop"], "end_turn", "{complete}");
+        let calls = calls.lock().unwrap().clone();
+        let mut ids: Vec<_> = calls.iter().map(|(id, _, _)| id.clone()).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(
+            ids.len(),
+            calls.len(),
+            "a saved model call was repeated: {calls:?}"
+        );
+        let steps: Vec<_> = calls
+            .iter()
+            .map(|(_, caller, step)| (*caller, *step))
+            .collect();
+        for step in [
+            ("parent", "spawn"),
+            ("parent", "waiting"),
+            ("child", "status"),
+            ("child", "final"),
+            ("parent", "final"),
+        ] {
+            assert_eq!(
+                steps.iter().filter(|s| **s == step).count(),
+                1,
+                "{step:?} in {steps:?}"
+            );
+        }
+        assert_eq!(steps.len(), 5, "{steps:?}");
+
+        let child = get(&mut restored, "chat-2");
+        assert_eq!(child["state"], "idle", "{child}");
+        assert_eq!(updates(&child, "user_message").len(), 1, "{child}");
+        let ends = updates(&child, "turn_end");
+        assert_eq!(ends.len(), 1, "{child}");
+        assert_eq!(ends[0]["stop"], "end_turn");
+        let tree = value(
+            &mut restored,
+            "GET",
+            "/api/agent-tree",
+            Value::Null,
+            &Execution::default(),
+        );
+        let row = tree["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == "chat-2")
+            .unwrap()
+            .clone();
+        assert_eq!(row["result"]["status"], "completed", "{row}");
+        assert_eq!(row["result"]["text"], "The index has one section.");
+        let parent = get(&mut restored, "chat-1");
+        assert_eq!(parent["state"], "idle", "{parent}");
+        let results: Vec<_> = updates(&parent, "user_message")
+            .into_iter()
+            .filter(|u| !u["source"].is_null())
+            .collect();
+        assert_eq!(results.len(), 1, "{parent}");
+        assert!(results[0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("Subagent chat-2 completed: The index has one section."));
+        assert_eq!(updates(&parent, "turn_end").len(), 1, "{parent}");
+    }
+}

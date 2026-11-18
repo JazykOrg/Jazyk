@@ -177,6 +177,10 @@ A hosted sub-agent turn is checkpointed with its parent, in the same
   that ended.
 - A suspension stops every running turn at its next durable boundary. The parent and
   its sub-agents suspend together. A suspended turn reports no result.
+- Steering a running sub-agent (`message_agent`) is saved with the sub-agent's
+  conversation until its turn takes it. A message the turn has not read when the
+  execution suspends reaches the resumed turn. A message the turn did not read
+  before it ended is dropped with the turn.
 - A resumed parent continues each turn it still waits for: from the turn's frame, or
   from its opening when the turn saved no frame. A turn that had ended reports its
   recorded result. Saved model responses are reused, not requested again.

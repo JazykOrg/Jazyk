@@ -57,7 +57,10 @@ compile keeps its report, including its verdict and counts, beside the reason th
 workflow stopped. The error names up to five blocking goals, their states, and
 stored parking or failure reasons, followed by the count of further blockers.
 It directs the user to those blockers instead of asking them to run the compile
-that just failed.
+that just failed. When saved unfinished attempts exist, the report lists their work
+IDs, batch names, mutation counts, and goal counts under `unfinishedWork`. The error
+states that this work is saved for recovery in project chat and is not committed.
+A record lookup failure is reported without claiming that work was lost.
 
 A ledger action checks what was committed before reporting a session error. A
 completed binding or valid generation manifest remains successful after a later

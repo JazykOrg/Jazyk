@@ -7,4 +7,5 @@ workflow: >-
 used_by:
   - "bootstrap/src/tools/catalog.rs"
 ---
-Resolve final goals and commit the staged mutations in one call. goals entries use {goal, justification, evidence?}, with the same evidence and gates as mark_goal_done. Earlier claims may already be marked. Every mandatory goal must end done or failed; all batch gates run. A rejected claim or gate leaves earlier work intact for repair. summary is one line.
+Resolve final goals and commit the staged mutations in one call. goals entries use {goal, justification, evidence?}, with the same evidence and gates as mark_goal_done. Earlier claims may already be marked. Without checkpoint: true, every mandatory goal must end done or failed; all batch gates run. A rejected claim or gate leaves earlier work intact for repair. summary is one line.
+Use checkpoint: true to save valid partial progress while unclaimed goals remain open. Accepted goal claims and graph integrity still pass their gates; unclaimed goals do not require completion or coverage marks. Do not mark uninspected work failed to close a batch.

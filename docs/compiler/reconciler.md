@@ -661,16 +661,19 @@ would open ([`jazyk explain`](../frontends/cli.md#jazyk-explain)).
 ## Batching
 
 The model never sees the whole board. Each session gets one batch. The scheduler forms
-a batch from goals of one class and one tier that resolve to one
-[executor](./control-plane.md#executors), grouped by locality:
+a graph batch from goals of one class, one tier, and one kind that resolve to one
+[executor](./control-plane.md#executors), grouped by locality.
+Different goal kinds use separate batches so an unfinished review or reference repair
+cannot prevent completed pair judgments from committing. Goals of the same kind
+still batch across compatible localities within the context budget:
 
 - document locality: `place-anchors` is one goal for the document; `reconcile-section`
   goals of one document batch in document order, adjacent sections together.
 - node locality: `rejudge-pair`, `review-entity`, `retrace`, and `conform-instance`
-  goals whose targets share an entity, a requirement, or a view batch together, so a
+  goals of the same kind whose targets share an entity, a requirement, or a view batch together, so a
   judgment sees the merges and diagnostics of its neighbors. Entities that share
   requirements or relationships form one group.
-- view locality: view goals batch with the goals on the view's members.
+- view locality: goals of the same kind batch through the view's members.
 - level locality: an `abstract-entity` goal on a node or on `scope:<scope>` has node
   locality through the level's members, the direct children or the scope's parentless
   entities ([fan-out](#fan-out)).

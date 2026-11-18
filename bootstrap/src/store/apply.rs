@@ -152,7 +152,7 @@ impl Store {
                 session
                     .dispatch(
                         "done",
-                        &serde_json::json!({"summary":"commit-time validation"}),
+                        &serde_json::json!({"summary":"commit-time validation", "checkpoint":session.checkpoint}),
                     )
                     .map_err(|e| format!("{}: {}", e.rule, e.message))?;
                 Ok(())

@@ -1285,6 +1285,7 @@ async fn handle_action(
                 Err("Skipped: the session was cancelled before this call started".into())
             } else if state.failed_tool_transition == Some(state.transition)
                 && !crate::tools::read_only(&name)
+                && !matches!(name.as_str(), "mark_goal_done" | "mark_goal_failed")
             {
                 // Later reads of the same reply still run; only a call that could
                 // act on the failed call's assumption is skipped.

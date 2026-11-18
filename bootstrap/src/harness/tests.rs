@@ -2747,3 +2747,72 @@ fn graph_continuation_checkpoints_before_another_model_request() {
     assert!(request.contains("same-batch"));
     assert!(request.contains("unfinishedGoals"));
 }
+
+#[test]
+fn one_refused_goal_claim_does_not_skip_independent_claims() {
+    let tools = [
+        named_tool("mark_goal_done"),
+        named_tool("mark_goal_failed"),
+        named_tool("write_text_file"),
+    ];
+    let mut host = Host::new(vec![
+        reply_with_calls(
+            &[
+                "mark_goal_done",
+                "mark_goal_done",
+                "mark_goal_failed",
+                "write_text_file",
+            ],
+            0,
+        ),
+        response("finished"),
+    ]);
+    let mut store = Store::default();
+    let mut history = vec![json!({"role":"user","content":"Record the judgments"})];
+    let mut ran = Vec::new();
+    let stop = runtime::run_with_host(
+        LoopArgs {
+            llm: &llm(),
+            history: &mut history,
+            tools: &tools,
+            dispatch: &mut |name, _| {
+                ran.push(name.to_string());
+                if ran.len() == 1 {
+                    Err("diagnostic-unjudged".into())
+                } else {
+                    Ok("{}".into())
+                }
+            },
+            emit: &mut |_| {},
+            cancelled: &|| false,
+            max_rounds: 8,
+            label: "claims".into(),
+            conversation: true,
+            inputs: None,
+            input_close: None,
+        },
+        "",
+        &mut host,
+        &mut store,
+    );
+    assert_eq!(stop, Stop::EndTurn);
+    assert_eq!(
+        ran,
+        vec!["mark_goal_done", "mark_goal_done", "mark_goal_failed"]
+    );
+    let receipts: Vec<_> = store
+        .saved
+        .as_ref()
+        .unwrap()
+        .tool_receipts
+        .values()
+        .collect();
+    assert_eq!(receipts.iter().filter(|r| r.ok).count(), 2);
+    assert_eq!(
+        receipts
+            .iter()
+            .filter(|r| r.result.starts_with("Skipped"))
+            .count(),
+        1
+    );
+}

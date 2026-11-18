@@ -55,6 +55,16 @@ fn deferred_skills_are_only_marked_delivered_after_their_payload_is_read() {
         .contains("extraction"));
     let again = call("load_skill", json!({"name":"extraction"}));
     assert!(again["payload"].is_null());
+    let batch = call(
+        "load_skill",
+        json!({"names":["judgment", "missing-skill", "diagrams"]}),
+    );
+    assert!(batch["results"][0]["payload"].is_string());
+    assert_eq!(batch["results"][1]["error"]["rule"], "unknown-skill");
+    assert!(batch["results"][2]["payload"].is_string());
+    let delivered = server.delivered.lock().unwrap().skills.clone();
+    assert!(delivered.contains("judgment") && delivered.contains("diagrams"));
+    assert!(!delivered.contains("missing-skill"));
     let next = call("begin_goals", json!({}));
     assert!(next["instructions"]
         .as_str()
@@ -1012,5 +1022,65 @@ fn crash_mid_session_leaves_a_resumable_changeset_on_disk() {
         !log.contains("Crash-safe review."),
         "discard retained payload"
     );
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn checkpoint_commits_completed_sections_while_other_goals_remain_open() {
+    let dir = bare_dir("partial-checkpoint");
+    crate::vfs::write(
+        dir.join("docs/a.md"),
+        "# Intro\n\nBackground material.\n\n## Later\n\nLater material.\n",
+    )
+    .unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let mut control = crate::control::Control::load(&project, &project.out);
+    control.compile = "auto".into();
+    control.save(&project.out);
+    let server = McpServer::with_bridge(
+        project.clone(),
+        project.out.clone(),
+        vec!["compile".into()],
+        true,
+        BridgeFlags::default(),
+    );
+    let call = |name: &str, args: Value| {
+        let value = server
+            .handle("tools/call", &json!({"name":name,"arguments":args}))
+            .unwrap();
+        assert_ne!(value["isError"], true, "{value}");
+        serde_json::from_str::<Value>(value["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    call("begin_goals", json!({}));
+    call(
+        "set_coverage",
+        json!({"section":"docs/a.md#/intro", "state":"non-normative", "note":"Background material."}),
+    );
+    call(
+        "mark_goal_done",
+        json!({"goal":"g:reconcile-section:docs/a.md#/intro", "justification":"The introduction is background material."}),
+    );
+    call(
+        "done",
+        json!({"summary":"Save the completed introduction.", "checkpoint":true}),
+    );
+    let saved = crate::store::Store::load(&project.out);
+    assert!(saved.status.generation > 0);
+    assert!(saved.docs["docs/a.md"].coverage.contains_key("/intro"));
+    assert!(!saved.docs["docs/a.md"]
+        .coverage
+        .contains_key("/intro/later"));
+    let board = crate::board::Board::compute(&project, &project.out);
+    assert!(board
+        .goals
+        .iter()
+        .any(|g| g.target == "docs/a.md#/intro/later"));
+    assert!(crate::open_work::list(&project.out)
+        .unwrap()
+        .iter()
+        .any(|r| r.state == "committed"));
     crate::vfs::remove_dir_all(dir).unwrap();
 }

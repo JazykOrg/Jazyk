@@ -129,7 +129,8 @@ refuses a false one naming the rule:
   `resolve_diagnostic` on it staged in this session), or `refiled` (that resolve plus
   a new `report_diagnostic` of the same rule). A claim the staged work does not back is
   `diagnostic-unbacked`, and so is `stands` on a diagnostic naming a `(deleted)`
-  subject: it cannot stand as filed, so it is resolved, refiled or not.
+  subject: it cannot stand as filed, so it is resolved, refiled or not. Live criterion
+  and document-section subjects are valid alongside entity and requirement subjects.
 - Every part the composition hint listed has an entry under `parts`
   (`part-unjudged`): `{id: <the part>, verdict: parented | edge-fixed | kept,
   reason?}`. `parented` requires the part's `parent` to be the stated whole, or under

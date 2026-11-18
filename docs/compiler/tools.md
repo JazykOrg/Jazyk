@@ -467,16 +467,20 @@ graph mutation ([resolving, failing, parking](./sessions.md#resolving-failing-pa
   goal derives on that target while it is open. A failed mandatory goal blocks
   convergence; a failed optional goal is recorded and stands
   ([parked and failed](./reconciler.md#parked-and-failed)).
-- `load_skill({name})`: bring one [skill](./sessions.md#skills) into the session. The
-  skill index line of the status block lists the names. An unknown name is rejected
-  with the index; a call past the per-session cap (four, the registry constant
-  `skills-per-session`) is refused naming the cap and the skills already rendered.
-- `done({summary, goals?, beginNext?})`: end the session and request commit. `goals`
+- `load_skill({name})` or `load_skill({names: [...]})`: load one or several
+  [skills](./sessions.md#skills) from the status block's index. Batch results name
+  each skill and return its payload or error independently. A failed entry does not
+  prevent other requested skills from loading. Already delivered skills return a
+  reference without repeating their text. The registry constant `skills-per-session`
+  sets the cap; a refusal names the cap and the skills already rendered.
+- `done({summary, goals?, checkpoint?, beginNext?})`: end the session and request commit. `goals`
   supplies final claims as `{goal, justification, evidence?}` entries. Each runs
   the same gate as `mark_goal_done`. Use it to resolve the final goals and commit
   in one call. A repeated goal or an invalid claim refuses the call. If any claim
   or batch gate fails, none of this call's claims or staged effects remain. Earlier
-  staged work and claims stay available for repair. Runs the batch
+  staged work and claims stay available for repair. `checkpoint: true` saves valid
+  staged work and accepted outcomes while unclaimed goals remain open, retaining
+  evidence, stale-anchor, proposal and store integrity checks. Runs the batch
   gates per goal kind: every goal of the batch marked done or failed, every stale
   anchor from the batch addressed (its quote locates again, or a staged mutation
   re-records, revises, or deletes it), every dirty section of the batch carrying a

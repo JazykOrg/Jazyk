@@ -33,6 +33,8 @@ pub struct ToolSession {
     pub scope: WorkScope,
     pub staged: Vec<Op>,
     pub done: Option<String>,
+    #[serde(default)]
+    pub checkpoint: bool,
     // The session's working set, re-rendered condensed on every mutating reply.
     pub loaded: LoadedSet,
     // The skills rendered this session, active or inactive, capped.
@@ -140,6 +142,7 @@ impl ToolSession {
             scope,
             staged: Vec::new(),
             done: None,
+            checkpoint: false,
             gen,
             caller: Default::default(),
             outcomes: Default::default(),

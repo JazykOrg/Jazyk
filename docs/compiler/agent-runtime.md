@@ -36,6 +36,9 @@ authorized again before execution and after recovery.
 One model reply can carry several tool calls. They run in order. After a call in
 the reply fails, its later calls that are not read-only are skipped with a notice to
 inspect the failure first, so no write runs on an assumption the failed call broke.
+Goal outcome calls (`mark_goal_done` and `mark_goal_failed`) still run because each
+validates its own claim against the staged state. A refused claim does not prevent
+independent claims in the same reply from being recorded.
 Later read-only calls still run: one failed lookup does not discard the independent
 reads issued beside it. The tool registry names the read-only tools: the
 [read tools](./tools.md#read-tools), the file reads, listings and searches, and the

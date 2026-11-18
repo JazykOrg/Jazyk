@@ -408,6 +408,13 @@ impl ToolSession {
             let r = self.snapshot.resolve_id(s);
             self.snapshot.graph.entities.contains_key(r)
                 || self.snapshot.graph.requirements.contains_key(r)
+                || self.snapshot.graph.criteria.contains_key(r)
+                || split_section_ref(s).is_some_and(|(doc, section)| {
+                    self.snapshot
+                        .docs
+                        .get(&doc)
+                        .is_some_and(|record| record.sections.contains_key(&section))
+                })
         };
         for did in crate::goals::review_diagnostics(&self.snapshot, &target) {
             let Some(e) = find("diagnostics", "id", &did) else {
@@ -1649,6 +1656,63 @@ impl ToolSession {
     }
 
     pub(super) fn load_skill_tool(&mut self, args: &Value) -> Result<Value, ToolError> {
+        if let Some(names) = args.get("names") {
+            let names = names
+                .as_array()
+                .filter(|names| !names.is_empty() && names.iter().all(Value::is_string))
+                .ok_or_else(|| {
+                    ToolError::new(
+                        "bad-args",
+                        "names must be a nonempty list of skill names".into(),
+                    )
+                })?;
+            let results: Vec<_> = names
+                .iter()
+                .map(|name| match self.load_skill_tool(&json!({"name":name})) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        json!({"skill":name,"error":{"rule":error.rule,"message":error.message}})
+                    }
+                })
+                .collect();
+            return Ok(json!({"results":results}));
+        }
+        if let Some(names) = args.get("names") {
+            if args.get("name").is_some() {
+                return Err(ToolError::new(
+                    "bad-args",
+                    "supply name or names, not both".into(),
+                ));
+            }
+            let names = names
+                .as_array()
+                .filter(|names| !names.is_empty())
+                .ok_or_else(|| {
+                    ToolError::new(
+                        "bad-args",
+                        "names must be a non-empty list of skill names".into(),
+                    )
+                })?;
+            if names
+                .iter()
+                .any(|name| name.as_str().is_none_or(|name| name.trim().is_empty()))
+            {
+                return Err(ToolError::new(
+                    "bad-args",
+                    "each skill name must be a non-empty string".into(),
+                ));
+            }
+            let results: Vec<_> = names
+                .iter()
+                .map(|name| match self.load_skill_tool(&json!({"name":name})) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        json!({"skill":name,"error":{"rule":error.rule,"message":error.message}})
+                    }
+                })
+                .collect();
+            return Ok(json!({"results":results}));
+        }
         let name_arg = Self::str_arg(args, "name")?;
         match self.skills.activate(&name_arg) {
             Err(e) => Err(ToolError::new("unknown-skill", e)),
@@ -1707,10 +1771,17 @@ impl ToolSession {
         if args.get("goals").is_some() {
             return self.done_with_goals(args);
         }
+        let checkpoint = args["checkpoint"].as_bool().unwrap_or(false);
+        if checkpoint && self.staged.is_empty() && self.outcomes.is_empty() {
+            return Err(ToolError::new(
+                "empty-checkpoint",
+                "there is no staged work or recorded outcome to checkpoint".into(),
+            ));
+        }
         // A done that leaves a mandatory goal neither done nor failed is
         // rejected naming it; the implicit path commits around it and the
         // goal stays open for its retry. Mirrors docs/compiler/sessions.md#commit.
-        if !self.implicit_done {
+        if !self.implicit_done && !checkpoint {
             let open: Vec<&str> = self
                 .scope
                 .goals
@@ -1722,7 +1793,10 @@ impl ToolSession {
                 return Err(ToolError::new(
                     "open-goal",
                     format!(
-                        "goal(s) neither done nor failed: {}; mark_goal_done or mark_goal_failed each, then done",
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/tools-claims/open-goals-checkpoint.md"
+                        )),
                         open.join(", ")
                     ),
                 ));
@@ -1759,6 +1833,9 @@ impl ToolSession {
         // implicit path commits without one and the section stays unprocessed.
         if !self.implicit_done {
             for gs in self.scope.reconcile_scopes() {
+                if checkpoint && !self.outcomes.contains_key(&gs.goal) {
+                    continue;
+                }
                 if matches!(
                     self.outcomes.get(&gs.goal),
                     Some(GoalOutcome::Failed { .. })
@@ -1807,6 +1884,7 @@ impl ToolSession {
         }
         let summary = Self::opt_str(args, "summary").unwrap_or_default();
         self.done = Some(summary);
+        self.checkpoint = checkpoint;
         Ok(json!({"ok": true}))
     }
 }

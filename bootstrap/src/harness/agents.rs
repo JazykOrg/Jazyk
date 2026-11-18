@@ -211,6 +211,10 @@ pub struct Node {
 }
 
 impl Node {
+    fn steerable(&self) -> bool {
+        self.state == AgentState::Running && !self.cancel.is_cancelled()
+    }
+
     pub fn turn_id(&self, n: u32) -> String {
         if n <= 1 {
             self.id.clone()
@@ -306,13 +310,18 @@ impl Tree {
     /// Queue steering for a running sub-agent. False when it is not running.
     pub fn steer(&self, id: &str, input: Value) -> bool {
         self.update(id, |n| {
-            let running = n.state == AgentState::Running && !n.cancel.is_cancelled();
+            let running = n.steerable();
             if running {
                 n.inbox.push(input);
             }
             running
         })
         .unwrap_or(false)
+    }
+
+    /// Whether `id` runs a turn that can take steering.
+    pub fn steerable(&self, id: &str) -> bool {
+        self.get(id).is_some_and(|n| n.steerable())
     }
 
     /// `id` and every sub-agent below it, `id` first.
@@ -513,6 +522,13 @@ pub trait ChildHost {
     /// record of it.
     fn resume_turn(&self, _child: RunSpec, _turn: &str) -> Option<TurnFuture> {
         None
+    }
+    /// Queue steering for running sub-agent `id`. False when it is not running. A
+    /// host that checkpoints turns keeps the message with the sub-agent's
+    /// conversation, so a suspension does not lose it
+    /// (docs/frontends/subagents.md#checkpoints).
+    fn steer(&self, tree: &Tree, id: &str, input: Value) -> bool {
+        tree.steer(id, input)
     }
     /// The root a top-level run's sub-agents hang from.
     fn root_of(&self, id: &str) -> String {
@@ -838,7 +854,7 @@ impl AgentRun {
                 let input = json!({"text": text,
                     "messageId": format!("agent-{}-{}", self.spec.id, MESSAGES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)),
                     "source": {"agentId": self.spec.id}});
-                if self.spec.tree.steer(&node.id, input) {
+                if self.host.steer(&self.spec.tree, &node.id, input) {
                     json!({"agentId": node.id, "state": "running", "delivered": "steering"})
                 } else {
                     self.startable()?;

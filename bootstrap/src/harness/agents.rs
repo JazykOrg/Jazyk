@@ -1213,10 +1213,12 @@ impl Operation<Session, Effect> for AgentsOperation {
 }
 
 // Answers each owed turn of a stopped run with its recorded outcome, or cancelled.
+// Only a hosted stop settles a run, and the browser engine has no hosted stop.
+#[cfg(not(target_arch = "wasm32"))]
 struct Settled(BTreeMap<String, SubagentOutcome>);
 
-#[cfg_attr(not(target_arch = "wasm32"), async_trait)]
-#[cfg_attr(target_arch = "wasm32", async_trait(?Send))]
+#[cfg(not(target_arch = "wasm32"))]
+#[async_trait]
 impl SubagentRunner<Session> for Settled {
     fn requested_subagent_session_ids(&self, session: &Session, message: &Message) -> Vec<String> {
         requested(message, &returned(&session.conversation))
@@ -1241,6 +1243,7 @@ impl SubagentRunner<Session> for Settled {
 
 /// The messages that close a stopped run's owed turns without running them: each
 /// turn's recorded outcome, or `cancelled` (docs/frontends/subagents.md#checkpoints).
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) async fn settle(
     id: &str,
     conversation: &Conversation,

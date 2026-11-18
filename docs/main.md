@@ -175,6 +175,11 @@ code is formatted with rustfmt's defaults: `cargo fmt --check` in `bootstrap/` p
 After any binary change, finish with `cargo build --locked --release` to refresh the
 owner's local binary.
 
+Tests never change the source checkout. They work on temporary or in-memory projects,
+so a full `cargo test` leaves `git status` as it found it. A test build refuses, and
+fails the test, on any write through the engine's file layer into the checkout outside
+the crate's `target*` build directories, managed files such as `AGENTS.md` included.
+
 The CI workflow runs for relevant pull requests and on manual dispatch. A push to
 `master` does not start engine CI. Its default checks use the formatting check, the
 Rust test profile, the standalone WASM check, and the Go helper tests. A manual dispatch with

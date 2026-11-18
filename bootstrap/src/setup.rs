@@ -260,7 +260,9 @@ pub fn host_label(host: &str) -> &'static str {
 // Where the Jazyk agent is reached in each host. Mirrors docs/frontends/mcp.md#reaching-each-agent.
 pub fn jazyk_reach(host: &str) -> &'static str {
     match host {
-        "vscode" | "cursor" => "the ACP Client icon in the Activity Bar, Agents view: Jazyk",
+        "vscode" | "cursor" => {
+            "Command Palette: Jazyk: Open Chat (or ACP: Connect to Agent), select Jazyk"
+        }
         "zed" => "the Agent panel, the new thread menu: Jazyk",
         _ => "the AI Chat window, the agent selector at the bottom: Jazyk",
     }

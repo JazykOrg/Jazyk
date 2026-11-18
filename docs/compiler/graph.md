@@ -75,11 +75,18 @@ got there: the [graph](./model.md) under `graph/`, its decisions under
 - `generation`: bumped on every commit. See [the generation](#the-generation).
 - `verdict`: `{state, open, failed, blocked, optional}`, the last build's
   [convergence](./compilation.md#convergence) with its counts.
-- `costs`: `{sessions, tokens, by_kind, by_class}` for the last build, one
-  `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`). The cost
+- `run_costs`: map of run id → one build's own `{sessions, tokens, by_kind, by_class}`,
+  one `{sessions, tokens}` line per goal kind and per class (`compile`, `gc`), for the
+  latest builds. A build that opens while no other build runs on the set clears the
+  map and adds its own entry. A build that opens beside a running build keeps the
+  other entries, so builds running at once never reset each other's
+  ([concurrent work](./control-plane.md#concurrent-work)). A build writes only its
+  own entry, under the store lock.
+- `costs`: `{sessions, tokens, by_kind, by_class}`, the sum of `run_costs`. The cost
   of every build, by goal kind and by document, is read from the [journal](#journal)
   instead ([`jazyk status --costs`](../frontends/cli.md#jazyk-status)).
-- `spent`: `{sessions, rounds, tokens}`, the budgets the last build used.
+- `spent`: `{sessions, rounds, tokens}`, the budgets the builds used. A build adds its
+  spend to the value on disk under the store lock, never to an earlier copy.
 - `diagnostics`: open diagnostic counts by severity, suppressed excluded.
 - `docs`: map of document path → the content hash of the source file at last
   reconcile. A document without an entry (a fresh checkout, a document another branch

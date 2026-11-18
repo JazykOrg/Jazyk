@@ -271,7 +271,7 @@ The launcher's summary names where each agent is reached in the IDE it started:
 
 | agent | where |
 |---|---|
-| the Jazyk agent, VS Code or Cursor | the ACP Client icon in the Activity Bar, Agents view: Jazyk |
+| the Jazyk agent, VS Code or Cursor | Command Palette: `Jazyk: Open Chat` (or `ACP: Connect to Agent`), select Jazyk |
 | the Jazyk agent, Zed | the Agent panel, the new thread menu: Jazyk |
 | the Jazyk agent, JetBrains | the AI Chat window, the agent selector at the bottom: Jazyk |
 | `claude` | jazyk tools load once Claude Code trusts the folder |

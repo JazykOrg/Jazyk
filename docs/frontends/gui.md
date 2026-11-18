@@ -853,9 +853,12 @@ appears, changes state, or leaves.
 A chat session snapshot (`GET /api/chat/sessions`, `GET /api/chat/sessions/{id}`)
 carries `parentId`, `rootId`, `depth`, `task`, and `write`. A sub-agent's transcript
 is an ordinary conversation. A result delivered to a parent is an `input` and a
-`user_message` with `source: {agentId}`. In the native server a sub-agent's session
-takes inputs only while it runs ([sub-agent updates](./acp.md#sub-agent-updates));
-stopping it stops that sub-agent and its descendants.
+`user_message` with `source: {agentId}`. A prompt to an idle sub-agent's session
+starts its next turn ([prompting a sub-agent](./subagents.md#prompting-a-sub-agent)),
+and input to a running one steers it. In the native server both travel through
+[sub-agent updates](./acp.md#sub-agent-updates). Stopping a sub-agent's session stops
+that sub-agent and its descendants. `DELETE /api/chat/sessions/{id}` deletes the
+conversation and every sub-agent session below it, stopping running ones first.
 
 The browser engine serves the same route and event for its
 [conversations](./wasm.md#chat). Its builds run inside the request, so it lists no

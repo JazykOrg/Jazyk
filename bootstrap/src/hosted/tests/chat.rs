@@ -866,11 +866,33 @@ fn hosted_chat_runs_a_sub_agent_and_delivers_its_result() {
         .unwrap()
         .starts_with("Subagent chat-2 completed"));
 
-    let events = events.lock().unwrap();
-    assert!(events
+    {
+        let events = events.lock().unwrap();
+        assert!(events
+            .iter()
+            .any(|e| e["type"] == "agents" && e["agents"].to_string().contains("\"chat-2\"")));
+        assert!(events
+            .iter()
+            .any(|e| e["type"] == "chat.update" && e["sessionId"] == "chat-2"));
+    }
+
+    // Deleting the parent deletes its sub-agent conversation too
+    // (docs/frontends/subagents.md#cancellation).
+    let other = value(&mut w, "POST", "/api/chat/sessions", json!({}), &e);
+    let deleted = value(
+        &mut w,
+        "DELETE",
+        "/api/chat/sessions/chat-1",
+        Value::Null,
+        &e,
+    );
+    assert_eq!(deleted["ok"], true);
+    let sessions = value(&mut w, "GET", "/api/chat/sessions", Value::Null, &e);
+    let ids: Vec<&str> = sessions["sessions"]
+        .as_array()
+        .unwrap()
         .iter()
-        .any(|e| e["type"] == "agents" && e["agents"].to_string().contains("\"chat-2\"")));
-    assert!(events
-        .iter()
-        .any(|e| e["type"] == "chat.update" && e["sessionId"] == "chat-2"));
+        .filter_map(|s| s["id"].as_str())
+        .collect();
+    assert_eq!(ids, [other["id"].as_str().unwrap()]);
 }

@@ -511,6 +511,8 @@ pub(super) fn write_durable(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     #[cfg(not(target_arch = "wasm32"))]
     if !crate::vfs::is_scoped() {
         use std::io::Write;
+        #[cfg(test)]
+        crate::vfs::guard_checkout(path, "write")?;
         let mut f = std::fs::File::create(path)?;
         let written = f.write_all(bytes).and_then(|()| sync_file(&f));
         if let Err(e) = written {
@@ -1043,6 +1045,7 @@ impl Store {
         store.status.generation = build.generation.max(generation_floor(&store.status));
         store.status.verdict = build.verdict;
         store.status.costs = build.costs;
+        store.status.run_costs = build.run_costs;
         store.status.spent = build.spent;
         store.status.diagnostics = build.diagnostics;
         if legacy {

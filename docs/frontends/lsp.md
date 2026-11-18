@@ -320,3 +320,10 @@ from recorded product sites return all live source ranges. Redirected requiremen
 ids in older ledger rows resolve to the surviving requirement. Opening a requirement
 skips missing source quotes when choosing a navigation fallback. Offline viewer
 cards display every attached source.
+
+## Opening agent chat
+
+The VS Code extension contributes `Jazyk: Open Chat`. It activates ACP Client and
+connects to the registered Jazyk agent and opens its chat panel. If ACP Client is missing, it offers its extension page
+and names `jazyk setup vscode` (or `jazyk setup cursor`) as the setup command.
+This command is available even when the language server cannot start.

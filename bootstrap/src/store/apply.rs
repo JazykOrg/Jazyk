@@ -693,6 +693,7 @@ impl Store {
                         }
                     }
                     for v in self.graph.views.values_mut() {
+                        crate::diagrams::rewrite_authored(&mut v.authored, &rewire);
                         v.members.iter_mut().for_each(rewire);
                         dedup_keep_order(&mut v.members);
                         v.collapse.iter_mut().for_each(rewire);
@@ -1346,6 +1347,7 @@ impl Store {
                         rewire(&mut c.requirement);
                     }
                     for v in self.graph.views.values_mut() {
+                        crate::diagrams::rewrite_authored(&mut v.authored, &rewire);
                         v.members.iter_mut().for_each(rewire);
                         dedup_keep_order(&mut v.members);
                         v.collapse.iter_mut().for_each(rewire);
@@ -1673,6 +1675,38 @@ impl Store {
                         None => skipped.push(format!("delete_criterion: unknown id {}", cid)),
                     }
                 }
+                Op::SetViewProvenance { id, provenance } => {
+                    if let Some(v) = self.graph.views.get_mut(&id) {
+                        v.provenance = Some(provenance.clone());
+                        v.updated = Some(build.clone());
+                        applied.push(Op::SetViewProvenance { id, provenance });
+                    } else {
+                        skipped.push(format!("set_view_provenance: unknown view {}", id));
+                    }
+                }
+                Op::SetDiagramDecision { id, decision } => {
+                    if let Some(d) = &decision {
+                        let live = crate::diagrams::findings(self)
+                            .into_iter()
+                            .find(|f| f.id == id);
+                        if live.is_none_or(|f| {
+                            d["candidates"] != f.value()["candidates"]
+                                || d["boundary"] != f.boundary
+                                || f.family == "source"
+                        }) {
+                            skipped.push(format!("diagram-area-moved: {}", id));
+                            continue;
+                        }
+                    }
+                    if let Some(value) = &decision {
+                        self.decisions
+                            .diagram_coverage
+                            .insert(id.clone(), value.clone());
+                    } else {
+                        self.decisions.diagram_coverage.remove(&id);
+                    }
+                    applied.push(Op::SetDiagramDecision { id, decision });
+                }
                 Op::CreateView { id, mut view } => {
                     if !VIEW_KINDS.contains(&view.kind.as_str()) {
                         skipped.push(format!(
@@ -1696,6 +1730,19 @@ impl Store {
                         *from = from.iter().map(|f| resolve(&remap, self, f)).collect();
                     }
                     view.provenance = Some(provenance);
+                    crate::diagrams::rewrite_authored(&mut view.authored, &|id| {
+                        *id = resolve(&remap, self, id)
+                    });
+                    if let Some(missing) = crate::diagrams::authored_references(&view)
+                        .iter()
+                        .find(|id| !crate::diagrams::reference_exists(self, id))
+                    {
+                        skipped.push(format!(
+                            "create_view {}: unknown authored reference {}",
+                            id, missing
+                        ));
+                        continue;
+                    }
                     view.members = view
                         .members
                         .iter()
@@ -1727,8 +1774,7 @@ impl Store {
                         skipped.push(format!("create_view {}: unknown member {}", id, missing));
                         continue;
                     }
-                    // Natural key: kind plus title. A default under that key is curated
-                    // from here on.
+                    // Natural key: kind plus title.
                     if let Some(existing) = self.find_view(&view.kind, &view.title) {
                         remap.insert(id, existing.clone());
                         let v = self.graph.views.get_mut(&existing).unwrap();
@@ -1746,10 +1792,13 @@ impl Store {
                         if !view.collapse.is_empty() {
                             v.collapse = view.collapse.clone();
                         }
+                        v.authored.extend(view.authored.clone());
                         v.provenance = view.provenance.clone();
                         v.default = false;
                         v.updated = Some(build.clone());
                         applied.push(Op::UpdateView {
+                            clear_query: false,
+                            authored: view.authored.clone(),
                             id: existing,
                             title: None,
                             members: (!view.members.is_empty()).then(|| view.members.clone()),
@@ -1779,6 +1828,8 @@ impl Store {
                     self.graph.views.insert(final_id, view);
                 }
                 Op::UpdateView {
+                    clear_query,
+                    mut authored,
                     id,
                     title,
                     members,
@@ -1826,7 +1877,35 @@ impl Store {
                         skipped.push(format!("update_view {}: unknown member {}", rid, missing));
                         continue;
                     }
+                    crate::diagrams::rewrite_authored(&mut authored, &|id| {
+                        *id = resolve(&remap, self, id)
+                    });
+                    let mut candidate = self.graph.views[&rid].clone();
+                    for (key, value) in &authored {
+                        if value.is_null() {
+                            candidate.authored.remove(key);
+                        } else {
+                            candidate.authored.insert(key.clone(), value.clone());
+                        }
+                    }
+                    if let Some(missing) = crate::diagrams::authored_references(&candidate)
+                        .iter()
+                        .find(|id| !crate::diagrams::reference_exists(self, id))
+                    {
+                        skipped.push(format!(
+                            "update_view {}: unknown authored reference {}",
+                            rid, missing
+                        ));
+                        continue;
+                    }
                     let v = self.graph.views.get_mut(&rid).unwrap();
+                    for (key, value) in &authored {
+                        if value.is_null() {
+                            v.authored.remove(key);
+                        } else {
+                            v.authored.insert(key.clone(), value.clone());
+                        }
+                    }
                     if let Some(t) = &title {
                         v.title = t.clone();
                     }
@@ -1839,7 +1918,9 @@ impl Store {
                         }
                     }
                     v.members.retain(|x| !remove_members.contains(x));
-                    if let Some(q) = &query {
+                    if clear_query {
+                        v.query = None;
+                    } else if let Some(q) = &query {
                         v.query = Some(q.clone());
                     }
                     if let Some(c) = &collapse {
@@ -1853,16 +1934,24 @@ impl Store {
                         }
                     }
                     if let Some(why) = &reasoning {
-                        if let Some(Provenance::Derived { reasoning: r, .. }) =
-                            v.provenance.as_mut()
-                        {
-                            *r = why.clone();
-                        }
+                        let mut from = v.members.clone();
+                        from.extend(
+                            crate::diagrams::authored_references(v)
+                                .into_iter()
+                                .filter(|id| id.starts_with("ent:") || id.starts_with("req:")),
+                        );
+                        from.sort();
+                        from.dedup();
+                        v.provenance = Some(Provenance::Derived {
+                            from,
+                            reasoning: why.clone(),
+                        });
                     }
-                    // Any mutation naming a default view makes it curated.
                     v.default = false;
                     v.updated = Some(build.clone());
                     applied.push(Op::UpdateView {
+                        clear_query,
+                        authored: authored.clone(),
                         id: rid,
                         title,
                         members,
@@ -1877,10 +1966,6 @@ impl Store {
                 Op::DeleteView { id, reason } => {
                     let rid = resolve(&remap, self, &id);
                     match self.graph.views.get(&rid) {
-                        Some(v) if v.default => skipped.push(format!(
-                            "delete_view {}: a default view derives again at the next commit; curate it first (update_view clears default)",
-                            rid
-                        )),
                         Some(_) => {
                             self.graph.views.remove(&rid);
                             dirt.deleted(&rid, m);
@@ -1936,9 +2021,9 @@ impl Store {
                         c.provenance = None;
                         c.stale = false;
                         c.updated = Some(build.clone());
-                    } else if self.graph.views.contains_key(&rid) {
-                        skipped.push(format!("ratify_provenance {}: views are not ratified", rid));
-                        continue;
+                    } else if let Some(view) = self.graph.views.get_mut(&rid) {
+                        view.provenance = Some(Provenance::Quote(source.clone()));
+                        view.updated = Some(build.clone());
                     } else {
                         skipped.push(format!("ratify_provenance: unknown id {}", rid));
                         continue;
@@ -2514,7 +2599,7 @@ impl Store {
         applied.extend(auto_resolved);
         self.deletion_ripple(&dirt.deleted, &mut batch);
 
-        // Derived data: relationships, state machines, default views, limit counts.
+        // Derived data: relationships, state machines, query membership, limit counts.
         crate::derive::recompute(self, &build, &mut batch);
         self.record_reparent_flips(&moves, &mut batch);
 

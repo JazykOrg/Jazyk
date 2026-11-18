@@ -105,7 +105,7 @@ through the diagnostic and answered in prose.
   initial state, then one arrow per transition from `from` to `to`, labeled with the
   trigger and the guard in brackets. A machine with no initial state draws no `[*]` arrow.
   One `state` view derives per machine by default. See
-  [default views](./view.md#default-views).
+  [authored diagrams](./view.md#membership).
 - The `timing` view kind reads the machine plus the subject's `quality` requirements that
   carry a time `measure`: the lane shows the states the measure governs. Timing views are
   curated, never default; one over a subject with no time measure draws the lane with no

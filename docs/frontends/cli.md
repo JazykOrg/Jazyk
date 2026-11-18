@@ -855,7 +855,7 @@ matched, `1` when nothing did (the text form says so on stderr).
 
 `jazyk gen [entity...]` runs the built-in [generation](../consumers/gen.md) worker over
 the ledger goals: [`bind`](../compiler/goals/bind.md), [`generate`](../compiler/goals/generate.md),
-and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 3. `bind` and
+and [`verify`](../compiler/goals/verify.md) sit on the same board at tier 4. `bind` and
 `generate` are gated by the generate
 [release](../compiler/control-plane.md#modes-and-releases), and `jazyk gen` is that
 release. `verify` is not release-gated (verification writes nothing into the

@@ -47,7 +47,7 @@ fn derive(store: &Store) -> Board {
 // anchor reads stale, and the derived data (relationships, machines, default
 // views) stands as a commit leaves it.
 pub(crate) fn settled_store() -> Store {
-    let mut s = crate::derive::tests::showcase_store();
+    let mut s = crate::derive::tests::authored_showcase_store();
     let text = "# Shop\n\nThe shop.\nThe order service provides the checkout API.\nThe inventory service provides the stock API.\nA shopping cart holds one or more order items.\nThe shop shall confirm checkout within 2 seconds.\nThe shop is deployed in the EU region.\n\n## Checkout\n\nThe customer submits the shopping cart through the checkout API.\nWhen checkout succeeds, the order service reserves stock through the stock API.\n\n## Orders\n\nAn order carries a total and a currency.\nWhen payment succeeds, the order becomes paid.\nIf payment is declined, then the order is held for review.\n\n## Examples\n\nAna, a gold-tier customer, keeps 3 items in her cart, priced in EUR.\n";
     s.docs.insert(
         "shop.md".into(),
@@ -76,6 +76,12 @@ pub(crate) fn settled_store() -> Store {
         }
     }
     s.status.changes.clear();
+    for f in crate::diagrams::findings(&s) {
+        let mut d = f.value();
+        d["ruleVersion"] = serde_json::json!(1);
+        d["reason"] = serde_json::json!("Fixture diagram review completed");
+        s.decisions.diagram_coverage.insert(f.id, d);
+    }
     s
 }
 

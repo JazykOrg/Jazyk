@@ -47,7 +47,7 @@ fn limits_state(store: &Store, view: &View, members: &[String]) -> Vec<Value> {
         push("members-per-structural-view", n);
         push(
             "edges-per-view",
-            crate::derive::view_edge_count(store, members),
+            crate::derive::authored_view_edge_count(store, view, members),
         );
     } else {
         push("members-per-flow-view", n);
@@ -76,9 +76,11 @@ pub fn views_value(store: &Store) -> Value {
                 "id": id,
                 "kind": v.kind,
                 "title": v.title,
-                "default": v.default,
+                "purpose": v.authored.get("purpose"),
+                "area": v.authored.get("area"),
+                "definition": v,
                 "members": members.len(),
-                "edges": crate::derive::view_edge_count(store, &members),
+                "edges": crate::derive::authored_view_edge_count(store, v, &members),
                 "limits": limits_state(store, v, &members),
             })
         })
@@ -350,14 +352,16 @@ pub fn view_value(store: &Store, id: &str, detail: usize) -> Option<Value> {
         "id": id,
         "kind": view.kind,
         "title": view.title,
-        "default": view.default,
+        "definition":view,
+        "purpose":view.authored.get("purpose"),
+        "area":view.authored.get("area"),
         "members": member_detail,
         "excluded": view.excluded,
         "collapse": view.collapse,
         "query": view.query,
         "provenance": view.provenance,
         "limits": limits_state(store, view, &members),
-        "arrows": view_arrows(store, &shown),
+        "arrows": view_arrows(&crate::diagrams::projection(store,view), &shown),
         "steps": steps,
         "machines": machines,
         "children": children_value(store, &id),
@@ -373,9 +377,19 @@ pub fn view_value(store: &Store, id: &str, detail: usize) -> Option<Value> {
 // entity with a level view of its own, the same list `get_view` answers.
 // Mirrors docs/compiler/concepts/levels.md#drill-down.
 fn children_value(store: &Store, view_id: &str) -> Vec<Value> {
-    crate::derive::children_of_view(store, view_id)
+    crate::derive::drawn_entities_of(store, view_id)
         .into_iter()
-        .map(|(member, view)| json!({ "member": member, "view": view }))
+        .filter(|id| !crate::board::level_members(store, id).is_empty())
+        .map(|member| {
+            let views: Vec<String> = store
+                .graph
+                .views
+                .iter()
+                .filter(|(_, v)| crate::diagrams::area(v) == Some(member.as_str()))
+                .map(|(id, _)| id.clone())
+                .collect();
+            json!({"member":member,"target":member,"view":views.first(),"views":views})
+        })
         .collect()
 }
 
@@ -399,13 +413,11 @@ fn ordered_children(store: &Store, target: &str, ids: &[String]) -> Vec<String> 
 // view, the flow views derived for its level, and its grouping mark. Computed at read
 // time from the shards, never stored. Mirrors docs/frontends/gui.md#api (`GET /api/tree`).
 pub fn tree_value(store: &Store) -> Value {
-    // The flow views by the level they derive for.
+    // Every authored diagram associated with each area, regardless of kind.
     let mut flows: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (id, v) in &store.graph.views {
-        if crate::goals::is_flow_kind(&v.kind) {
-            if let Some(level) = crate::derive::flow_view_level(store, id) {
-                flows.entry(level).or_default().push(id.clone());
-            }
+        if let Some(target) = crate::diagrams::area(v) {
+            flows.entry(target.into()).or_default().push(id.clone());
         }
     }
     // Children by parent; a parent that resolves to no entity leaves its children at
@@ -481,7 +493,7 @@ mod tests {
     // The showcase graph with its derived data in place: the shop level view over the
     // two services, the order service's level view over its four children.
     fn store() -> Store {
-        let mut s = crate::derive::tests::showcase_store();
+        let mut s = crate::derive::tests::authored_showcase_store();
         crate::derive::recompute(&mut s, "g1", &mut RecordBatch::new(1));
         s
     }
@@ -497,7 +509,11 @@ mod tests {
         let children = v["children"].as_array().expect("a children list");
         let pairs: Vec<(&str, &str)> = children
             .iter()
-            .map(|c| (c["member"].as_str().unwrap(), c["view"].as_str().unwrap()))
+            .filter_map(|c| {
+                c["view"]
+                    .as_str()
+                    .map(|v| (c["member"].as_str().unwrap(), v))
+            })
             .collect();
         assert_eq!(
             pairs,

@@ -288,19 +288,11 @@ fn flow_placement_ranking(store: &Store, ix: &Indices, rid: &str) -> Vec<String>
         })
         .collect();
     ranked.sort();
-    let mut ids: Vec<String> = ranked.into_iter().map(|(_, _, _, _, id)| id).collect();
-    // The requirement's own cluster (its document's flow at the root level) outranks
-    // every other. Mirrors docs/compiler/goals/curate-view.md.
-    let stem = doc
-        .rsplit('/')
-        .next()
-        .unwrap_or(&doc)
-        .trim_end_matches(".md");
-    let own = format!("view:usecase/{}", md::slug(stem));
-    if let Some(pos) = ids.iter().position(|v| *v == own) {
-        let v = ids.remove(pos);
-        ids.insert(0, v);
-    }
+    let ids: Vec<String> = ranked
+        .into_iter()
+        .filter(|(shared, _, _, _, _)| shared.0 > 0)
+        .map(|(_, _, _, _, id)| id)
+        .collect();
     ids
 }
 
@@ -346,6 +338,9 @@ pub(super) fn flow_placement(
             continue;
         }
         let ranking = flow_placement_ranking(store, ix, rid);
+        if ranking.is_empty() {
+            continue;
+        }
         let (rule, message) = if facet == "behavior" {
             (
                 "unplaced-behavior",
@@ -1254,7 +1249,7 @@ pub fn levels(store: &Store) -> Vec<(String, Vec<String>)> {
 
 // The slug segment of a level view id: the node's slug, the scope's slug for the root
 // form (the per-scope id the root view has always had, `view:component/public`).
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
 fn level_slug(target: &str) -> String {
     match crate::board::scope_target(target) {
         Some(scope) => md::slug(scope),
@@ -1264,7 +1259,7 @@ fn level_slug(target: &str) -> String {
 
 // The structural level view of a target, under either kind the kind rule can pick
 // (`component` when the level carries a structural stereotype, `class` otherwise).
-// Mirrors docs/compiler/model/view.md#level-views.
+// Mirrors docs/compiler/model/view.md#membership.
 pub fn level_view_of(store: &Store, target: &str) -> Option<String> {
     let slug = level_slug(target);
     ["component", "class"]
@@ -1306,20 +1301,6 @@ fn is_derived_grouping_with(store: &Store, ix: &Indices, id: &str) -> bool {
 fn level_shape_checks(store: &Store, ix: &Indices) -> Vec<Finding> {
     let mut f = Vec::new();
     for (target, children) in levels(store) {
-        if children.len() >= 2 && level_view_of(store, &target).is_none() {
-            f.push(finding(
-                "level-shape",
-                &target,
-                "warning",
-                format!(
-                    "{} holds {} direct children but has no structural level view (view:component/{} or view:class/{})",
-                    target,
-                    children.len(),
-                    level_slug(&target),
-                    level_slug(&target)
-                ),
-            ));
-        }
         let (_, hard) = fan_out_thresholds(store, &target);
         if children.len() as u64 > hard {
             f.push(finding(

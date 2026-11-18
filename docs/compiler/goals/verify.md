@@ -6,7 +6,7 @@ code is the verdict. Only an `llm` row asks a model, because its requirement nee
 judgment no command can render. See
 [the ledger's verification statuses](../../consumers/gen.md#status-is-derived-never-stored).
 
-- Class: compile. Mandatory. Readiness tier 3.
+- Class: compile. Mandatory. Readiness tier 4.
 - Unit: one ledger row. Goal id `g:verify:req:<stem>-<hash>`.
 - Skill: none.
 
@@ -164,3 +164,5 @@ programmatic rows ([over MCP](../../frontends/mcp.md#generation-and-verification
 Whichever harness runs, the row comes out the same shape. The trace carries the
 worker's own events per row (`verifyRowStart`, `verifyRowDone`, `verifyRowStale`,
 `verifyRowError`, [trace events](../sessions.md#trace-events)).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

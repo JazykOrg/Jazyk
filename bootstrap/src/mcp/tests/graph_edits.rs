@@ -73,7 +73,7 @@ fn chat_authored_graph_families_work_without_build_goals_or_release() {
     call(
         &server,
         "update_view",
-        json!({"id":view["id"],"title":"Cart overview"}),
+        json!({ "reasoning": "Fixture diagram authoring","id":view["id"],"title":"Cart overview"}),
     );
     call(
         &server,

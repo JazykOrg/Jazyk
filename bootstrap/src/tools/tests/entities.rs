@@ -665,9 +665,9 @@ fn group_entities_accepts_a_valid_grouping_and_rejects_bad_ones() {
     }
     // The session's own gates see the moves: the grouping now holds the level.
     assert_eq!(t.level_after("ent:compute"), vec!["ent:c0", "ent:c1"]);
-    assert_eq!(
-        t.level_view_of("ent:compute").as_deref(),
-        Some("view:component/compute")
+    assert!(
+        t.staged_views.is_empty(),
+        "A grouping does not author a diagram"
     );
     // The abstract-entity gate accepts the grouping as staged.
     t.dispatch(

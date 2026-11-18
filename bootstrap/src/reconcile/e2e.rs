@@ -624,7 +624,7 @@ impl ScriptedRunner {
                 server,
                 batch,
                 "update_view",
-                json!({"id": goal.target, "add_members": add}),
+                json!({"id": goal.target, "add_members": add,"reasoning":"Place the matched behavior in its authored flow"}),
             );
         }
         let evidence: Vec<Value> = matched
@@ -778,7 +778,7 @@ impl ScriptedRunner {
             server,
             batch,
             "update_view",
-            json!({"id": goal.target, "exclude": exclude}),
+            json!({"id": goal.target, "exclude": exclude,"reasoning":"Move outside context to the linked detail diagram"}),
         );
         self.call(
             server,
@@ -880,6 +880,25 @@ impl SessionRunner for ScriptedRunner {
                     "The two statements constrain different facts and neither contradicts the other.",
                 ),
                 "declare-edges" => self.declare_edges(&server, &batch.id, &snapshot, goal),
+                "diagram-coverage" => {
+                    let family=goal.change["family"].as_str().unwrap_or("structure");
+                    let target=goal.change["target"].as_str().unwrap();
+                    let kind=if family=="structure" && crate::goals::level_members(&snapshot,target).iter().any(|id|snapshot.graph.entities.get(id).is_some_and(|e|matches!(e.stereotype.as_deref(),Some("system"|"service"|"component"|"interface"|"actor")))) {"component"} else {goal.change["kinds"][0].as_str().unwrap()};
+                    let candidates:Vec<String>=goal.change["candidates"].as_object().unwrap().keys().cloned().collect();
+                    let members:Vec<String>=if family=="state" {vec![target.into()]}
+                        else if family=="timing" {std::iter::once(target.to_string()).chain(candidates.clone()).collect()}
+                        else if family=="deployment" {candidates.iter().filter_map(|id|id.split_once('#').map(|(e,_)|e.to_string())).collect::<std::collections::BTreeSet<_>>().into_iter().collect()}
+                        else if family=="overview" {candidates.iter().filter_map(|id|snapshot.graph.views.get(id)).filter_map(|v|v.members.first().cloned()).collect()}
+                        else if family=="structure" {crate::derive::level_view_members(&snapshot,target)}
+                        else {candidates.clone()};
+                    if family=="drift" {
+                        let view=goal.target.trim_start_matches("drift:");
+                        self.call(&server,&batch.id,"update_view",json!({"id":view,"add_members":members,"reasoning":"Restore this area's current facts"}));
+                    } else {
+                        self.call(&server,&batch.id,"upsert_view",json!({"kind":kind,"title":if family=="structure" || family=="system" {snapshot.graph.entities.get(target).map(|e|e.name.clone()).unwrap_or_else(||"Public".into())} else {format!("{} explanation {}",family,goal.target)},"purpose":format!("Explain {} in {}",family,target),"area":{"target":target,"extent":"selection"},"members":members,"links":if family=="overview" {candidates.iter().map(|id|json!({"view":id,"relation":"phase"})).collect::<Vec<_>>()} else {vec![]},"reasoning":"The reviewed requirements support this explanation"}));
+                    }
+                    self.verdict_only(&server,&batch.id,goal,json!({"verdict":"covered"}),"Saved the authored explanation through diagram tools.");
+                }
                 "curate-view" => self.curate_view(&server, &batch.id, &snapshot, goal),
                 "dedupe-candidates" => self.verdict_only(
                     &server,
@@ -1165,8 +1184,8 @@ fn f1_compiles_from_an_empty_store_to_converged_with_a_scripted_executor() {
     );
     assert!(!store.graph.views.is_empty());
     assert!(
-        store.graph.views.values().any(|v| v.default),
-        "every view was curated"
+        store.graph.views.values().all(|v| !v.default),
+        "every diagram is explicitly authored"
     );
     for id in store.graph.views.keys() {
         let rel = id.strip_prefix("view:").unwrap();
@@ -1642,11 +1661,10 @@ fn e2e_gc_runs_the_gc_burst_through_the_gates_and_converges() {
         "the fan-out goal never waited on its cone"
     );
     assert!(
-        boards.iter().any(|b| b
-            .explain
-            .get(platform_split)
-            .is_some_and(|e| e.contains(&format!("fan-out first: {}", fan_out)))),
-        "the Platform's split-view never yielded to the fan-out"
+        boards[..=ran]
+            .iter()
+            .all(|b| !b.goals.iter().any(|g| g.id == platform_split)),
+        "No platform diagram exists before the authoring stage"
     );
     let split_goal = boards
         .iter()
@@ -2166,12 +2184,12 @@ fn a_build_archives_a_store_of_another_version_and_a_reader_treats_it_as_empty()
     assert!(out.join("graph").join("entities").is_dir());
     let store = Store::load(&out);
     assert_eq!(store.status.version, crate::store::STORE_VERSION);
-    assert_eq!(store.status.version, 6);
+    assert_eq!(store.status.version, 7);
     assert!(store.status.verdict.converged(), "{}", store.status.verdict);
     assert_eq!(store.graph.requirements.len(), 12);
     assert!(crate::vfs::read_to_string(out.join("store.yaml"))
         .unwrap()
-        .contains("version: 6"));
+        .contains("version: 7"));
     crate::vfs::remove_dir_all(&bak).ok();
     crate::vfs::remove_dir_all(&dir).ok();
 }

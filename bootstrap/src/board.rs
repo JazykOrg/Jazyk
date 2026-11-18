@@ -99,7 +99,7 @@ pub struct Board {
     pub open_diags: BTreeMap<String, u64>,
     pub dangling_diags: bool,
     pub alignment_pending: BTreeSet<String>,
-    tier_open: [usize; 4],
+    tier_open: [usize; 5],
     doc_levels: BTreeMap<String, usize>,
     pub(crate) blob_inputs: BTreeMap<String, BTreeSet<String>>,
     tier1_open_docs: BTreeSet<String>,

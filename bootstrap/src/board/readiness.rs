@@ -5,6 +5,22 @@ use super::*;
 impl Board {
     // ---- readiness queries the kinds ask ----
 
+    pub fn diagram_blocker(&self, target: &str) -> Option<String> {
+        self.goals
+            .iter()
+            .find(|g| {
+                g.kind == "diagram-coverage"
+                    && g.mandatory
+                    && is_open(g)
+                    && (g.change["target"].as_str() == Some(target)
+                        || g.change["candidates"].get(target).is_some()
+                        || g.change["entities"]
+                            .as_array()
+                            .is_some_and(|ids| ids.iter().any(|id| id.as_str() == Some(target))))
+            })
+            .map(|g| g.id.clone())
+    }
+
     pub fn tier_open(&self, tier: u8) -> usize {
         self.tier_open[tier as usize]
     }

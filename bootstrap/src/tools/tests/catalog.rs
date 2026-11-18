@@ -78,6 +78,9 @@ fn task_docs_name_every_tool() {
             "dedupe-candidates" => {
                 include_str!("../../../../docs/compiler/goals/dedupe-candidates.md")
             }
+            "diagram-coverage" => {
+                include_str!("../../../../docs/compiler/goals/diagram-coverage.md")
+            }
             "curate-view" => include_str!("../../../../docs/compiler/goals/curate-view.md"),
             "split-view" => include_str!("../../../../docs/compiler/goals/split-view.md"),
             "abstract-entity" => {

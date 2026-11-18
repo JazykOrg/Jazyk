@@ -325,6 +325,9 @@ pub(super) fn load_decisions(
             );
         }
     }
+    for (id, v) in read_decision_files(&layout::decisions_dir(out, "diagram-coverage"), errors) {
+        d.diagram_coverage.insert(id, v);
+    }
     (d, lookalikes)
 }
 
@@ -379,6 +382,9 @@ pub(super) fn save_decisions(out: &Path, d: &Decisions, lookalikes: &[LookalikeV
             id,
             decision_value(id, &serde_json::json!({ "matched": m })),
         );
+    }
+    for (id, value) in &d.diagram_coverage {
+        put("diagram-coverage", id, decision_value(id, value));
     }
     for kind in DECISION_KINDS {
         let mut files = Vec::new();
@@ -443,6 +449,22 @@ impl Store {
     // failed goal is a `goal-failed` diagnostic; one no longer failed is removed.
     // Runs before every save. Mirrors docs/compiler/graph.md#what-needs-building.
     pub(super) fn project_decisions(&mut self) {
+        let targets: std::collections::BTreeSet<String> = self
+            .graph
+            .entities
+            .keys()
+            .cloned()
+            .chain(
+                self.graph
+                    .entities
+                    .values()
+                    .map(|e| crate::store::scope_root_target(&e.scope)),
+            )
+            .collect();
+        self.decisions
+            .diagram_coverage
+            .retain(|_, d| d["target"].as_str().is_some_and(|id| targets.contains(id)));
+
         let open = |kind: &[&str], subject: &str, changes: &[ChangeRecord]| {
             changes
                 .iter()
@@ -789,6 +811,21 @@ impl Store {
                         serde_json::json!({ "gone": gone }),
                     ));
                 }
+            }
+        }
+
+        for (id, view) in &self.graph.views {
+            let gone: Vec<String> = crate::diagrams::authored_references(view)
+                .into_iter()
+                .filter(|r| !crate::diagrams::reference_exists(self, r))
+                .collect();
+            if !gone.is_empty() {
+                found.push(rec(
+                    CHANGE_VIEW_MEMBER_GONE,
+                    id,
+                    "authored",
+                    serde_json::json!({"gone":gone}),
+                ));
             }
         }
 

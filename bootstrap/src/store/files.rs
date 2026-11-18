@@ -54,7 +54,7 @@ pub const COMMITTED_KINDS: [&str; 6] = [
 ];
 
 // The derived kinds: local, recomputed at load when missing and on every commit.
-pub const DERIVED_KINDS: [&str; 3] = ["default-views", "relationships", "state-machines"];
+pub const DERIVED_KINDS: [&str; 2] = ["relationships", "state-machines"];
 
 // The file id of a node id: `:` as `~`, `/` as `+`, lowercase ASCII letters, digits,
 // `-`, `_`, `.` kept, every other byte (and a leading `.`) as `%XX` in uppercase hex.
@@ -865,17 +865,51 @@ impl Store {
             };
         }
         let mut store = Self::load(out);
-        // A version 4 store is rewritten whole in the version 5 layout before the build
-        // begins, ids and facts kept: its open records become decisions and build
-        // progress, and nothing of the old layout stays. Mirrors
+        // A version 6 store preserves authored views and discards automatic projections.
+        // Mirrors
         // docs/compiler/graph.md#store-version.
         if store.status.version == UPGRADABLE_VERSION && store.load_errors.is_empty() {
             let flock = FileLock::acquire(out);
             if flock.busy() {
                 return store;
             }
+            let scopes: std::collections::BTreeMap<String, String> = store
+                .graph
+                .entities
+                .iter()
+                .map(|(id, e)| (id.clone(), e.scope.clone()))
+                .collect();
+            for v in store.graph.views.values_mut() {
+                v.authored
+                    .entry("purpose".into())
+                    .or_insert_with(|| serde_json::json!(v.title));
+                let target = if ["state", "timing"].contains(&v.kind.as_str()) {
+                    v.members.first().cloned()
+                } else {
+                    v.query.as_ref().and_then(|q| q.parent.clone())
+                }
+                .unwrap_or_else(|| {
+                    v.members
+                        .iter()
+                        .find_map(|id| scopes.get(id))
+                        .map(|scope| crate::store::scope_root_target(scope))
+                        .unwrap_or_else(|| "scope:public".into())
+                });
+                v.authored
+                    .entry("area".into())
+                    .or_insert_with(|| serde_json::json!({"target":target,"extent":"selection"}));
+                if v.provenance.is_none() {
+                    v.provenance = Some(Provenance::Derived {
+                        from: v.members.clone(),
+                        reasoning: "Preserved an authored diagram during version-6 upgrade".into(),
+                    });
+                }
+            }
             store.status.version = STORE_VERSION;
             store.persist();
+            for (id, error) in crate::render::render_all(&store, out).failed {
+                eprintln!("[jazyk] diagram {}: {}", id, error);
+            }
             let _ledger_lock = crate::gen::Ledger::lock(out);
             let ledger = crate::gen::Ledger::load(out);
             if ledger.unreadable.is_none() {
@@ -907,7 +941,7 @@ impl Store {
             }
         };
         let mut views: BTreeMap<String, View> = load_nodes(&g.join("views"), &mut errors);
-        views.extend(load_nodes::<View>(&derived("default-views"), &mut errors));
+        views.retain(|_, v| !v.default);
         let status = if legacy {
             read_status(out, &mut errors)
         } else {
@@ -1026,7 +1060,7 @@ impl Store {
             crate::derive::recompute_state_machines(&mut store);
             let build = format!("g{}", store.status.generation);
             let mut batch = RecordBatch::new(store.status.generation);
-            crate::derive::recompute_default_views(&mut store, &build, &mut batch);
+            crate::derive::recompute_query_views(&mut store, &build, &mut batch);
         }
         // The work the committed state shows, beside what this machine already holds.
         // Mirrors docs/compiler/graph.md#what-needs-building.
@@ -1170,11 +1204,7 @@ impl Store {
         ));
         gone.extend(save_kind(
             &crate::layout::derived_node_dir(&self.out, "default-views"),
-            self.graph
-                .views
-                .iter()
-                .filter(|(_, v)| v.default)
-                .map(borrowed),
+            self.graph.views.iter().filter(|_| false).map(borrowed),
         ));
         gone.extend(save_kind(
             &g.join("diagnostics"),

@@ -21,7 +21,7 @@ mod tests {
     use crate::store::RecordBatch;
 
     fn store() -> Store {
-        let mut s = crate::derive::tests::showcase_store();
+        let mut s = crate::derive::tests::authored_showcase_store();
         crate::derive::recompute(&mut s, "g1", &mut RecordBatch::new(1));
         s
     }

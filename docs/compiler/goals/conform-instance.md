@@ -224,9 +224,11 @@ The `conform-instance` toolset ([toolsets](../tools.md#toolsets)):
 - [`report_feedback`](../tools.md#feedback-tool).
 
 No creation or delete tools, no coverage, and no view tools: an object view derives
-from the `instantiation` edges ([default views](../model/view.md#default-views)), and
+from the `instantiation` edges ([authored views](../model/view.md#membership)), and
 its curation is [GC](../graph.md#garbage-collection). An example that proves to be a
 type, or two instances that are one example, is not a conformance finding: the session
 files `duplicate-entity` or `ambiguity` with `report_diagnostic` naming the entities,
 and the type's next [`review-entity`](./review-entity.md) goal judges it with the
 statements loaded whole.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

@@ -194,7 +194,7 @@ The store version, the only thing a load checks before reading the rest
 ```yaml
 # Jazyk store: the version of this set's files. Written by jazyk.
 # yaml-language-server: $schema=https://jazyk.org/schemas/store.json
-version: 6
+version: 7
 ```
 
 ### `graph/<kind>/<id>.yaml`
@@ -460,7 +460,6 @@ derived graph kinds, and the next build's tail rewrites the rest.
 |---|---|---|
 | `graph/relationships/<id>.yaml` | One entity pair's typed connections, from requirement `edges` ([relationship](./model/relationship.md)). | YAML |
 | `graph/state-machines/<id>.yaml` | One entity's states and transitions, from requirement `transition`s ([state machine](./model/state-machine.md)). | YAML |
-| `graph/default-views/<id>.yaml` | One default view by rule; it moves to the committed `graph/views/` when curated ([default views](./model/view.md#default-views)). | YAML |
 | `diagrams/<kind>/<slug>.puml`, `.svg`, `.png` | One rendering per view ([output layout](./diagrams.md#output-layout)). | PlantUML, SVG, PNG |
 | `docsgen/` | Generated requirements documentation ([docsgen](../consumers/docsgen.md)). | Markdown |
 | `last-build/<doc path>` | Each document as the last build stored it, for the editor's diff ([commands](../frontends/lsp.md#commands)). | the document's format |
@@ -575,9 +574,16 @@ required. See [asset classification](parsing.md#asset-classification).
 
 ## Requirement source storage
 
-Version 6 stores requirement `sources` as a non-empty list. Version 5 loads with
-`source` converted to a singleton list and rewrites at the next build opening.
-Older stores archive and rebuild. Requirement ids and ledger bindings are preserved.
+Version 7 stores requirement `sources` as a non-empty list. Only version 6
+upgrades in place. Earlier stores archive and rebuild.
+An in-place upgrade preserves requirement IDs and ledger bindings.
+
+## Diagram decisions
+
+`graph/views/` holds authored diagram definitions. Version 7 writes no default-view
+files. `graph/decisions/diagram-coverage/` holds reasoned suppressions with baseline
+measures, identities, hashes and provenance. Expired decisions remain inspectable
+until their area disappears. Rendering files remain under derived output.
 
 ## Open changeset records
 

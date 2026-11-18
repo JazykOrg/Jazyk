@@ -24,6 +24,7 @@ mod curate_view;
 mod declare_edges;
 mod dedupe_candidates;
 mod derive_criteria;
+mod diagram_coverage;
 mod fan_out;
 mod generate;
 mod helpers;
@@ -45,6 +46,7 @@ pub use curate_view::*;
 pub use declare_edges::*;
 pub use dedupe_candidates::*;
 pub use derive_criteria::*;
+pub use diagram_coverage::*;
 pub use fan_out::*;
 pub use generate::*;
 pub use helpers::*;
@@ -171,13 +173,14 @@ pub trait GoalKind: Sync + Send {
     fn prompt(&self) -> &'static str;
 }
 
-pub static REGISTRY: [&dyn GoalKind; 18] = [
+pub static REGISTRY: [&dyn GoalKind; 19] = [
     &PlaceAnchors,
     &ReconcileSection,
     &RejudgePair,
     &ReviewEntity,
     &Retrace,
     &ConformInstance,
+    &DiagramCoverage,
     &DeriveCriteria,
     &Bind,
     &Generate,
@@ -202,7 +205,8 @@ pub fn tier(kind: &str) -> Option<u8> {
         "place-anchors" => Some(0),
         "reconcile-section" => Some(1),
         "rejudge-pair" | "review-entity" | "retrace" | "conform-instance" => Some(2),
-        "derive-criteria" | "bind" | "generate" | "verify" | "ratify" | "answer" => Some(3),
+        "diagram-coverage" => Some(3),
+        "derive-criteria" | "bind" | "generate" | "verify" | "ratify" | "answer" => Some(4),
         _ => None,
     }
 }
@@ -246,15 +250,20 @@ pub const CHANGE_FLOW_UNPLACED: &str = "flow-unplaced";
 pub fn skills_for(kind: &str, store: &Store, target: &str) -> Vec<&'static str> {
     match kind {
         "reconcile-section" => vec!["extraction"],
+        "diagram-coverage" => vec!["diagrams"],
         "declare-edges" => vec!["edges"],
         "rejudge-pair" | "review-entity" | "dedupe-candidates" => vec!["judgment"],
         "conform-instance" => vec!["conformance"],
         "derive-criteria" => vec!["criteria"],
         "abstract-entity" => vec!["abstraction"],
-        "curate-view" | "split-view" => view_skill(store, target).into_iter().collect(),
+        "curate-view" | "split-view" => std::iter::once("diagrams")
+            .chain(view_skill(store, target))
+            .collect(),
         "retrace" => {
             if target.starts_with("view:") {
-                view_skill(store, target).into_iter().collect()
+                std::iter::once("diagrams")
+                    .chain(view_skill(store, target))
+                    .collect()
             } else if is_instance(store, target) {
                 vec!["conformance"]
             } else if is_derived(store, target) {

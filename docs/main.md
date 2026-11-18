@@ -52,7 +52,8 @@ against the documentation. Four authored kinds live in the
 [statements](./compiler/concepts/statements.md), each with a verbatim quote as its
 provenance), [criteria](./compiler/model/criterion.md) (the observable evidence one
 requirement is met), and [views](./compiler/model/view.md) (what one diagram includes).
-Relationships, state machines, and default views derive from them on every commit. The
+Relationships and state machines are computed from them on every commit.
+Diagrams are explicitly authored after requirement and structural review. The
 graph is edited in place across builds, never regenerated. Every fact carries
 [provenance](./compiler/model.md#provenance): a verbatim quote, a derivation from
 upstream facts, or a human decree. A derived or decreed fact carries a proposal for the
@@ -75,7 +76,7 @@ views, so a picture cannot drift from the documents behind it. Downstream consum
 the same way: they query the graph one entity, one requirement, or one view at a time,
 staying in the small-prompt regime where LLMs are reliable.
 
-Entities nest in one containment tree, every level of the tree gets its own diagrams,
+Entities nest in one containment tree, levels may have authored diagrams,
 and digging into an entity shows the level below it ([levels](./compiler/concepts/levels.md)).
 
 ## Architecture

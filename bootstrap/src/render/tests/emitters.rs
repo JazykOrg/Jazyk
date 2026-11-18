@@ -2,6 +2,7 @@ use super::*;
 use crate::render::renderer::{hosted_svg, in_process_svg, strip_element_links};
 use crate::render::scene::structure;
 use crate::render::text::{alias_of, bracketed, inert, quoted};
+use std::collections::BTreeMap;
 
 #[test]
 fn part_names_and_stereotypes_cannot_break_the_component_syntax() {
@@ -105,6 +106,7 @@ fn a_level_sequence_view_lifts_endpoints_to_the_level_members() {
     s.graph.requirements.insert("req:c-6".into(), c6);
     let mut batch = RecordBatch::new(1);
     recompute(&mut s, "g1", &mut batch);
+    crate::derive::tests::author_fixture_diagrams(&mut s);
     let id = "view:sequence/checkout-checkout";
     assert!(
         !s.graph.views[id].members.iter().any(|m| m == "req:c-4"),
@@ -689,4 +691,85 @@ fn flow_participants_link_to_their_cards() {
         svg
     );
     assert!(!svg.contains("[["), "{}", svg);
+}
+
+#[test]
+fn authored_presentation_and_nested_sequence_fragments_render_deterministically() {
+    let mut s = Store::default();
+    for name in ["a", "b"] {
+        s.graph.entities.insert(
+            format!("ent:{name}"),
+            Entity {
+                name: name.into(),
+                ..Default::default()
+            },
+        );
+    }
+    for i in 0..3 {
+        s.graph.requirements.insert(
+            format!("req:step-{i}"),
+            Requirement {
+                statement: format!("Message {i}"),
+                entities: vec!["ent:a".into(), "ent:b".into()],
+                edges: vec![ReqEdge {
+                    a: "ent:a".into(),
+                    b: "ent:b".into(),
+                    rel_type: Some("dependency".into()),
+                    cardinality: None,
+                }],
+                ..Default::default()
+            },
+        );
+    }
+    crate::derive::recompute_relationships(&mut s);
+    let fields:BTreeMap<String,serde_json::Value>=serde_json::from_value(serde_json::json!({
+        "purpose":"Explain the boundary","area":{"target":"scope:public","extent":"selection"},
+        "labels":[{"target":"ent:a","text":"Reader"}],
+        "groups":[{"id":"boundary","title":"Application","members":["ent:a"]}],
+        "layout":{"direction":"left-to-right"},
+        "notes":[{"id":"annotation","text":"Known boundary","targets":["ent:a"],"sources":["req:step-0"]}]
+    })).unwrap();
+    assert!(crate::diagrams::validate_fields(&s, "class", &fields).is_ok());
+    let view = View {
+        kind: "class".into(),
+        title: "Boundary".into(),
+        members: vec!["ent:a".into(), "ent:b".into()],
+        authored: fields,
+        ..Default::default()
+    };
+    let puml = crate::render::emit(&s, "view:class/boundary", &view);
+    assert!(puml.contains("package \"Application\""), "{puml}");
+    assert!(
+        puml.contains("Reader") && puml.contains("left to right direction"),
+        "{puml}"
+    );
+    assert_eq!(puml, crate::render::emit(&s, "view:class/boundary", &view));
+    assert!(in_process_svg(&puml).unwrap().contains("<svg"));
+    let fields:BTreeMap<String,serde_json::Value>=serde_json::from_value(serde_json::json!({
+        "fragments":[{"id":"outer","operator":"opt","operands":[{"guard":{"text":"Known condition","sources":["req:step-0"]},"members":["req:step-0","req:step-2"],"fragments":[{"id":"inner","operator":"loop","operands":[{"members":["req:step-1"],"guard":{"text":"Retry","sources":["req:step-1"]}}]}]}]}]
+    })).unwrap();
+    let members = (0..3).map(|i| format!("req:step-{i}")).collect::<Vec<_>>();
+    assert!(crate::diagrams::validate_fields(&s, "sequence", &fields).is_ok());
+    assert!(crate::diagrams::validate_members(&members, &fields).is_ok());
+    let v = View {
+        kind: "sequence".into(),
+        title: "Nested scenario".into(),
+        members,
+        authored: fields,
+        ..Default::default()
+    };
+    let puml = crate::render::emit(&s, "view:sequence/scenario", &v);
+    assert!(
+        puml.find("Message 0").unwrap() < puml.find("loop Retry").unwrap(),
+        "{puml}"
+    );
+    assert!(
+        puml.find("loop Retry").unwrap() < puml.find("Message 1").unwrap(),
+        "{puml}"
+    );
+    assert!(
+        puml.find("Message 1").unwrap() < puml.find("Message 2").unwrap(),
+        "{puml}"
+    );
+    assert!(in_process_svg(&puml).unwrap().contains("<svg"));
 }

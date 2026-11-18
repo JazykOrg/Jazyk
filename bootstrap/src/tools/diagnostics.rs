@@ -850,6 +850,8 @@ impl ToolSession {
             let members = self.canon_members(&raw, "member")?;
             self.check_view_members(&v.kind, &members, &v.collapse)?;
             self.stage(Op::UpdateView {
+                clear_query: false,
+                authored: BTreeMap::new(),
                 id: vid.clone(),
                 title: None,
                 members: Some(members),

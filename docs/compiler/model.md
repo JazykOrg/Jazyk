@@ -33,7 +33,7 @@ store on every commit and has no write tool.
   outcome with concrete values, quoted from a test case or an example or derived with a
   proposal; what a test encodes.
 - View: the stored half of a diagram: which nodes one diagram includes, never how it looks.
-  Default views derive on every commit. Curated views are authored.
+  All views are authored. Commit recomputation never creates a diagram.
 - Relationship: the typed connections between two entities, grouped per direction and type,
   recomputed from requirement `edges`.
 - State machine: one per entity that a `transition` names as subject, recomputed from those
@@ -104,7 +104,7 @@ Where the provenance sits:
 - Requirement: non-empty `sources: [{doc, section, quote}]` is the quote form. `provenance` carries the
   other two kinds. A requirement has exactly one of non-empty `sources` or `provenance`.
 - Attribute: each attribute carries its own `provenance`, any of the three kinds.
-- View: `provenance` is `derived` for default views and for views a session curates,
+- View: `provenance` is `derived` for views a model authors,
   `decree` for views a human creates. Views are projections and are not ratified. Their
   justification closes through their members.
 

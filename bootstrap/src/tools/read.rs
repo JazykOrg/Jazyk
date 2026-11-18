@@ -332,14 +332,17 @@ impl ToolSession {
                 r
             })
             .collect();
-        let reply = json!({
+        let mut reply = json!({
             "id": id, "kind": v.kind, "title": v.title, "members": v.members,
             "excluded": v.excluded.iter().map(|x| json!({"id": x.id, "note": x.note})).collect::<Vec<_>>(),
-            "collapse": v.collapse, "query": v.query, "default": v.default,
+            "collapse": v.collapse, "query": v.query, "provenance": v.provenance,
             "rendering": format!("derived/diagrams/{}/{}.svg", v.kind, slug),
             "children": children,
             "relationships": relationships,
         });
+        if let Some(o) = reply.as_object_mut() {
+            o.extend(v.authored.clone());
+        }
         self.loaded.load_stub(&self.snapshot, &id);
         Ok(reply)
     }
@@ -585,6 +588,8 @@ impl ToolSession {
             v["children"] = json!(children);
         }
         self.loaded.load_stub(&self.snapshot, &rid);
+        let diagrams = crate::diagrams::references(&self.snapshot, &id);
+        v["diagrams"] = json!({"views":diagrams.iter().take(8).collect::<Vec<_>>(),"total":diagrams.len(),"complete":diagrams.len()<=8,"next":if diagrams.len()>8 {Some(8)} else {None}});
         Ok(v)
     }
 

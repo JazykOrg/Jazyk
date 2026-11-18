@@ -183,3 +183,5 @@ tool, one field: the goal declares edges and nothing else. No `report_diagnostic
 sentence the session cannot type is a failed goal with the reason on the requirement,
 not a finding, and the entity's next review files what the author can act on. See
 [write tools](../tools.md#write-tools).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

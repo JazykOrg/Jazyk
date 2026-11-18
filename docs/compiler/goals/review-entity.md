@@ -211,7 +211,7 @@ Computed by the harness and rendered under the goal block:
 - `level views: <view id> (this entity), <view id> (the level above)`: the structural
   level view of the entity when it has children and of the level it sits in, so a
   review reads the drawing without guessing view ids
-  ([level views](../model/view.md#level-views)).
+  ([level views](../model/view.md#membership)).
 - The project's lint rules, numbered, with their severities, on the `## Project`
   block's `lint` line; the evidence takes one entry per number ([the prompt](../sessions.md#the-prompt),
   [linting](../project-settings.md#linting)).
@@ -316,3 +316,5 @@ mechanically.
 
 `merge_requirements` consolidates duplicate obligations found during entity review.
 It preserves every source location and redirects the absorbed requirement.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

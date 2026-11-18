@@ -371,39 +371,146 @@ pub(super) fn emit_sequence(scene: &Scene) -> String {
             link_suffix(p)
         ));
     }
-    for m in &msgs {
-        // A failure-mode step is a branch: its message sits in an `alt` fragment
-        // labeled by its condition (the transition's trigger and guard when it has
-        // one). Mirrors docs/compiler/diagrams.md#the-emitters.
-        let r = scene.requirement(&m.rid);
-        let failure = r.facets.iter().any(|f| f.facet == "failure-mode");
-        if failure {
-            let cond = r
-                .transition
-                .as_ref()
-                .and_then(|t| {
-                    let mut c = t.trigger.clone().unwrap_or_default();
-                    if let Some(g) = &t.guard {
-                        c = if c.is_empty() {
-                            format!("[{}]", g)
-                        } else {
-                            format!("{} [{}]", c, g)
-                        };
-                    }
-                    (!c.is_empty()).then_some(c)
-                })
-                .unwrap_or_else(|| "failure".to_string());
-            out.push(format!("alt {}", condition_text(&cond)));
-        }
-        out.push(format!(
-            "{}{} -> {} : {}",
-            if failure { "  " } else { "" },
+    let fragments = scene
+        .view
+        .authored
+        .get("fragments")
+        .and_then(serde_json::Value::as_array);
+    fn emit_message(scene: &Scene, m: &Message) -> String {
+        format!(
+            "{} -> {} : {}",
             alias_of(&m.from),
             alias_of(&m.to),
             scene.flow_label(&m.rid)
-        ));
-        if failure {
-            out.push("end".to_string());
+        )
+    }
+    fn fragment_ids(f: &serde_json::Value) -> Vec<&str> {
+        let mut ids = Vec::new();
+        for operand in f["operands"].as_array().into_iter().flatten() {
+            ids.extend(
+                operand["members"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str()),
+            );
+            for nested in operand["fragments"].as_array().into_iter().flatten() {
+                ids.extend(fragment_ids(nested));
+            }
+        }
+        ids
+    }
+    fn emit_fragment(
+        scene: &Scene,
+        f: &serde_json::Value,
+        msgs: &[Message],
+        out: &mut Vec<String>,
+        used: &mut BTreeSet<String>,
+    ) {
+        let operator = f["operator"].as_str().unwrap_or("opt");
+        if operator == "ref" {
+            if let Some(v) = f["view"]
+                .as_str()
+                .and_then(|id| scene.store.graph.views.get(id))
+            {
+                let people = participants(msgs);
+                out.push(format!(
+                    "ref over {} : {}",
+                    people
+                        .iter()
+                        .map(|p| alias_of(p))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    condition_text(&v.title)
+                ));
+                used.extend(fragment_ids(f).into_iter().map(String::from));
+                out.push("end ref".into());
+            }
+            return;
+        }
+        for (i, operand) in f["operands"].as_array().into_iter().flatten().enumerate() {
+            let guard = operand["guard"]["text"].as_str().unwrap_or("");
+            out.push(format!(
+                "{} {}",
+                if i == 0 { operator } else { "else" },
+                condition_text(guard)
+            ));
+            for m in msgs {
+                if used.contains(&m.rid) {
+                    continue;
+                }
+                if let Some(nested) = operand["fragments"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .find(|f| fragment_ids(f).contains(&m.rid.as_str()))
+                {
+                    emit_fragment(scene, nested, msgs, out, used);
+                } else if operand["members"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .any(|id| id.as_str() == Some(&m.rid))
+                {
+                    used.insert(m.rid.clone());
+                    out.push(emit_message(scene, m));
+                }
+            }
+        }
+        out.push("end".into());
+    }
+    if fragments.is_none() {
+        for m in &msgs {
+            // A failure-mode step is a branch: its message sits in an `alt` fragment
+            // labeled by its condition (the transition's trigger and guard when it has
+            // one). Mirrors docs/compiler/diagrams.md#the-emitters.
+            let r = scene.requirement(&m.rid);
+            let failure = r.facets.iter().any(|f| f.facet == "failure-mode");
+            if failure {
+                let cond = r
+                    .transition
+                    .as_ref()
+                    .and_then(|t| {
+                        let mut c = t.trigger.clone().unwrap_or_default();
+                        if let Some(g) = &t.guard {
+                            c = if c.is_empty() {
+                                format!("[{}]", g)
+                            } else {
+                                format!("{} [{}]", c, g)
+                            };
+                        }
+                        (!c.is_empty()).then_some(c)
+                    })
+                    .unwrap_or_else(|| "failure".to_string());
+                out.push(format!("alt {}", condition_text(&cond)));
+            }
+            out.push(format!(
+                "{}{} -> {} : {}",
+                if failure { "  " } else { "" },
+                alias_of(&m.from),
+                alias_of(&m.to),
+                scene.flow_label(&m.rid)
+            ));
+            if failure {
+                out.push("end".to_string());
+            }
+        }
+    } else {
+        let mut used = BTreeSet::new();
+        for m in &msgs {
+            if used.contains(&m.rid) {
+                continue;
+            }
+            let fragment = fragments
+                .into_iter()
+                .flatten()
+                .find(|f| fragment_ids(f).contains(&m.rid.as_str()));
+            if let Some(f) = fragment {
+                emit_fragment(scene, f, &msgs, &mut out, &mut used);
+            } else {
+                used.insert(m.rid.clone());
+                out.push(emit_message(scene, m));
+            }
         }
     }
     document(title_line(scene.view, note.as_deref()), out)
@@ -450,16 +557,40 @@ fn leading_number(measure: &str) -> Option<String> {
     (!n.is_empty() && n.chars().any(|c| c.is_ascii_digit())).then_some(n)
 }
 
-pub(super) fn emit_timing(scene: &Scene) -> String {
-    let note = flow_note(scene, None);
-    let governing = scene.requirements.iter().find_map(|rid| {
+fn legacy_timing_measure(scene: &Scene) -> Option<(String, String)> {
+    scene.requirements.iter().find_map(|rid| {
         scene
             .requirement(rid)
             .facets
             .iter()
             .find(|f| f.facet == "quality" && f.measure.is_some())
             .map(|f| (rid.clone(), f.measure.clone().unwrap_or_default()))
-    });
+    })
+}
+
+pub(super) fn emit_timing(scene: &Scene) -> String {
+    let note = flow_note(scene, None);
+    let governing = scene
+        .store
+        .graph
+        .requirements
+        .iter()
+        .filter(|(rid, r)| {
+            scene.requirements.contains(rid)
+                || r.entities.iter().any(|id| scene.entities.contains(id))
+        })
+        .find_map(|(rid, _)| {
+            scene.store.criteria_of(rid).iter().find_map(|cid| {
+                scene
+                    .store
+                    .graph
+                    .criteria
+                    .get(cid)
+                    .and_then(|c| c.measure.as_ref())
+                    .map(|m| (rid.clone(), m.clone()))
+            })
+        })
+        .or_else(|| legacy_timing_measure(scene));
     let mut lanes: Vec<&String> = scene
         .entities
         .iter()
@@ -524,6 +655,28 @@ pub(super) fn emit_timing(scene: &Scene) -> String {
 pub(super) fn emit_overview(scene: &Scene) -> String {
     let store = scene.store;
     let note = flow_note(scene, None);
+    if let Some(links) = scene
+        .view
+        .authored
+        .get("links")
+        .and_then(serde_json::Value::as_array)
+        .filter(|links| !links.is_empty())
+    {
+        let mut out = vec!["start".to_string()];
+        for link in links.iter().filter(|link| link["relation"] == "phase") {
+            if let Some(id) = link["view"].as_str().filter(|id| {
+                store
+                    .graph
+                    .views
+                    .get(*id)
+                    .is_some_and(|v| v.kind == "sequence")
+            }) {
+                out.push(format!(":ref: {};", condition_text(id)));
+            }
+        }
+        out.push("stop".into());
+        return document(title_line(scene.view, note.as_deref()), out);
+    }
     let member_set: BTreeSet<&str> = scene.requirements.iter().map(String::as_str).collect();
     // (first member index, view id, covered members) per sequence view held by this view.
     let mut refs: Vec<(usize, String, Vec<String>)> = Vec::new();

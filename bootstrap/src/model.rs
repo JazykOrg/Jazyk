@@ -15,9 +15,6 @@ fn is_default_scope(s: &String) -> bool {
 fn is_open(s: &String) -> bool {
     s == "open"
 }
-fn is_false(b: &bool) -> bool {
-    !*b
-}
 fn is_zero(n: &u64) -> bool {
     *n == 0
 }
@@ -484,6 +481,8 @@ pub struct Exclusion {
 // Mirrors docs/compiler/model/view.md.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct View {
+    #[serde(flatten)]
+    pub authored: BTreeMap<String, serde_json::Value>,
     pub kind: String,
     pub title: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -497,7 +496,7 @@ pub struct View {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<Provenance>,
     // True on a view the recompute owns. Any mutation on the view clears it.
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(default, skip_serializing)]
     pub default: bool,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub limits: BTreeMap<String, LimitBump>,
@@ -1340,6 +1339,8 @@ pub const LOOKALIKE_SEPARATE: &str = "separate";
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Decisions {
     #[serde(default)]
+    pub diagram_coverage: BTreeMap<String, serde_json::Value>,
+    #[serde(default)]
     pub inputs: BTreeMap<String, InputDecision>,
     // `a~b` (smaller id first) to the pair's verdict and both statement hashes.
     #[serde(default)]
@@ -1371,7 +1372,8 @@ pub struct InputDecision {
     pub reason: String,
 }
 
-pub const DECISION_KINDS: [&str; 7] = [
+pub const DECISION_KINDS: [&str; 8] = [
+    "diagram-coverage",
     "inputs",
     "lookalikes",
     "pairs",
@@ -1820,12 +1822,12 @@ mod tests {
             ..Default::default()
         };
         let y = serde_norway::to_string(&view).unwrap();
-        assert!(y.contains("default: true"), "{}", y);
+        assert!(!y.contains("default:"), "{}", y);
         let back: View = serde_norway::from_str(&y).unwrap();
         assert_eq!(back.members, view.members);
         assert_eq!(back.excluded, view.excluded);
         assert_eq!(back.query, view.query);
-        assert!(back.default);
+        assert!(!back.default);
         let curated = View {
             default: false,
             ..view.clone()

@@ -578,27 +578,33 @@ fn views_curate_delete_and_bump() {
         ],
         &session(),
     );
-    // Defaults derived: a class view per scope and the cart's flow.
-    assert!(s.graph.views["view:class/public"].default);
-    assert_eq!(
-        s.graph.views["view:usecase/t"].members,
-        vec!["req:t-1", "req:t-2"]
-    );
-    let r = s.apply(
-        vec![Op::DeleteView {
-            id: "view:class/public".into(),
-            reason: "noise".into(),
-        }],
+    assert!(s.graph.views.is_empty());
+    s.apply(
+        vec![
+            Op::CreateView {
+                id: "view:class/public".into(),
+                view: View {
+                    kind: "class".into(),
+                    title: "Public".into(),
+                    members: vec!["ent:cart".into(), "ent:order".into()],
+                    provenance: Some(derived(&["ent:cart"])),
+                    ..Default::default()
+                },
+            },
+            Op::CreateView {
+                id: "view:usecase/t".into(),
+                view: View {
+                    kind: "use-case".into(),
+                    title: "T".into(),
+                    members: vec!["req:t-1".into(), "req:t-2".into()],
+                    provenance: Some(derived(&["req:t-1"])),
+                    ..Default::default()
+                },
+            },
+        ],
         &session(),
     );
-    assert_eq!(r.applied, 0);
-    assert!(r.skipped[0].contains("default view"), "{:?}", r.skipped);
-    // The scope root's level view lists its members and carries no query.
-    assert_eq!(
-        s.graph.views["view:class/public"].members,
-        vec!["ent:cart", "ent:order"]
-    );
-    assert!(s.graph.views["view:class/public"].query.is_none());
+    assert_eq!(s.graph.views.len(), 2);
     // An upsert on the default's kind and title lands on it and curates it.
     let r = s.apply(
         vec![Op::CreateView {
@@ -628,6 +634,8 @@ fn views_curate_delete_and_bump() {
     // A curated view is never removed by the recompute, and its members survive.
     s.apply(
         vec![Op::UpdateView {
+            clear_query: false,
+            authored: BTreeMap::new(),
             id: "view:usecase/t".into(),
             title: Some("Cart flow".into()),
             members: None,
@@ -714,9 +722,9 @@ fn views_curate_delete_and_bump() {
         &session(),
     );
     assert_eq!(r.applied, 1, "{:?}", r.skipped);
-    // And the next commit derives it again as a default.
+    // Recompute cannot recreate a deleted authored definition.
     s.apply(vec![], &session());
-    assert!(s.graph.views["view:class/public"].default);
+    assert!(!s.graph.views.contains_key("view:class/public"));
 }
 
 // The 51st requirement crosses requirements-per-entity; a bump on the entity

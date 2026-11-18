@@ -101,7 +101,9 @@ fn card_text(store: &Store, c: &Card) -> String {
         .and_then(|v| store.graph.views.get(v).map(|x| (v, x)))
     {
         Some((vid, v)) => s.push_str(&embed(store, vid, v, from)),
-        None => s.push_str("no level view: the level above holds this entity alone\n\n"),
+        None => s.push_str(
+            "No authored context diagram. Parent and sibling links remain available.\n\n",
+        ),
     }
 
     s.push_str("## Inside\n\n");
@@ -120,7 +122,8 @@ fn card_text(store: &Store, c: &Card) -> String {
                 s.push('\n');
             }
         }
-        None => s.push_str("a leaf\n\n"),
+        None if c.children.is_empty() => s.push_str("a leaf\n\n"),
+        None => s.push_str("No authored diagram. Follow the child links below.\n\n"),
     }
 
     s.push_str("## Relationships\n\n");
@@ -194,7 +197,7 @@ fn card_text(store: &Store, c: &Card) -> String {
             s.push_str(&format!("- Level page of {}\n", link));
         }
     }
-    if c.inside.is_some() {
+    if !c.children.is_empty() {
         if let Some(link) = level_link(store, &c.id, from) {
             s.push_str(&format!("- Own level page: {}\n", link));
         }
@@ -286,7 +289,39 @@ fn view_page_text(store: &Store, p: &crate::card::ViewPage) -> String {
     };
     let mut s = format!("# {}\n\n`{}` · {} · {}\n\n", p.title, p.id, p.kind, count);
 
-    s.push_str("## Level\n\n");
+    if let Some(purpose) = view
+        .authored
+        .get("purpose")
+        .and_then(serde_json::Value::as_str)
+    {
+        s.push_str(&format!("{}\n\n", purpose));
+    }
+    if let Some(description) = view
+        .authored
+        .get("description")
+        .and_then(serde_json::Value::as_str)
+    {
+        s.push_str(&format!("{}\n\n", description));
+    }
+    for link in view
+        .authored
+        .get("links")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(id) = link["view"]
+            .as_str()
+            .filter(|id| store.graph.views.contains_key(*id))
+        {
+            s.push_str(&format!(
+                "- {}: {}\n",
+                link["relation"].as_str().unwrap_or("detail"),
+                view_page_link(store, id, from)
+            ));
+        }
+    }
+    s.push_str("\n## Level\n\n");
     match &p.level {
         Some(l) => {
             let mut line = crumb_links(store, &l.breadcrumb, from, true);

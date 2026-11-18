@@ -154,9 +154,9 @@ fn requirement_v5_single_source_loads_and_serializes_only_sources() {
     let yaml = serde_norway::to_string(&r).unwrap();
     assert!(yaml.contains("sources:"));
     assert!(!yaml.contains("\nsource:"));
-    assert_eq!(STORE_VERSION, 6);
-    assert!(readable_version(5));
-    assert!(!readable_version(4));
+    assert_eq!(STORE_VERSION, 7);
+    assert!(readable_version(6));
+    assert!(!readable_version(5));
 }
 
 #[test]

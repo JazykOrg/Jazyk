@@ -38,7 +38,7 @@ Docs proposals. Every sub-entity or grouping with derived provenance is invented
 - Prefer a target the documents already structure: the section that introduces the parent, or a new sub-document when the parent's section is already over its size limit. Name the target in the note.
 - One proposal per fact, never a bundle: a parent that gains three parts is three sentences, or one sentence naming the three, and the note says which.
 
-Views. After a split or a grouping, the views that showed the entity keep drawing it: lifting folds the descendants' relationships into the nearest shown ancestor, and a level view derives at commit for every node with two or more children. Collapse the parent in the coarse views that do not need the internals; give the internals a sub-view when they earn one.
+Views. After a split or a grouping, the views that showed the entity keep drawing it: lifting folds the descendants' relationships into the nearest shown ancestor, and containment navigation remains available even without a diagram. Diagram review considers newly formed levels after the structural review settles. Collapse the parent in the coarse views that do not need the internals; give the internals a sub-view when they earn one.
 
 Limits and dismissal. When the count is honest and every split or grouping would invent structure, do not abstract. Raising the node's own limit is a human's decree, recorded with decree provenance, and the goal stops deriving until the raised threshold is crossed. Fail the goal with that recommendation in the reason; the failure surfaces on the target where the human will see it.
 

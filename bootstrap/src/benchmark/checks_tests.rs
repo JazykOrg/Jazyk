@@ -18,6 +18,8 @@ fn a_split_view_claim_needs_the_parent_under_its_limit() {
     let members = store.graph.views[&goal.target].members.clone();
     // Collapsing requirements hides nothing in a flow view.
     let collapse = crate::store::Op::UpdateView {
+        clear_query: false,
+        authored: BTreeMap::new(),
         id: goal.target.clone(),
         title: None,
         members: None,
@@ -31,6 +33,8 @@ fn a_split_view_claim_needs_the_parent_under_its_limit() {
     assert!(crate::goals::split_view_goal_gate(&store, &[collapse], &goal.target).is_some());
     // One member per phase brings the parent under.
     let coarse = crate::store::Op::UpdateView {
+        clear_query: false,
+        authored: BTreeMap::new(),
         id: goal.target.clone(),
         title: None,
         members: Some(vec![members[0].clone(), members[6].clone()]),

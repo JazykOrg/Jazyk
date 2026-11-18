@@ -242,3 +242,5 @@ The `dedupe-candidates` [toolset](../tools.md#toolsets): the
 pair is judged as two nodes, and what a merged survivor's statements need is
 [`review-entity`](./review-entity.md)'s work at the next commit. See
 [write tools](../tools.md#write-tools).
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

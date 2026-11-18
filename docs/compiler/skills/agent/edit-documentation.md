@@ -39,6 +39,8 @@ tools:
   - resolve_diagnostic
   - place_anchor
   - orphan_anchor
+  - suppress_diagram_coverage
+  - unsuppress_diagram_coverage
   - upsert_view
   - update_view
   - delete_view

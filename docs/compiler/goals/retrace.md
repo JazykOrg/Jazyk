@@ -8,8 +8,7 @@ it, the instance that conformed to it, and the derived entity that cited it each
 surface as a `retrace` goal with the same cause, each hinting what to load to see the
 damage. The gate is uniform: nothing on the target may keep pointing at a dead node.
 Derived data needs no retrace: [relationships](../model/relationship.md#recompute),
-[state machines](../model/state-machine.md#derivation), and
-[default views](../model/view.md#default-views) recompute at commit, and query-based
+[state machines](../model/state-machine.md#derivation) recompute at commit, and query-based
 membership recomputes with them.
 
 - Class: compile. Mandatory. Readiness tier 2.
@@ -33,8 +32,7 @@ computed per derivation from references that name no live node
 - `view-member-gone`: a node listed in a curated view's `members`, `excluded`, or
   `collapse` no longer exists. The subject is the view; `via` is the list (`members`,
   `excluded`, `collapse`); `detail` names the dead node and its position in the list,
-  and the reason and generation of its deletion when this machine's journal holds them. Only a listed member derives the goal: a
-  default view is recomputed and a query re-matched at the same commit
+  and the reason and generation of its deletion when this machine's journal holds them. Authored presentation references also participate. A query is re-matched at the same commit
   ([membership](../model/view.md#membership)).
 - `node-deleted`: a live node still points at a node that no longer exists, `via`
   naming the reference: `from` on derived provenance (an entity, view, or
@@ -236,8 +234,7 @@ The `retrace` toolset ([toolsets](../tools.md#toolsets)):
 No `set_coverage`, no `resolve_diagnostic`, and no anchor tools: the diagnostics that
 named the dead node are settled by the store at commit
 ([journal](../graph.md#journal)), and a section's coverage is the
-`reconcile-section` goal's. A default view is never a retrace target and never
-deleted; it recomputes. A delete staged here previews the retraces it opens in the
+`reconcile-section` goal's. Every authored view can be a retrace target. A delete staged here previews the retraces it opens in the
 tool reply ([bubbling](../reconciler.md#bubbling)), so the session sees the next hop
 of the cascade before it commits it; the `retrace` on a derived fact whose only
 justification died ends the cascade by deleting the fact, and
@@ -249,3 +246,5 @@ A requirement merge follows redirects for ledger rows, pair decisions, criteria,
 and view members. Source removal alone requires no retrace while other sources survive.
 
 Source tools: `add_requirement_source`, `remove_requirement_source`, `merge_requirements`.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

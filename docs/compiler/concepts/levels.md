@@ -1,9 +1,7 @@
 # Levels
 
 Requirements stay on the entities the documents state. Those entities summarize into
-higher-level entities, and those into higher still. Each level gets its own diagrams
-(structure, use cases, sequences) describing the relationships among that level's
-entities. Digging into an entity shows the level below it. A level that grows too large
+higher-level entities, and those into higher still. Each level can have authored diagrams describing its entities and behavior. Digging into an entity shows the level below it. A level that grows too large
 draws garbage collection to regroup or split it; a grouping that shrinks too small
 dissolves. The build converges on a navigable architecture of the project.
 
@@ -41,10 +39,9 @@ upward pressure that builds the tree and the views that show each level.
   statements stay out until a diagram needs one.
 - Levels converge bottom-up without a new scheduler. A GC goal is ready only when no
   compile goal is open in its target's cone ([cones](../reconciler.md#cones)), so
-  leaves reconcile first, groupings form cone by cone, and each new level's views derive
+  leaves reconcile first, groupings form cone by cone, and each new level becomes eligible for diagram review
   after.
-- A `level-shape` check closes every build: every node with at least two children has
-  its structural level view, no node is over the hard fan-out threshold, and no derived
+- A `level-shape` check closes every build: no node is over the hard fan-out threshold, and no derived
   grouping has fewer than two children. See [checks](../compilation.md#checks).
 
 ## Groupings
@@ -150,25 +147,7 @@ the [abstraction skill](../skills/abstraction.md):
 
 ## Drill-down
 
-Every node with at least two children, the scope root included, gets its own diagrams:
-one structural level view over its children, and use case and sequence views over the
-flows that lift into the level. A level view includes the outside entities whose lifted
-edges touch the level, so the top diagram shows User beside Frontend and Backend. See
-[level views](../diagrams.md#level-views) and
-[default views](../model/view.md#default-views).
-
-Drill-down is navigation over those views. Digging into an entity shows the level below
-it:
-
-- Every rendered member whose entity has a level view links to it: hyperlinks in the
-  `.puml`, anchors in the `.svg`, and a `children` list on the view. See
-  [drill-down](../diagrams.md#drill-down).
-- [Docsgen](../../consumers/docsgen.md) nests a page per level: the node's definition,
-  its level views, its members with links down, and a breadcrumb up.
-- The [GUI](../../frontends/gui.md) shows the containment tree and a breadcrumb over the
-  diagram panel. The [viewer](../../frontends/viewer.md) prints the tree with each
-  node's view ids.
-
-Diagrams stay projections. A level view derives from the tree and the requirements on
-its leaves; deleting a rendering loses nothing, and a reparent redraws every level it
-touches on the next commit.
+Containment supplies navigation regardless of authored diagrams. Cards and level
+pages list children, parent, siblings, relationships, and relevant authored views.
+A missing view never makes an entity a leaf. Diagrams link to cards. Each card
+lists zero or more area and parent-context diagrams.

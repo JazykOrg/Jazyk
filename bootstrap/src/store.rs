@@ -168,12 +168,24 @@ pub enum Op {
         id: String,
         reason: String,
     },
+    SetViewProvenance {
+        id: String,
+        provenance: Provenance,
+    },
+    SetDiagramDecision {
+        id: String,
+        decision: Option<serde_json::Value>,
+    },
     CreateView {
         id: String,
         view: View,
     },
     UpdateView {
         id: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        clear_query: bool,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        authored: BTreeMap<String, serde_json::Value>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         title: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -335,11 +347,11 @@ pub const JUDGED_RULES: [&str; 6] = [
 ];
 
 // The store version written to store.yaml. Mirrors docs/compiler/graph.md#store-version.
-pub const STORE_VERSION: u32 = 6;
+pub const STORE_VERSION: u32 = 7;
 
 // The one earlier version a load reads as it is: the next build's opening rewrites it
 // in the version 5 layout, ids kept. Mirrors docs/compiler/graph.md#store-version.
-pub const UPGRADABLE_VERSION: u32 = 5;
+pub const UPGRADABLE_VERSION: u32 = 6;
 
 pub fn readable_version(v: u32) -> bool {
     v == STORE_VERSION || v == UPGRADABLE_VERSION

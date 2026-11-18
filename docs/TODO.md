@@ -67,7 +67,7 @@ This scratch space is a live document to outline the work for this documentation
 - Embeddings: one index over docs and graph behind the same
   [`search` tool](./compiler/tools.md#read-tools) (same interface, no schema change),
   feeding `dedupe-candidates` lookalike scoring and the flow clustering behind
-  [default views](./compiler/model/view.md#default-views). A similarity signal inside
+  [default views](./compiler/model/view.md#membership). A similarity signal inside
   deterministic machinery, never the context path.
 - OpenTelemetry export, off by default: one span per build, session, and tool call,
   GenAI semantic-convention attributes on session spans, OTLP endpoint from config.

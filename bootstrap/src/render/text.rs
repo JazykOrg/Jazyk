@@ -309,3 +309,90 @@ pub(super) fn attribute_line(a: &Attribute) -> String {
         (None, None) => oneline(&a.name),
     }
 }
+
+// Presentation packages move complete declarations, never semantic relationships.
+pub(super) fn authored_groups(puml: &str, view: &View) -> String {
+    let Some(groups) = view
+        .authored
+        .get("groups")
+        .and_then(serde_json::Value::as_array)
+    else {
+        return puml.to_string();
+    };
+    if groups.is_empty() {
+        return puml.to_string();
+    }
+    let member_ids: std::collections::BTreeSet<String> = groups
+        .iter()
+        .flat_map(|g| g["members"].as_array().into_iter().flatten())
+        .filter_map(|m| m.as_str().map(String::from))
+        .collect();
+    let lines: Vec<&str> = puml.lines().collect();
+    let mut remaining = Vec::new();
+    let mut declarations = std::collections::BTreeMap::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let member = member_ids.iter().find(|id| {
+            line.split_whitespace()
+                .collect::<Vec<_>>()
+                .windows(2)
+                .any(|w| w[0] == "as" && w[1] == alias_of(id))
+        });
+        if let Some(member) = member {
+            let mut chunk = vec![line.to_string()];
+            let mut depth = line.chars().filter(|c| *c == '{').count() as i32
+                - line.chars().filter(|c| *c == '}').count() as i32;
+            i += 1;
+            while depth > 0 && i < lines.len() {
+                let l = lines[i];
+                depth += l.chars().filter(|c| *c == '{').count() as i32
+                    - l.chars().filter(|c| *c == '}').count() as i32;
+                chunk.push(l.to_string());
+                i += 1;
+            }
+            declarations.insert(member.clone(), chunk);
+        } else {
+            remaining.push(line.to_string());
+            i += 1;
+        }
+    }
+    fn group(
+        g: &serde_json::Value,
+        groups: &[serde_json::Value],
+        decls: &std::collections::BTreeMap<String, Vec<String>>,
+        out: &mut Vec<String>,
+    ) {
+        out.push(format!(
+            "package {} {{",
+            quoted(&inert(g["title"].as_str().unwrap_or("Group")))
+        ));
+        for id in g["members"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|x| x.as_str())
+        {
+            if let Some(lines) = decls.get(id) {
+                out.extend(lines.iter().cloned());
+            }
+        }
+        for child in groups.iter().filter(|child| child["parent"] == g["id"]) {
+            group(child, groups, decls, out);
+        }
+        out.push("}".into());
+    }
+    let mut body = Vec::new();
+    for g in groups
+        .iter()
+        .filter(|g| g.get("parent").is_none_or(|p| p.is_null()))
+    {
+        group(g, groups, &declarations, &mut body);
+    }
+    let at = remaining
+        .iter()
+        .position(|l| l == "@enduml")
+        .unwrap_or(remaining.len());
+    remaining.splice(at..at, body);
+    remaining.join("\n") + "\n"
+}

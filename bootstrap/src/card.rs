@@ -505,11 +505,11 @@ pub fn view_page(store: &Store, walk: &Walk, view_id: &str) -> Option<ViewPage> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::derive::tests::showcase_store;
+    use crate::derive::tests::authored_showcase_store;
     use crate::store::RecordBatch;
 
     fn shop() -> Store {
-        let mut s = showcase_store();
+        let mut s = authored_showcase_store();
         let mut batch = RecordBatch::new(1);
         crate::derive::recompute(&mut s, "g1", &mut batch);
         s

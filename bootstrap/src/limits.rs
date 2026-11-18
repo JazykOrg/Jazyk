@@ -159,7 +159,7 @@ pub const MODEL_CONTEXT_TOKENS: usize = 131_072;
 pub const DEFAULT_MAX_COMPLETION_TOKENS: u64 = 65_536;
 pub const GOAL_ATTEMPTS: u32 = 4;
 pub const ROUNDS_PER_SECTION: u32 = 8;
-pub const SKILLS_PER_SESSION: usize = 8;
+pub const SKILLS_PER_SESSION: usize = 9;
 // The most derive-criteria goals one batch packs: each lists several requirements
 // with their source sections and grows the changeset's mutation budget.
 // Mirrors docs/compiler/reconciler.md#batching.
@@ -213,6 +213,24 @@ pub fn command_timeout() -> std::time::Duration {
 // Near-identical obligation clusters trigger optional and mandatory consolidation.
 pub const REQUIREMENT_CLUSTER_SOFT: usize = 2;
 pub const REQUIREMENT_CLUSTER_HARD: usize = 10;
+
+// Diagram-review candidate thresholds. Counts must exceed the threshold.
+pub const DIAGRAM_STRUCTURE_SOFT: usize = 3;
+pub const DIAGRAM_STRUCTURE_HARD: usize = 9;
+pub const DIAGRAM_FLOW_SOFT: usize = 3;
+pub const DIAGRAM_FLOW_HARD: usize = 11;
+
+pub const DIAGRAM_DEPLOYMENT_HARD: usize = 5;
+pub const DIAGRAM_OVERVIEW_MIN: usize = 3;
+
+pub const DIAGRAM_SYSTEM_HARD: usize = 7;
+pub const DIAGRAM_STATE_SOFT: usize = 2;
+pub const DIAGRAM_STATE_HARD: usize = 7;
+pub const DIAGRAM_OBJECT_SOFT: usize = 1;
+pub const DIAGRAM_OBJECT_HARD: usize = 7;
+pub const DIAGRAM_DRIFT_SOFT_DENOMINATOR: usize = 5;
+
+pub const DIAGRAM_COMMUNICATION_PARTICIPANTS: usize = 3;
 
 // Persisted changesets unlock on inactivity, but retain their staged data.
 pub const OPEN_WORK_TTL_SECS: u64 = 120;

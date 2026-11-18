@@ -121,6 +121,13 @@ impl Lsp {
                 if k == 1 { "child" } else { "children" }
             ));
         }
+        if card.inside.is_none() && !card.children.is_empty() {
+            s.push_str(&format!(
+                "\n\nInside: [level]({}) ({} children)",
+                path_to_uri(&self.level_page_path(&card.id)),
+                card.children.len()
+            ));
+        }
         // The long reads: the card, the requirements document, the level page of the
         // parent's level (only when the parent has one, as its context view says).
         let mut links = vec![
@@ -131,7 +138,7 @@ impl Lsp {
                 path_to_uri(&self.requirements_doc_path(&card.id))
             ),
         ];
-        if card.context.is_some() && n >= 2 {
+        if n >= 2 {
             let parent = &card.breadcrumb[n - 2];
             links.push(format!(
                 "[level: {}]({})",

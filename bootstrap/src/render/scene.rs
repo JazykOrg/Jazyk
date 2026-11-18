@@ -354,6 +354,8 @@ pub fn view_relationships(
     view_id: &str,
     view: &View,
 ) -> Vec<(String, String, String, Option<String>, usize)> {
+    let projected = crate::diagrams::projection(store, view);
+    let store = &projected;
     let sc = scene(store, view_id, view);
     frame(&sc)
         .st

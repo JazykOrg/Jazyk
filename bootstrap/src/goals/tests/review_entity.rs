@@ -6,6 +6,23 @@ use super::*;
 #[test]
 fn review_hints_name_the_level_views_and_skip_harness_owned_diagnostics() {
     let mut s = levels_store();
+    for (id, target) in [
+        ("view:component/backend", "ent:backend"),
+        ("view:component/public", "scope:public"),
+    ] {
+        s.graph.views.insert(
+            id.into(),
+            View {
+                kind: "component".into(),
+                title: target.into(),
+                authored: BTreeMap::from([(
+                    "area".into(),
+                    serde_json::json!({"target":target,"extent":"selection"}),
+                )]),
+                ..Default::default()
+            },
+        );
+    }
     let n = s.status.changes.len();
     s.status.changes.push(ChangeRecord::new(
         7,

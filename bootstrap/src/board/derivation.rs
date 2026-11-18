@@ -69,6 +69,24 @@ pub(crate) fn failure_stands(failed: &Goal, derived: &Goal) -> bool {
     if derived.change == failed.change {
         return true;
     }
+    if derived.kind == "diagram-coverage" {
+        if failed.change["boundary"] != derived.change["boundary"] {
+            return false;
+        }
+        let Some(base) = failed.change["candidates"].as_object() else {
+            return false;
+        };
+        let Some(now) = derived.change["candidates"].as_object() else {
+            return false;
+        };
+        let delta = base.len().div_ceil(5).max(1);
+        let removed = base
+            .iter()
+            .filter(|(id, h)| now.get(*id) != Some(*h))
+            .count();
+        let added = now.keys().filter(|id| !base.contains_key(*id)).count();
+        return removed + added < delta && now.len() < base.len() + delta;
+    }
     if derived.kind == "abstract-entity" {
         let within = |then: Option<u64>, now: Option<u64>| match (then, now) {
             (Some(then), Some(now)) => Some(now * 5 < then * 6),
@@ -398,7 +416,7 @@ impl Board {
         };
 
         // Readiness inputs.
-        let mut tier_open = [0usize; 4];
+        let mut tier_open = [0usize; 5];
         let mut tier1_open_docs = BTreeSet::new();
         let mut bind_open_by_entity: BTreeMap<String, usize> = BTreeMap::new();
         // A document whose place-anchors goal failed stays undecided: its sections

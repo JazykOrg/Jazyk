@@ -280,7 +280,7 @@ midway stages neither the grouping nor any reparent).
   quotes anchor there and the parent's one mark covers the block
   ([section tree](./parsing.md#section-tree)).
 
-There is no write tool for relationships, state machines, or default views. They are
+There is no write tool for relationships or state machines. They are
 [derived data](./graph.md#derived-data), recomputed on every commit from requirement
 `edges` and `transition` facets and from the graph's structure.
 
@@ -347,34 +347,33 @@ under the same gates.
 
 ## View tools
 
-Views are the stored half of a diagram: what it includes, never how it looks
-([view](./model/view.md)). The view tools stage view mutations under the same gates as
-the write tools. They serve the [`retrace`](./goals/retrace.md),
-[`curate-view`](./goals/curate-view.md), [`split-view`](./goals/split-view.md), and
-[`abstract-entity`](./goals/abstract-entity.md) goals.
+Every view is an explicitly authored diagram definition. All catalog kinds are
+editable and deletable. Mutations stage behind the normal session gates.
 
-- `upsert_view({kind, title, members?, query?, collapse?, excluded?, reasoning})`
-  → `{id, created}`. Keys on `kind` plus `title`
-  ([identity](./model/view.md#identity)). `kind` is one of the
-  [catalog](./model/view.md#kinds). `members` are ordered node ids: entities for
-  structural kinds, requirements for flow kinds; order is the flow order
-  ([membership](./model/view.md#membership)). `query` is
-  `{scope?, parent?, stereotype?, depth?}`, membership by rule; matches join `members`
-  at every commit. `collapse` lists entities shown as one node despite their children.
-  `excluded` is `[{id, note}]`. `reasoning` becomes the view's derived provenance
-  (`from` the members, `reasoning` why); every id must exist. A call that lands on a
-  default view's `kind` and `title` clears its `default` field. A view crossing a
-  [limit](./graph.md#limits) is accepted and renders with collapse applied
-  ([over-limit views](./diagrams.md#over-limit-views)); the `split-view` goal follows.
-- `update_view({id, title?, members?, add_members?, remove_members?, query?, collapse?, exclude?, reasoning?})`:
-  `members` replaces the whole ordered list; `add_members` and `remove_members` edit
-  it; `exclude` adds one `{id, note}` pair or a list of them, so one view's exclusions
-  batch into one call. On a default view any field clears the
-  boolean `default` field: the store stops rewriting the view's `title` and `members`
-  from the rule, and the view is curated from then on
-  ([default views](./model/view.md#default-views)).
-- `delete_view({id, reason})`: refused on a default view, because the next commit
-  would derive it again. Exclude its members instead, or collapse them.
+- `upsert_view({kind, title, purpose, members?, query?, collapse?, excluded?,
+  area?, description?, relationships?, labels?, notes?, groups?, layout?,
+  fragments?, links?, section?, quote?, decision?, reasoning})` searches kind and
+  normalized title, then creates or updates one diagram. Source section and quote
+  record quoted authorship; model choices record derived sources and reasoning.
+  Human decision provenance is available on the explicit writable chat path.
+- `update_view({id, title?, members?, add_members?, remove_members?, query?,
+  collapse?, exclude?, purpose?, description?, area?, relationships?, labels?,
+  notes?, groups?, layout?, fragments?, links?, reasoning})` edits the authored
+  definition. Empty lists clear collections. Replacement and membership deltas
+  cannot be combined. Omitted fields remain unchanged.
+- `delete_view({id, reason})` deletes the definition and its rendering, never its
+  semantic facts. No recomputation recreates it.
+- `list_views({entity?, area?, kind?, offset?, limit?})` returns bounded summaries
+  and definitions. Entity matching includes participation and area context.
+- `list_diagram_suppressions({})` reads active or expired decisions and measures.
+- `suppress_diagram_coverage({id, reason, expectedAreaHash})` stages a reasoned
+  decision for a heuristic finding. Source-backed obligations cannot be waived.
+- `unsuppress_diagram_coverage({id, reason})` removes the decision.
+
+Diagram review receives view mutations and suppression tools for its area.
+Curation, splitting and retrace retain their view mutation slices. Diagram reads
+are available in every read surface and never expand mutation authority. Loading
+`diagrams` supplies selection guidance, not permission to edit.
 
 ## Goal tools
 
@@ -518,8 +517,7 @@ so a chat edit moves the prose and the graph together, or not at all:
 - `edit_fact({id, field, value, note?})`: set one authored field on one node
   (`statement`, `edges`, `transition`, `facets`, `definition`, `stereotype`, `parent`,
   an attribute's `type` or `value` as `attributes.<name>.type` or
-  `attributes.<name>.value`, a view's `members`; on a default view the edit
-  clears `default`). When the fact is
+  `attributes.<name>.value`, a view's `members`). When the fact is
   quote-provenanced and the person accepted a sentence rewrite in conversation, the
   call carries the accepted sentence as `note`: the serving locates the quote and
   commits the prose replacement with the graph mutation as one dual write. Without an
@@ -1182,6 +1180,21 @@ natural-key match. `add_requirement_source` accepts `id`, `section`, and `quote`
 `merge_requirements` accepts `survivor`, `loser`, and `reason`. Source attachment
 and removal preserve obligation hashes. A duplicate pair verdict merges its sides.
 
+## Authored diagram operations
+
+View creation and updates accept purpose, description, area, relationship
+selection, labels, notes, groups, direction hints, sequence fragments and links.
+Every model mutation requires reasoning and live sources. All kinds are editable
+and deletable. Diagram-coverage sessions receive view writes and area-scoped
+suppression operations. Other sessions retain their goal-specific write slices.
+Reads list views and suppression status without authorizing writes.
+
+`update_view` accepts an explicit human `decision` in writable chat. It records
+that decision as decree provenance after applying the field edits. Source
+quotation uses `upsert_view` with `section` and `quote`, including existing views.
+Suppression accepts `decision` for an explicit human choice; model suppression
+records derived provenance with the area's sources and reasoning.
+
 ## Open work tools
 
 `open_work({node?, goal?, state?, cursor?, limit?})` lists persisted work.
@@ -1200,3 +1213,6 @@ Warnings explicitly describe conflicts the second committer will see. No overrid
 is required. `done` reports committed field overwrites and pending notices; overlap
 alone never refuses a commit or opens a mandatory review goal. Existing integrity
 and completion gates remain in force.
+
+`update_view` requires `reasoning`. `query: null` removes a query. Null optional
+presentation fields remove their overrides. Purpose and area remain present.

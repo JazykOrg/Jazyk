@@ -1,9 +1,10 @@
 use super::*;
 
-// ---- default views ----
+// ---- flow analysis specifications ----
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct DefaultView {
+pub(super) struct FlowClusterSpec {
     pub(super) id: String,
     pub(super) kind: &'static str,
     pub(super) title: String,
@@ -13,22 +14,8 @@ pub(super) struct DefaultView {
     pub(super) rule: &'static str,
 }
 
-// Each word's first letter upper-cased: the scope's name as a title.
-pub(super) fn title_case(s: &str) -> String {
-    s.split(|c: char| c.is_whitespace() || c == '-' || c == '_')
-        .filter(|w| !w.is_empty())
-        .map(|w| {
-            let mut cs = w.chars();
-            match cs.next() {
-                Some(f) => f.to_uppercase().collect::<String>() + cs.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
-}
-
 // The document's title: its root section's title, or the file stem.
+#[cfg(test)]
 pub(super) fn doc_title(store: &Store, doc: &str) -> String {
     store
         .docs
@@ -39,6 +26,7 @@ pub(super) fn doc_title(store: &Store, doc: &str) -> String {
         .unwrap_or_else(|| doc_stem(doc))
 }
 
+#[cfg(test)]
 pub(super) fn doc_stem(doc: &str) -> String {
     let stem = doc.rsplit('/').next().unwrap_or(doc);
     stem.strip_suffix(".md").unwrap_or(stem).to_string()
@@ -181,143 +169,8 @@ pub fn children_of_view(store: &Store, view_id: &str) -> Vec<(String, String)> {
         .collect()
 }
 
-// The rule instances that hold on the current graph.
-pub(super) fn default_view_rules(store: &Store, ix: &Indices) -> Vec<DefaultView> {
-    let instances = instance_types(store);
-    let mut out = Vec::new();
-
-    // One structural level view per level of two or more, the scope root included, and
-    // the flow views of the requirements lifted into it.
-    let lv = ix.levels(store);
-    for level in lv.held.iter().map(|i| &lv.levels[*i]) {
-        let members = lv.members[&level.target].clone();
-        let mut from: Vec<String> = level.node.iter().cloned().collect();
-        from.extend(members.iter().cloned());
-        out.push(DefaultView {
-            id: level_id(store, ix, level),
-            kind: level_kind(store, ix, level),
-            title: level_title(store, level),
-            members: members.clone(),
-            query: None,
-            from,
-            rule: if level.node.is_some() {
-                "level view of a node"
-            } else {
-                "level view of the scope root"
-            },
-        });
-    }
-    out.extend(level_flow_views(store, ix).iter().map(|(_, w)| w.clone()));
-
-    // A state view per derived machine.
-    for m in store.graph.state_machines.values() {
-        let Some(subject) = store.graph.entities.get(&m.subject) else {
-            continue;
-        };
-        out.push(DefaultView {
-            id: format!("view:state/{}", entity_slug(&m.subject)),
-            kind: "state",
-            title: subject.name.clone(),
-            members: vec![m.subject.clone()],
-            query: None,
-            from: vec![m.subject.clone()],
-            rule: "state per state machine",
-        });
-    }
-
-    // An object view per type: an entity that is `b` of an instantiation group.
-    let mut by_type: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for (inst, ty) in &instances {
-        by_type.entry(ty.clone()).or_default().push(inst.clone());
-    }
-    for (ty, mut insts) in by_type {
-        let Some(t) = store.graph.entities.get(&ty) else {
-            continue;
-        };
-        insts.sort();
-        let mut from = vec![ty.clone()];
-        from.extend(insts.iter().cloned());
-        out.push(DefaultView {
-            id: format!("view:object/{}", entity_slug(&ty)),
-            kind: "object",
-            title: t.name.clone(),
-            members: insts,
-            query: None,
-            from,
-            rule: "object per type",
-        });
-    }
-    out
-}
-
-// Create the default views whose rule holds, rewrite title and members on the ones
-// still marked default, remove the defaults whose rule stopped holding, leave curated
-// views alone; then recompute query membership on every view with a query.
-// Mirrors docs/compiler/model/view.md#default-views.
-pub fn recompute_default_views(store: &mut Store, build: &str, batch: &mut RecordBatch) {
-    let ix = Indices::build(store);
-    recompute_default_views_with(store, &ix, build, batch);
-}
-
-pub(super) fn recompute_default_views_with(
-    store: &mut Store,
-    ix: &Indices,
-    build: &str,
-    batch: &mut RecordBatch,
-) {
-    let wanted = default_view_rules(store, ix);
-    let mut wanted_ids: BTreeSet<String> = BTreeSet::new();
-    for w in wanted {
-        wanted_ids.insert(w.id.clone());
-        let provenance = Provenance::Derived {
-            from: w.from,
-            reasoning: format!("default view: {}", w.rule),
-        };
-        match store.graph.views.get_mut(&w.id) {
-            Some(v) if v.default => {
-                // The view's exclusions survive the rewrite and keep their nodes out.
-                let members: Vec<String> = w
-                    .members
-                    .into_iter()
-                    .filter(|m| !v.excluded.iter().any(|x| x.id == *m))
-                    .collect();
-                let changed = v.title != w.title
-                    || v.members != members
-                    || v.query != w.query
-                    || v.provenance.as_ref() != Some(&provenance);
-                if changed {
-                    v.title = w.title;
-                    v.members = members;
-                    v.query = w.query;
-                    v.provenance = Some(provenance);
-                    v.updated = Some(build.to_string());
-                }
-            }
-            Some(_) => {}
-            None => {
-                store.graph.views.insert(
-                    w.id,
-                    View {
-                        kind: w.kind.to_string(),
-                        title: w.title,
-                        members: w.members,
-                        query: w.query,
-                        provenance: Some(provenance),
-                        default: true,
-                        created: Some(build.to_string()),
-                        updated: Some(build.to_string()),
-                        ..Default::default()
-                    },
-                );
-            }
-        }
-    }
-    store
-        .graph
-        .views
-        .retain(|id, v| !v.default || wanted_ids.contains(id));
-
-    // Query membership recomputes at every commit: silently on a default view, as a
+pub fn recompute_query_views(store: &mut Store, build: &str, batch: &mut RecordBatch) {
+    // Query membership recomputes on existing authored views, with a
     // query-match record on a curated one.
     let instances = instance_types(store);
     let queried: Vec<(String, Vec<String>)> = store
@@ -332,13 +185,6 @@ pub(super) fn recompute_default_views_with(
         .collect();
     for (id, matches) in queried {
         let v = store.graph.views.get_mut(&id).unwrap();
-        if v.default {
-            if v.members != matches {
-                v.members = matches;
-                v.updated = Some(build.to_string());
-            }
-            continue;
-        }
         let added: Vec<String> = matches
             .into_iter()
             .filter(|m| !v.members.contains(m))

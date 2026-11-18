@@ -1,7 +1,11 @@
 use super::*;
 
 // The skill payloads, embedded at compile time. Mirrors docs/compiler/sessions.md#skills.
-pub const SKILLS: [(&str, &str); 8] = [
+pub const SKILLS: [(&str, &str); 9] = [
+    (
+        "diagrams",
+        include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/diagrams.md")),
+    ),
     (
         "extraction",
         include_str!(concat!(env!("OUT_DIR"), "/payloads/skills/extraction.md")),

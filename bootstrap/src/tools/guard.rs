@@ -272,6 +272,11 @@ impl ToolSession {
             "report_diagnostic" => self.report_diagnostic_tool(args),
             "update_diagnostic" => self.update_diagnostic_tool(args),
             "resolve_diagnostic" => self.resolve_diagnostic_tool(args),
+            "list_views" => Ok(crate::diagrams::list(&self.snapshot, args)),
+            "list_diagram_suppressions" => Ok(crate::diagrams::suppressions(&self.snapshot)),
+            "suppress_diagram_coverage" | "unsuppress_diagram_coverage" => {
+                self.diagram_decision_tool(name, args)
+            }
             "upsert_view" | "update_view" | "delete_view" => self.view_tool(name, args),
             "edit_fact" => self.edit_fact(args),
             "inspect_input" => self.inspect_input_tool(args),

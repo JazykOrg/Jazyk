@@ -1,9 +1,8 @@
 # Authored diagrams
 
-Status: implementation plan, 2026-11-17. This change commits the plan only.
-The specification, engine, store migration, and editor contracts below are planned
-work, not implemented behavior. No dogfood build or paid model session is needed
-to prepare this plan.
+Status: implemented in the engine and specifications, 2026-11-17. Validation
+uses cargo tests and scripted fixtures. No dogfood build or paid model session
+is run for this change. The Cloud editor UI remains follow-up work.
 
 ## Decisions
 
@@ -23,7 +22,7 @@ to prepare this plan.
   No analysis rule creates a view, even as a temporary placeholder.
 - Containment defines levels and navigation independently of views. Cards and
   level pages exist without diagrams. There is no mandatory primary diagram.
-- Store version becomes 6. Upgrade only version 5. Drop untouched defaults;
+- Store version becomes 6. Upgrade only version 6. Drop untouched defaults;
   preserve every curated view and its ID. Never relabel automatic output as human
   or model authorship. Version 4 follows the older-store archive policy.
 - Keep the current exemption from sentence ratification for presentation nodes.
@@ -86,11 +85,11 @@ Add these fields to `View`, graph schema, read models, and mutation schemas:
 | `area` | `{target, extent: area \| selection, document?}`. Target is an entity or `scope:<scope>`. A flow may additionally name its source document. An area view claims to explain its area; a selection view intentionally shows a subset. |
 | `perspective` | Optional `context`, `container`, or `component` for C4 framing. This is intent metadata, not a new kind or a fixed global tree depth. |
 | `relationships` | `{mode: all \| selected, include: [selector], exclude: [{selector, reason}]}`. Default is all. Each selector is canonical `{a, b, type}` over a derived directional relationship group before lifting. Include is used only in selected mode. |
-| `labels` | Ordered `{target, text}` entries for member entities, requirements, or relationship selectors. Overrides display text only. Canonical names and source IDs remain in read data and captions. |
-| `notes` | Ordered `{id, targets, text, sources}` entries. Targets resolve to drawn elements or relationship selectors; a diagram-wide note has no targets. Sources cite graph facts or document sections. |
+| `labels` | Ordered `{target, text}` entries for member entities or requirements. Overrides display text only. Canonical names and source IDs remain in read data and captions. |
+| `notes` | Ordered `{id, targets, text, sources}` entries. Structural entity targets receive note connectors; other notes remain diagram-wide; a diagram-wide note has no targets. Sources cite graph facts or document sections. |
 | `groups` | Ordered `{id, title, members, parent?}` entries. Local presentation groups have no semantic containment effect. Groups form an acyclic forest; an element belongs to at most one group. |
-| `layout` | `{direction?: left-to-right \| top-to-bottom, together?: [[entity id]]}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
-| `fragments` | Sequence-only ordered tree of `{id, operator, operands}`. Operators are `alt`, `opt`, `loop`, `par`, `break`, `critical`, `ref`. Operands carry sourced guard text and ordered requirement IDs or nested fragments; `ref` names an existing sequence view. |
+| `layout` | `{direction?: left-to-right \| top-to-bottom}`. Relative hints only, no coordinates, fonts, colors, or raw PlantUML. Unsupported hints for a kind are rejected. |
+| `fragments` | Sequence-only ordered tree of `{id, operator, operands}`. Operators are `alt`, `opt`, `loop`, `par`, `break`, `critical`, `ref`. Operands carry sourced guard text and ordered requirement IDs or nested fragments; `ref` names an existing sequence view in `view`. |
 | `links` | Ordered `{view, relation: detail \| phase, member?}`. Explicit sub-view and overview links, independent of title matching. |
 
 Example authored definition, omitting generation markers and optional fields:
@@ -118,7 +117,7 @@ The renderer emits unfragmented requirements at their list positions and replace
 each fragment's contiguous member interval with its fragment tree. Each message
 occurs exactly once. Crossing intervals, cyclic refs, unknown members, duplicate
 fragment IDs, and unsourced guards are refused. `par` expresses only sourced
-concurrency. Timing continues to read quality measures and transitions; it cannot
+concurrency. Timing continues to read criterion bounds and transitions; it cannot
 invent time coordinates. State diagrams continue to read the subject's derived
 machine. Deployment diagrams continue to read valued attributes.
 
@@ -264,15 +263,13 @@ and reject cached out-of-scope writes through the existing wrong-toolset gate.
 | `diagram-coverage` | All diagram and graph reads | Upsert/update/delete views and suppress/unsuppress for its area/findings, plus goal completion/failure and atomic done. |
 | `curate-view`, `split-view`, view `retrace` | All diagram and graph reads | Existing view mutation slice, extended to authored fields and linked details. No suppression tool unless a coverage goal is also in the batch. |
 | `abstract-entity` | All diagram and graph reads | Existing upsert/update view slice for affected coarse/detail diagrams. No diagram deletion or suppression from abstraction alone. |
-| `reconcile-section` on source PlantUML `diagram` input | All diagram and graph reads | Upsert/update/delete source-anchored views in the section's scope, alongside its existing semantic extraction tools. No coverage suppression. |
+| Source PlantUML `diagram` input | Existing semantic extraction tools first; full diagram reads in the subsequent mandatory source review | `diagram-coverage` authors the quoted definition after semantic extraction, without heuristic suppression. |
 | Explicit human diagram request in writable chat/editor | All diagram and graph reads | Validated graph-edit mutations needed for the request, including suppression only when requested or otherwise authorized. No compiler batch required. |
 
 Source-diagram reconciliation may author the diagram stated by its input; this
-is an explicit ingest goal, not automatic default-view derivation. Select that
-extra write slice deterministically from the source section type when opening
-the batch. Ordinary prose reconciliation does not receive diagram writes merely
-because it mentions entities. Changes to or removal of the source block use the
-same provenance and retrace rules as other quoted facts.
+is an explicit source-backed review after semantic extraction. The source section
+opens a mandatory diagram-coverage finding without broadening ordinary prose
+ingest writes. Quoted provenance must locate in that source block.
 
 The `diagrams` domain skill guides judgment and does not grant tools. Automatically
 activate it for diagram-coverage and diagram-targeted curate/split/retrace work,
@@ -338,13 +335,13 @@ alone does not justify drawing all eligible kinds.
 | `package` | At least two existing containment groups have children and relationships crossing their boundaries. | No separate quota. It can answer a mandatory structural question if package boundaries are the question. | Show existing group boundaries and cross-group dependencies. Do not invent architectural layers to make packages look tidy. |
 | `composite` | One stated whole has at least two parts with connectors/interactions among them or across its boundary. | No separate quota. It can answer mandatory internal-structure review when connected parts are the issue. | Draw one boundary, its parts, and sourced connectors. Distinguish presentation groups from real containment. |
 | `use-case` | An actor participates in a behavior cluster of at least 4 statements, or the source explicitly asks for an actor-goal overview. | The behavior review is mandatory at 12 statements. Use-case is suitable only for actor-goal scope, not sufficient for a required process or interaction question. | Identify the externally meaningful intent and actors from statements. Never turn each sentence into a separate user goal or draw an internal subsystem as an invented actor. |
-| `activity` | A behavior cluster has at least 4 statements; failure-mode facets or competing outgoing transitions particularly suggest paths and decisions. | Behavior review at 12 statements; for a process-path finding this is the preferred kind. | Show actions, sourced ordering, alternatives, and recovery. Source every guard; do not invent a branch, join, or concurrency because the picture looks better. |
+| `activity` | A behavior cluster has at least 4 statements; sourced guards, triggers, or competing outgoing transitions particularly suggest paths and decisions. | Behavior review at 12 statements; for a process-path finding this is the preferred kind. | Show actions, sourced ordering, alternatives, and recovery. Source every guard; do not invent a branch, join, or concurrency because the picture looks better. |
 | `state` | A machine has at least 3 distinct states. A smaller machine can be drawn when explicitly requested. | Lifecycle review at 8 states. A sequence diagram cannot replace it. | Explain one subject's states and allowed transitions, using its actual machine. Cite triggering requirements; expose missing information rather than invent transitions. |
 | `sequence` | At least 4 behavior statements involve at least 2 message participants. Source order, causal language, and message edges suggest the candidate. | Behavior review at 12 statements. For a message-order finding, use sequence or a justified communication alternative. | Select one scenario, identify initiator/receiver per step, and source message order and fragments. Add failure paths only where stated. Do not reproduce every statement as a message. |
 | `communication` | At least 3 participants interact and understanding their connections is more useful than vertical chronology. | No independent quota. It can answer mandatory interaction review when topology plus numbered order answers the question. | Show who communicates with whom and number the interactions. Prefer sequence when temporal order or nested alternatives dominate; avoid redundant twins. |
 | `object` | A type has at least 2 known instances, especially instances with values or links worth comparing. | Instance-example review at 8 instances, with suppression appropriate if the examples are repetitive. | Choose a meaningful concrete snapshot, show instance/type identity and known values/links. Never invent example values or turn types into instances. |
 | `deployment` | Any valued placement fact exists in an area. | Placement review at 6 placement facts. A component diagram without placements does not answer it. | Show only artifacts and placements stated by the graph. Do not assume hosts, replicas, networks, or cloud services from conventional architecture. |
-| `timing` | A stateful subject also has quality measures that might express time constraints. The model must read their source and confirm temporal relevance. | No numeric rule forces timing solely from the number of quality measures. An explicit timing-diagram request or stated diagram obligation requires review. | Use actual state changes and stated durations, deadlines, or measures. If no meaningful time scale is stated, explain the missing facts and suppress rather than guessing a trace. |
+| `timing` | A stateful subject also has bounds in criteria that might express time constraints. The model must read their source and confirm temporal relevance. | No numeric rule forces timing solely from the number of criteria. An explicit timing-diagram request or stated diagram obligation requires review. | Use actual state changes and stated durations, deadlines, or measures. If no meaningful time scale is stated, explain the missing facts and suppress rather than guessing a trace. |
 | `overview` | At least 3 authored interaction diagrams explain the same area and could be related phases of one scenario. | No automatic count-based requirement. An explicit scenario-map request requires review; a mandatory readability task can require a linked coarse explanation, with overview as one option. | Verify phases and their order from sources, then link the existing interactions. Do not invent a workflow merely because three diagrams share a parent or title. |
 
 The positive signals for package/composite/communication/timing/overview can
@@ -352,14 +349,13 @@ open optional review below the family size threshold. Fold them into the same
 area task as other findings. Use stable question keys such as `time-constraints`
 and `interaction-map`; put their presence/count tests in `limits.rs` alongside
 the family limits. Do not introduce one model call per candidate type. False
-positives are expected: a quality bound can concern throughput rather than time,
+positives are expected: a criterion bound can concern throughput rather than time,
 and three interactions can be unrelated. The model reads evidence and suppresses
 that suggestion. Do not add undocumented keywords, regex classifications, or a
 hidden model call to the static analyzer.
 
 For behavior clusters, static evidence exposes supported questions: an actor
-suggests actor-goal scope, directed edges suggest interaction, failure-mode facets
-and transitions suggest process paths. Generic large clusters get a behavior
+suggests actor-goal scope, directed edges suggest interaction, guards and transitions suggest process paths. Generic large clusters get a behavior
 review without a forced notation. A session may produce both activity and sequence
 when they explain distinct questions; it states both purposes and evidence.
 The harness never requires all alternatives and the model cannot replace a
@@ -399,7 +395,7 @@ strictly greater than soft or hard, matching existing limit semantics.
 |---|---|---:|---:|---|
 | `structure` | Direct children of an entity or scope root, excluding instances | 3 | 9 | class, component, package, composite |
 | `system` | A `system` entity; count is max(1, direct children plus distinct external interactors) | 0 | 7 | component with context/container/component perspective |
-| `flow` | Behavior and failure-mode requirements reaching one containment level, clustered by source document | 3 | 11 | use-case, activity, sequence, communication, timing, overview |
+| `flow` | Requirements with dependency edges, transitions or scenario criteria reaching one containment level, clustered by source document | 3 | 11 | use-case, activity, sequence, communication, timing, overview |
 | `state` | Distinct states of one derived machine | 2 | 7 | state on its subject |
 | `object` | Instances of one type through instantiation groups | 1 | 7 | object |
 | `deployment` | Distinct `(entity, attribute name, value)` placement facts in one nearest system, or scope when no system contains it | 0 | 5 | deployment |
@@ -620,7 +616,7 @@ Worked runtime evidence, shown separately from the shared instructions:
 Area: ent:checkout, document docs/checkout.md
 Question: How do the participants complete checkout and recover from failure?
 Review: mandatory, 14 behavior statements (mandatory above 11)
-Evidence: 4 message participants, 2 failure-mode statements
+Evidence: 4 message participants, 2 guarded transitions
 Candidates: activity for paths; sequence for messages and order
 Existing: view:usecase/checkout, purpose "What can a customer do?"
 Coverage: actor-goal scope covered; paths and interactions not yet covered
@@ -720,32 +716,32 @@ Portable API contract for the later editor:
 
 ## Migration and persistence
 
-Set `STORE_VERSION = 6`, `UPGRADABLE_VERSION = 5`. Upgrade at the next writable
+Set `STORE_VERSION = 7`, `UPGRADABLE_VERSION = 6`. Upgrade at the next writable
 build opening, preserving the current read-only behavior before upgrade. Never
 run the migration on the dogfood to test it.
 
-- Untouched defaults live in version 5's derived/default-view projection. Discard
+- Untouched defaults live in version 6's derived/default-view projection. Discard
   them and their stale rendering outputs. Do not promote them into graph/views.
 - Preserve all curated views, including views converted by a previous edit to a
   default. Preserve provenance, identity, membership, query, exclusions, collapse,
   and limit bumps. Missing provenance receives derived migration provenance citing
-  surviving members and stating preservation of a curated version-5 view.
+  surviving members and stating preservation of a curated version-6 view.
 - Fill missing purpose with the existing title as a visibly migration-supplied
-  intent. Infer an area only when version-5 level association or query.parent is
+  intent. Infer an area only when version-6 level association or query.parent is
   unambiguous. Otherwise choose the members' common scope with extent selection;
   use the first subject for state/timing. Never guess a whole-area coverage claim.
 - Migrate explicit split links where existing exclusions or containment identify
   them unambiguously. Leave ambiguous phase linkage for authored repair, surfaced
   through diagnostics; do not infer links from matching titles alone.
-- Version 6 writes no `default` field or default-view files. Rebuild derived
+- Version 7 writes no `default` field or default-view files. Rebuild derived
   relationships, machines, query membership, and coverage findings after upgrade.
   Do not run a model during migration. Opening a store can therefore expose new
   goals without creating diagrams.
-- Keep atomic persistence and failure recovery. A failed upgrade leaves version 5
+- Keep atomic persistence and failure recovery. A failed upgrade leaves version 6
   authoritative; retry is deterministic. A second successful opening is a no-op.
-- Version 4 and older archive/rebuild under the existing one-previous-version
+- Version 5 and older archive/rebuild under the existing one-previous-version
   policy. Newer stores stay read-only and are never archived. Document this
-  consequence explicitly because version 4 currently upgrades to version 5.
+  consequence explicitly because only version 6 upgrades to version 7.
 
 ## Implementation sequence
 
@@ -775,7 +771,7 @@ run the migration on the dogfood to test it.
    output; preserve size accounting and explicit omission visibility.
 7. Extend `context.rs`, entity reads, context packing, reverse association indexing,
    members-axis handles, and context/session specifications as defined above.
-   Implement version-5 migration, store round trips, output pruning, docsgen/card/
+   Implement version-6 migration, store round trips, output pruning, docsgen/card/
    viewer/LSP updates, webapi contracts, and native adapters. Version bump lands
    with a working migration and all changed readers, never as a standalone release.
 8. Update fixtures and recorded tool sessions, run validation, commit coherent
@@ -873,7 +869,7 @@ actual gated tool execution, not model output strings asserted in isolation.
   text, over-limit notes, render failure cleanup, and deleted-view file pruning.
   Use the in-process renderer locally; official native renderer parity only when
   available, with no unsolicited download or hosted validation dispatch.
-- Migration: a real version-5-shaped disk fixture with untouched defaults plus
+- Migration: a real version-6-shaped disk fixture with untouched defaults plus
   curated views, including a curated former default. Assert defaults disappear,
   IDs/provenance and edits survive, no models run, failed-write recovery, second
   opening no-op, older archive, newer read-only, and suppression round trips.
@@ -916,7 +912,7 @@ commit. Stage and commit in one command chain, never amend, stash, or rebase.
 ## Completion and open items
 
 The implementation is complete only with saved specs, passing local checks,
-version-5 fixture migration, explicit tool-session coverage for every catalog
+version-6 fixture migration, explicit tool-session coverage for every catalog
 kind, integration into local master, and verified remote master SHA. Report
 local validation, push, artifact publication, and deployment separately. No
 publication or deployment is requested by this plan.

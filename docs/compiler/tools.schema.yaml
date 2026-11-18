@@ -366,7 +366,7 @@ definitions:
           type: string
       default:
         type: boolean
-        description: Present on a default view the store recomputes every commit
+        description: Legacy field accepted when reading the previous store version
       relationships:
         description: The relationships among the members, lifted where a member is collapsed
         type: array
@@ -1032,6 +1032,35 @@ definitions:
         type: string
         description: Required when state is non-normative
     additionalProperties: false
+  listViews:
+    type: object
+    properties:
+      entity: {type: string}
+      kind: {type: string}
+      area: {type: string}
+      offset: {type: integer}
+      limit: {type: integer}
+    additionalProperties: false
+  listDiagramSuppressions:
+    type: object
+    properties: {}
+    additionalProperties: false
+  suppressDiagramCoverage:
+    type: object
+    required: [id, reason, expectedAreaHash]
+    properties:
+      decision: {type: string}
+      id: {type: string}
+      reason: {type: string}
+      expectedAreaHash: {type: string}
+    additionalProperties: false
+  unsuppressDiagramCoverage:
+    type: object
+    required: [id, reason]
+    properties:
+      id: {type: string}
+      reason: {type: string}
+    additionalProperties: false
   upsertView:
     description: >-
       Request payload of upsert_view. Keys on kind plus title. reasoning becomes the
@@ -1046,6 +1075,43 @@ definitions:
         $ref: 'graph.json#/definitions/viewKind'
       title:
         type: string
+      purpose:
+        type: string
+        minLength: 1
+      description:
+        type: string
+      area:
+        type: object
+        required: [target, extent]
+        properties:
+          target: {type: string}
+          extent: {enum: [area, selection]}
+          document: {type: string}
+      perspective:
+        enum: [context, container, component]
+      relationships:
+        type: object
+        properties:
+          mode: {enum: [all, selected]}
+          include: {type: array, items: {type: object}}
+          exclude: {type: array, items: {type: object}}
+      labels:
+        type: array
+        items: {type: object}
+      notes:
+        type: array
+        items: {type: object}
+      groups:
+        type: array
+        items: {type: object}
+      layout:
+        type: object
+      fragments:
+        type: array
+        items: {type: object}
+      links:
+        type: array
+        items: {type: object}
       members:
         description: Ordered node ids. Entities for structural kinds, requirements for flow kinds
         type: array
@@ -1061,22 +1127,63 @@ definitions:
         type: array
         items:
           $ref: 'graph.json#/definitions/exclusion'
+      section: {type: string}
+      quote: {type: string}
+      decision: {type: string}
       reasoning:
         type: string
     additionalProperties: false
   updateView:
     description: >-
       Request payload of update_view. members replaces the whole ordered list;
-      add_members and remove_members edit it. On a default view any field given clears
-      its boolean default field; the view is curated from then on
+      add_members and remove_members edit it. Every view is authored
     type: object
     required:
       - id
+      - reasoning
     properties:
+      decision: {type: string}
       id:
         type: string
       title:
         type: string
+      purpose:
+        type: string
+        minLength: 1
+      description:
+        type: [string, 'null']
+      area:
+        type: object
+        required: [target, extent]
+        properties:
+          target: {type: string}
+          extent: {enum: [area, selection]}
+          document: {type: string}
+      perspective:
+        enum: [context, container, component, null]
+      relationships:
+        type: [object, 'null']
+        properties:
+          mode: {enum: [all, selected]}
+          include: {type: array, items: {type: object}}
+          exclude: {type: array, items: {type: object}}
+      labels:
+        type: [array, 'null']
+        items: {type: object}
+      notes:
+        type: [array, 'null']
+        items: {type: object}
+      groups:
+        type: [array, 'null']
+        items: {type: object}
+      layout:
+        type: [object, 'null']
+      fragments:
+        type: [array, 'null']
+        items: {type: object}
+      links:
+        type: [array, 'null']
+        items: {type: object}
       members:
         type: array
         items:
@@ -1103,7 +1210,7 @@ definitions:
         type: string
     additionalProperties: false
   deleteView:
-    description: Request payload of delete_view. Rejected on a default view
+    description: Request payload of delete_view. Requires a reason
     type: object
     required:
       - id

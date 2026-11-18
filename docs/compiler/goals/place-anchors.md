@@ -198,3 +198,5 @@ Placement or orphaning changes only that source and preserves the other location
 select one source. A requirement with several proposals requires this selector.
 Completion and proposal retirement identify each source by its quote as well as
 its document and section.
+
+`list_views` and `list_diagram_suppressions` inspect authored diagrams and decisions.

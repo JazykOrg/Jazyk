@@ -256,7 +256,7 @@ the graph at batch time, never stored:
 
 - A system is a containment root with at least one child; with two or more it holds a
   level view of its own, `view:component/<system-slug>`
-  ([level views](../compiler/model/view.md#level-views)). A group root is a direct
+  ([level views](../compiler/model/view.md#membership)). A group root is a direct
   child of a system: the «service»-like tier of the tree, whatever stereotype the
   documents gave it. A group is its root plus every descendant through `parent`.
 - Every other entity generates alone: the system itself, for the requirements that name

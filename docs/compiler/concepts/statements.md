@@ -344,10 +344,10 @@ Statements express obligations. Everything else is a separate node or a derivati
   [derivation](../model/state-machine.md#derivation).
 - Facets are judgments recorded beside the statement, with reasoning, not read from
   its shape. See [facets](../model/requirement.md#facets).
-- Which flow or diagram a requirement appears in is view membership: default views
-  derive, curated views come from the `curate-view` goal. A statement carries no view.
+- Which flow or diagram a requirement appears in is view membership: diagrams
+  are explicitly authored, and `curate-view` reviews later membership matches. A statement carries no view.
   See [membership](../model/view.md#membership) and
-  [default views](../model/view.md#default-views).
+  [diagram review](../goals/diagram-coverage.md).
 - A contradiction, a duplicate, or an ambiguity in a sentence is a
   [diagnostic](../model/diagnostic.md) filed against the requirement, never a caveat
   written into the statement.

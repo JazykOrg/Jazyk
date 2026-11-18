@@ -38,7 +38,7 @@ The harness owns everything that must never be wrong:
 - [goal derivation](./reconciler.md#goal-derivation),
   [readiness](./reconciler.md#readiness), and [batching](./reconciler.md#batching):
   what work exists, in what order, in which session,
-- [derived data](./graph.md#derived-data): relationships, state machines, default views,
+- [derived data](./graph.md#derived-data): relationships, state machines,
 - the [loaded set](./context.md#the-loaded-set): what the model sees, under a budget,
 - [budgets](./sessions.md#budgets) and causality (the [journal](./graph.md#journal),
   the cause on every goal),
@@ -219,7 +219,7 @@ file is listed in [the .jazyk folder](./jazyk-folder.md).
   truth behind `jazyk ripple`), `control.yaml`, `workers/`, `leases/` (the control
   plane), and the locks.
 - `derived/`: rebuilt from the committed files. The derived graph kinds
-  (`graph/relationships/`, `graph/state-machines/`, `graph/default-views/`),
+  (`graph/relationships/`, `graph/state-machines/`),
   `diagrams/` (one `.puml` and one `.svg` per view under `<kind>/<slug>`, `.png`
   beside them on request, see [output layout](./diagrams.md#output-layout)), and
   `docsgen/` (one requirements document per entity, see

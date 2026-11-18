@@ -271,6 +271,11 @@ impl Resolved {
     }
 
     pub fn holds(&self, goal: &Goal) -> bool {
+        if goal.kind == "diagram-coverage" {
+            return goal.change["candidates"]
+                .as_object()
+                .is_some_and(|c| c.keys().any(|id| self.holds_target(id)));
+        }
         self.holds_target(&goal.target)
     }
 

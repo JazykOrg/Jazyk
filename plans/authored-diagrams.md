@@ -16,8 +16,10 @@ to prepare this plan.
 - Extend views with intent, an explicit area, selected relationships, annotations,
   grouping, and bounded layout hints. Rendering remains deterministic through
   `plantuml-little`. Diagram annotations cannot add semantic edges or transitions.
-- Add `diagram-coverage`, a GC goal derived by static analysis. Models decide
-  which diagrams answer a question, or suppress the finding with a durable reason.
+- Add an explicit diagram-review compilation step after requirement judgment and
+  structural review, before criteria and implementation. Its `diagram-coverage`
+  tasks come from static analysis. Models choose diagrams that answer the raised
+  questions, or suppress a finding with a durable reason.
   No analysis rule creates a view, even as a temporary placeholder.
 - Containment defines levels and navigation independently of views. Cards and
   level pages exist without diagrams. There is no mandatory primary diagram.
@@ -243,7 +245,8 @@ set even when several entities reference it. Compaction, reload, and unload use
 the normal item lifecycle. Read summaries reflect the session snapshot and mark
 staged edits/deletes consistently with the current context contract.
 
-Fetching an entity or loading a diagram never authorizes edits or starts GC.
+Fetching an entity or loading a diagram never authorizes edits or starts
+diagram review or maintenance.
 Generation, verification, review, and read-only agents can consult the same
 references without receiving diagram write tools.
 
@@ -296,15 +299,86 @@ what is useful, or records a concrete suppression. Goal hints carry runtime
 evidence; shared instructions and corrective guidance stay in docs payloads.
 There is no unsolicited diagram-authoring prompt on an ordinary entity read.
 
+## Compilation step and per-kind selection
+
+The owner accepted this visible compilation sequence:
+
+Extract requirements → review requirements and structure → review and author
+diagrams → criteria and implementation → verification and final output.
+
+Use existing task/session machinery for this step. Insert diagram-review at
+readiness tier 3 and move current tier-3 criteria/ledger work to tier 4. Change
+readiness rules explicitly rather than retaining the old GC gate: waiting for
+all compile work would wait for the very implementation this step should precede.
+Mandatory diagram reviews hold downstream work in their affected area until
+answered by diagrams or valid suppression. Unrelated settled areas may proceed.
+Optional diagram work is offered before downstream work within the selected
+scope and budget; unresolved optional advice cannot hold implementation forever.
+Keep optional tasks visible when skipped or left unfinished. This local rule
+must coexist with the existing upstream tier barrier and concurrent batches.
+
+Existing maintenance tasks still handle abstraction, duplicate cleanup,
+curation, splitting, and repairs. Structural abstraction needed for an area
+runs before its diagram review. Curation and split-view may run inside the diagram
+step as follow-up work. A later semantic edit reopens the affected upstream work
+and diagram review, never the whole project's diagram step without cause.
+Pure rendering changes only regenerate output. Preserve explicit release and
+cost gates; adding this step does not start otherwise unauthorized model work.
+
+The program chooses areas and questions using graph facts and fixed thresholds.
+The model chooses the smallest useful set of diagrams for each task. A suggestion
+is a candidate for judgment, not a command to create that kind. Mandatory means
+that the explanation question must be answered or explicitly suppressed. Size
+alone does not justify drawing all eligible kinds.
+
+| Kind | When to suggest it to the model | When review becomes mandatory | What the kind-specific prompt asks |
+|---|---|---|---|
+| `class` | A level of domain concepts has at least 4 children; attributes, associations, inheritance, or composition make the structure worth explaining. | Structural question at 10 children, when no suitable explanation covers it. Component/package/composite may be better choices depending on the facts. | Explain the concepts, relevant attributes, and selected relationships at one abstraction level. Do not use class notation to pretend every actor or service is a data class. |
+| `component` | Any stated system needs a boundary/context review; internal levels with services, interfaces, or components also qualify for structural review. | System boundary question at 8 children/interactors, or internal structural question at 10 children. Explicit context requests require context, not merely an internal component picture. | For context, show the subject system and external actors/systems. For container/component, show the stated internal units and their responsibilities/interfaces. Keep perspective explicit and link detail. |
+| `package` | At least two existing containment groups have children and relationships crossing their boundaries. | No separate quota. It can answer a mandatory structural question if package boundaries are the question. | Show existing group boundaries and cross-group dependencies. Do not invent architectural layers to make packages look tidy. |
+| `composite` | One stated whole has at least two parts with connectors/interactions among them or across its boundary. | No separate quota. It can answer mandatory internal-structure review when connected parts are the issue. | Draw one boundary, its parts, and sourced connectors. Distinguish presentation groups from real containment. |
+| `use-case` | An actor participates in a behavior cluster of at least 4 statements, or the source explicitly asks for an actor-goal overview. | The behavior review is mandatory at 12 statements. Use-case is suitable only for actor-goal scope, not sufficient for a required process or interaction question. | Identify the externally meaningful intent and actors from statements. Never turn each sentence into a separate user goal or draw an internal subsystem as an invented actor. |
+| `activity` | A behavior cluster has at least 4 statements; failure-mode facets or competing outgoing transitions particularly suggest paths and decisions. | Behavior review at 12 statements; for a process-path finding this is the preferred kind. | Show actions, sourced ordering, alternatives, and recovery. Source every guard; do not invent a branch, join, or concurrency because the picture looks better. |
+| `state` | A machine has at least 3 distinct states. A smaller machine can be drawn when explicitly requested. | Lifecycle review at 8 states. A sequence diagram cannot replace it. | Explain one subject's states and allowed transitions, using its actual machine. Cite triggering requirements; expose missing information rather than invent transitions. |
+| `sequence` | At least 4 behavior statements involve at least 2 message participants. Source order, causal language, and message edges suggest the candidate. | Behavior review at 12 statements. For a message-order finding, use sequence or a justified communication alternative. | Select one scenario, identify initiator/receiver per step, and source message order and fragments. Add failure paths only where stated. Do not reproduce every statement as a message. |
+| `communication` | At least 3 participants interact and understanding their connections is more useful than vertical chronology. | No independent quota. It can answer mandatory interaction review when topology plus numbered order answers the question. | Show who communicates with whom and number the interactions. Prefer sequence when temporal order or nested alternatives dominate; avoid redundant twins. |
+| `object` | A type has at least 2 known instances, especially instances with values or links worth comparing. | Instance-example review at 8 instances, with suppression appropriate if the examples are repetitive. | Choose a meaningful concrete snapshot, show instance/type identity and known values/links. Never invent example values or turn types into instances. |
+| `deployment` | Any valued placement fact exists in an area. | Placement review at 6 placement facts. A component diagram without placements does not answer it. | Show only artifacts and placements stated by the graph. Do not assume hosts, replicas, networks, or cloud services from conventional architecture. |
+| `timing` | A stateful subject also has quality measures that might express time constraints. The model must read their source and confirm temporal relevance. | No numeric rule forces timing solely from the number of quality measures. An explicit timing-diagram request or stated diagram obligation requires review. | Use actual state changes and stated durations, deadlines, or measures. If no meaningful time scale is stated, explain the missing facts and suppress rather than guessing a trace. |
+| `overview` | At least 3 authored interaction diagrams explain the same area and could be related phases of one scenario. | No automatic count-based requirement. An explicit scenario-map request requires review; a mandatory readability task can require a linked coarse explanation, with overview as one option. | Verify phases and their order from sources, then link the existing interactions. Do not invent a workflow merely because three diagrams share a parent or title. |
+
+The positive signals for package/composite/communication/timing/overview can
+open optional review below the family size threshold. Fold them into the same
+area task as other findings. Use stable question keys such as `time-constraints`
+and `interaction-map`; put their presence/count tests in `limits.rs` alongside
+the family limits. Do not introduce one model call per candidate type. False
+positives are expected: a quality bound can concern throughput rather than time,
+and three interactions can be unrelated. The model reads evidence and suppresses
+that suggestion. Do not add undocumented keywords, regex classifications, or a
+hidden model call to the static analyzer.
+
+For behavior clusters, static evidence exposes supported questions: an actor
+suggests actor-goal scope, directed edges suggest interaction, failure-mode facets
+and transitions suggest process paths. Generic large clusters get a behavior
+review without a forced notation. A session may produce both activity and sequence
+when they explain distinct questions; it states both purposes and evidence.
+The harness never requires all alternatives and the model cannot replace a
+specific question with an easier unrelated one.
+
+Explicit human requests for a kind are instructions to execute within their
+scope, even below automatic thresholds. A source diagram or a quoted requirement
+that explicitly requires a diagram is not waived by an ordinary heuristic
+suppression. Fulfill it, or report missing prerequisites/unsupported requirements.
+Human reversal of that instruction must be explicit. Extracted diagram
+obligations must be represented through the normal source/requirement machinery,
+not detected by scanning arbitrary prose during diagram analysis.
+
 ## Coverage analysis
 
-Run analysis after relationship and state-machine derivation and query expansion,
-at commit and again when deriving the board.
-Optional findings run in GC bursts when their cone is ready and the selected
-work scope and remaining build budget permit. They never justify an unsolicited
-model session during a read. Mandatory findings use existing GC scheduling and
-block convergence until covered or validly suppressed. Compile work reopened by
-a diagram edit runs before the affected cone returns to GC.
+Run analysis after relationship and state-machine calculation and query expansion,
+at commit and again when preparing work. Present its work as the named
+**Review and author diagrams** compilation step, not as a GC burst. Loading an
+entity remains read-only and never starts this step.
 
 Analysis produces findings and counts only. Use immutable graph IDs for area identity,
 never a title, name, generated view ID, or document basename.
@@ -313,6 +387,8 @@ An area key is a structured `{family, target, document?}` encoded reversibly for
 `g:diagram-coverage:<area-key>`. Families separate independent questions about the
 same target. One goal folds all findings for that area, including diagram drift;
 its mandatory flag is the maximum severity of its unsuppressed findings.
+Each finding has a stable question code and its own eligible diagram kinds;
+counting the same facts in an unrelated kind cannot answer the question.
 No synthetic entity is stored for an area.
 
 Thresholds are initial product defaults, not benchmark-derived values. Put named
@@ -344,7 +420,16 @@ single behavior requirement does not create a goal by itself; it remains visible
 in the area report below threshold. Missing documentation source for a derived
 behavior groups it into a separate stable `derived` bucket, not a random document.
 
-A diagram matches by explicit area and compatible kind, never by title. For
+A diagram matches by explicit area, question, and compatible kind, never by title.
+Use-case diagrams can cover actor-goal scope, but cannot close a message-order
+finding. Activity diagrams cover process paths; a simple message list cannot
+claim branch coverage. Sequence and communication diagrams cover interactions;
+state diagrams cover lifecycle; timing diagrams cover stated time constraints.
+The family table gives the candidate catalog, not interchangeability between
+all kinds in one row. Record covered question codes in goal evidence and the
+computed diagram coverage summary; do not accept self-declared coverage alone.
+
+ For
 structure, flow, object, and deployment, union the candidates represented by
 matching diagrams, after exclusions. Full-area coverage means at least 80% of
 candidates represented. Use integer arithmetic `5 * covered >= 4 * total`.
@@ -382,7 +467,8 @@ are harness-computed. No build-local parked state is used as suppression.
 
 The evidence hash covers candidate membership, behavior statement/edge/transition
 hashes, state transitions, instance-type assignments, valued placement facts,
-area containment identity, and applicable coverage rules. It excludes generation,
+area containment identity, related authored interaction IDs/hashes for overview
+suggestions, and applicable coverage rules. It excludes generation,
 formatting, render files, note text, and layout. Canonicalization follows redirects.
 A changed hash causes measurement, not immediate invalidation.
 Store the full baseline candidate set outside prompt context; expandable handles
@@ -412,7 +498,7 @@ baseline, not a newly minted baseline. A newly created matching diagram can end
 the finding without modifying the suppression. Deleting that diagram does not
 revive a previously waived finding before the baseline expires.
 
-A suppression may remain valid across optional-to-mandatory escalation if growth
+A heuristic suppression may remain valid across optional-to-mandatory escalation if growth
 has not reached its re-fire delta. Severity is waived deliberately; it is not a
 failed mandatory goal. Expose this on the board and explain surface. Human and
 model suppressions use the same expiry rule. Permanent per-project disable flags
@@ -432,13 +518,17 @@ Goal: judge the visual explanation needed for one stable area after its semantic
 facts settle. Create or repair diagrams that answer specific questions, or record
 why this area does not need the requested explanation.
 
-- Kind: `diagram-coverage`. Class: GC. Optional above soft; mandatory above hard.
+- Kind: `diagram-coverage`. Class: compile, in the new diagram-review step.
+  Optional above soft; mandatory above hard. This is the explicit exception to
+  the existing statement that all compile goals are mandatory.
 - Unit: one area. ID: `g:diagram-coverage:<area-key>`.
 - Created by: `diagram-undercovered` and `diagram-drift` findings from the analyzer.
-- Ready when no open or parked compile goal exists in the area's cone. Reuse the
-  existing exceptions for human ratification/answer work; do not introduce a global
-  diagram phase. Include descendant entities, relevant requirements, their source
-  sections, and diagrams referencing them in the cone.
+- Ready after extraction, requirement/entity judgment, reference repair, and
+  structural abstraction in the affected area settle. Do not wait for criteria,
+  binding, generation, or verification that belong after this step. Include
+  descendant entities, relevant requirements, source sections, and related
+  diagrams in the affected area. Human ratification and answer work keep their
+  existing explicit blocked state; do not make them an invisible global barrier.
 - Yield to open or parked fan-out abstraction for the same level, as split-view
   does. Repair stale diagram references through tier-2 retrace before GC judgment.
 - Locality: target entity or scope plus source document for flow. Batch overlapping
@@ -484,6 +574,74 @@ cannot be completed; failure is not suppression.
 
 Implement this payload with guide-compliant metadata and shared partials. Keep
 corrective gate guidance in docs payloads, not Rust strings.
+
+## Session prompt assembly and worked example
+
+Assemble three layers through the existing prompt parser and partial mechanism:
+
+- A shared authoring contract: inspect before create, name the reader's question,
+  reuse diagrams, load semantic sources, keep all facts sourced, and close each
+  finding with actual saved work or a valid suppression. Explicitly distinguish
+  completing a mandatory review from being forced to create a pointless diagram.
+- The `diagrams` skill: the selection table above, UML/C4/4+1 question lenses,
+  abstraction-level guidance, good/bad examples, and when text is clearer. Load
+  kind-specific instructions only for relevant candidates or selected kinds.
+- Runtime evidence: area and question IDs, why review opened, optional/mandatory
+  status, counts and thresholds, statements/source handles, relationships and
+  machine summaries, current diagram purposes/coverage, active suppression
+  baselines, and the exact evidence schema for completion. These are data fields,
+  not new authored instructions generated inside Rust.
+
+Draft session instruction for the new compilation step:
+
+```text
+You are reviewing diagrams after the requirements and structure of this area
+have been reviewed. Address each listed question. First inspect existing diagram
+summaries and load any candidate for reuse. Read the relevant statements and
+source sections before deciding what to draw. Choose the smallest set of diagrams
+that answers the questions; the suggested kinds are alternatives unless the
+request explicitly requires a kind. Give each diagram a reader's question as its
+purpose and explain why its kind, members, ordering, and omissions serve it.
+
+Use upsert_view or update_view to save definitions. Use sourced graph IDs for
+members, relationships, notes, and fragments. Do not invent domain facts or raw
+PlantUML. If a heuristic suggestion would produce no useful explanation, call
+suppress_diagram_coverage with a concrete reason. Missing facts needed to fulfill
+an explicit requirement must be reported, not silently suppressed.
+
+Claim completion only after each question has eligible saved diagrams with
+verified coverage, or a valid suppression where permitted. Cite the saved IDs.
+If you cannot complete the authorized work, fail it with the specific reason.
+```
+
+Worked runtime evidence, shown separately from the shared instructions:
+
+```text
+Area: ent:checkout, document docs/checkout.md
+Question: How do the participants complete checkout and recover from failure?
+Review: mandatory, 14 behavior statements (mandatory above 11)
+Evidence: 4 message participants, 2 failure-mode statements
+Candidates: activity for paths; sequence for messages and order
+Existing: view:usecase/checkout, purpose "What can a customer do?"
+Coverage: actor-goal scope covered; paths and interactions not yet covered
+Sources: requirement IDs and section handles supplied below
+```
+
+Here the model should inspect the use-case view and its sources, then choose an
+activity diagram, a sequence diagram, or both for distinct needs. Creating another
+use-case view does not close the missing explanation. If sources do not state
+recovery order, the model reports that gap or omits unsupported order with a
+specific disposition; it never invents a retry loop to complete a pretty picture.
+
+Rechecks verify eligible kinds, question-specific evidence and coverage, live
+references, saved mutations, provenance, sourced fragments, and suppression
+permission/current baseline. Mark each finding as `heuristic` or `obligation`,
+with source/requirement IDs for obligations, and reject ordinary suppression of
+the latter. The program, not the model, determines that classification from the
+recorded request or source-backed requirement. They do not pretend to prove visual communication
+quality. The model's justification and human inspection judge whether the picture
+is useful. Fixture replays include both good and poor choices to test guidance
+and gate boundaries. No new paid sessions are authorized by this plan.
 
 ## Existing goals and checks
 
@@ -610,6 +768,8 @@ run the migration on the dogfood to test it.
 5. Implement limits and analyzer, `goals/diagram_coverage.rs`, board derivation,
    cones, batching, hints, gates, fingerprints, and suppression expiry. Adapt
    placement checks and existing view goals. Preserve abstract-entity retry rules.
+   Add the named diagram-review step, tier-3/tier-4 scheduling, local downstream
+   gating, and explicit optional-review exception to compile-goal policy.
 6. Extend render scene/emitter support for labels, notes, groups, selection,
    direction, and fragments across the catalog. Keep inert text and deterministic
    output; preserve size accounting and explicit omission visibility.
@@ -671,6 +831,11 @@ actual gated tool execution, not model output strings asserted in isolation.
 - Fresh graph: seed entities, systems, flows, machine, instances, placement facts;
   recompute repeatedly and round-trip the store. Assert zero views and renderings,
   derived semantic facts intact, topology/cards navigable, expected coverage goals.
+- Scheduling: diagrams wait for extraction/judgment/structural review, never for
+  downstream criteria or generation; mandatory review holds its area, optional
+  review cannot deadlock implementation, and unrelated areas proceed. Exercise
+  explicit obligations versus heuristic suppression, mixed batches, and reopen
+  after upstream edits. Show the named step in status and trace output.
 - Analyzer: table-driven tests at soft, soft+1, hard, hard+1 for every family;
   scope roots, deep uneven containment, grouping-only flows, document-path
   collisions, internal flows without diagrams, instances excluded from structure,
@@ -679,6 +844,9 @@ actual gated tool execution, not model output strings asserted in isolation.
   partitioned diagrams do; collapsed descendants count correctly; 80% boundary,
   selected relationships, missing phases, and exact drift boundaries behave as
   documented. Focused selection diagrams do not spuriously drift.
+  Actor-goal coverage cannot close message-order/path work; type suggestions are
+  alternatives, explicit requests honor the named kind, and timing/overview
+  opportunities do not invent temporal facts or phase order.
 - Tools: replay create/edit/delete for each of the 13 kinds with appropriate facts.
   Exercise every new field, queries, null/empty updates, quoted source blocks,
   human decrees, reasoning/provenance, natural-key retry, staged references,

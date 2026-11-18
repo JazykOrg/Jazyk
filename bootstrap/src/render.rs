@@ -115,6 +115,15 @@ pub fn emit(store: &Store, view_id: &str, view: &View) -> String {
                 }
             }
             if !attached {
+                // A note is text even when it spells the legend's closing marker.
+                let text = if matches!(
+                    text.to_ascii_lowercase().as_str(),
+                    "end legend" | "endlegend"
+                ) {
+                    format!("\u{200B}{text}")
+                } else {
+                    text
+                };
                 legend.push(text);
             }
         }

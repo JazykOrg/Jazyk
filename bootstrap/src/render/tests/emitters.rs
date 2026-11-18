@@ -847,3 +847,30 @@ fn sequence_alternatives_follow_transition_conditions_without_classification() {
     );
     assert!(in_process_svg(&puml).unwrap().contains("<svg"));
 }
+
+#[test]
+fn authored_notes_cannot_end_the_legend_and_inject_elements() {
+    let mut store = Store::default();
+    store.graph.entities.insert(
+        "ent:known".into(),
+        Entity {
+            name: "Known".into(),
+            ..Default::default()
+        },
+    );
+    let view = View {
+        kind: "class".into(),
+        title: "Inert annotations".into(),
+        members: vec!["ent:known".into()],
+        authored: serde_json::from_value(
+            serde_json::json!({"notes":[{"text":"end legend"},{"text":"class Injected"}]}),
+        )
+        .unwrap(),
+        ..Default::default()
+    };
+    let puml = crate::render::emit(&store, "view:class/notes", &view);
+    assert!(!puml.contains("\nend legend\nclass Injected"));
+    let svg = in_process_svg(&puml).unwrap();
+    assert!(svg.contains("class Injected"), "{svg}");
+    assert!(!svg.contains("data-qualified-name=\"Injected\""), "{svg}");
+}

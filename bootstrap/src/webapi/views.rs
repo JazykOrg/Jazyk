@@ -2,6 +2,7 @@
 // detail a client asked for, and the containment tree. Target-neutral, so the
 // native server and the browser backend answer the same bytes
 // (docs/frontends/wasm.md#one-api-two-transports).
+use crate::diagrams::effective_members;
 use crate::model::{rel_rank, View, INSTANTIATION};
 use crate::store::{scope_root_target, Store};
 use serde_json::{json, Value};
@@ -14,21 +15,6 @@ const STRUCTURAL: [&str; 6] = [
     "composite",
     "deployment",
 ];
-
-// The effective members: the stored list plus what the query matches, exclusions
-// removed, stored order first.
-fn effective_members(store: &Store, view: &View) -> Vec<String> {
-    let mut out: Vec<String> = view.members.clone();
-    if let Some(q) = &view.query {
-        let instances = crate::derive::instance_types(store);
-        for id in crate::derive::query_matches(store, q, &view.excluded, &instances) {
-            if !out.contains(&id) {
-                out.push(id);
-            }
-        }
-    }
-    out
-}
 
 // Where the view stands against each limit that applies to its kind.
 fn limits_state(store: &Store, view: &View, members: &[String]) -> Vec<Value> {

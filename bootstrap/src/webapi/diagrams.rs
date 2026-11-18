@@ -211,8 +211,13 @@ mod tests {
     #[test]
     fn editor_can_remove_all_prior_exclusions() {
         let (proj, out) = fixture("exclusions");
-        let result = edit(&proj, &out, &json!({"tool":"upsert_view","arguments":{"kind":"class","title":"Selection","members":["ent:item-0"],"excluded":[{"id":"ent:item-1","note":"Outside the question"}],"notes":[{"text":"A temporary note"}],"collapse":["ent:item-0"],"purpose":"Explain a selection","decision":"Show item zero","reasoning":"A human selection"}})).unwrap();
+        let result = edit(&proj, &out, &json!({"tool":"upsert_view","arguments":{"kind":"class","title":"Selection","members":["ent:item-0","ent:item-1"],"excluded":[{"id":"ent:item-1","note":"Outside the question"}],"notes":[{"text":"A temporary note"}],"collapse":["ent:item-0"],"purpose":"Explain a selection","decision":"Show item zero","reasoning":"A human selection"}})).unwrap();
         let id = result["id"].as_str().unwrap();
+        let listed = super::super::views::list_value(&Store::load(&out), &json!({}));
+        assert_eq!(
+            listed["views"][0]["members"], 1,
+            "Exclusions must match the picture's membership"
+        );
         edit(&proj, &out, &json!({"tool":"update_view","arguments":{"id":id,"clear_excluded":true,"exclude":[],"members":[],"collapse":[],"notes":[],"decision":"Allow excluded members again","reasoning":"Review the area"}})).unwrap();
         let saved = Store::load(&out);
         assert!(saved.graph.views[id].excluded.is_empty());

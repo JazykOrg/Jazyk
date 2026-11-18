@@ -373,7 +373,11 @@ pub(super) fn anchor_entities(svg: &str, links: &[(String, String)]) -> String {
         let Some(key) = attr_value(tag, "data-qualified-name") else {
             continue;
         };
-        let Some(href) = hrefs.get(key.as_str()) else {
+        // Presentation packages qualify otherwise unique element aliases.
+        let Some(href) = hrefs
+            .get(key.as_str())
+            .or_else(|| key.rsplit_once('.').and_then(|(_, alias)| hrefs.get(alias)))
+        else {
             continue;
         };
         let Some(end) = group_end(svg, start) else {

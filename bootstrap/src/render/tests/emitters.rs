@@ -723,7 +723,7 @@ fn authored_presentation_and_nested_sequence_fragments_render_deterministically(
         "labels":[{"target":"ent:a","text":"Reader"}],
         "groups":[{"id":"boundary","title":"Application","members":["ent:a"]}],
         "layout":{"direction":"left-to-right"},
-        "notes":[{"id":"annotation","text":"Known boundary","targets":["ent:a"],"sources":["req:step-0"]}]
+        "notes":[{"id":"annotation","text":"Known boundary","targets":["ent:a"],"sources":["req:step-0"]},{"text":"Diagram wide explanation"}]
     })).unwrap();
     assert!(crate::diagrams::validate_fields(&s, "class", &fields).is_ok());
     let view = View {
@@ -740,7 +740,9 @@ fn authored_presentation_and_nested_sequence_fragments_render_deterministically(
         "{puml}"
     );
     assert_eq!(puml, crate::render::emit(&s, "view:class/boundary", &view));
-    assert!(in_process_svg(&puml).unwrap().contains("<svg"));
+    let svg = in_process_svg(&puml).unwrap();
+    assert!(svg.contains("Known boundary"), "{svg}");
+    assert!(svg.contains("Diagram wide explanation"), "{svg}");
     let fields:BTreeMap<String,serde_json::Value>=serde_json::from_value(serde_json::json!({
         "fragments":[{"id":"outer","operator":"opt","operands":[{"guard":{"text":"Known condition","sources":["req:step-0"]},"members":["req:step-0","req:step-2"],"fragments":[{"id":"inner","operator":"loop","operands":[{"members":["req:step-1"],"guard":{"text":"Retry","sources":["req:step-1"]}}]}]}]}]
     })).unwrap();

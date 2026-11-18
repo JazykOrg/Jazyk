@@ -337,7 +337,7 @@ fn configure_ide(choice: &Choice, root: &Path, agent: &str) -> Result<(), String
             return crate::paseo::configure();
         }
         let host = crate::setup::host_of(choice.id).ok_or("unsupported IDE")?;
-        crate::setup::install(&crate::setup::Item::Jazyk(host), root, false, true)?;
+        jazyk_agent_extension(host)?;
         // Pin the built-in agent in this registration; project executor settings stay independent.
         if let Some(crate::acp::install::Ide {
             registry:

@@ -53,6 +53,78 @@ definitions:
     allOf:
       - $ref: '#/definitions/jazykWorkflowSkill'
       - required: [body]
+  openWorkRequest:
+    type: object
+    properties:
+      node: {type: string}
+      goal: {type: string}
+      state: {type: string, enum: [active, expired, all]}
+      cursor: {type: integer, minimum: 0}
+      limit: {type: integer, minimum: 1, maximum: 100}
+    additionalProperties: false
+  readOpenWorkRequest:
+    type: object
+    required: [id]
+    properties:
+      id: {type: string}
+    additionalProperties: false
+  adoptOpenWorkRequest:
+    type: object
+    required: [id, expectedEpoch, reason]
+    properties:
+      id: {type: string}
+      expectedEpoch: {type: integer, minimum: 1}
+      ownerToken: {type: string}
+      reason: {type: string}
+    additionalProperties: false
+  discardOpenWorkRequest:
+    $ref: '#/definitions/adoptOpenWorkRequest'
+  unstageRequest:
+    type: object
+    required: [mutationIds]
+    properties:
+      mutationIds:
+        type: array
+        items: {type: integer, minimum: 0}
+    additionalProperties: false
+  openWorkSummary:
+    type: object
+    required: [workId, epoch, identity, batch, goals, snapshotGeneration, createdAt, lastActivity, heartbeatAt, expiresAt, state, targets]
+    properties:
+      setId: {type: [string, 'null']}
+      workId: {type: string}
+      epoch: {type: integer, minimum: 1}
+      identity: {type: object}
+      batch: {type: string}
+      goals: {type: array, items: {type: string}}
+      snapshotGeneration: {type: integer, minimum: 0}
+      createdAt: {type: integer, minimum: 0}
+      lastActivity: {type: integer, minimum: 0}
+      heartbeatAt: {type: integer, minimum: 0}
+      expiresAt: {type: integer, minimum: 0}
+      state: {type: string, enum: [open, expired, committed, discarded]}
+      targets: {type: array, items: {type: string}, uniqueItems: true}
+    additionalProperties: false
+  openWorkWarning:
+    type: object
+    required: [work, mutations, message]
+    properties:
+      work: {$ref: '#/definitions/openWorkSummary'}
+      mutations: {type: array, items: {type: object}}
+      message: {type: string}
+    additionalProperties: false
+  fieldOverwrite:
+    type: object
+    required: [node, field, baseValue, priorValue, value, priorGeneration, priorAuthor]
+    properties:
+      node: {type: string}
+      field: {type: string}
+      baseValue: {}
+      priorValue: {}
+      value: {}
+      priorGeneration: {type: [integer, 'null']}
+      priorAuthor: {}
+    additionalProperties: false
   toolError:
     description: A rejected call. Names the violated rule and how to repair the call
     type: object
@@ -1068,6 +1140,7 @@ definitions:
     type: object
     required:
       - id
+      - reasoning
     properties:
       decision: {type: string}
       id:
@@ -1078,7 +1151,7 @@ definitions:
         type: string
         minLength: 1
       description:
-        type: string
+        type: [string, 'null']
       area:
         type: object
         required: [target, extent]
@@ -1087,29 +1160,29 @@ definitions:
           extent: {enum: [area, selection]}
           document: {type: string}
       perspective:
-        enum: [context, container, component]
+        enum: [context, container, component, null]
       relationships:
-        type: object
+        type: [object, 'null']
         properties:
           mode: {enum: [all, selected]}
           include: {type: array, items: {type: object}}
           exclude: {type: array, items: {type: object}}
       labels:
-        type: array
+        type: [array, 'null']
         items: {type: object}
       notes:
-        type: array
+        type: [array, 'null']
         items: {type: object}
       groups:
-        type: array
+        type: [array, 'null']
         items: {type: object}
       layout:
-        type: object
+        type: [object, 'null']
       fragments:
-        type: array
+        type: [array, 'null']
         items: {type: object}
       links:
-        type: array
+        type: [array, 'null']
         items: {type: object}
       members:
         type: array
@@ -1309,6 +1382,13 @@ definitions:
     required:
       - committed
     properties:
+      workId: {type: string}
+      overwrites:
+        type: array
+        items: {$ref: '#/definitions/fieldOverwrite'}
+      conflictNotices:
+        type: array
+        items: {type: object}
       committed:
         type: boolean
       generation:
@@ -1448,6 +1528,9 @@ definitions:
         - batch
         - goals
     properties:
+      workId: {type: string}
+      ownerToken: {type: string}
+      epoch: {type: integer, minimum: 1}
       batch:
         description: A batch id from the goals reply. One the current board does not hold is refused
         $ref: '#/definitions/batchId'
@@ -1471,6 +1554,9 @@ definitions:
       - instructions
       - package
     properties:
+      workId: {type: string}
+      ownerToken: {type: string}
+      epoch: {type: integer, minimum: 1}
       batch:
         description: The batch id, the target of the worker protocol line
         $ref: '#/definitions/batchId'

@@ -120,6 +120,18 @@ impl Store {
         parsed: Option<&crate::reconcile::ParsedDocs>,
     ) -> CommitReport {
         let _flock = FileLock::acquire(&self.out);
+        // A staged changeset always replays on the current store under the mutex.
+        // Snapshot-only status writers retain their separate store-moved protection.
+        if commit.base.is_some() && read_generation(&self.out) != self.status.generation {
+            *self = Store::load(&self.out);
+        }
+        let mut current_commit = commit.clone();
+        if let Some(base) = &current_commit.base {
+            if base.status.generation != self.status.generation {
+                current_commit.rebased_from = Some(base.status.generation);
+            }
+        }
+        let commit = &current_commit;
         if let Some(why) = self.refuse("commit") {
             return CommitReport {
                 applied: 0,
@@ -131,6 +143,34 @@ impl Store {
                 swept: Vec::new(),
             };
         }
+        if let Some(value) = &commit.validation {
+            let validation = (|| -> Result<(), String> {
+                let mut session: crate::tools::ToolSession =
+                    serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
+                session.snapshot = self.clone();
+                session.done = None;
+                session
+                    .dispatch(
+                        "done",
+                        &serde_json::json!({"summary":"commit-time validation"}),
+                    )
+                    .map_err(|e| format!("{}: {}", e.rule, e.message))?;
+                Ok(())
+            })();
+            if let Err(error) = validation {
+                return CommitReport {
+                    applied: 0,
+                    skipped: vec![error],
+                    generation: self.status.generation,
+                    changes: Vec::new(),
+                    touched_entities: BTreeSet::new(),
+                    changed_requirements: BTreeSet::new(),
+                    swept: Vec::new(),
+                };
+            }
+        }
+        let recovery_before = self.clone();
+        let before_fields = super::rebase::facts(self);
         let snapshot = commit.all_or_nothing.then(|| self.clone());
         let sync_entries = parsed
             .map(|parsed| self.sync_docs_for_commit(parsed))
@@ -2821,6 +2861,19 @@ impl Store {
         self.settle_lookalikes(&commit.resolved, generation, &mut batch);
         self.prune_records();
         let changes = self.commit_records(batch);
+        if let Some(progress) = &commit.progress {
+            self.status.changes.retain(|c| {
+                !progress.clear_records.contains(&c.id)
+                    || matches!(c.kind.as_str(), CHANGE_REQ_CREATED | CHANGE_REQ_REVISED)
+            });
+            self.status
+                .failed
+                .retain(|f| !progress.failed.iter().any(|new| new.goal.id == f.goal.id));
+            self.status.failed.extend(progress.failed.iter().cloned());
+            self.status
+                .parked
+                .retain(|p| !progress.finished.contains(&p.goal.id));
+        }
         self.mark_answered_pairs_judged(&applied);
         let mut mutations: Vec<serde_json::Value> = applied
             .iter()
@@ -2837,12 +2890,50 @@ impl Store {
                 mv[k] = v.clone();
             }
         }
-        let entry = self.journal_entry(&build, commit, mutations);
+        let (field_changes, overwrites) = self.audit_fields(&before_fields, commit);
+        self.overwrite_diagnostics(&overwrites, generation);
+        let mut entry = self.journal_entry(&build, commit, mutations);
+        entry.work_id = commit.work_id.clone();
+        entry.actor = commit.actor.clone();
+        entry.field_changes = field_changes;
+        entry.overwrites = overwrites;
+        let _commit_marker = CommitMarker::begin(&self.out);
+        if commit.work_id.is_some() {
+            if let Err(error) = self.prepare_redo(&entry) {
+                *self = recovery_before;
+                return CommitReport {
+                    applied: 0,
+                    skipped: vec![format!("commit recovery could not be persisted: {error}")],
+                    generation: self.status.generation,
+                    changes: Vec::new(),
+                    touched_entities: BTreeSet::new(),
+                    changed_requirements: BTreeSet::new(),
+                    swept: Vec::new(),
+                };
+            }
+        }
         for synced in &sync_entries {
             self.write_journal(synced);
         }
         self.write_journal(&entry);
         self.persist();
+        if commit.work_id.is_some() {
+            if let Err(error) = self.verify_publication() {
+                return CommitReport {
+                    applied: 0,
+                    skipped: vec![format!("commit-recovery-pending: {error}")],
+                    generation,
+                    changes: Vec::new(),
+                    touched_entities: BTreeSet::new(),
+                    changed_requirements: BTreeSet::new(),
+                    swept: Vec::new(),
+                };
+            }
+        }
+        if commit.work_id.is_some() && read_generation(&self.out) == generation {
+            crate::vfs::remove_file(super::recovery::redo_path(&self.out)).ok();
+        }
+        drop(_commit_marker);
         // The renderer redraws the views the commit touched; a view whose emitted
         // `.puml` matches the file on disk is skipped.
         // Mirrors docs/compiler/diagrams.md#rendering.

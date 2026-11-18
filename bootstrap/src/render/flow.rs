@@ -557,16 +557,40 @@ fn leading_number(measure: &str) -> Option<String> {
     (!n.is_empty() && n.chars().any(|c| c.is_ascii_digit())).then_some(n)
 }
 
-pub(super) fn emit_timing(scene: &Scene) -> String {
-    let note = flow_note(scene, None);
-    let governing = scene.requirements.iter().find_map(|rid| {
+fn legacy_timing_measure(scene: &Scene) -> Option<(String, String)> {
+    scene.requirements.iter().find_map(|rid| {
         scene
             .requirement(rid)
             .facets
             .iter()
             .find(|f| f.facet == "quality" && f.measure.is_some())
             .map(|f| (rid.clone(), f.measure.clone().unwrap_or_default()))
-    });
+    })
+}
+
+pub(super) fn emit_timing(scene: &Scene) -> String {
+    let note = flow_note(scene, None);
+    let governing = scene
+        .store
+        .graph
+        .requirements
+        .iter()
+        .filter(|(rid, r)| {
+            scene.requirements.contains(rid)
+                || r.entities.iter().any(|id| scene.entities.contains(id))
+        })
+        .find_map(|(rid, _)| {
+            scene.store.criteria_of(rid).iter().find_map(|cid| {
+                scene
+                    .store
+                    .graph
+                    .criteria
+                    .get(cid)
+                    .and_then(|c| c.measure.as_ref())
+                    .map(|m| (rid.clone(), m.clone()))
+            })
+        })
+        .or_else(|| legacy_timing_measure(scene));
     let mut lanes: Vec<&String> = scene
         .entities
         .iter()

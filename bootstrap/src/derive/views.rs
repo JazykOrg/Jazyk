@@ -2,6 +2,7 @@ use super::*;
 
 // ---- flow analysis specifications ----
 
+#[cfg(test)]
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct FlowClusterSpec {
     pub(super) id: String,
@@ -14,6 +15,7 @@ pub(super) struct FlowClusterSpec {
 }
 
 // The document's title: its root section's title, or the file stem.
+#[cfg(test)]
 pub(super) fn doc_title(store: &Store, doc: &str) -> String {
     store
         .docs
@@ -24,6 +26,7 @@ pub(super) fn doc_title(store: &Store, doc: &str) -> String {
         .unwrap_or_else(|| doc_stem(doc))
 }
 
+#[cfg(test)]
 pub(super) fn doc_stem(doc: &str) -> String {
     let stem = doc.rsplit('/').next().unwrap_or(doc);
     stem.strip_suffix(".md").unwrap_or(stem).to_string()

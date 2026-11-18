@@ -480,9 +480,8 @@ graph mutation ([resolving, failing, parking](./sessions.md#resolving-failing-pa
   re-records, revises, or deletes it), every dirty section of the batch carrying a
   coverage mark, staged or already recorded, and every `covered` claim honest. A gate
   failure leaves the changeset open and names the repair. Goals neither marked done
-  nor failed when `done` commits park. The implicit path (a session ending with staged
-  work and no `done`) commits under the same gates minus the coverage-mark requirement
-  ([budgets](./sessions.md#budgets)). Over MCP, `beginNext: true` claims the next
+  nor failed when `done` commits park. A session ending without `done` retains staging
+  without committing ([budgets](./sessions.md#budgets)). Over MCP, `beginNext: true` claims the next
   ready batch in the same call ([compilation tools](#compilation-tools)). `done` is
   exempt from the repeated-call guard, so repairing a rejected `done` is legitimate.
 
@@ -635,7 +634,7 @@ committed entry after the fact.
 
 Compilation over MCP is goal-based: the agent claims goal batches from
 [the board](./reconciler.md#goal-derivation), staging graph writes into an open
-changeset exactly as an in-process session does. One batch is open at a time per
+changeset exactly as an in-process session does. Several batches may be open per
 serving ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
 
 - `goals({})`: the board: every goal with its kind, class (`compile` or `gc`),
@@ -674,8 +673,8 @@ serving ([compilation over MCP](../frontends/mcp.md#compilation-over-mcp)).
   board (blocked and optional goals aside) also runs the deterministic tail
   ([checks](./compilation.md#checks), rendering, docsgen, verdict) and reports the
   verdict and the generation rows that became ready.
-- `abandon_goals({reason})`: drop the staged changeset. Leaves no trace; the batch's
-  goals return to `open`.
+- `abandon_goals({reason})`: discard the selected own changeset. Its goals remain
+  derivable. Only an identity-only lifecycle receipt remains.
 
 ## Generation tools
 
@@ -934,11 +933,10 @@ The named errors a caller meets beyond the gates:
 - `batch-required`: a write tool, goal tool, `done`, or `abandon_goals` without
   `batch` on a serving with several open batches; the error lists the open ids
   ([the control plane over MCP](../frontends/mcp.md#the-control-plane-over-mcp)).
-- `commit-conflict`: `done` or a ledger `record_*` whose changeset collides with a
-  commit that landed after the batch opened. The reply lists each node, section, or
-  goal conflict with the generation that changed it. The batch stays open on the
-  current generation with the conflicting mutations and resolutions dropped
-  ([commit conflicts](./graph.md#commit-conflicts)).
+- `open-work-owner`: the work expired or ownership changed. Resume with the current
+  receipt or adopt expired work explicitly. Staged data remains persisted.
+- A ledger `record_*` retains its row-conflict guards. Staged graph `done` reports
+  field overwrites as successful commit data, not a conflict refusal.
 - `store-busy`: the commit lock stayed held past `STORE_LOCK_WAIT`; nothing changed,
   retry ([concurrency](./graph.md#concurrency)).
 - `session-complete`: a write tool, goal tool, `done`, `abandon_goals`, or
@@ -1196,3 +1194,25 @@ that decision as decree provenance after applying the field edits. Source
 quotation uses `upsert_view` with `section` and `quote`, including existing views.
 Suppression accepts `decision` for an explicit human choice; model suppression
 records derived provenance with the area's sources and reasoning.
+
+## Open work tools
+
+`open_work({node?, goal?, state?, cursor?, limit?})` lists persisted work.
+`read_open_work({id})` returns its manifest and staged mutations.
+`adopt_open_work({id, expectedEpoch, reason})` transfers expired work explicitly.
+`discard_open_work({id, expectedEpoch, reason})` discards own or expired work.
+`unstage({mutationIds})` withdraws selected atomic staged calls and validates the
+remaining changeset. Whole atomic calls are withdrawn together. Dependent
+creates cannot be withdrawn without their consumers. Withdrawal invalidates goal
+claims, which must be marked again against the retained work. `begin_goals({workId, ownerToken})` resumes owned persisted work.
+The opening reply supplies `ownerToken`; discovery never reveals it. Adoption
+rotates the token and advances the owner epoch.
+
+Accepted writes return overlap warnings with foreign identity and staged changes.
+Warnings explicitly describe conflicts the second committer will see. No override
+is required. `done` reports committed field overwrites and pending notices; overlap
+alone never refuses a commit or opens a mandatory review goal. Existing integrity
+and completion gates remain in force.
+
+`update_view` requires `reasoning`. `query: null` removes a query. Null optional
+presentation fields remove their overrides. Purpose and area remain present.

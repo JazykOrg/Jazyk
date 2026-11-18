@@ -743,6 +743,15 @@ impl Store {
                 ..Default::default()
             };
         }
+        if crate::vfs::exists(&super::recovery::redo_path(out)) && !commit_in_progress(out) {
+            if let Err(error) = Self::recover_redo(out) {
+                return Store {
+                    out: out.into(),
+                    load_errors: vec![error],
+                    ..Default::default()
+                };
+            }
+        }
         // Readers never take the lock. A read counts when no commit was in progress at
         // its start or its end and the generation held still across it; otherwise it
         // waits and retries. A store that never holds still within the wait loads
@@ -1254,6 +1263,48 @@ impl Store {
     }
 
     // A commit's write: the mentions in their canonical order, then the files.
+    pub(super) fn verify_publication(&self) -> Result<(), String> {
+        let loaded = Self::load_once(&self.out);
+        if !loaded.load_errors.is_empty() {
+            return Err(loaded.load_errors.join("; "));
+        }
+        if loaded.status.generation != self.status.generation
+            || super::rebase::facts(&loaded) != super::rebase::facts(self)
+            || loaded.graph.redirects != self.graph.redirects
+        {
+            return Err("saved graph differs from the pending commit image".into());
+        }
+        let referenced = reference_sources(&self.graph);
+        let saved_referenced = reference_sources(&loaded.graph);
+        let own = |entity: &Entity, refs: Option<&Vec<SourceRef>>| {
+            entity
+                .mentions
+                .iter()
+                .filter(|m| refs.is_none_or(|refs| !refs.contains(m)))
+                .map(|m| serde_json::to_string(m).unwrap_or_default())
+                .collect::<BTreeSet<_>>()
+        };
+        for (id, entity) in &self.graph.entities {
+            if loaded.graph.entities.get(id).is_none_or(|saved| {
+                own(saved, saved_referenced.get(id)) != own(entity, referenced.get(id))
+            }) {
+                return Err(format!("saved authored mentions differ on {id}"));
+            }
+        }
+        if loaded.docs.len() != self.docs.len() {
+            return Err("saved source inventory differs".into());
+        }
+        for (doc, record) in &self.docs {
+            let Some(saved) = loaded.docs.get(doc) else {
+                return Err(format!("missing saved source {doc}"));
+            };
+            if doc_record_value(record) != doc_record_value(saved) {
+                return Err(format!("saved source differs: {doc}"));
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn persist(&mut self) {
         let roots = self.status.roots.clone();
         normalize_mentions(&mut self.graph, &self.docs, &roots, false);

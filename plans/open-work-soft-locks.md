@@ -1,7 +1,7 @@
 # Persisted open work and soft node locks
 
-Status: implementation plan, 2026-11-17. This document records owner direction and
-implementation decisions. It does not claim that the behavior is implemented.
+Status: implementation and local validation, 2026-11-17. This document records
+owner direction, the implementation contract, and integration boundaries.
 
 ## Scope and integration baseline
 
@@ -16,9 +16,9 @@ multiple batches per serving, executor `max_sessions`, release gates, tier
 barriers, bounded store commit locks, and informational `openBy`. Replace its
 conflict refusal and ephemeral open-task records with the contracts below.
 
-This turn delivers the plan. The specification edits, engine implementation,
-behavioral tests, full Rust validation, and implementation integration are the
-following work. No dogfood compilation or graph mutation is part of planning.
+Implementation uses `feat/persisted-open-work` in `/Users/matus/dev/jazyk-open-work`,
+branched from `master` at `4766db6d` after parallel work merged. Dogfood compilation
+and graph mutation remain outside this workflow.
 
 ## Decisions
 
@@ -26,7 +26,8 @@ following work. No dogfood compilation or graph mutation is part of planning.
 - Uncommitted graph work survives crashes, disconnects, stops, and model failures.
   Only explicit commit or discard removes the recoverable changeset.
 - Soft locks are warnings derived from live open work. They never claim a node,
-  hide a goal, refuse a mutation, or prevent a commit.
+  hide a goal, refuse a mutation, or prevent a commit. No explicit override or
+  additional review goal is required for overlapping work.
 - Commit replays field changes on the current graph. The last committed writer
   wins an overlapping field. Disjoint fields survive.
 - Overwrites are reported to the committer, journaled, and delivered to other
@@ -69,18 +70,15 @@ Native layout, relative to the document-set directory:
 local/open/<work-id>/
   manifest.yaml
   events.jsonl
-  base.yaml
 ```
 
 `manifest.yaml` contains format version, work ID, document-set identity, state,
 owner epoch, owner identity, batch and goals with their original `change`, snapshot
-generation, configuration hash, creation time, last activity, heartbeat,
-`expiresAt`, and last complete event sequence. `base.yaml` contains the immutable
-opening graph snapshot needed to restore the original view and validation context.
-It uses the existing serializable store representation, excluding runtime caches,
-credentials and process resources. It is local and is not a new graph format or
-store-version migration. Prefer a complete snapshot initially to a new mechanism
-for lazily reconstructing missing historical fields.
+generation, creation time, last activity, heartbeat, `expiresAt`, and last complete
+event sequence. The event checkpoint envelope contains the immutable opening graph
+snapshot needed to restore the original view and validation context. It uses the
+existing serializable session representation, excluding process resources. It is
+local and is not a new graph format or store-version migration.
 
 Owner identity includes worker ID, client name, conversation ID and display name,
 session ID/name, optional parent agent, PID and host where available. Missing
@@ -111,7 +109,7 @@ Document this capability explicitly.
 
 ## Lifecycle and concurrency
 
-Opening work persists the manifest and base before returning `workId`. Opening a
+Opening work persists its initial checkpoint and manifest before returning `workId`. Opening a
 batch does not itself soft-lock its goals' target nodes. Only staged mutations do.
 Conversational atomic graph edits use this same machinery with an empty goal list.
 Build and ledger visibility records must not masquerade as staged node locks.
@@ -142,8 +140,28 @@ The later staging reply names the earlier work immediately. The earlier work get
 an overlap notice on its next tool reply, even if its earlier stage preceded the
 second agent. Thus both receive warnings without requiring retroactive delivery.
 Warnings name node/section, work ID, owner identity, batch/goals, staged mutations
-on that target, and last activity. Reads carry one short note plus work IDs; full
-mutation details come from `read_open_work`.
+on that target, and last activity. The warning explicitly says the change was
+staged successfully and explains the commit-order consequence: if the other work
+commits first, this work's commit reply will present any merge conflicts with
+those committed changes. Disjoint fields merge; overlapping fields use the later
+committer's value and report what it overwrote. Existing integrity gates still
+apply. The warning requires no override or review acknowledgment.
+
+E.g.:
+
+```text
+Staged successfully. WARNING: ent:order also has staged changes in work w-other
+(worker agent-2, client Codex, session orders, batch b412-1; last active 10s ago).
+If that work commits first, your commit reply will report any merge conflicts
+with its committed changes. Disjoint fields merge; your later commit wins
+conflicting fields and reports what it overwrites, subject to integrity gates.
+Use read_open_work(w-other) to inspect its staged mutations.
+```
+
+Reads carry one short note plus work IDs; full mutation details come from
+`read_open_work`. Overlap does not create mandatory review goals or mark adjacent
+nodes dirty merely to require acknowledgment. Normal commit dirtiness and goal
+derivation still follow actual graph changes.
 
 A heartbeat refreshes only work still attached to an active execution. A connected
 server must not refresh abandoned or stopped conversations indefinitely. Stop
@@ -310,14 +328,16 @@ Each implementation slice updates its requirements before code. Read the
    adoption with a racy `meta`/`put_meta` pair. Hosted writes fail clearly without a
    durable record store. No fallback into Git-exported workspace files.
 8. Update session, serving and inline prompt payloads and relevant workflow skills.
-   Explain that warnings follow accepted writes; inspect, proceed, wait, or coordinate
-   outside Jazyk. Explain successful overwrite replies, recovery IDs, expiry,
+   Explain that warnings follow accepted writes and state what conflicts the later
+   committer will see. Inspect, proceed, wait, or coordinate outside Jazyk without
+   requiring an override or review acknowledgment. Explain overwrite replies, recovery IDs, expiry,
    explicit adoption/discard, and integrity-gate repair. Share guidance through
    partials and preserve parser conventions. No corrective Rust prompt strings.
 9. Run focused tests, then full validation, commit coherent slices, integrate with
-   `git merge --no-ff` after the parallel-work base is integrated, and push engine
-   changes to `master`. Do not merge the plan branch into master prematurely if it
-   would import the other effort's unverified implementation. No deployment.
+   `git merge --no-ff` after the parallel-work base is integrated, and prepare the combined
+   deployment-triggering push to `master`. Do not merge the plan branch into master prematurely if it
+   would import the other effort's unverified implementation. Deploy only after both
+   efforts pass integrated verification, as the owner subsequently authorized.
 
 ## Tests and acceptance evidence
 
@@ -328,7 +348,7 @@ sessions. No paid model sessions and no `jazyk compile/check/gen/test` on dogfoo
 |---|---|
 | Crash after stage success | Kill the process, reopen by work ID; mutation IDs, staged writes, scope, outcomes and original base survive; no graph commit occurred |
 | Disk failure / torn append | Refused call changes neither effective staging nor touched-node index; complete earlier records survive; corrupt interior logs remain inspectable |
-| Two agents stage one node | Both calls succeed; later caller gets a warning immediately, earlier gets it next reply; full foreign staging and identity can be read |
+| Two agents stage one node | Both calls succeed without override; later caller gets a warning immediately explaining second-committer conflict reporting, earlier gets it next reply; full foreign staging and identity can be read; no overlap review gate is created |
 | Both commit the same field | Both commits succeed in either order; later value wins; reply/journal include exact prior value, generation and author; info diagnostic exists |
 | Disjoint fields | Entity name and definition, distinct attributes, requirement/criterion/view/diagnostic fields survive both commits; no false overwrite diagnostic |
 | Explicit collections | Add/remove by member identity commutes where disjoint; overlapping add/remove follows commit order; full replacement is reported accurately |
@@ -368,15 +388,36 @@ Planning alone requires plan link/style checks and `git diff --check`, not Rust
 builds or graph reconciliation. Configure the owner's signed commit identity before
 committing. Keep feature branches local and preserve unrelated work.
 
-## Remaining work and boundaries
+## Implementation decisions and release boundaries
 
-The plan settles the requested behavior and test contract. Normative docs, schema,
-code, fixtures, validation and implementation merge remain. Graph reconciliation
-is pending and must not start a dogfood model session under this request.
+The native log stores the existing serialized session checkpoint envelope alongside
+staged mutations. The original snapshot is inside that envelope rather than a
+separate `base.yaml`. Accepted calls remain atomic and recovery reuses the existing
+session representation. Expired records are retained until explicit discard.
 
-Host-side durable atomic adoption and commit-crash recovery are required engineering
-work, not optional follow-ups. The host adapter implementation and editor UI in
-`jazyk-cloud` remain separately owned. Browser process-exit durability requires host
-persistence and is not supplied by an in-memory workspace. Expired work may grow
-without bound until explicitly discarded; paginated discovery makes it manageable
-without silently losing recovery data. Retention automation needs separate design.
+Conflict notices derive from journal receipts on every reply and at `done`, rather
+than a separately mutated recipient queue. Delivery never consumes the only copy.
+`openBy` retains worker names for existing consumers; `openWork` supplies stable work
+IDs, identity, activity and expiry. Atomic-call groups and monotonic mutation IDs
+make `unstage` explicit; withdrawing work invalidates its goal claims.
+
+Graph commits use a local redo image and verify saved shards before removing it.
+Goal-resolution progress lands with the graph. Hosted commits retain a recovery
+payload until the host acknowledges a durable snapshot containing the journal
+receipt. Cloud adds the atomic record adapter and migration `0040_open_work.sql`.
+No store version bump is needed for runtime open-work records.
+
+Local validation covers cargo tests and CLI fixtures, formatting, clippy with
+warnings denied, WASM checking, and release compilation. Tests include killed
+process recovery, adoption and owner fencing, overwrite attribution, disjoint field
+and alias merging, repeated notices, redo recovery, and a host crash before its
+workspace checkpoint. Cloud validates its record adapter with real PostgreSQL and
+its editor refresh behavior with unit tests. No paid model sessions are required.
+
+Integration coordinates with the authored-diagram effort. Its new decision and view
+fields use the shared touched-target and serialized field audit. Both efforts must
+be complete and verified before the combined deployment-triggering push. Keep
+work branches local and merge with `git merge --no-ff`. Hosted publication and live
+verification follow the owner's explicit combined-deployment instruction. AWS
+actions require an owner-supplied profile. Graph reconciliation remains pending;
+no dogfood LLM session runs as part of this implementation.

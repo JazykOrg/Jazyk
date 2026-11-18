@@ -29,3 +29,12 @@ with `mark_goal_done`, `mark_goal_failed`, and `done`; `load_skill` loads guidan
 A source PlantUML section opens a source-backed diagram obligation after semantic
 extraction. Diagram-review tools author its quoted view. Extraction itself keeps
 its existing semantic tools. A heuristic suppression cannot waive this obligation.
+
+## Evidence for suggestions
+
+Interaction candidates use directional dependency edges, transitions, and existing
+criteria with scenario conditions. They never inspect requirement classifications.
+Stateful subjects with measured criteria can receive an optional timing review.
+The model confirms whether the bound concerns time. Criteria may arrive after
+initial diagram review and open a later optional review. No count requires a
+speculative timing diagram.

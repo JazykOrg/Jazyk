@@ -25,6 +25,7 @@ pub struct McpServer {
     // The client name from `initialize`, recorded on feedback entries so an external
     // agent's report is distinguishable from a compilation turn's.
     client: std::sync::Mutex<Option<String>>,
+    identity: std::sync::Mutex<Value>,
     // The open goal batch: a ToolSession holding the staged changeset across calls.
     // Single-flight per serving. Mirrors docs/frontends/mcp.md#compilation-over-mcp.
     open: std::sync::Mutex<Option<OpenBatch>>,
@@ -181,6 +182,10 @@ struct OpenCase {
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct OpenBatch {
+    #[serde(default)]
+    work: Option<crate::open_work::Receipt>,
+    #[serde(skip)]
+    heartbeat: Option<std::sync::Arc<()>>,
     // The project configuration the batch opened against; a commit after another
     // configuration write refuses `config-moved` (docs/compiler/control-plane.md#workers-and-open-work).
     #[serde(default)]
@@ -204,6 +209,7 @@ mod catalog;
 mod chat;
 mod dispatch;
 mod lifecycle;
+mod open_work;
 mod router;
 mod server;
 mod transport;

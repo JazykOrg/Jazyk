@@ -789,6 +789,7 @@ impl WorkItem {
             cached: None,
             tokens_source: None,
             all_or_nothing: false,
+            ..Default::default()
         }
     }
 
@@ -1151,6 +1152,14 @@ pub struct OpenedGoal {
 // One file under journal/, one per generation. Mirrors docs/compiler/graph.md#journal.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct JournalEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub field_changes: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overwrites: Vec<serde_json::Value>,
     pub build: String,
     #[serde(default)]
     pub generation: u64,

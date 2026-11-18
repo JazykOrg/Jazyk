@@ -19,14 +19,15 @@ pub(crate) mod tests;
 mod thresholds;
 mod views;
 
-use levels::{entity_document_rank_with, flow_view_level_index, level_flow_views, Levels};
+use levels::{entity_document_rank_with, flow_view_level_index, Levels};
 pub use levels::{
     flow_view_level, flow_view_levels, level_view_id, level_view_id_with, level_view_members,
     level_view_members_with, lift_into, view_levels,
 };
 #[cfg(test)]
 use levels::{
-    level_flow_views_scan, level_holds, level_id, level_kind, level_members_of_scan, levels, Level,
+    level_flow_views, level_flow_views_scan, level_holds, level_id, level_kind,
+    level_members_of_scan, levels, Level,
 };
 pub(crate) use order::doc_levels_in;
 pub use order::{doc_levels_from, document_order, Indices};
@@ -37,8 +38,10 @@ pub use thresholds::{
     record_threshold_crossings, threshold_crossings, view_edge_count, Crossing, FLOW_KINDS,
 };
 use thresholds::{live_members, record_threshold_crossings_with};
+use views::drawn_entities;
 pub use views::{children_of_view, drawn_entities_of, query_matches, recompute_query_views};
-use views::{doc_stem, doc_title, drawn_entities, FlowClusterSpec};
+#[cfg(test)]
+use views::{doc_stem, doc_title, FlowClusterSpec};
 
 // Everything derived, in dependency order: relationships feed the level and object
 // rules, state machines feed the state rule, views feed the limit counts.
@@ -181,20 +184,5 @@ pub fn record_ledger_stale(store: &mut Store, gs: &crate::gen::GenSettings) {
 
 /// Existing topology and source grouping without creating diagrams.
 pub fn diagram_flow_areas(store: &Store) -> Vec<(String, String, Vec<String>)> {
-    let ix = Indices::build(store);
-    level_flow_views(store, &ix)
-        .iter()
-        .filter(|(_, v)| v.kind == "use-case")
-        .map(|(target, v)| {
-            let doc = v
-                .members
-                .iter()
-                .filter_map(|id| store.graph.requirements.get(id))
-                .flat_map(|r| r.sources.iter())
-                .map(|s| s.doc.clone())
-                .next()
-                .unwrap_or_else(|| "derived".into());
-            (target.clone(), doc, v.members.clone())
-        })
-        .collect()
+    levels::diagram_areas(store, &Indices::build(store))
 }

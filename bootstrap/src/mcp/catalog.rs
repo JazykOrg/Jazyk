@@ -23,6 +23,13 @@ impl McpServer {
                 .into_iter()
                 .collect::<BTreeSet<_>>();
             names.extend(LIFECYCLE);
+            names.extend([
+                "open_work",
+                "read_open_work",
+                "adopt_open_work",
+                "discard_open_work",
+                "unstage",
+            ]);
             if self.conversational_graph_writer() {
                 names.insert("edit_graph");
                 names.insert("edit_fact");

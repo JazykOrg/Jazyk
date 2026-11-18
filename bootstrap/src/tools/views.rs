@@ -392,6 +392,15 @@ impl ToolSession {
                         ),
                     ));
                 };
+                if ["purpose", "area"]
+                    .iter()
+                    .any(|key| args.get(*key).is_some_and(Value::is_null))
+                {
+                    return Err(ToolError::new(
+                        "diagram-fields",
+                        "Purpose and area cannot be cleared".into(),
+                    ));
+                }
                 let authored = Self::diagram_fields(args);
                 let mut merged = current.authored.clone();
                 for (key, value) in &authored {

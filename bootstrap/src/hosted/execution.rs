@@ -15,6 +15,8 @@ pub(crate) fn test_execution_scope(execution: Execution) -> impl Drop {
 }
 impl ExecutionScope {
     pub(super) fn enter(execution: Execution) -> Self {
+        #[cfg(test)]
+        let execution = super::tests::with_host(&execution);
         let previous = CHECKPOINT_SEQUENCE.with(|s| {
             s.replace(
                 execution
@@ -56,7 +58,13 @@ pub(crate) async fn checkpoint(mut capsule: Value) -> Result<u64, String> {
     }
     capsule["sequence"] = json!(sequence);
     let snapshot = crate::vfs::scoped_snapshot()?;
+    let confirmed = snapshot.clone();
     let next = sink(capsule, snapshot).await?;
+    if let Some(records) = record_store() {
+        if let Err(error) = super::confirm_open_work(&confirmed, records.as_ref()) {
+            eprintln!("[jazyk] saved graph; open work payload retained: {error}");
+        }
+    }
     if next <= sequence {
         return Err("Checkpoint sequence did not advance.".into());
     }
@@ -155,4 +163,19 @@ pub fn close_inputs(session: &str) -> bool {
         .with(|e| e.borrow().as_ref().and_then(|e| e.input_close.clone()))
         .map(|close| close(session))
         .unwrap_or(true)
+}
+
+pub(crate) fn has_execution() -> bool {
+    EXECUTION.with(|e| e.borrow().is_some())
+}
+
+pub(crate) fn open_work_cancel() -> Option<(
+    Arc<std::sync::atomic::AtomicBool>,
+    Arc<std::sync::atomic::AtomicBool>,
+)> {
+    EXECUTION.with(|e| {
+        e.borrow()
+            .as_ref()
+            .map(|e| (e.cancel.clone(), e.suspend.clone()))
+    })
 }

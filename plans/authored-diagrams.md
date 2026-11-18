@@ -117,7 +117,7 @@ The renderer emits unfragmented requirements at their list positions and replace
 each fragment's contiguous member interval with its fragment tree. Each message
 occurs exactly once. Crossing intervals, cyclic refs, unknown members, duplicate
 fragment IDs, and unsourced guards are refused. `par` expresses only sourced
-concurrency. Timing continues to read quality measures and transitions; it cannot
+concurrency. Timing continues to read criterion bounds and transitions; it cannot
 invent time coordinates. State diagrams continue to read the subject's derived
 machine. Deployment diagrams continue to read valued attributes.
 
@@ -335,13 +335,13 @@ alone does not justify drawing all eligible kinds.
 | `package` | At least two existing containment groups have children and relationships crossing their boundaries. | No separate quota. It can answer a mandatory structural question if package boundaries are the question. | Show existing group boundaries and cross-group dependencies. Do not invent architectural layers to make packages look tidy. |
 | `composite` | One stated whole has at least two parts with connectors/interactions among them or across its boundary. | No separate quota. It can answer mandatory internal-structure review when connected parts are the issue. | Draw one boundary, its parts, and sourced connectors. Distinguish presentation groups from real containment. |
 | `use-case` | An actor participates in a behavior cluster of at least 4 statements, or the source explicitly asks for an actor-goal overview. | The behavior review is mandatory at 12 statements. Use-case is suitable only for actor-goal scope, not sufficient for a required process or interaction question. | Identify the externally meaningful intent and actors from statements. Never turn each sentence into a separate user goal or draw an internal subsystem as an invented actor. |
-| `activity` | A behavior cluster has at least 4 statements; failure-mode facets or competing outgoing transitions particularly suggest paths and decisions. | Behavior review at 12 statements; for a process-path finding this is the preferred kind. | Show actions, sourced ordering, alternatives, and recovery. Source every guard; do not invent a branch, join, or concurrency because the picture looks better. |
+| `activity` | A behavior cluster has at least 4 statements; sourced guards, triggers, or competing outgoing transitions particularly suggest paths and decisions. | Behavior review at 12 statements; for a process-path finding this is the preferred kind. | Show actions, sourced ordering, alternatives, and recovery. Source every guard; do not invent a branch, join, or concurrency because the picture looks better. |
 | `state` | A machine has at least 3 distinct states. A smaller machine can be drawn when explicitly requested. | Lifecycle review at 8 states. A sequence diagram cannot replace it. | Explain one subject's states and allowed transitions, using its actual machine. Cite triggering requirements; expose missing information rather than invent transitions. |
 | `sequence` | At least 4 behavior statements involve at least 2 message participants. Source order, causal language, and message edges suggest the candidate. | Behavior review at 12 statements. For a message-order finding, use sequence or a justified communication alternative. | Select one scenario, identify initiator/receiver per step, and source message order and fragments. Add failure paths only where stated. Do not reproduce every statement as a message. |
 | `communication` | At least 3 participants interact and understanding their connections is more useful than vertical chronology. | No independent quota. It can answer mandatory interaction review when topology plus numbered order answers the question. | Show who communicates with whom and number the interactions. Prefer sequence when temporal order or nested alternatives dominate; avoid redundant twins. |
 | `object` | A type has at least 2 known instances, especially instances with values or links worth comparing. | Instance-example review at 8 instances, with suppression appropriate if the examples are repetitive. | Choose a meaningful concrete snapshot, show instance/type identity and known values/links. Never invent example values or turn types into instances. |
 | `deployment` | Any valued placement fact exists in an area. | Placement review at 6 placement facts. A component diagram without placements does not answer it. | Show only artifacts and placements stated by the graph. Do not assume hosts, replicas, networks, or cloud services from conventional architecture. |
-| `timing` | A stateful subject also has quality measures that might express time constraints. The model must read their source and confirm temporal relevance. | No numeric rule forces timing solely from the number of quality measures. An explicit timing-diagram request or stated diagram obligation requires review. | Use actual state changes and stated durations, deadlines, or measures. If no meaningful time scale is stated, explain the missing facts and suppress rather than guessing a trace. |
+| `timing` | A stateful subject also has bounds in criteria that might express time constraints. The model must read their source and confirm temporal relevance. | No numeric rule forces timing solely from the number of criteria. An explicit timing-diagram request or stated diagram obligation requires review. | Use actual state changes and stated durations, deadlines, or measures. If no meaningful time scale is stated, explain the missing facts and suppress rather than guessing a trace. |
 | `overview` | At least 3 authored interaction diagrams explain the same area and could be related phases of one scenario. | No automatic count-based requirement. An explicit scenario-map request requires review; a mandatory readability task can require a linked coarse explanation, with overview as one option. | Verify phases and their order from sources, then link the existing interactions. Do not invent a workflow merely because three diagrams share a parent or title. |
 
 The positive signals for package/composite/communication/timing/overview can
@@ -349,14 +349,13 @@ open optional review below the family size threshold. Fold them into the same
 area task as other findings. Use stable question keys such as `time-constraints`
 and `interaction-map`; put their presence/count tests in `limits.rs` alongside
 the family limits. Do not introduce one model call per candidate type. False
-positives are expected: a quality bound can concern throughput rather than time,
+positives are expected: a criterion bound can concern throughput rather than time,
 and three interactions can be unrelated. The model reads evidence and suppresses
 that suggestion. Do not add undocumented keywords, regex classifications, or a
 hidden model call to the static analyzer.
 
 For behavior clusters, static evidence exposes supported questions: an actor
-suggests actor-goal scope, directed edges suggest interaction, failure-mode facets
-and transitions suggest process paths. Generic large clusters get a behavior
+suggests actor-goal scope, directed edges suggest interaction, guards and transitions suggest process paths. Generic large clusters get a behavior
 review without a forced notation. A session may produce both activity and sequence
 when they explain distinct questions; it states both purposes and evidence.
 The harness never requires all alternatives and the model cannot replace a
@@ -396,7 +395,7 @@ strictly greater than soft or hard, matching existing limit semantics.
 |---|---|---:|---:|---|
 | `structure` | Direct children of an entity or scope root, excluding instances | 3 | 9 | class, component, package, composite |
 | `system` | A `system` entity; count is max(1, direct children plus distinct external interactors) | 0 | 7 | component with context/container/component perspective |
-| `flow` | Behavior and failure-mode requirements reaching one containment level, clustered by source document | 3 | 11 | use-case, activity, sequence, communication, timing, overview |
+| `flow` | Requirements with dependency edges, transitions or scenario criteria reaching one containment level, clustered by source document | 3 | 11 | use-case, activity, sequence, communication, timing, overview |
 | `state` | Distinct states of one derived machine | 2 | 7 | state on its subject |
 | `object` | Instances of one type through instantiation groups | 1 | 7 | object |
 | `deployment` | Distinct `(entity, attribute name, value)` placement facts in one nearest system, or scope when no system contains it | 0 | 5 | deployment |
@@ -617,7 +616,7 @@ Worked runtime evidence, shown separately from the shared instructions:
 Area: ent:checkout, document docs/checkout.md
 Question: How do the participants complete checkout and recover from failure?
 Review: mandatory, 14 behavior statements (mandatory above 11)
-Evidence: 4 message participants, 2 failure-mode statements
+Evidence: 4 message participants, 2 guarded transitions
 Candidates: activity for paths; sequence for messages and order
 Existing: view:usecase/checkout, purpose "What can a customer do?"
 Coverage: actor-goal scope covered; paths and interactions not yet covered

@@ -138,9 +138,9 @@ this spawning path and are not for standalone servings:
 - `--ephemeral`: the serving belongs to one session. It does not register in the
   [worker registry](../compiler/control-plane.md#workers-and-open-work) (the session is not
   a peer worker, it is part of a run that already registered), and end of input
-  with an open batch runs the implicit finish: staged work commits under the same
-  gates the [budget path](../compiler/sessions.md#budgets) uses, so an agent that dies
-  mid-batch still lands its valid extractions. It does not serve `await_changes`
+  with an open batch retains its staged work; explicit `done` commits under the same
+  [completion gates](../compiler/sessions.md#commit). An agent that dies mid-batch
+  leaves valid extractions available for resume. It does not serve `await_changes`
   or `recent_edits`:
   the session exists for one batch, and a long poll is a stall wearing a tool's name
   (a weak model was observed idling a build on it instead of calling `done`).
@@ -320,9 +320,8 @@ agent spawns nothing:
   An owned worker's task history uses five-row pages with the existing cursors.
   The editor's HTTP task view and retained runtime evidence are unchanged.
 - The server stops when the session closes. Jazyk closes the session first (the agent
-  tears its client down), then stops the listener and runs the implicit finish, the
-  same one end of input runs on a stdio serving: staged work commits under the
-  budget path's gates, and the transcript finishes.
+  tears its client down), then stops the listener and retains staged work,
+  as end of input does on a stdio serving. The transcript finishes.
 - A server that cannot start fails the session before it is created: the trace
   carries `sessionFailed` with `session: mcp http serving: cannot bind 127.0.0.1:
   <error>`, and the batch retries or fails as any session failure does. A session
@@ -476,11 +475,10 @@ The serving is a worker among workers, and says so:
   name (kind `agent`), heartbeats while the process lives, and deregisters on exit.
 - `begin_goals` opens a batch; `begin_binding` and `begin_generation` open a ledger
   row. Opening claims nothing and refuses nothing for another worker's sake: two
-  workers may open the same goals, and the first commit wins
+  workers may open the same goals and later commits merge fields
   ([workers and open work](../compiler/control-plane.md#workers-and-open-work)). The
-  later `done` or `record_*` gets a
-  [commit conflict](../compiler/graph.md#commit-conflicts) naming what changed, and
-  the agent repairs and finishes again. The board's `openBy` per goal names the
+  later `done` reports [field overwrites](../compiler/graph.md#commit-conflicts).
+  Ledger `record_*` retains its evidence guards. The board's `openBy` per goal names the
   workers with it open, so an agent can pick other work.
 - A serving holds any number of open batches. With one open, the write tools,
   `mark_goal_done`, `done`, and `abandon_goals` act on it. With several, they take
@@ -602,10 +600,8 @@ serving; what it claims is a batch:
 - A goal the batch neither resolved nor failed when `done` commits parks; a parked
   goal resumes first in the next batch that fits it
   ([parked and failed](../compiler/reconciler.md#parked-and-failed)).
-- `abandon_goals({reason})` drops the staged work. An abandoned batch leaves no
-  trace, the same contract as an aborted session; its goals return to `open`. A
-  server that dies mid-batch loses only staging; any process recomputes the board
-  and the goals reappear.
+- `abandon_goals({reason})` explicitly discards own staged work. A lifecycle receipt
+  remains. A server that dies mid-batch retains staging for resume or adoption.
 - GC goals become ready as their cones settle
   ([compile and garbage collection](../compiler/compilation.md#compile-and-garbage-collection)).
   The board offers them in the same order the internal scheduler would, so an
@@ -756,8 +752,8 @@ time even with a compile running next to the server. See
 
 An internal worker serving accepts `--cancel-file PATH`. The runner creates this
 attempt-specific file before stopping the worker. Once it exists, tool calls are
-refused and end of input discards staged work. An ordinary session end still uses
-the implicit finish. A subsequent build uses new session fences.
+refused and end of input retains staged work. Ordinary session end also retains
+work without implicit commit. A subsequent build uses new session fences.
 
 ## Project integration context
 
@@ -779,3 +775,23 @@ query has a five-second limit, takes no optional locks, and never runs a
 configured filesystem monitor. A query past its limit leaves its value null.
 Browser-only projects report that no GitHub integration is attached. A metadata failure is
 reported as unavailable, never as proof that the project is unlinked.
+
+## Recoverable changesets
+
+`begin_goals` returns a stable `workId`. Each accepted staged call persists before
+its reply. Disconnect, HTTP shutdown, EOF and Stop retain work without committing.
+The owner resumes with `begin_goals({workId, ownerToken})`. Discovery exposes `open_work` and
+`read_open_work`. Expired work is explicitly adopted or discarded; active foreign
+work cannot be discarded. `abandon_goals` explicitly discards own work.
+
+A staging overlap succeeds with an immediate warning naming the other work. The
+warning says that if the other work commits first, the later commit reports any
+merge conflicts. Disjoint fields merge and the later writer wins overlapping
+fields, subject to integrity gates. `done` returns structured overwrite details.
+Other affected open work receives notices on its next reply and at completion.
+
+Clients may identify the conversation in initialize `_meta.jazyk` with
+`conversationId`, `sessionName`, and `parentAgentId`. Persisted work carries this
+identity alongside worker/client and available host/PID information. These fields
+are attribution data and grant no permissions. Resume uses the private owner token
+from the opening reply; discovery and warning replies never disclose that token.

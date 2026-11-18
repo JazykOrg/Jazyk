@@ -42,8 +42,8 @@ the graph itself, so a retry is a clean run, and what the model saw is exactly w
 prompt and the tool replies rendered ([preview](#preview)).
 
 A session produces either a committed [changeset](./graph.md#changesets) with each goal
-of the batch resolved, failed, or left open, or a failed session that leaves no trace in
-the graph. Nothing in between. A goal left open after four attempts parks
+of the batch resolved, failed, or left open, or persisted unfinished work.
+Uncommitted work remains outside the graph until explicit completion. A goal left open after four attempts parks
 ([resolving, failing, parking](#resolving-failing-parking)).
 
 ## The prompt
@@ -361,11 +361,9 @@ A refusal is not an invalid mutation: the call was well-formed, the model is stu
 The serving does not add it to its invalid-mutation count. The
 [embedded agent](../frontends/acp.md#the-embedded-agent) has a separate failure
 counter with a limit of twenty. Failed calls, including refusals, increment it at
-most once per model transition. A successful call resets it. Refusals are cheap (a refused call never
-dispatches) and counted: past eight in one batch, the serving finishes the session
-implicitly, committing the staged work under the same gates the [budget path](#budgets)
-uses. A weak model that loops keeps what it earned; the guard only stops it paying for
-the loop.
+most once per model transition. A successful call resets it. The guard refuses
+repeated calls. The harness stops a stuck session at its failed-call bound and
+retains staged work without committing.
 
 ## Execution
 
@@ -381,7 +379,7 @@ A session runs as one [ACP worker session](../frontends/acp.md#worker-sessions):
 - The runner reminds once when the prompt ends in prose without the batch landing, then
   translates the agent's update stream into [trace events](#trace-events), closes the
   session, and waits for the teardown so a session that ended with staged work still
-  lands it through the implicit finish.
+  retains it for explicit completion.
 - Success is read from the store, never from the agent's word: every goal in the batch
   is resolved (`mark_goal_done` accepted at commit), failed with a reason (a
   `goal-failed` diagnostic), or parked.
@@ -488,21 +486,12 @@ While mutations are staged, every read reply and every status line touching a st
 node carries a note saying so, so a session that reads back a node it just staged a
 delete for does not conclude the delete was lost.
 
-A session that fails (the agent's session ends without landing its batch, is cancelled by
-the idle timeout, or exhausts its repair rounds) leaves no trace: the changeset is
-dropped and the graph is untouched. Its goals return to `open`, and the batch is retried
-once with a fresh session; a second failure parks the goals for this build
-([parked and failed](./reconciler.md#parked-and-failed)). The
-[embedded agent](../frontends/acp.md#the-embedded-agent) additionally stops at its
-[failed-call limit](#repeated-calls), so a stuck weak model fails fast instead of
-spending the budget.
-
-A user stop drops the active changeset and its model context. Completed commits remain.
-Late replies cannot stage mutations or commit. Cancellation does not retry the session.
-An ephemeral serving receives an internal `--cancel-file` fence. Once the file exists,
-it rejects calls and drops open work at end of input instead of committing implicitly.
-The runner creates the fence before cancelling or closing the agent. Each attempt uses
-its own fence, so rebuilding cannot reactivate a stopped session.
+Every accepted staging call persists before success. A crash, disconnect, timeout,
+model failure, or user stop preserves the changeset and stops its heartbeat.
+Late replies remain fenced. Explicit `done` commits, and explicit abandonment
+discards. A resumed session uses its stable work ID and ownership receipt.
+Expired work is unlocked and inspectable. Explicit adoption transfers ownership
+and journals the old and new identities. An obsolete owner cannot continue.
 
 ## Resolving, failing, parking
 
@@ -531,7 +520,7 @@ Every goal in the batch ends in one of three states, and the session says which.
   failed optional goal is recorded and stands. A change to the target resolves the
   diagnostic, and so does a person retrying it.
 - Parking is neither. A goal the session neither resolved nor failed when it finished
-  (out of rounds, the implicit finish, a claim the gate refused) stays open, gets one
+  (out of rounds, disconnection, a claim the gate refused) stays open, gets one
   fresh session in the same build, and parks when that session leaves it open too.
   Parking is the build's own progress, never committed: the goal stays in memory, and in
   the build's run file while a local build runs
@@ -576,14 +565,12 @@ the commit touched, and the board re-derives.
 An explicit `done` holds the model to its claims: a session that extracts requirements
 from a section and never marks it is sent back to set the mark, not committed around,
 and a `done` that leaves a goal open is rejected naming the goal. A batch that cannot be
-repaired within its rounds finishes implicitly (see [budgets](#budgets)): valid staged
-work commits, the open goals stay open for their retry.
+repaired within its rounds remains persisted for resume or adoption.
 
 One thing the harness never commits around: an untouched stale anchor. Stale anchors are
 a contract only the model can honor. A `reconcile-section` goal whose section carries a
-stale anchor the session neither re-anchored, revised, nor deleted stays open, the
-mutations staged against that section are dropped, and the rest of the batch commits.
-The next build lists the anchor again.
+stale anchor the session neither re-anchored, revised, nor deleted refuses
+completion. Staged mutations remain available for repair. No partial batch commits.
 
 ## Budgets
 
@@ -637,18 +624,11 @@ Budgets are registry constants built into the binary, not settings
   ([escalation](./reconciler.md#escalation)). `jazyk compile --sessions N` replaces
   the cap with N for one run ([compile](../frontends/cli.md#jazyk-compile)).
 
-An agent whose session ends with mutations staged and no `done` is treated as having
-called it: the serving runs the same commit gates, a clean batch commits, and the goals
-the session marked are resolved while the rest stay open. Weak models forget the finish
-contract more often than they stage bad work; discarding a valid changeset over a
-missing `done` would punish the wrong thing. A session with nothing staged and no goal
-marked is a failed session and counts toward the same four-attempt goal budget.
+A session ending without `done` retains its staged work for resume or adoption.
+It does not commit implicitly. Repair attempts and spend remain recorded.
 
-The same reasoning bounds what one bad claim can sink. When the implicit `done` is
-rejected over a dishonest `covered` claim, the harness drops the offending coverage marks
-and commits the rest: the extracted requirements land, the miscovered sections stay
-unprocessed, and the next build resumes them. Only the explicit `done` holds the model
-to repairing its own claims.
+A rejected completion retains staged work and reports its repair. It does not
+drop coverage marks or commit a partial changeset implicitly.
 
 Every session's token count lands in `build.yaml` under `costs` (`sessions`, `tokens`,
 `by_kind`, `by_class`), so the choice of executor per kind is informed by what each kind

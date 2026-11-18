@@ -584,3 +584,11 @@ An in-place upgrade preserves requirement IDs and ledger bindings.
 files. `graph/decisions/diagram-coverage/` holds reasoned suppressions with baseline
 measures, identities, hashes and provenance. Expired decisions remain inspectable
 until their area disappears. Rendering files remain under derived output.
+
+## Open changeset records
+
+`local/open/<work-id>/manifest.yaml` identifies persisted work and its owner epoch,
+opening generation, heartbeat and expiry. `events.jsonl` appends accepted staged
+calls and lifecycle events. Runtime snapshots remain local. These records never
+enter Git or source/delivery exports. Expiry unlocks work and never deletes it.
+Explicit discard removes staged payload and retains a small lifecycle audit receipt.

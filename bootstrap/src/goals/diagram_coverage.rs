@@ -26,6 +26,7 @@ impl GoalKind for DiagramCoverage {
                         .filter(|id| {
                             store.graph.entities.contains_key(*id)
                                 || store.graph.requirements.contains_key(*id)
+                                || store.graph.criteria.contains_key(*id)
                                 || crate::model::split_section_ref(id).is_some()
                         })
                         .map(|id| format!("load {}", id)),

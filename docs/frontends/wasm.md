@@ -515,3 +515,12 @@ Native connections write actual filesystem symlinks. Standalone delivery and tas
 exports resolve allowed asset links into regular file bytes.
 
 An in-process runner validates the `begin_goals` reply before model execution. A refused claim returns its actual error without a model call. The tool catalog is read after a successful claim or recovery restore, so it matches the active batch.
+
+## Open work persistence
+
+Staged graph changesets persist in the engine's in-memory workspace before tool
+success. Timers heartbeat attached work. Ending a turn stops its heartbeat without
+removing staging. Expired work remains available for explicit adoption or discard.
+Tab-close and process-crash survival require the application's persistence adapter;
+an in-memory engine alone does not promise disk durability. Open-work events
+refresh Board and worker visibility without advancing graph generation.

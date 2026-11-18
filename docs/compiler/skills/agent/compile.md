@@ -3,6 +3,11 @@ name: compile
 description: "Compile documentation into the semantic graph and resolve reconciliation goals."
 requiredCapabilities: "compile orchestration or goal loop"
 tools:
+  - open_work
+  - read_open_work
+  - adopt_open_work
+  - discard_open_work
+  - unstage
   - goals
   - begin_goals
   - done

@@ -110,12 +110,6 @@ impl ToolSession {
                     return result;
                 }
                 self.refusals += 1;
-                // Past eight refusals in one batch, the serving finishes the session
-                // implicitly: the staged work commits under the same gates the budget
-                // path uses.
-                if self.refusals > 8 && self.done.is_none() {
-                    self.finish_implicit("(implicit: the session repeated itself past the guard)");
-                }
                 return Err(ToolError::new(
                     "repeated-call",
                     format!(

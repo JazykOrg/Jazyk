@@ -106,8 +106,8 @@ with the release that would lift it, `begin_goals` refuses a blocked goal with a
 
 Nothing claims work. Any number of workers (the internal loop, an MCP agent, a chat
 conversation, a sub-agent, a second `jazyk compile`) may open the same goals at once.
-Commits are the only synchronization: the first commit lands, and a later commit that
-collides gets a [commit conflict](./graph.md#commit-conflicts) and repairs its work.
+Commits serialize publication. Later commits merge fields and report overwrites
+([commit conflicts](./graph.md#commit-conflicts)).
 
 - `workers/<id>.yaml`: one file per attached worker session. `kind` (`internal`,
   `gui`, `agent`), `client` (the MCP client name when there is one), `pid`,
@@ -116,10 +116,9 @@ collides gets a [commit conflict](./graph.md#commit-conflicts) and repairs its w
   derivation. Registration happens at MCP
   `initialize` for the lifecycle servings, at job start in the GUI, and for the
   lifetime of a `jazyk compile`/`gen`/`test` run.
-- `open/<task>~<worker>.yaml`: one file per task a worker has open (a goal batch with
-  its goals, a ledger row, or a build run named `build`). Several workers may have the
-  same task open, each with its own file. Activity on the task refreshes it; a file
-  not refreshed for 120 seconds is swept.
+- `open/<work-id>/`: persisted graph changesets, retained on expiry.
+- `open/<task>~<worker>.yaml`: short-lived ledger and build visibility entries.
+  They carry no staged mutations and may be swept on expiry.
 - The registry is information, never a lock. The board reports `openBy` per goal (the
   workers with it open) so an agent can choose other work and avoid paying twice for
   the same goal. Nothing filters or refuses on it.
@@ -185,3 +184,17 @@ The [embedded runtime](./agent-runtime.md#deployment-and-stop) checkpoints accep
 work before deployment handoff. Suspension is nonterminal and distinct from Stop.
 The host fences old owners at dispatch and save boundaries. Automatic reclaim
 retains job identity, budgets, input receipts and the event cursor.
+
+## Persisted open work
+
+Open work has a stable ID independent of batch and worker IDs. The native registry
+is `local/open/<work-id>/manifest.yaml` plus an append-only staged event log.
+Hosted work uses the host record store. Browser work uses its in-memory workspace;
+process-exit survival requires host persistence. Every accepted mutation is saved
+before the tool replies. TTL and heartbeat values belong in `limits.rs`.
+
+Live work derives informational soft locks on its staged targets. Heartbeats stop
+when execution detaches. Expired records remain inspectable, unlocked and available
+for explicit adoption or discard. Adoption changes the owner epoch atomically and
+records both identities. Active foreign work cannot be discarded. Resume requires
+the current owner's receipt. Discovery never refreshes expiry.

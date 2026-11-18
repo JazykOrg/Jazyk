@@ -98,6 +98,32 @@ impl McpServer {
         if name == "begin_goals" {
             return None;
         }
+        let work_id = params["arguments"]["workId"].as_str();
+        if let Some(id) = work_id {
+            let mut open = self.open.lock().unwrap();
+            let mut parked = self.parked.lock().unwrap();
+            if open
+                .as_ref()
+                .is_some_and(|o| o.work.as_ref().is_some_and(|r| r.id == id))
+            {
+                return None;
+            }
+            let key = parked
+                .iter()
+                .find(|(_, o)| o.work.as_ref().is_some_and(|r| r.id == id))
+                .map(|(k, _)| k.clone());
+            if let Some(key) = key {
+                let batch = parked.remove(&key).unwrap();
+                if let Some(old) = open.replace(batch) {
+                    parked.insert(old.id.clone(), old);
+                }
+                return None;
+            }
+            return Some(text_result(
+                json!({"error":{"rule":"unknown-work","message":include_str!(concat!(env!("OUT_DIR"),"/payloads/goals/prompts/inline/open-work/unknown-attached-work.md"))}}),
+                true,
+            ));
+        }
         let wanted = params["arguments"]["batch"].as_str();
         let mut open = self.open.lock().unwrap();
         let mut parked = self.parked.lock().unwrap();
@@ -140,7 +166,7 @@ impl McpServer {
         crate::tools::GRAPH_WRITE_TOOLS.contains(&name)
             || crate::tools::GOAL_TOOLS.contains(&name)
             || name == crate::tools::PAIR_SETTLE_TOOL
-            || matches!(name, "abandon_goals" | "done")
+            || matches!(name, "abandon_goals" | "done" | "unstage")
     }
 
     // Move the active batch aside before another opens. True when one was moved.
@@ -173,6 +199,9 @@ impl McpServer {
                 continue;
             }
             if let Some(props) = tool["inputSchema"]["properties"].as_object_mut() {
+                props
+                    .entry("workId")
+                    .or_insert(json!({"type":"string","description":"stable attached work ID"}));
                 props.entry("batch").or_insert(json!({
                     "type": "string",
                     "description": "the open batch this call works on; required when several are open"
@@ -361,6 +390,10 @@ impl McpServer {
             }
             Err(_) if method == "initialize" => {
                 self.watch_edits();
+                *self.identity.lock().unwrap() = params["_meta"]["jazyk"]
+                    .as_object()
+                    .map(|m| Value::Object(m.clone()))
+                    .unwrap_or(json!({}));
                 if let Some(name) = params["clientInfo"]["name"].as_str() {
                     *self.client.lock().unwrap() = Some(name.into());
                 }
@@ -721,6 +754,7 @@ impl McpServer {
                 // A set's call runs under the transport's request: one interrupt record.
                 child.interrupts = self.interrupts.clone();
                 child.handle_local("initialize",&json!({"clientInfo":{"name":self.client.lock().unwrap().clone().unwrap_or_else(||"agent".into())}}))?;
+                *child.identity.lock().unwrap() = self.identity.lock().unwrap().clone();
                 children.insert(id.clone(), child);
             }
             let mut local = params.clone();

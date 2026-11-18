@@ -1,242 +1,177 @@
-// Rebase at commit: a changeset staged against an older generation meets the commits
-// that landed since. Additive mutations commute; the rest conflict with what changed
-// the same node, section, or goal. Mirrors docs/compiler/graph.md#commit-conflicts.
+//! Field-level audit of commits replayed on a newer graph.
 use super::*;
-use serde::Serialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 
-// One collision between a staged changeset and a commit that landed first.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Conflict {
-    // node | section | goal
-    pub kind: String,
-    // The node id, `doc#section`, or goal id.
-    pub id: String,
-    // The generation that changed it, and that commit's kind and batch.
-    pub generation: u64,
-    #[serde(rename = "byKind")]
-    pub by_kind: String,
-    #[serde(rename = "byBatch", skip_serializing_if = "Vec::is_empty")]
-    pub by_batch: Vec<String>,
-    // What the winner did: the mutation's op, or the goal's justification.
-    pub detail: String,
-    // The staged mutation's index (0-based) a node or section conflict drops; none
-    // for a goal conflict.
-    #[serde(skip)]
-    pub staged: Option<usize>,
-}
-
-// The fields that make an update more than additive.
-const ENTITY_REWRITES: [&str; 8] = [
-    "name",
-    "definition",
-    "remove_aliases",
-    "stereotype",
-    "parent",
-    "clear_parent",
-    "set_attributes",
-    "provenance",
-];
-const VIEW_REWRITES: [&str; 6] = [
-    "title",
-    "members",
-    "query",
-    "collapse",
-    "reasoning",
-    "authored",
-];
-
-// Whether a mutation commutes with any other: creates reconcile by natural key, an
-// additive entity or view update unions, a finding's id is its natural key.
-pub fn commutes(mutation: &Value) -> bool {
-    match mutation["op"].as_str().unwrap_or_default() {
-        "create_entity" | "create_requirement" | "create_criterion" | "create_view"
-        | "report_diagnostic" => true,
-        "update_entity" => ENTITY_REWRITES.iter().all(|k| field_absent(mutation, k)),
-        "update_view" => VIEW_REWRITES.iter().all(|k| field_absent(mutation, k)),
-        _ => false,
-    }
-}
-
-fn field_absent(mutation: &Value, key: &str) -> bool {
-    match mutation.get(key) {
-        None | Some(Value::Null) => true,
-        Some(Value::Bool(b)) => !b,
-        Some(Value::Array(a)) => a.is_empty(),
-        _ => false,
-    }
-}
-
-// What a mutation changes: node ids, and `doc#section` for section mutations.
-fn targets(mutation: &Value) -> (Vec<String>, Vec<String>) {
-    let s = |k: &str| mutation[k].as_str().map(str::to_string);
-    let op = mutation["op"].as_str().unwrap_or_default();
-    let mut nodes = Vec::new();
-    let mut sections = Vec::new();
-    match op {
-        "merge_entities" => nodes.extend([s("keep"), s("absorb")].into_iter().flatten()),
-        "set_coverage" => {
-            if let (Some(doc), Some(section)) = (s("doc"), s("section")) {
-                sections.push(format!("{doc}#{section}"));
-            }
-        }
-        "classify_input" => nodes.extend(s("doc").map(|d| format!("input:{d}"))),
-        // A prose edit carries its own staleness check (the old text must still stand).
-        "edit_doc_prose" => {}
-        _ => nodes.extend(s("id")),
-    }
-    (nodes, sections)
-}
-
-// Nodes a mutation removes outright.
-fn removes(mutation: &Value) -> Vec<String> {
-    let s = |k: &str| mutation[k].as_str().map(str::to_string);
-    match mutation["op"].as_str().unwrap_or_default() {
-        "delete_entity" | "delete_requirement" | "delete_criterion" | "delete_view"
-        | "dissolve_entity" | "retract_decree" => s("id").into_iter().collect(),
-        "merge_entities" => s("absorb").into_iter().collect(),
-        _ => Vec::new(),
-    }
-}
-
-struct Winner {
-    generation: u64,
-    kind: String,
-    batch: Vec<String>,
-    detail: String,
-}
-
-impl Store {
-    // The conflicts between `ops`, staged against generation `since`, plus the goals
-    // they resolve, and the commits after `since` up to this store's generation.
-    pub fn conflicts_since(&self, since: u64, ops: &[Op], resolved: &[String]) -> Vec<Conflict> {
-        let mut changed: BTreeMap<String, Winner> = BTreeMap::new();
-        let mut sections: BTreeMap<String, Winner> = BTreeMap::new();
-        let mut removed: BTreeMap<String, Winner> = BTreeMap::new();
-        let mut goals: BTreeMap<String, Winner> = BTreeMap::new();
-        for g in since + 1..=self.status.generation {
-            let Some(entry) =
-                crate::goals::read_journal_entry(&crate::layout::journal_file(&self.out, g), g)
-            else {
-                continue;
-            };
-            let winner = |detail: String| Winner {
-                generation: g,
-                kind: entry.kind.clone(),
-                batch: entry.batch.clone(),
-                detail,
-            };
-            for m in &entry.mutations {
-                let op = m["op"].as_str().unwrap_or_default().to_string();
-                for id in removes(m) {
-                    removed.insert(id, winner(op.clone()));
-                }
-                if commutes(m) {
+pub(crate) fn facts(store: &Store) -> BTreeMap<(String, String), Value> {
+    fn fields(id: &str, prefix: &str, v: &Value, out: &mut BTreeMap<(String, String), Value>) {
+        if let Some(map) = v.as_object() {
+            for (k, v) in map {
+                if matches!(k.as_str(), "created" | "updated") {
                     continue;
                 }
-                let (nodes, secs) = targets(m);
-                for id in nodes {
-                    changed.insert(id, winner(op.clone()));
-                }
-                for sec in secs {
-                    sections.insert(sec, winner(op.clone()));
-                }
+                let p = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{prefix}.{k}")
+                };
+                fields(id, &p, v, out);
             }
-            for r in &entry.resolved_goals {
-                goals.insert(r.goal.clone(), winner(r.justification.clone()));
+        } else if prefix == "attributes" && v.is_array() {
+            for a in v.as_array().unwrap() {
+                fields(
+                    id,
+                    &format!("attributes.{}", a["name"].as_str().unwrap_or_default()),
+                    a,
+                    out,
+                );
+            }
+        } else {
+            out.insert((id.into(), prefix.into()), v.clone());
+        }
+    }
+    let mut out = BTreeMap::new();
+    let referenced = super::files::reference_sources(&store.graph);
+    let mut entities = store.graph.entities.clone();
+    for (id, entity) in &mut entities {
+        if let Some(refs) = referenced.get(id) {
+            entity.mentions.retain(|m| !refs.contains(m));
+        }
+    }
+    for nodes in [
+        serde_json::to_value(&entities),
+        serde_json::to_value(&store.graph.requirements),
+        serde_json::to_value(&store.graph.criteria),
+        serde_json::to_value(&store.graph.views),
+        serde_json::to_value(&store.graph.diagnostics),
+    ] {
+        if let Ok(Value::Object(nodes)) = nodes {
+            for (id, node) in nodes {
+                fields(&id, "", &node, &mut out);
             }
         }
-        let conflict = |kind: &str, id: &str, w: &Winner, staged: Option<usize>| Conflict {
-            kind: kind.into(),
-            id: id.into(),
-            generation: w.generation,
-            by_kind: w.kind.clone(),
-            by_batch: w.batch.clone(),
-            detail: w.detail.clone(),
-            staged,
-        };
-        let mut out = Vec::new();
-        for (i, op) in ops.iter().enumerate() {
-            let Ok(m) = serde_json::to_value(op) else {
+    }
+    for (doc, record) in &store.docs {
+        for (sec, coverage) in &record.coverage {
+            fields(
+                &format!("{doc}#{sec}"),
+                "coverage",
+                &serde_json::to_value(coverage).unwrap_or_default(),
+                &mut out,
+            );
+        }
+    }
+    if let Ok(Value::Object(categories)) = serde_json::to_value(&store.decisions) {
+        for (category, entries) in categories {
+            if let Some(entries) = entries.as_object() {
+                for (id, value) in entries {
+                    fields(id, &format!("decision.{category}"), value, &mut out);
+                }
+            }
+        }
+    }
+    out
+}
+impl Store {
+    pub(super) fn audit_fields(
+        &self,
+        before: &BTreeMap<(String, String), Value>,
+        commit: &Commit,
+    ) -> (Vec<Value>, Vec<Value>) {
+        let after = facts(self);
+        let keys: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
+        let base = commit.base.as_ref().map(|s| facts(s));
+        let missing = json!({"missing":true});
+        let mut fields = Vec::new();
+        let mut overwrites = Vec::new();
+        for (id, field) in keys {
+            let k = (id.clone(), field.clone());
+            let prior = before.get(&k).unwrap_or(&missing);
+            let next = after.get(&k).unwrap_or(&missing);
+            if prior == next {
                 continue;
-            };
-            let (nodes, secs) = targets(&m);
-            let additive = commutes(&m);
-            let hit = nodes.iter().find_map(|id| {
-                // A merged node is followed through its redirect; a deleted one is gone.
-                if let Some(w) = removed.get(id) {
-                    let redirected = self.graph.redirects.contains_key(id);
-                    if !(additive && redirected) {
-                        return Some(conflict("node", id, w, Some(i)));
+            }
+            fields.push(json!({"node":id,"field":field,"priorValue":prior,"value":next}));
+            let Some(base) = base.as_ref() else { continue };
+            let base_value = base.get(&k).unwrap_or(&missing);
+            if base_value == prior {
+                continue;
+            }
+            if [
+                "aliases",
+                "mentions",
+                "entities",
+                "members",
+                "exclude",
+                "collapse",
+                "not_about",
+            ]
+            .contains(&field.as_str())
+            {
+                let empty = Vec::new();
+                let base = base_value.as_array().unwrap_or(&empty);
+                let prior = prior.as_array().unwrap_or(&empty);
+                let next = next.as_array().unwrap_or(&empty);
+                let added_survive = prior
+                    .iter()
+                    .filter(|v| !base.contains(v))
+                    .all(|v| next.contains(v));
+                let removed_stay_absent = base
+                    .iter()
+                    .filter(|v| !prior.contains(v))
+                    .all(|v| !next.contains(v));
+                if added_survive && removed_stay_absent {
+                    continue;
+                }
+            }
+            let mut generation = None;
+            let mut author = None;
+            let since = commit.base.as_ref().unwrap().status.generation;
+            for g in (since + 1..self.status.generation).rev() {
+                if let Some(e) =
+                    crate::goals::read_journal_entry(&crate::layout::journal_file(&self.out, g), g)
+                {
+                    if e.field_changes
+                        .iter()
+                        .any(|f| f["node"] == id && f["field"] == field)
+                    {
+                        generation = Some(g);
+                        author = e.actor.or_else(|| e.author.map(|a| json!({"name":a})));
+                        break;
                     }
                 }
-                (!additive)
-                    .then(|| changed.get(id).map(|w| conflict("node", id, w, Some(i))))
-                    .flatten()
-            });
-            let hit = hit.or_else(|| {
-                secs.iter().find_map(|sec| {
-                    sections
-                        .get(sec)
-                        .map(|w| conflict("section", sec, w, Some(i)))
-                })
-            });
-            out.extend(hit);
-        }
-        for goal in resolved {
-            if let Some(w) = goals.get(goal) {
-                out.push(conflict("goal", goal, w, None));
             }
+            overwrites.push(json!({"node":id,"field":field,"baseValue":base_value,"priorValue":prior,"value":next,"priorGeneration":generation,"priorAuthor":author.unwrap_or(json!("unknown"))}));
         }
-        out
+        (fields, overwrites)
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn additive_mutations_commute_and_rewrites_do_not() {
-        assert!(commutes(&json!({"op":"create_entity","id":"ent:a"})));
-        assert!(commutes(
-            &json!({"op":"update_entity","id":"ent:a","add_aliases":["A"],"add_mention":{"doc":"d.md"}})
-        ));
-        assert!(!commutes(
-            &json!({"op":"update_entity","id":"ent:a","name":"B"})
-        ));
-        assert!(commutes(
-            &json!({"op":"update_entity","id":"ent:a","clear_parent":false})
-        ));
-        assert!(!commutes(
-            &json!({"op":"update_entity","id":"ent:a","parent":"ent:b"})
-        ));
-        assert!(commutes(
-            &json!({"op":"update_view","id":"view:x","add_members":["ent:a"]})
-        ));
-        assert!(!commutes(
-            &json!({"op":"update_view","id":"view:x","title":"T"})
-        ));
-        assert!(!commutes(
-            &json!({"op":"update_requirement","id":"req:a","statement":"s"})
-        ));
-        assert!(commutes(&json!({"op":"report_diagnostic","id":"diag:x"})));
-    }
-
-    #[test]
-    fn targets_name_nodes_and_sections() {
-        assert_eq!(
-            targets(&json!({"op":"merge_entities","keep":"ent:a","absorb":"ent:b"})).0,
-            vec!["ent:a".to_string(), "ent:b".to_string()]
-        );
-        assert_eq!(
-            targets(&json!({"op":"set_coverage","doc":"d.md","section":"/a"})).1,
-            vec!["d.md#/a".to_string()]
-        );
-        assert_eq!(
-            removes(&json!({"op":"merge_entities","keep":"ent:a","absorb":"ent:b"})),
-            vec!["ent:b".to_string()]
-        );
+    pub(super) fn overwrite_diagnostics(&mut self, overwrites: &[Value], generation: u64) {
+        let nodes: BTreeSet<_> = overwrites
+            .iter()
+            .filter_map(|o| o["node"].as_str())
+            .collect();
+        for node in nodes {
+            let details: Vec<_> = overwrites.iter().filter(|o| o["node"] == node).collect();
+            let id = format!("diag:concurrent-overwrite-{generation}-{}", hash_hex(node));
+            self.graph.diagnostics.insert(
+                id,
+                Diagnostic {
+                    rule: "concurrent-overwrite".into(),
+                    severity: "info".into(),
+                    subjects: vec![node.into()],
+                    message: format!(
+                        "Concurrent commit overwrote {} field(s) on {node}",
+                        details.len()
+                    ),
+                    reasoning: Some(serde_json::to_string(&details).unwrap_or_default()),
+                    lifecycle: "open".into(),
+                    triage: None,
+                    prompt: None,
+                    answer: None,
+                    goal: None,
+                    created: Some(format!("g{generation}")),
+                    updated: Some(format!("g{generation}")),
+                },
+            );
+        }
     }
 }

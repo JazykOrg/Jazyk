@@ -232,6 +232,10 @@ pub const DIAGRAM_DRIFT_SOFT_DENOMINATOR: usize = 5;
 
 pub const DIAGRAM_COMMUNICATION_PARTICIPANTS: usize = 3;
 
+// Persisted changesets unlock on inactivity, but retain their staged data.
+pub const OPEN_WORK_TTL_SECS: u64 = 120;
+pub const OPEN_WORK_HEARTBEAT_SECS: u64 = 30;
+
 #[cfg(test)]
 mod tests {
     use super::*;

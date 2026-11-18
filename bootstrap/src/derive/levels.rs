@@ -259,6 +259,7 @@ pub(super) struct Levels {
     // The members of every held level, by target.
     pub(super) members: BTreeMap<String, Vec<String>>,
     // Every level's flow views with the level each belongs to.
+    #[cfg(test)]
     pub(super) flow_views: Vec<(String, FlowClusterSpec)>,
 }
 
@@ -276,6 +277,7 @@ impl Levels {
         let is_held: BTreeSet<usize> = held.iter().copied().collect();
         // The ancestor chain of every entity, and the held levels it reaches: the
         // level each chain element is a child of.
+        #[cfg(test)]
         let mut chains: BTreeMap<String, Vec<String>> = BTreeMap::new();
         let mut reach: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for id in store.graph.entities.keys() {
@@ -295,9 +297,11 @@ impl Levels {
                     }
                 }
             }
+            #[cfg(test)]
             chains.insert(id.clone(), chain);
             reach.insert(id.clone(), reached);
         }
+        #[cfg(test)]
         let chain = |id: &str| -> Vec<String> {
             let cur = store.resolve_id(id);
             chains
@@ -344,82 +348,92 @@ impl Levels {
             }
         }
         let mut members: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        #[cfg(test)]
         let mut member_sets: Vec<BTreeSet<String>> = vec![BTreeSet::new(); levels.len()];
         for i in &held {
             let mut out = std::mem::take(&mut outside[*i]);
             in_document_order(&mut out, &ix.entity_rank);
             let mut all = levels[*i].children.clone();
             all.extend(out);
-            member_sets[*i] = all.iter().cloned().collect();
+            #[cfg(test)]
+            {
+                member_sets[*i] = all.iter().cloned().collect();
+            }
             members.insert(levels[*i].target.clone(), all);
         }
 
-        // The flow rule instances of every held level: the behavior and failure-mode
-        // requirements whose entities lift to at least one member, clustered by
-        // document (the author's own cut of the subject into flows; the actors are
-        // read off the members at render time, never baked into the key).
-        // Mirrors docs/compiler/model/view.md#membership.
-        let mut clusters: Vec<BTreeMap<String, Vec<String>>> = vec![BTreeMap::new(); levels.len()];
-        for rid in &ix.document_order {
-            let r = &store.graph.requirements[rid];
-            let flows = r
-                .facets
-                .iter()
-                .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
-            let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
-                continue;
-            };
-            if !flows {
-                continue;
-            }
-            // Reaching means lifting to a child: an interactor is only ever the other
-            // end of a flow, never what makes a flow the level's own.
-            let mut reaching: Vec<usize> = Vec::new();
-            for e in &r.entities {
-                for i in reached(e) {
-                    if !reaching.contains(i) {
-                        reaching.push(*i);
-                    }
-                }
-            }
-            for i in reaching {
-                // A flow whose every entity lifts to one child with a level of its own
-                // is that child's, never a self-message here; a self-message on a leaf
-                // stays.
-                let lifts: Vec<Option<String>> = r
-                    .entities
+        #[cfg(test)]
+        let flow_views = {
+            // The flow rule instances of every held level: the behavior and failure-mode
+            // requirements whose entities lift to at least one member, clustered by
+            // document (the author's own cut of the subject into flows; the actors are
+            // read off the members at render time, never baked into the key).
+            // Mirrors docs/compiler/model/view.md#membership.
+            let mut clusters: Vec<BTreeMap<String, Vec<String>>> =
+                vec![BTreeMap::new(); levels.len()];
+            for rid in &ix.document_order {
+                let r = &store.graph.requirements[rid];
+                let flows = r
+                    .facets
                     .iter()
-                    .map(|e| chain(e).into_iter().find(|c| member_sets[i].contains(c)))
-                    .collect();
-                let lifted: BTreeSet<String> = lifts.iter().flatten().cloned().collect();
-                if lifted.len() == 1 && lifts.iter().all(Option::is_some) {
-                    let only = lifted.iter().next().unwrap();
-                    if levels[i].children.contains(only) && ix.has_children(only) {
-                        continue;
-                    }
-                }
-                clusters[i]
-                    .entry(doc.clone())
-                    .or_default()
-                    .push(rid.clone());
-            }
-        }
-        let mut flow_views = Vec::new();
-        for i in &held {
-            let level = &levels[*i];
-            let level_members = &members[&level.target];
-            for w in flow_views_of_clusters(store, level, std::mem::take(&mut clusters[*i])) {
-                if flow_view_all_groupings(store, level_members, &w) {
+                    .any(|f| f.facet == "behavior" || f.facet == "failure-mode");
+                let Some(doc) = r.sources.first().map(|s| s.doc.clone()) else {
+                    continue;
+                };
+                if !flows {
                     continue;
                 }
-                flow_views.push((level.target.clone(), w));
+                // Reaching means lifting to a child: an interactor is only ever the other
+                // end of a flow, never what makes a flow the level's own.
+                let mut reaching: Vec<usize> = Vec::new();
+                for e in &r.entities {
+                    for i in reached(e) {
+                        if !reaching.contains(i) {
+                            reaching.push(*i);
+                        }
+                    }
+                }
+                for i in reaching {
+                    // A flow whose every entity lifts to one child with a level of its own
+                    // is that child's, never a self-message here; a self-message on a leaf
+                    // stays.
+                    let lifts: Vec<Option<String>> = r
+                        .entities
+                        .iter()
+                        .map(|e| chain(e).into_iter().find(|c| member_sets[i].contains(c)))
+                        .collect();
+                    let lifted: BTreeSet<String> = lifts.iter().flatten().cloned().collect();
+                    if lifted.len() == 1 && lifts.iter().all(Option::is_some) {
+                        let only = lifted.iter().next().unwrap();
+                        if levels[i].children.contains(only) && ix.has_children(only) {
+                            continue;
+                        }
+                    }
+                    clusters[i]
+                        .entry(doc.clone())
+                        .or_default()
+                        .push(rid.clone());
+                }
             }
-        }
+            let mut flow_views = Vec::new();
+            for i in &held {
+                let level = &levels[*i];
+                let level_members = &members[&level.target];
+                for w in flow_views_of_clusters(store, level, std::mem::take(&mut clusters[*i])) {
+                    if flow_view_all_groupings(store, level_members, &w) {
+                        continue;
+                    }
+                    flow_views.push((level.target.clone(), w));
+                }
+            }
+            flow_views
+        };
         Levels {
             levels,
             held,
             by_target,
             members,
+            #[cfg(test)]
             flow_views,
         }
     }
@@ -428,6 +442,7 @@ impl Levels {
 // Whether a flow view's participants all lift to groupings: boxes no document states
 // messaging each other, so the view is dropped.
 // Mirrors docs/compiler/model/view.md#membership.
+#[cfg(test)]
 fn flow_view_all_groupings(store: &Store, members: &[String], w: &FlowClusterSpec) -> bool {
     let drawn: BTreeSet<String> = flow_participants(store, &w.members)
         .into_iter()
@@ -596,6 +611,7 @@ fn flow_view_rules_scan(
 // never create graph nodes. The root
 // form keeps the unprefixed ids; a node prefixes its slug.
 // Mirrors docs/compiler/model/view.md#membership.
+#[cfg(test)]
 fn flow_views_of_clusters(
     store: &Store,
     level: &Level,
@@ -661,6 +677,7 @@ fn flow_views_of_clusters(
 // Every level's flow views with the level each belongs to. A view whose participants
 // all lift to groupings is dropped: boxes no document states messaging each other.
 // Mirrors docs/compiler/model/view.md#membership.
+#[cfg(test)]
 pub(super) fn level_flow_views<'a>(
     store: &Store,
     ix: &'a Indices,
@@ -714,4 +731,64 @@ pub(super) fn flow_view_level_index(store: &Store, ix: &Indices) -> BTreeMap<Str
 // the whole project. Mirrors docs/consumers/docsgen.md#entity-cards.
 pub fn flow_view_levels(store: &Store) -> BTreeMap<String, String> {
     flow_view_level_index(store, &Indices::build(store))
+}
+
+// Diagram review uses graph evidence, independently of requirement classifications.
+pub(super) fn diagram_areas(store: &Store, ix: &Indices) -> Vec<(String, String, Vec<String>)> {
+    let lv = ix.levels(store);
+    let mut out = Vec::new();
+    for i in &lv.held {
+        let level = &lv.levels[*i];
+        let members = &lv.members[&level.target];
+        let mut clusters: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for rid in &ix.document_order {
+            let r = &store.graph.requirements[rid];
+            let supported = r.transition.is_some()
+                || r.edges
+                    .iter()
+                    .any(|edge| edge.rel_type.as_deref().unwrap_or("dependency") == "dependency")
+                || store.criteria_of(rid).iter().any(|id| {
+                    store
+                        .graph
+                        .criteria
+                        .get(id)
+                        .is_some_and(|c| c.when.is_some())
+                });
+            if !supported
+                || !r
+                    .entities
+                    .iter()
+                    .any(|id| lift_into(store, &level.children, id).is_some())
+            {
+                continue;
+            }
+            let lifts = r
+                .entities
+                .iter()
+                .map(|id| lift_into(store, members, id))
+                .collect::<Vec<_>>();
+            let lifted = lifts.iter().flatten().collect::<BTreeSet<_>>();
+            if lifted.len() == 1
+                && lifts.iter().all(Option::is_some)
+                && lifted
+                    .iter()
+                    .next()
+                    .is_some_and(|only| level.children.contains(only) && ix.has_children(only))
+            {
+                continue;
+            }
+            let doc = r
+                .sources
+                .first()
+                .map(|s| s.doc.clone())
+                .unwrap_or_else(|| "derived".into());
+            clusters.entry(doc).or_default().push(rid.clone());
+        }
+        out.extend(
+            clusters
+                .into_iter()
+                .map(|(doc, ids)| (level.target.clone(), doc, ids)),
+        );
+    }
+    out
 }

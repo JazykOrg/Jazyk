@@ -532,6 +532,7 @@ impl Board {
             readiness: BTreeMap::new(),
             gated: BTreeSet::new(),
             open_by: BTreeMap::new(),
+            open_work: BTreeMap::new(),
             held_batches: BTreeSet::new(),
             own: BTreeSet::new(),
             batches: Vec::new(),
@@ -632,6 +633,28 @@ impl Board {
                 .filter(|l| is_batch_id(&l.task))
                 .map(|l| l.task.clone())
                 .collect();
+        }
+        match crate::open_work::list(&store.out) {
+            Ok(work) => {
+                for record in work.iter().filter(|r| r.active()) {
+                    for goal in &record.goals {
+                        board
+                            .open_work
+                            .entry(goal.clone())
+                            .or_default()
+                            .push(record.summary());
+                        let worker = record.identity["workerId"]
+                            .as_str()
+                            .unwrap_or(&record.receipt.id)
+                            .to_string();
+                        let workers = board.open_by.entry(goal.clone()).or_default();
+                        if !workers.contains(&worker) {
+                            workers.push(worker);
+                        }
+                    }
+                }
+            }
+            Err(error) => eprintln!("[jazyk] open work unavailable: {error}"),
         }
         board.batches = board.form_batches(store, proj);
         board

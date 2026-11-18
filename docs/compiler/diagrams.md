@@ -185,8 +185,8 @@ The kinds, with what each reads from the graph:
   cluster, over the members that carry a message edge.
 - `communication`: the same view in its second layout: participants as `actor` or
   `rectangle`, messages numbered `1.`, `2.`, in member order.
-- `timing`: the member requirements that carry a `quality` facet with a `measure`, and
-  the member entities that have a derived machine. The `title` is the first such
+- `timing`: measured criteria of the member requirements or the subject's
+  requirements, and the member entities that have a derived machine. The `title` is the first such
   requirement's statement and id. Each entity is a `robust` lane: `@0` its initial state,
   `@<measure>` the state after the machine's first transition out of the initial state.
   The lane shows only what the measure governs. A timing view is always curated; over a

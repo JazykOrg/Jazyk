@@ -466,7 +466,7 @@ fn per_call_sessions_keep_the_guard_and_the_feedback_cap() {
 // commit wins and the second gets a commit conflict with the batch still open on the
 // current generation. Mirrors docs/compiler/graph.md#commit-conflicts.
 #[test]
-fn two_servings_race_on_one_batch_and_the_second_gets_a_conflict() {
+fn two_servings_overlap_warn_and_both_commit_with_recorded_overwrite() {
     let dir = bare_dir("race-same");
     crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
     let project = crate::document_sets::Workspace::load(&dir)
@@ -514,12 +514,29 @@ fn two_servings_race_on_one_batch_and_the_second_gets_a_conflict() {
             .count(),
         2
     );
+    let staged_one = call(
+        &one,
+        "set_coverage",
+        json!({"section":"docs/a.md#/a","state":"non-normative","note":"First navigation review."}),
+    );
+    assert!(staged_one["error"].is_null(), "{staged_one}");
+    let staged_two = call(
+        &two,
+        "set_coverage",
+        json!({"section":"docs/a.md#/a","state":"non-normative","note":"Second navigation review."}),
+    );
+    assert_eq!(
+        staged_two["warnings"].as_array().unwrap().len(),
+        1,
+        "{staged_two}"
+    );
+    assert!(staged_two["warnings"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("commits first"));
+    let read = call(&one, "graph_status", json!({}));
+    assert_eq!(read["warnings"].as_array().unwrap().len(), 1, "{read}");
     let finish = |server: &McpServer| {
-        call(
-            server,
-            "set_coverage",
-            json!({"section":"docs/a.md#/a", "state":"non-normative", "note":"Navigation."}),
-        );
         let goals = server.open.lock().unwrap().as_ref().unwrap().goals.clone();
         let claims = goals
             .iter()
@@ -533,30 +550,38 @@ fn two_servings_race_on_one_batch_and_the_second_gets_a_conflict() {
     };
     let first = finish(&one);
     assert_eq!(first["committed"], true, "{first}");
+    let noticed = call(&two, "graph_status", json!({}));
+    assert!(
+        !noticed["conflictNotices"].as_array().unwrap().is_empty(),
+        "{noticed}"
+    );
     let second = finish(&two);
-    assert_eq!(second["error"]["rule"], "commit-conflict", "{second}");
-    let conflicts = second["error"]["conflicts"].as_array().unwrap();
-    assert!(conflicts.iter().any(|c| c["kind"] == "goal"), "{second}");
-    assert!(conflicts.iter().any(|c| c["kind"] == "section"), "{second}");
-    assert_eq!(
-        second["error"]["generation"],
-        json!(crate::store::read_generation(&out))
+    assert_eq!(second["committed"], true, "{second}");
+    assert!(
+        !second["overwrites"].as_array().unwrap().is_empty(),
+        "{second}"
     );
-    // The losing batch stays open on the current generation, its conflicting work dropped.
-    {
-        let open = two.open.lock().unwrap();
-        let o = open.as_ref().expect("the batch stays open");
-        assert_eq!(
-            o.session.snapshot.status.generation,
-            crate::store::read_generation(&out)
-        );
-        assert!(o.session.staged.is_empty());
-    }
-    call(
-        &two,
-        "abandon_goals",
-        json!({"reason":"Another session resolved it."}),
+    assert!(
+        !second["conflictNotices"].as_array().unwrap().is_empty(),
+        "{second}"
     );
+    let generation = second["generation"].as_u64().unwrap();
+    let entry = crate::goals::read_journal_entry(
+        &crate::layout::journal_file(&out, generation),
+        generation,
+    )
+    .unwrap();
+    assert!(!entry.overwrites.is_empty());
+    assert!(entry
+        .overwrites
+        .iter()
+        .any(|c| c["priorValue"] == "First navigation review."
+            && c["value"] == "Second navigation review."));
+    assert!(Store::load(&out)
+        .graph
+        .diagnostics
+        .values()
+        .any(|d| d.rule == "concurrent-overwrite" && d.severity == "info"));
     crate::vfs::remove_dir_all(dir).unwrap();
 }
 
@@ -696,4 +721,231 @@ fn one_serving_holds_several_open_batches_and_calls_name_theirs() {
         .unwrap();
     assert!(done["inputSchema"]["properties"]["batch"].is_object());
     crate::vfs::remove_dir_all(&dir).ok();
+}
+
+#[test]
+fn durable_open_work_survives_disconnect_and_expired_adoption_fences_old_owner() {
+    let dir = bare_dir("durable-open-adopt");
+    crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let make = || {
+        McpServer::with_bridge(
+            project.clone(),
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        )
+    };
+    let call = |server: &McpServer, name: &str, args: Value| {
+        let r = server
+            .handle("tools/call", &json!({"name":name,"arguments":args}))
+            .unwrap();
+        serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let one = make();
+    let opened = call(&one, "begin_goals", json!({}));
+    let id = opened["workId"].as_str().unwrap();
+    let token = opened["ownerToken"].clone();
+    let staged = call(
+        &one,
+        "set_coverage",
+        json!({"section":"docs/a.md#/a","state":"non-normative","note":"Retained navigation review."}),
+    );
+    assert!(staged["error"].is_null(), "{staged}");
+    let generation = crate::store::read_generation(&out);
+    one.eof_finish();
+    drop(one);
+    assert_eq!(
+        crate::store::read_generation(&out),
+        generation,
+        "disconnect must not commit"
+    );
+    let two = make();
+    let resumed = call(&two, "begin_goals", json!({"workId":id,"ownerToken":token}));
+    assert_eq!(resumed["resumed"], true, "{resumed}");
+    assert_eq!(
+        two.open
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .session
+            .staged
+            .len(),
+        1
+    );
+    let mut r = crate::open_work::read(&out, id).unwrap();
+    let seq = r.sequence;
+    r.expires_at = 0;
+    crate::open_work::save(&out, &mut r, Some(seq)).unwrap();
+    let three = make();
+    let adopted = call(
+        &three,
+        "adopt_open_work",
+        json!({"id":id,"expectedEpoch":r.receipt.epoch,"reason":"Recover interrupted work."}),
+    );
+    assert_eq!(adopted["resumed"], true, "{adopted}");
+    assert_ne!(adopted["ownerToken"], token);
+    let stale = call(
+        &two,
+        "set_coverage",
+        json!({"section":"docs/a.md#/a","state":"non-normative","note":"Late old owner."}),
+    );
+    assert_eq!(stale["error"]["rule"], "open-work-owner", "{stale}");
+    let goals = three.open.lock().unwrap().as_ref().unwrap().goals.clone();
+    let claims = goals
+        .iter()
+        .map(|g| json!({"goal":g.id,"justification":"Navigation index marked non-normative."}))
+        .collect::<Vec<_>>();
+    let done = call(
+        &three,
+        "done",
+        json!({"summary":"Recovered navigation coverage.","goals":claims}),
+    );
+    assert_eq!(done["committed"], true, "{done}");
+    let audit = crate::vfs::read_to_string(out.join("local/journal/open-work.jsonl")).unwrap();
+    assert!(audit.contains("previousOwner"), "{audit}");
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn crash_mid_session_leaves_a_resumable_changeset_on_disk() {
+    const CHILD: &str = "JAZYK_OPEN_WORK_CRASH_FIXTURE";
+    let child = std::env::var_os(CHILD).map(std::path::PathBuf::from);
+    let dir = child.clone().unwrap_or_else(|| bare_dir("crash-resume"));
+    if child.is_none() {
+        crate::vfs::write(dir.join("docs/a.md"), "# A\n\nNavigation index.\n").unwrap();
+    }
+    let project = crate::document_sets::Workspace::load(&dir)
+        .unwrap()
+        .resolve(Some("ds_main"))
+        .unwrap();
+    let out = project.out.clone();
+    let mut control = crate::control::Control::load(&project, &out);
+    control.compile = "auto".into();
+    control.save(&out);
+    let make = || {
+        McpServer::with_bridge(
+            project.clone(),
+            out.clone(),
+            vec!["compile".into()],
+            true,
+            BridgeFlags {
+                ephemeral: true,
+                ..Default::default()
+            },
+        )
+    };
+    let call = |s: &McpServer, name: &str, args: Value| {
+        let r = s
+            .handle("tools/call", &json!({"name":name,"arguments":args}))
+            .unwrap();
+        assert_ne!(r["isError"], true, "{r}");
+        serde_json::from_str::<Value>(r["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    if child.is_some() {
+        let s = make();
+        call(&s, "begin_goals", json!({}));
+        call(
+            &s,
+            "set_coverage",
+            json!({"section":"docs/a.md#/a","state":"non-normative","note":"Crash-safe review."}),
+        );
+        crate::vfs::write(dir.join("ready"), "ready").unwrap();
+        loop {
+            std::thread::park();
+        }
+    }
+    let mut process = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "mcp::tests::lifecycle::crash_mid_session_leaves_a_resumable_changeset_on_disk",
+        ])
+        .env(CHILD, &dir)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    while !dir.join("ready").exists() {
+        if started.elapsed().as_secs() > 10 {
+            process.kill().ok();
+            panic!("crash fixture did not stage in time");
+        }
+        assert!(
+            process.try_wait().unwrap().is_none(),
+            "child exited before staging"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    process.kill().unwrap();
+    process.wait().unwrap();
+    let records = crate::open_work::list(&out).unwrap();
+    assert_eq!(records.len(), 1);
+    let record = &records[0];
+    assert_eq!(record.mutations.len(), 1);
+    let server = make();
+    let resumed = call(
+        &server,
+        "begin_goals",
+        json!({"workId":record.receipt.id,"ownerToken":record.receipt.owner}),
+    );
+    assert_eq!(resumed["resumed"], true);
+    assert_eq!(
+        server
+            .open
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .session
+            .staged
+            .len(),
+        1
+    );
+    let staged = call(&server, "read_open_work", json!({"id":record.receipt.id}));
+    let mutation_id = staged["mutations"][0]["mutationId"].as_u64().unwrap();
+    let unstaged = call(&server, "unstage", json!({"mutationIds":[mutation_id]}));
+    assert_eq!(unstaged["stillStaged"], 0, "{unstaged}");
+    call(
+        &server,
+        "set_coverage",
+        json!({"section":"docs/a.md#/a","state":"non-normative","note":"Crash-safe review."}),
+    );
+    let restaged = call(&server, "read_open_work", json!({"id":record.receipt.id}));
+    assert!(
+        restaged["mutations"][0]["mutationId"].as_u64().unwrap() > mutation_id,
+        "mutation IDs must not be reused"
+    );
+    let discarded = call(
+        &server,
+        "abandon_goals",
+        json!({"reason":"Crash recovery verified."}),
+    );
+    assert!(discarded["error"].is_null());
+    let closed = crate::open_work::read(&out, &record.receipt.id).unwrap();
+    assert!(closed.mutations.is_empty());
+    assert!(closed.payload.is_null());
+    let log = crate::vfs::read_to_string(
+        out.join("local/open")
+            .join(&record.receipt.id)
+            .join("events.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        !log.contains("Crash-safe review."),
+        "discard retained payload"
+    );
+    crate::vfs::remove_dir_all(dir).unwrap();
 }

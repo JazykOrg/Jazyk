@@ -232,6 +232,11 @@ impl ToolSession {
             tokens_source,
             all_or_nothing: false,
             rebased_from: None,
+            base: Some(Box::new(self.snapshot.clone())),
+            actor: serde_json::to_value(&self.caller).ok(),
+            work_id: None,
+            validation: None,
+            progress: None,
         }
     }
 
@@ -254,6 +259,94 @@ impl ToolSession {
         });
         self.outcomes.retain(|goal, _| !drop_goals.contains(goal));
         self.done = None;
+    }
+
+    pub fn unstage(&mut self, indices: &BTreeSet<usize>) -> Result<(), ToolError> {
+        let creates: BTreeSet<String> = self
+            .staged
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| indices.contains(i))
+            .filter_map(|(_, op)| match op {
+                Op::CreateEntity { id, .. }
+                | Op::CreateRequirement { id, .. }
+                | Op::CreateCriterion { id, .. }
+                | Op::CreateView { id, .. } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
+        fn refers(value: &Value, ids: &BTreeSet<String>) -> bool {
+            match value {
+                Value::String(s) => ids.contains(s),
+                Value::Array(a) => a.iter().any(|v| refers(v, ids)),
+                Value::Object(m) => m.values().any(|v| refers(v, ids)),
+                _ => false,
+            }
+        }
+        for (i, op) in self.staged.iter().enumerate() {
+            if !indices.contains(&i)
+                && refers(&serde_json::to_value(op).unwrap_or_default(), &creates)
+            {
+                return Err(ToolError::new(
+                    "unstage-dependencies",
+                    format!(
+                        include_str!(concat!(
+                            env!("OUT_DIR"),
+                            "/payloads/goals/prompts/inline/open-work/unstage-dependency.md"
+                        )),
+                        i
+                    ),
+                ));
+            }
+        }
+        let mut i = 0;
+        self.staged.retain(|_| {
+            let keep = !indices.contains(&i);
+            i += 1;
+            keep
+        });
+        self.outcomes.clear();
+        self.done = None;
+        self.staged_entities.clear();
+        self.staged_diags.clear();
+        self.staged_reqs.clear();
+        self.staged_views.clear();
+        self.staged_parents.clear();
+        self.taken_ids.clear();
+        for op in &self.staged {
+            match op {
+                Op::CreateEntity { id, entity } => {
+                    self.staged_entities.insert(id.clone(), entity.clone());
+                    self.taken_ids.insert(id.clone());
+                }
+                Op::CreateRequirement { id, .. } => {
+                    self.staged_reqs.insert(id.clone());
+                    self.taken_ids.insert(id.clone());
+                }
+                Op::CreateCriterion { id, .. } => {
+                    self.taken_ids.insert(id.clone());
+                }
+                Op::CreateView { id, view } => {
+                    self.staged_views.insert(id.clone(), view.clone());
+                    self.taken_ids.insert(id.clone());
+                }
+                Op::ReportDiagnostic { id, diagnostic } => {
+                    self.staged_diags.insert(id.clone(), diagnostic.clone());
+                }
+                Op::UpdateEntity {
+                    id,
+                    parent: Some(parent),
+                    ..
+                } => {
+                    self.staged_parents.insert(id.clone(), parent.clone());
+                }
+                _ => {}
+            }
+        }
+        self.repeats.clear();
+        self.last_answers.clear();
+        self.previewed.clear();
+        Ok(())
     }
 
     // The goals the session failed, with their reasons, for the serving to record.

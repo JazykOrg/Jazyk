@@ -3,6 +3,11 @@ name: edit-documentation
 description: "Edit prose, requirements, criteria, or intended behavior without implicit compilation."
 requiredCapabilities: "document writes"
 tools:
+  - open_work
+  - read_open_work
+  - adopt_open_work
+  - discard_open_work
+  - unstage
   - edit_graph
   - edit_fact
   - revise_requirement

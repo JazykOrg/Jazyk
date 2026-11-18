@@ -90,8 +90,13 @@ fn stop_discards_staged_batch_and_releases_only_saved_claims_after_partial_commi
     let mut recovered = Workspace::new(files.clone()).unwrap();
     recovered.stop_recovery(&capsule, &[]).unwrap();
     assert!(
-        super::host_records().0.lock().unwrap().is_empty(),
-        "a compile job keeps no conversation records"
+        super::host_records()
+            .0
+            .lock()
+            .unwrap()
+            .keys()
+            .all(|(stream, _)| stream == "open-work"),
+        "a compile job keeps recoverable work, not conversation records"
     );
     let stopped = recovered.snapshot();
     assert!(!stopped.keys().any(|path| path.contains("/open/")));

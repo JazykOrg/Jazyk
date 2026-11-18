@@ -38,7 +38,7 @@ view is created at commit. Rendering files are disposable output.
 | `state` | one entity | the subject's derived [state machine](./state-machine.md) | states (on the subject) |
 | `sequence` | requirements (ordered) | one message per member from its initiator to its receiver; the participants are the union | flow, participants |
 | `communication` | requirements (ordered) | the same messages, numbered in order, the participants as boxes | flow, participants |
-| `timing` | one entity and requirements | the subject's state machine as a lane, the members' `quality` measures as the timeline | flow |
+| `timing` | one entity and requirements | the subject's state machine as a lane, measured criteria on the members' requirements as the timeline | flow |
 | `overview` | requirements (ordered) | an activity frame whose steps reference the sequence views containing the members | flow |
 
 Terms the flow kinds share:

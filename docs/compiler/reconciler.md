@@ -929,3 +929,10 @@ A suppression stores its baseline candidate identities and semantic hashes.
 It expires at cumulative growth or churn of `max(1, ceil(baseline / 5))`, a changed
 boundary or rule, or human unsuppression. A failed review is not suppression.
 Explicit source or human diagram obligations cannot be suppressed heuristically.
+
+## Open work visibility
+
+Board `openBy` derives from live persisted work and carries its stable work ID and
+owner identity. It never hides goals or changes readiness. Expired work remains
+available through open-work discovery. Staging overlap creates no review goal.
+Normal dirtiness and goal derivation follow actual committed changes.

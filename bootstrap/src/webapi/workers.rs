@@ -16,6 +16,7 @@ pub fn workers_snapshot(proj: &Project, out: &Path, gs: &GenSettings, c: &Contro
         "workflow": {"compile": c.compile, "generate": c.generate, "worker": c.worker},
         "workers": crate::control::workers(out),
         "open": crate::control::leases(out),
+        "openWork": crate::open_work::list(out).map(|work|work.iter().filter(|r|r.active()).map(|r|r.summary()).collect::<Vec<_>>()).unwrap_or_default(),
         "gated": {
             "compile": board.gated_of(&graph_kinds),
             // Bind goals gate under the generate release beside generation.

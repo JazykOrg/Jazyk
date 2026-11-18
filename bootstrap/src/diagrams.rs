@@ -101,7 +101,7 @@ impl Finding {
     }
     pub fn covered(&self, store: &Store) -> bool {
         if self.family == "source" {
-            return store.graph.views.values().any(|v| !v.members.is_empty() && matches!(&v.provenance,Some(Provenance::Quote(src)) if self.candidates.contains_key(&format!("{}#{}",src.doc,src.section))));
+            return store.graph.views.values().any(|v| !effective_members(store,v).is_empty() && matches!(&v.provenance,Some(Provenance::Quote(src)) if self.candidates.contains_key(&format!("{}#{}",src.doc,src.section)) && store.docs.get(&src.doc).and_then(|doc|doc.sections.get(&src.section)).is_some_and(|block|crate::md::locate(&block.raw,&src.quote).is_some())));
         }
         if self.family == "drift" {
             return !findings(store).iter().any(|f| f.id == self.id);
@@ -288,9 +288,7 @@ pub fn findings(store: &Store) -> Vec<Finding> {
             .flat_map(|r| r.entities.iter())
             .collect::<BTreeSet<_>>();
         let interaction = requirements.iter().any(|r| !r.edges.is_empty());
-        let paths = requirements
-            .iter()
-            .any(|r| r.transition.is_some() || r.facets.iter().any(|f| f.facet == "failure-mode"));
+        let paths = requirements.iter().any(|r| r.transition.is_some());
         let actors = participants.iter().any(|id| {
             store
                 .graph
@@ -345,8 +343,8 @@ pub fn findings(store: &Store) -> Vec<Finding> {
         };
         for id in ids {
             f.candidates.insert(
-                id,
-                hash_hex(&serde_json::to_string(machine).unwrap_or_default()),
+                id.clone(),
+                hash_hex(&json!({"state":id.split_once('#').map(|(_,state)|state),"initial":machine.initial.as_ref().is_some_and(|state|id==format!("{}#{}",machine.subject,state)),"transitions":machine.transitions.iter().filter(|t|id==format!("{}#{}",machine.subject,t.from) || id==format!("{}#{}",machine.subject,t.to)).collect::<Vec<_>>()}).to_string()),
             );
         }
         if f.candidates.len() > f.soft {
@@ -424,16 +422,6 @@ pub fn findings(store: &Store) -> Vec<Finding> {
             .filter(|id| levels.contains_key(*id))
             .count();
         let parts = children.len();
-        let quality: Vec<String> = store
-            .graph
-            .requirements
-            .iter()
-            .filter(|(_, r)| {
-                r.entities.iter().any(|id| id == target)
-                    && r.facets.iter().any(|f| f.facet == "quality")
-            })
-            .map(|(id, _)| id.clone())
-            .collect();
         let candidates = children
             .iter()
             .map(|id| {
@@ -472,58 +460,25 @@ pub fn findings(store: &Store) -> Vec<Finding> {
                 hard: usize::MAX,
             });
         }
-        if !quality.is_empty()
-            && store
-                .graph
-                .state_machines
-                .values()
-                .any(|m| &m.subject == target)
-        {
-            out.push(Finding {
-                boundary: Value::Null,
-                measure: None,
-                id: format!("timing:{}", target),
-                target: target.clone(),
-                family: "timing".into(),
-                candidates: quality
-                    .iter()
-                    .map(|id| {
-                        (
-                            id.clone(),
-                            semantic_hash(
-                                serde_json::to_value(&store.graph.requirements[id])
-                                    .unwrap_or_default(),
-                            ),
-                        )
-                    })
-                    .collect(),
-                kinds: vec!["timing".into()],
-                soft: 0,
-                hard: usize::MAX,
-            });
-        }
     }
     for machine in store.graph.state_machines.values() {
-        if out
-            .iter()
-            .any(|f| f.family == "timing" && f.target == machine.subject)
-        {
-            continue;
-        }
         let candidates = store
             .graph
-            .requirements
+            .criteria
             .iter()
-            .filter(|(_, r)| {
-                r.entities.contains(&machine.subject)
-                    && r.facets
-                        .iter()
-                        .any(|f| f.facet == "quality" && f.measure.is_some())
+            .filter(|(_, c)| {
+                c.measure.is_some()
+                    && (c.entities.contains(&machine.subject)
+                        || store
+                            .graph
+                            .requirements
+                            .get(&c.requirement)
+                            .is_some_and(|r| r.entities.contains(&machine.subject)))
             })
-            .map(|(id, r)| {
+            .map(|(id, c)| {
                 (
                     id.clone(),
-                    semantic_hash(serde_json::to_value(r).unwrap_or_default()),
+                    semantic_hash(serde_json::to_value(c).unwrap_or_default()),
                 )
             })
             .collect::<BTreeMap<_, _>>();
@@ -638,6 +593,7 @@ pub fn findings(store: &Store) -> Vec<Finding> {
     for f in &mut out {
         let entity = store.graph.entities.get(&f.target);
         f.boundary = json!({"target":f.target,"parent":entity.and_then(|e|e.parent.as_ref()),"scope":entity.map(|e|&e.scope)});
+        f.boundary["rule"] = json!({"version":1,"family":f.family,"soft":f.soft,"hard":if f.hard==usize::MAX {None} else {Some(f.hard)}});
         if f.family == "drift" {
             f.boundary["definition"] = store
                 .graph
@@ -950,6 +906,7 @@ fn semantic_hash(mut value: Value) -> String {
     if let Some(o) = value.as_object_mut() {
         o.remove("created");
         o.remove("updated");
+        o.remove("facets");
     }
     hash_hex(&value.to_string())
 }
@@ -1063,6 +1020,7 @@ pub fn authored_references(view: &View) -> Vec<String> {
             Value::String(s)
                 if s.starts_with("ent:")
                     || s.starts_with("req:")
+                    || s.starts_with("crit:")
                     || s.starts_with("view:")
                     || s.starts_with("scope:") =>
             {
@@ -1111,6 +1069,7 @@ pub fn reference_exists(store: &Store, id: &str) -> bool {
     id.starts_with("scope:")
         || store.graph.entities.contains_key(id)
         || store.graph.requirements.contains_key(id)
+        || store.graph.criteria.contains_key(id)
         || store.graph.views.contains_key(id)
 }
 
@@ -1308,11 +1267,15 @@ mod coverage_tests {
                             section: "/process".into(),
                             quote: format!("operation {i}"),
                         }],
-                        facets: vec![Facet {
-                            facet: "behavior".into(),
-                            reasoning: "Operation".into(),
-                            measure: None,
-                        }],
+                        ..Default::default()
+                    },
+                );
+                s.graph.criteria.insert(
+                    format!("crit:scenario-{i}"),
+                    Criterion {
+                        requirement: format!("req:behavior-{i}"),
+                        statement: format!("Operation {i} completes"),
+                        when: Some(format!("Operation {i} starts")),
                         ..Default::default()
                     },
                 );
@@ -1395,6 +1358,36 @@ mod coverage_tests {
             .collect();
         s.graph.views.insert("view:class/parts".into(), v);
         assert!(!f.covered(&s));
+    }
+    #[test]
+    fn timing_suggestions_use_criterion_bounds_without_requirement_classification() {
+        let mut s = specimen("state", 3);
+        s.graph.requirements.insert(
+            "req:deadline".into(),
+            Requirement {
+                statement: "Subject reaches ready before the deadline".into(),
+                entities: vec!["ent:subject".into()],
+                ..Default::default()
+            },
+        );
+        assert!(!findings(&s).iter().any(|f| f.family == "timing"));
+        s.graph.criteria.insert(
+            "crit:deadline".into(),
+            Criterion {
+                requirement: "req:deadline".into(),
+                statement: "Ready is reached within2seconds".into(),
+                measure: Some("2s".into()),
+                kind: "quality".into(),
+                ..Default::default()
+            },
+        );
+        let f = findings(&s)
+            .into_iter()
+            .find(|f| f.family == "timing")
+            .unwrap();
+        assert!(f.candidates.contains_key("crit:deadline"));
+        assert_eq!(f.hard, usize::MAX);
+        assert!(s.graph.views.is_empty());
     }
     #[test]
     fn object_type_context_and_boundary_changes_are_visible() {

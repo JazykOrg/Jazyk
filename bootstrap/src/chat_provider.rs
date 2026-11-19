@@ -265,16 +265,15 @@ pub fn cloud_login() -> i32 {
     };
     let challenge = format!("{:x}", Sha256::digest(proof.as_bytes()));
     let url = format!("https://jazyk.dev/account/cli-login?challenge={challenge}");
-    if let Err(e) = ready(&url) {
-        eprintln!("{e}");
-        return 1;
-    }
+    let mut ready_sent = false;
     let client = ureq::AgentBuilder::new()
         .timeout(std::time::Duration::from_secs(10))
         .build();
-    for _ in 0..450 {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(900);
+    while std::time::Instant::now() < deadline {
         match client
             .post("https://api.jazyk.dev/api/inference/exchange")
+            .set("Origin", "https://jazyk.dev")
             .set("Content-Type", "application/json")
             .send_string(&serde_json::json!({"proof":proof}).to_string())
         {
@@ -316,7 +315,16 @@ pub fn cloud_login() -> i32 {
                     }
                 };
             }
-            Err(ureq::Error::Status(401, _)) => {}
+            Err(ureq::Error::Status(401, _)) => {
+                if !ready_sent {
+                    if let Err(e) = ready(&url) {
+                        eprintln!("{e}");
+                        return 1;
+                    }
+                    ready_sent = true;
+                }
+            }
+            Err(ureq::Error::Status(429 | 500..=599, _)) | Err(ureq::Error::Transport(_)) => {}
             Err(e) => {
                 eprintln!("Cloud authorization exchange failed: {e}");
                 return 1;

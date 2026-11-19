@@ -185,6 +185,7 @@ pub async fn select(
                 }
                 let response = client()
                     .post(format!("{origin}/api/inference/exchange"))
+                    .header("Origin", st.gui_origin.as_str())
                     .json(&json!({"proof":proof}))
                     .send()
                     .await

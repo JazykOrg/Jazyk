@@ -264,7 +264,7 @@ pub fn cloud_login() -> i32 {
         }
     };
     let challenge = format!("{:x}", Sha256::digest(proof.as_bytes()));
-    let url = format!("https://jazyk.dev/cli-login?challenge={challenge}");
+    let url = format!("https://jazyk.dev/account/cli-login?challenge={challenge}");
     if let Err(e) = ready(&url) {
         eprintln!("{e}");
         return 1;

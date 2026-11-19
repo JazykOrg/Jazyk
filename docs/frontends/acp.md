@@ -912,7 +912,7 @@ open conversations, including conversations in other proxy processes.
 Chat replies include the setup URL. Endpoint setup opens a bounded loopback form
 that collects the endpoint name, URL, model and key. It does not require a hosted
 page to fetch localhost. `/jazyk openai add` needs no argument.
-Cloud sign-in opens the hosted `/cli-login` page with a SHA-256 challenge. The
+Cloud sign-in opens the hosted `/account/cli-login` page with a SHA-256 challenge. The
 native helper retains the proof and exchanges it after browser authorization.
 The browser never fetches a loopback API during Cloud sign-in. A signed-out user
 signs in and returns to the pending authorization page. A signed-in user can

@@ -67,21 +67,38 @@ whose table shadows it.
 
 ### Switching agents
 
-The launcher selects native IDE agents independently through `jazyk --setup`.
-Its built-in Jazyk registration explicitly selects `embedded`. It does not use
-`/agent` as a launcher preference or as an external agent's command.
+The Jazyk proxy owns a stable client conversation ID. The model picker selects
+its chat provider and model through standard ACP session configuration. Choices
+include `setup` (Setup / Add provider), `cloud` (Jazyk Cloud), available ACP agents
+such as `claude` and `codex`, and configured endpoint models. Actual model IDs
+reported by an ACP agent appear as `<agent>/<model>`. Names are never invented.
 
-The IDE proxy holds one downstream connection per agent, spawned the first time a
-conversation needs it. A conversation stays on the agent it opened on for its whole
-life; only new conversations follow a switch. `/agent <name>` in Jazyk's ACP chat records the
-name in `[acp] agent` and makes it the agent new conversations open on, at once,
-without restarting the IDE's Jazyk agent. This command is intercepted by Jazyk's
-proxy before it reaches the downstream agent. It does not control the standalone
-Claude Code, Codex, or Copilot chat. The reply names both agents: the one new
-conversations run on and the one the current conversation stays on. The IDE's
-`initialize` request is replayed to each agent spawned after the first; the
-capabilities the IDE saw are the first agent's. A reopened conversation
-([session store](#session-store)) continues on the current agent.
+Selecting a choice changes the current conversation. `/agent NAME` remains an
+alias for selecting that agent in the current conversation. `/model CHOICE` uses
+the same picker choices. Neither command changes shared compiler configuration
+or the default agent of other conversations. An active turn must finish or be
+cancelled before switching. Failed switching preserves the previous route.
+
+The proxy opens a new downstream session when crossing providers. It carries the
+most recent 65,536 characters of completed transcript as clearly marked context on
+the next human turn, without
+replaying old prompts as new work. Switching and model discovery make no inference
+request. Requests and notifications remain scoped to their originating backend;
+late updates from a replaced session are ignored. Permission and filesystem
+requests retain the client's existing approval path.
+
+Chat provider setup is separate from compiler `[llm]` defaults. A fresh chat with
+no explicitly configured chat provider selects Setup. It does not expose the
+compiler's Ollama or LocalRouter models as chat choices. Setup only supports
+provider configuration and picker changes; it cannot run project commands or
+forward work to a model.
+
+Cloud is always a picker choice. Its first human message opens browser sign-in
+when no valid Cloud grant exists. Discovery and picker changes never open a
+browser. Endpoint credentials are entered in the browser setup form, never chat.
+Cloud and endpoint credentials coexist in the private machine chat-provider file.
+An authentication rejection explains which provider needs setup, offers the setup
+flow and does not describe a 401 as a transient error.
 
 ### Claude Code
 
@@ -222,29 +239,15 @@ The protocol carries the choice: an agent may return `configOptions` from
 `session/new`, and the client sets one with `session/set_config_option`. A select
 option in the `model` category is what an IDE renders as a model picker.
 
-The embedded agent offers one such option, `model`:
+The IDE proxy offers the unified [chat choices](#switching-agents). Endpoint models
+come from that explicitly configured chat endpoint's `/models` listing, with the
+configured model as fallback. ACP agent models appear after selecting that agent,
+using the actual model IDs it reports. Discovery sends no prompts. Other options,
+including permission modes, remain owned by the current downstream agent.
 
-- The values come from the endpoint itself, asked once per session over the
-  OpenAI-compatible `/models` listing. An endpoint that does not answer is not an
-  error: the configured model is then the only value, which is the state of the world
-  before asking.
-- The current value is the model the [LLM settings](../compiler/project-settings.md#llm)
-  resolved, so an unchanged session prompts exactly what the CLI would.
-- A choice applies to the next prompt in that session and to no other, and the answer
-  restates the whole option set, as the protocol requires. The option id stays
-  `model` across sessions because clients persist a user's default under that id and
-  replay it on the next session.
-- Nothing else moves: the endpoint and the key stay machine configuration, and a
-  session choice never edits `jazyk.toml`. To change what every session starts with,
-  set the model in the project or global settings, answer the question
-  [`jazyk init`](./cli.md#jazyk-init) asks, or run [`/model`](#slash-commands),
-  which does both: it pins the choice in `jazyk.toml` and applies it to the open
-  session through the same config option.
-
-For an external agent the options are its own. The proxy forwards
-`session/set_config_option` and `session/set_mode` downstream and passes the
-`configOptions` it returns back up untouched, so an IDE's model picker drives the
-agent behind jazyk exactly as it would without jazyk in the middle.
+The standalone embedded agent exposes only its endpoint models. Worker sessions
+use compiler LLM settings; human chat uses machine chat-provider credentials.
+Changing the human chat choice never edits `jazyk.toml`.
 
 ### Sub-agent updates
 
@@ -339,17 +342,11 @@ What the store serves:
 - `session/load` replays the conversation as `user_message_chunk` and the agent's own
   recorded updates, then answers, because the response is the protocol's
   end-of-replay signal.
-- An agent that keeps its own sessions (Claude, Codex, OpenCode all advertise
-  `loadSession`) owns the replay instead: its history is the real one, and jazyk
-  forwards the load rather than showing the conversation twice. The forwarded
-  request gains the jazyk serving the same way `session/new` does, so a reopened
-  session keeps its tools.
-- A load never reaches an agent that did not advertise `loadSession`. The proxy
-  answers it: it opens a fresh downstream session for the continuation, routes the
-  loaded id onto it (prompts, cancels, and configuration one way, updates and
-  permission requests the other), replays whatever the store holds, and responds.
-  A conversation with no recorded history still loads, with a note saying so; a
-  missing transcript is not a launch failure.
+- The proxy restores its stable conversation ID and recorded chat selection. It
+  creates a fresh downstream session, replays the store to the client, and carries
+  completed conversation context on the next human prompt. It never forwards the
+  proxy's ID as an agent's native session ID. A missing transcript still loads,
+  with a note saying it starts fresh.
 - After any load, the proxy re-advertises the [slash commands](#slash-commands) and
   the store keeps appending to the same conversation file, so a reopened session
   behaves like the one it continues.
@@ -654,8 +651,8 @@ what setup remains. The catalog:
 | `/help` | What jazyk is, and every command in this session with one line each. |
 | `/init` | Set the project up: scaffold what is missing, then state what is still unanswered (agent, model) and the command that answers it. |
 | `/config` | The project's settings and where each came from. With arguments (`/config llm.model qwen3`), a minimal edit to `jazyk.toml`. |
-| `/model` | The models the endpoint serves, the current one marked. With a name, pins it in `jazyk.toml` and applies it to this session where the agent takes the `model` config option. |
-| `/agent` | The agents jazyk can drive (built-in and configured), the current one marked. With a name, records it in `jazyk.toml`; in the IDE proxy new conversations open on it at once ([switching agents](#switching-agents)), in the GUI once its settings reload. |
+| `/model` | In the IDE proxy, selects a chat choice for the current conversation. In the GUI, configures the compiler model. |
+| `/agent` | In the IDE proxy, switches the current conversation using the same [chat choices](#switching-agents). In the GUI, records the default agent in `jazyk.toml`. |
 | `/status` | The last build: verdict with its counts, graph size, open findings, board counts. |
 | `/board` | The goal board as `jazyk compile` would derive it now: open goals by class and kind, the batches the scheduler would form, blocked goals with their reasons, parked and failed goals. The verdict when the board is empty. |
 | `/preview` | The next session's prompt, exactly as the model would receive it. With a goal or target (`/preview ent:order`), the batch that goal would join. What [`jazyk preview`](../compiler/sessions.md#preview) prints. |
@@ -884,12 +881,12 @@ OpenAI-compatible endpoint, without sending the message to a model.
 These commands open the existing local Jazyk Web connection and its agent chooser
 in a browser. `/login` asks the user to sign in and choose Cloud; `/setup` asks for
 an endpoint and model there. No API key is entered in chat. This setup connection
-saves only the chosen built-in provider in `~/.jazyk/chat-provider.json`, with
-owner-only permissions. It never changes shared project configuration. Cloud
+saves the selected source and separate Cloud and endpoint credentials in
+`~/.jazyk/chat-provider.json`, with owner-only permissions. It never changes shared project configuration. Cloud
 credentials are inference-only grants with an expiry, not browser session cookies.
 The next message in the existing IDE chat uses the saved provider. Expired Cloud
-grants ask the user to `/login` again. Explicit CLI, environment, project and global
-endpoint configuration continues to work without sign-in.
+grants open browser sign-in on the next message. Explicit chat CLI or environment
+endpoint configuration continues to work without Cloud sign-in. Project and global compiler endpoints do not opt chat into inference.
 
 ## Paseo client setup
 

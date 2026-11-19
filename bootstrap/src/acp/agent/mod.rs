@@ -37,6 +37,7 @@ struct SessionState {
     model: String,
     model_changed: bool,
     conversation: bool,
+    source: Option<String>,
     // The servers the client supplied, which each sub-agent connects to again
     // (docs/frontends/acp.md#sub-agent-updates).
     servers: Vec<McpServer>,
@@ -414,7 +415,8 @@ pub fn run() -> i32 {
                         Ok(opened) => opened,
                         Err(error) => return responder.respond_with_internal_error(error),
                     };
-                    let chat_llm = (purpose.as_deref() != Some("worker")).then(||crate::chat_provider::for_chat(&new_llm,&cwd).ok()).flatten();
+                    let source = req.meta.as_ref().and_then(|m|m.get("jazyk")).and_then(|j|j["source"].as_str()).map(str::to_owned);
+                    let chat_llm = (purpose.as_deref() != Some("worker")).then(||match source.as_deref() { Some(source)=>crate::chat_provider::for_source(&new_llm,&cwd,source).ok(), None=>crate::chat_provider::for_chat(&new_llm,&cwd).ok() }).flatten();
                     let model = chat_llm.as_ref().unwrap_or(&new_llm).model.clone();
                     new_sessions.lock().unwrap().insert(
                         id.clone(),
@@ -427,6 +429,7 @@ pub fn run() -> i32 {
                                 cwd,
                                 model: model.clone(),
                                 model_changed: false,
+                                source,
                                 conversation: req.meta.as_ref().and_then(|m| m.get("jazyk")).is_some_and(|m| m["purpose"] == "chat"),
                                 servers: req.mcp_servers.clone(),
                             })),
@@ -488,7 +491,7 @@ pub fn run() -> i32 {
                         // The session's model, which the client may have changed since
                         // the last turn. Mirrors docs/frontends/acp.md#choosing-a-model.
                         let mut llm = if state.conversation {
-                            match crate::chat_provider::for_chat(&llm,&state.cwd) {
+                            match match state.source.as_deref() { Some(source)=>crate::chat_provider::for_source(&llm,&state.cwd,source), None=>crate::chat_provider::for_chat(&llm,&state.cwd) } {
                                 Ok(llm)=>llm,
                                 Err(message)=>{
                                     notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(ContentBlock::from(message))));
@@ -590,7 +593,13 @@ pub fn run() -> i32 {
                             // Mirrors docs/frontends/acp.md#the-embedded-agent.
                             Stop::Error(e) => {
                                 notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
-                                    ContentBlock::from(format!("agent error: {}", e)),
+                                    ContentBlock::from(if (e.contains("401") || e.contains("Unauthorized")) && entry.state.lock().unwrap_or_else(|p|p.into_inner()).conversation {
+                                        match entry.state.lock().unwrap_or_else(|p|p.into_inner()).source.as_deref() {
+                                            Some("cloud")=>"Jazyk Cloud authentication failed. Use /login to sign in again.".into(),
+                                            Some("endpoint")=>"Endpoint authentication failed. Use /setup to update your endpoint credentials.".into(),
+                                            _=>"Authentication failed. Use /login for Cloud or /setup for your endpoint.".into(),
+                                        }
+                                    } else { format!("agent error: {e}") }),
                                 )));
                                 responder.respond(PromptResponse::new(StopReason::Refusal))
                             }

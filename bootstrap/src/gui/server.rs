@@ -529,6 +529,10 @@ pub fn router_on(st: SharedState, port: Option<u16>) -> Router {
             post(agents::bridge_request),
         )
         .route("/lsp", get(lsp_ws::ws))
+        .route(
+            "/chat-setup",
+            get(super::chat_setup::page).post(super::chat_setup::save),
+        )
         .fallback(not_found)
         .layer(middleware::from_fn_with_state(st.clone(), auth))
         .layer(middleware::from_fn(

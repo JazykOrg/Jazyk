@@ -170,7 +170,7 @@ pub fn remove(source: &str) -> Result<(), String> {
     save_at(&path, &p)
 }
 pub fn begin(cwd: &Path, source: &str) -> String {
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<String, String> {
         let log = dirs::cache_dir()
             .ok_or("cannot locate cache")?
             .join("jazyk/chat-setup.log");
@@ -182,7 +182,7 @@ pub fn begin(cwd: &Path, source: &str) -> String {
             use std::os::unix::fs::OpenOptionsExt;
             options.mode(0o600);
         }
-        let out = options.open(log).map_err(|e| e.to_string())?;
+        let out = options.open(&log).map_err(|e| e.to_string())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -196,28 +196,138 @@ pub fn begin(cwd: &Path, source: &str) -> String {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
         }
+        let ready = log.with_file_name(format!(
+            "chat-setup-{}-{}.json",
+            std::process::id(),
+            crate::sys::now_millis()
+        ));
         let mut child = command
-            .args(["gui", "--port", "0"])
-            .env("JAZYK_CHAT_SETUP", source)
+            .args(["gui", "--no-open", "--port", "0"])
+            .env(
+                "JAZYK_CHAT_SETUP",
+                if source == "cloud" {
+                    "cloud-direct"
+                } else {
+                    source
+                },
+            )
+            .env("JAZYK_CHAT_SETUP_READY", &ready)
             .current_dir(cwd)
             .stdin(std::process::Stdio::null())
             .stdout(out.try_clone().map_err(|e| e.to_string())?)
             .stderr(out)
             .spawn()
             .map_err(|e| e.to_string())?;
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
-            return Err(format!(
-                "setup server exited ({status}); see the private chat-setup.log"
-            ));
+        for _ in 0..400 {
+            if let Ok(bytes) = std::fs::read(&ready) {
+                let url: String = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+                let _ = std::fs::remove_file(&ready);
+                open::that_detached(&url)
+                    .map_err(|e| format!("cannot open browser ({e}); open {url}"))?;
+                return Ok(url);
+            }
+            if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+                return Err(format!(
+                    "setup server exited ({status}); see the private chat-setup.log"
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        Ok(())
+        let _ = child.kill();
+        Err("setup did not become ready within 20 seconds".into())
     })();
     match result {
-        Ok(())=>format!("Opening Jazyk Web. {} Your choice is saved for IDE chat; return here and send your message again.",if source=="cloud" {"Sign in, open the agent chooser and choose Jazyk Cloud."}else{"Open the agent chooser and configure your OpenAI-compatible endpoint and model."}),
-        Err(e)=>format!("Cannot open chat setup: {e}"),
+        Ok(url) => format!(
+            "Open setup: <{url}>\n{}",
+            if source == "cloud" {
+                "Sign in if needed, then authorize Jazyk. Return here when complete."
+            } else {
+                "Enter the endpoint details in the form. Return here after saving."
+            }
+        ),
+        Err(e) => format!("Cannot open chat setup: {e}"),
     }
 }
+pub fn ready(url: &str) -> Result<(), String> {
+    if let Some(path) = std::env::var_os("JAZYK_CHAT_SETUP_READY") {
+        save_at(Path::new(&path), &url)?;
+    }
+    Ok(())
+}
+pub fn cloud_login() -> i32 {
+    use sha2::{Digest, Sha256};
+    let proof = match crate::gui::state::mint_token() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("{e}");
+            return 1;
+        }
+    };
+    let challenge = format!("{:x}", Sha256::digest(proof.as_bytes()));
+    let url = format!("https://jazyk.dev/cli-login?challenge={challenge}");
+    if let Err(e) = ready(&url) {
+        eprintln!("{e}");
+        return 1;
+    }
+    let client = ureq::AgentBuilder::new()
+        .timeout(std::time::Duration::from_secs(10))
+        .build();
+    for _ in 0..450 {
+        match client
+            .post("https://api.jazyk.dev/api/inference/exchange")
+            .set("Content-Type", "application/json")
+            .send_string(&serde_json::json!({"proof":proof}).to_string())
+        {
+            Ok(response) => {
+                let grant: serde_json::Value = match response
+                    .into_string()
+                    .map_err(|e| e.to_string())
+                    .and_then(|s| serde_json::from_str(&s).map_err(|e| e.to_string()))
+                {
+                    Ok(v) => v,
+                    Err(e) => {
+                        eprintln!("invalid authorization reply: {e}");
+                        return 1;
+                    }
+                };
+                let Some(token) = grant["token"].as_str().filter(|s| s.len() == 64) else {
+                    eprintln!("invalid Cloud grant");
+                    return 1;
+                };
+                let mut llm = crate::cli::resolve_llm(
+                    &Default::default(),
+                    &Default::default(),
+                    &Default::default(),
+                    |_| None,
+                );
+                llm.base_url = "https://api.jazyk.dev/api/inference/v1".into();
+                llm.model = "cloud".into();
+                llm.api = "chat_completions".into();
+                llm.api_key = token.into();
+                return match save(
+                    "cloud",
+                    &llm,
+                    Some(grant["expires_in"].as_u64().unwrap_or(3600).min(3600)),
+                ) {
+                    Ok(()) => 0,
+                    Err(e) => {
+                        eprintln!("{e}");
+                        1
+                    }
+                };
+            }
+            Err(ureq::Error::Status(401, _)) => {}
+            Err(e) => {
+                eprintln!("Cloud authorization exchange failed: {e}");
+                return 1;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    eprintln!("Cloud authorization expired. Run /jazyk login again.");
+    1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -8,6 +8,7 @@ mod api;
 mod board_api;
 mod card_api;
 mod chat;
+mod chat_setup;
 mod deliverable;
 mod diff;
 mod docs;
@@ -169,6 +170,9 @@ pub fn connect_url(gui_url: &str, port: u16, token: Option<&str>) -> String {
 }
 
 pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
+    if std::env::var("JAZYK_CHAT_SETUP").as_deref() == Ok("cloud-direct") {
+        return crate::chat_provider::cloud_login();
+    }
     let proj = crate::document_sets::Workspace::load(&proj.root)
         .map(|w| w.files_project())
         .unwrap_or(proj);
@@ -270,7 +274,19 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
                 occupant
             );
         }
-        let url = connect_url(&page, addr.port(), st.token.as_deref());
+        let url = if std::env::var_os("JAZYK_CHAT_SETUP_READY").is_some() {
+            format!(
+                "http://127.0.0.1:{}/chat-setup?token={}",
+                addr.port(),
+                st.token.as_deref().unwrap_or_default()
+            )
+        } else {
+            connect_url(&page, addr.port(), st.token.as_deref())
+        };
+        if let Err(e) = crate::chat_provider::ready(&url) {
+            eprintln!("setup handoff failed: {e}");
+            return 1;
+        }
         println!(
             "jazyk: gui serving {} on 127.0.0.1:{} at {}",
             st.proj().root.display(),

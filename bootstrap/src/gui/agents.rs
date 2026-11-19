@@ -76,7 +76,7 @@ pub async fn list(State(st): State<SharedState>) -> Response {
         Err(_) => err(StatusCode::INTERNAL_SERVER_ERROR, "Agent discovery failed."),
     }
 }
-fn endpoint(body: &Value, mut llm: Llm) -> Result<Llm, String> {
+pub(super) fn endpoint(body: &Value, mut llm: Llm) -> Result<Llm, String> {
     let url = body["baseUrl"]
         .as_str()
         .ok_or("Endpoint URL is required.")?;

@@ -241,6 +241,9 @@ fn init_setup(cwd: &std::path::Path, mcp: Option<&str>, acp: Option<&str>) -> bo
 }
 
 pub fn run_gui(paths: &[String], opts: &Options) -> i32 {
+    if std::env::var("JAZYK_CHAT_SETUP").as_deref() == Ok("cloud-direct") {
+        return crate::chat_provider::cloud_login();
+    }
     let (proj, llm, out) = resolve(paths, opts);
     crate::gui::run(
         proj,

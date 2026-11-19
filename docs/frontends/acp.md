@@ -906,3 +906,14 @@ Setup helpers have an independent process group and remain available for one hou
 including after saving, so the setup browser stays connected.
 Credential changes publish standard ACP `config_option_update` notifications to all
 open conversations, including conversations in other proxy processes.
+
+## Browser setup handoff
+
+Chat replies include the setup URL. Endpoint setup opens a hosted form that collects the endpoint name, URL, model
+and key. It submits by browser navigation to a one-use local callback, with no
+localhost fetch. The callback nonce grants no access to the project API. `/jazyk openai add` needs no argument.
+Cloud sign-in opens the hosted `/account/cli-login` page with a SHA-256 challenge. The
+native helper retains the proof and exchanges it after browser authorization.
+The browser never fetches a loopback API during Cloud sign-in. A signed-out user
+signs in and returns to the pending authorization page. A signed-in user can
+authorize immediately. The page confirms completion without running a model.

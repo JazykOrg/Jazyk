@@ -860,7 +860,7 @@ pub(super) fn status(st: &ProxyState, sid: &str) -> String {
             model
         ));
     }
-    text.push_str("\n/jazyk login\n/jazyk logout\n/jazyk openai add NAME\n/jazyk openai remove NAME\n/jazyk status");
+    text.push_str("\n/jazyk login\n/jazyk logout\n/jazyk openai add\n/jazyk openai remove NAME\n/jazyk status");
     text
 }
 fn configure(st: &Arc<ProxyState>, sid: &str, args: &str) -> String {
@@ -875,6 +875,7 @@ fn configure(st: &Arc<ProxyState>, sid: &str, args: &str) -> String {
             }
             Err(e) => e,
         },
+        ["openai", "add"] => setup(st, sid, "endpoint-form"),
         ["openai", "add", name]
             if !name.is_empty()
                 && name
@@ -883,7 +884,11 @@ fn configure(st: &Arc<ProxyState>, sid: &str, args: &str) -> String {
         {
             setup(st, sid, &format!("endpoint:{name}"))
         }
-        ["openai", "remove", name] => match crate::chat_provider::remove(&if *name == "default" {
+        ["openai", "remove", name] => match crate::chat_provider::remove(&if *name == "default"
+            && !crate::chat_provider::entries()
+                .iter()
+                .any(|(id, _, _, _)| id == "endpoint:default")
+        {
             "endpoint".into()
         } else {
             format!("endpoint:{name}")
@@ -912,6 +917,32 @@ pub(super) fn watch(st: &Arc<ProxyState>) {
                 continue;
             }
             revision = next;
+            if crate::chat_provider::entries()
+                .iter()
+                .any(|(id, _, _, valid)| id == "cloud" && *valid)
+            {
+                let completed = {
+                    let mut sessions = st.chat.sessions.lock().unwrap();
+                    sessions
+                        .iter_mut()
+                        .filter_map(|(id, s)| {
+                            if s.auth_opened && s.choice.split('/').next() == Some("cloud") {
+                                s.auth_opened = false;
+                                Some(id.clone())
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                };
+                for id in completed {
+                    say(
+                        &st,
+                        &id,
+                        "Jazyk Cloud is signed in. Send your message to continue.",
+                    );
+                }
+            }
             st.chat.models.lock().unwrap().clear();
             let changed_sid = st.chat.sessions.lock().unwrap().keys().next().cloned();
             if let Some(sid) = changed_sid {

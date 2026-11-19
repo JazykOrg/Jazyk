@@ -101,6 +101,7 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
     class Cloud(http.server.BaseHTTPRequestHandler):
         def do_POST(self):
             assert self.path=='/api/inference/exchange'
+            assert self.headers.get('Origin')=='https://jazyk.dev'
             body=json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             assert len(body['proof'])>=32
             reply=json.dumps({'token':'f'*64,'expires_in':3600}).encode()

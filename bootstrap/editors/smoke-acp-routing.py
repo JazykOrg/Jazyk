@@ -108,11 +108,22 @@ with tempfile.TemporaryDirectory(prefix='jazyk routing ') as temporary:
             rpc('initialize',{'protocolVersion':1,'clientCapabilities':{'fs':{'readTextFile':True,'writeTextFile':True}},'clientInfo':{'name':'routing-smoke','version':'1'}})
             session=rpc('session/new',{'cwd':str(project),'mcpServers':[]});sid=session['sessionId']
             model=session['configOptions'][0];values={o['value'] for o in model['options']}
+            assert model['options'][0]['value']=='setup' and model['options'][0]['name']=='[Configure]'
             assert model['currentValue']=='setup' and {'setup','cloud','claude','codex'}<=values,model
             assert 'compiler-only-ollama' not in json.dumps(session)
             prompt('Please change all project files');prompt('/compile')
             assert not logs(),'Setup must not spawn external agents'
-            assert '/login' in json.dumps(messages) and '/setup' in json.dumps(messages)
+            assert '/jazyk login' in json.dumps(messages) and '/jazyk openai' in json.dumps(messages)
+            second=rpc('session/new',{'cwd':str(project),'mcpServers':[]})['sessionId']
+            before=len(messages)
+            fixture_provider={'source':'endpoint:demo','base_url':'http://127.0.0.1:9/v1','model':'demo','api':'chat_completions','api_key':'fixture'}
+            (home/'.jazyk/chat-provider.json').write_text(json.dumps({'selected':'setup','providers':{'endpoint:demo':fixture_provider}}))
+            time.sleep(.8)
+            prompt('/jazyk status')
+            assert 'endpoint:demo' in json.dumps(messages[before:])
+            assert any(m.get('params',{}).get('sessionId')==second and m['params'].get('update',{}).get('sessionUpdate')=='config_option_update' for m in messages[before:]),'settings updates must reach other sessions'
+            prompt('/jazyk openai remove demo')
+            assert not json.loads((home/'.jazyk/chat-provider.json').read_text())['providers']
             select('cloud');assert not logs(),'unsigned Cloud selection must be side-effect-free'
             select('claude');assert not [r for r in logs() if r.get('method')=='session/prompt']
             changed=rpc('session/set_config_option',{'sessionId':sid,'configId':'permissions','value':'ask'})

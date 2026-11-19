@@ -6,7 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 pub const ONBOARDING: &str =
-    "Use /login for Jazyk Cloud or /setup for an OpenAI-compatible endpoint.";
+    "Use /jazyk login for Jazyk Cloud or /jazyk openai add NAME for an OpenAI-compatible endpoint.";
 #[derive(Clone, Deserialize, Serialize)]
 struct Saved {
     source: String,
@@ -100,7 +100,7 @@ fn save_at(path: &Path, saved: &impl Serialize) -> Result<(), String> {
 }
 fn apply(saved: Saved, mut llm: Llm) -> Result<Llm, String> {
     if saved.expires_at.is_some_and(|t| t <= now()) {
-        return Err("Jazyk Cloud sign-in expired. Use /login again.".into());
+        return Err("Jazyk Cloud sign-in expired. Use /jazyk login again.".into());
     }
     llm.base_url = saved.base_url;
     llm.model = saved.model;
@@ -143,6 +143,32 @@ pub fn configured(_cwd: &Path) -> bool {
     std::env::var_os("JAZYK_LLM_BASE_URL").is_some()
 }
 
+pub fn entries() -> Vec<(String, String, String, bool)> {
+    path()
+        .ok()
+        .and_then(|p| providers_at(&p).ok())
+        .unwrap_or_default()
+        .providers
+        .into_iter()
+        .map(|(id, p)| {
+            (
+                id,
+                p.base_url,
+                p.model,
+                p.expires_at.is_none_or(|t| t > now()),
+            )
+        })
+        .collect()
+}
+pub fn remove(source: &str) -> Result<(), String> {
+    let path = path()?;
+    let mut p = providers_at(&path)?;
+    p.providers.remove(source);
+    if p.selected == source {
+        p.selected = "setup".into();
+    }
+    save_at(&path, &p)
+}
 pub fn begin(cwd: &Path, source: &str) -> String {
     let result = (|| -> Result<(), String> {
         let log = dirs::cache_dir()
@@ -164,7 +190,13 @@ pub fn begin(cwd: &Path, source: &str) -> String {
                 .map_err(|e| e.to_string())?;
         }
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-        std::process::Command::new(exe)
+        let mut command = std::process::Command::new(exe);
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            command.process_group(0);
+        }
+        let mut child = command
             .args(["gui", "--port", "0"])
             .env("JAZYK_CHAT_SETUP", source)
             .current_dir(cwd)
@@ -173,6 +205,12 @@ pub fn begin(cwd: &Path, source: &str) -> String {
             .stderr(out)
             .spawn()
             .map_err(|e| e.to_string())?;
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        if let Some(status) = child.try_wait().map_err(|e| e.to_string())? {
+            return Err(format!(
+                "setup server exited ({status}); see the private chat-setup.log"
+            ));
+        }
         Ok(())
     })();
     match result {
@@ -216,6 +254,6 @@ mod tests {
         }
         saved.expires_at = Some(0);
         save_at(&path, &saved).unwrap();
-        assert!(load_at(&path, llm).err().unwrap().contains("/login"));
+        assert!(load_at(&path, llm).err().unwrap().contains("/jazyk login"));
     }
 }

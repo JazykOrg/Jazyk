@@ -595,9 +595,9 @@ pub fn run() -> i32 {
                                 notify(SessionUpdate::AgentMessageChunk(ContentChunk::new(
                                     ContentBlock::from(if (e.contains("401") || e.contains("Unauthorized")) && entry.state.lock().unwrap_or_else(|p|p.into_inner()).conversation {
                                         match entry.state.lock().unwrap_or_else(|p|p.into_inner()).source.as_deref() {
-                                            Some("cloud")=>"Jazyk Cloud authentication failed. Use /login to sign in again.".into(),
-                                            Some("endpoint")=>"Endpoint authentication failed. Use /setup to update your endpoint credentials.".into(),
-                                            _=>"Authentication failed. Use /login for Cloud or /setup for your endpoint.".into(),
+                                            Some("cloud")=>"Jazyk Cloud authentication failed. Use /jazyk login to sign in again.".into(),
+                                            Some("endpoint")=>"Endpoint authentication failed. Use /jazyk openai add NAME to update your endpoint credentials.".into(),
+                                            _=>"Authentication failed. Use /jazyk login for Cloud or /jazyk openai add NAME for your endpoint.".into(),
                                         }
                                     } else { format!("agent error: {e}") }),
                                 )));

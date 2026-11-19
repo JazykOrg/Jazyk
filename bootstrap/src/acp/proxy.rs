@@ -223,6 +223,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         }
     };
     *state.agent_name.lock().unwrap() = agent_name.clone();
+    chat::watch(&state);
     if state.in_project() {
         start_sink(&state);
     }
@@ -529,7 +530,7 @@ fn mcp_server_name(server: &agent_client_protocol::schema::v1::McpServer) -> Opt
 fn advertise_commands(st: &Arc<ProxyState>, up: &ConnectionTo<Client>, sid: &str) {
     use agent_client_protocol::schema::v1::{AvailableCommand, AvailableCommandsUpdate};
     let setup = chat::choice(st, sid) == "setup";
-    let commands: Vec<AvailableCommand> = crate::acp::commands::available(st.in_project())
+    let mut commands: Vec<AvailableCommand> = crate::acp::commands::available(st.in_project())
         .filter(|c| !setup || ["help", "model", "agent", "login", "setup"].contains(&c.name))
         .map(|c| {
             let description = match c.name {
@@ -548,6 +549,13 @@ fn advertise_commands(st: &Arc<ProxyState>, up: &ConnectionTo<Client>, sid: &str
             }
         })
         .collect();
+    commands.insert(
+        0,
+        AvailableCommand::new(
+            "jazyk",
+            "Show configuration, login/logout, and manage OpenAI endpoints",
+        ),
+    );
     let _ = up.send_notification(SessionNotification::new(
         sid_of(sid),
         SessionUpdate::AvailableCommandsUpdate(AvailableCommandsUpdate::new(commands)),
@@ -609,6 +617,16 @@ fn ensure_down(
                 };
                 n.session_id = sid_of(&sid);
                 chat::record(&st_rec, &sid, &n.update);
+                if let SessionUpdate::AvailableCommandsUpdate(update) = &mut n.update {
+                    update.available_commands.retain(|c| c.name != "jazyk");
+                    update.available_commands.insert(
+                        0,
+                        agent_client_protocol::schema::v1::AvailableCommand::new(
+                            "jazyk",
+                            "Configure providers, login/logout, and manage OpenAI endpoints",
+                        ),
+                    );
+                }
                 if let SessionUpdate::ConfigOptionUpdate(update) = &n.update {
                     chat::backend_options(&st_rec, &sid, update.config_options.clone());
                     n.update = SessionUpdate::ConfigOptionUpdate(

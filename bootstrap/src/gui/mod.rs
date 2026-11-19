@@ -239,7 +239,7 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         if std::env::var_os("JAZYK_CHAT_SETUP").is_some() {
             let shutdown = st.shutdown.clone();
             tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
                 shutdown.notify_one();
             });
         }

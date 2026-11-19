@@ -909,9 +909,9 @@ open conversations, including conversations in other proxy processes.
 
 ## Browser setup handoff
 
-Chat replies include the setup URL. Endpoint setup opens a bounded loopback form
-that collects the endpoint name, URL, model and key. It does not require a hosted
-page to fetch localhost. `/jazyk openai add` needs no argument.
+Chat replies include the setup URL. Endpoint setup opens a hosted form that collects the endpoint name, URL, model
+and key. It submits by browser navigation to a one-use local callback, with no
+localhost fetch. The callback nonce grants no access to the project API. `/jazyk openai add` needs no argument.
 Cloud sign-in opens the hosted `/account/cli-login` page with a SHA-256 challenge. The
 native helper retains the proof and exchanges it after browser authorization.
 The browser never fetches a loopback API during Cloud sign-in. A signed-out user

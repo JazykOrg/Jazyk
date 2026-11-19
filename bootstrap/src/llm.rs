@@ -305,6 +305,9 @@ impl Llm {
                     ))
                     .timeout(timeout)
                     .json(&body);
+                if base_url.trim_end_matches('/') == "https://api.jazyk.dev/api/inference/v1" {
+                    call = call.header("Origin", "https://jazyk.dev");
+                }
                 if !api_key.is_empty() {
                     call = call.bearer_auth(&api_key);
                 }

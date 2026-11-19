@@ -16,19 +16,26 @@ with tempfile.TemporaryDirectory(prefix='jazyk browser setup ') as tmp:
             while not ready.exists() and time.monotonic()<end:
                 assert child.poll() is None,(root/'helper.log').read_text();time.sleep(.05)
             assert ready.exists(),'setup did not report its URL'
-            url=json.loads(ready.read_text());assert url.startswith('http://127.0.0.1:') and '/chat-setup?token=' in url
-            form=urllib.request.urlopen(url).read().decode()
-            assert all(f'name="{field}"' in form for field in ['name','url','model','key'])
+            link=json.loads(ready.read_text());assert link.startswith('https://jazyk.dev/account/endpoint-setup#')
+            fields=urllib.parse.parse_qs(urllib.parse.urlparse(link).fragment)
+            url=f"http://127.0.0.1:{fields['port'][0]}/chat-setup?token={fields['token'][0]}"
+            class NoRedirect(urllib.request.HTTPRedirectHandler):
+                def redirect_request(self,*args):return None
+            opener=urllib.request.build_opener(NoRedirect)
             def post(target,origin):
                 data=urllib.parse.urlencode({'name':'Work','url':'http://127.0.0.1:9/v1','model':'fixture','key':'fixture-private-key'}).encode()
                 request=urllib.request.Request(target,data=data,headers={'Origin':origin,'Content-Type':'application/x-www-form-urlencoded'})
                 try:
-                    with urllib.request.urlopen(request) as response:return response.status,response.read().decode()
-                except urllib.error.HTTPError as error:return error.code,error.read().decode()
-            origin=url.split('/chat-setup')[0]
+                    with opener.open(request) as response:return response.status,response.read().decode()
+                except urllib.error.HTTPError as error:return error.code,error.headers.get('Location') or error.read().decode()
+            origin='https://jazyk.dev'
+            try:urllib.request.urlopen(url.replace('/chat-setup','/api/status'))
+            except urllib.error.HTTPError as error:assert error.code==401
+            else:raise AssertionError('setup nonce must not authorize the project API')
             assert post(url,'https://untrusted.test')[0]==403
             assert post(url.replace('token=','token=wrong'),origin)[0]==401
-            status,reply=post(url,origin);assert status==200 and 'Endpoint saved' in reply
+            status,reply=post(url,origin);assert status==303 and reply=='https://jazyk.dev/account/endpoint-setup?complete=1'
+            assert post(url,origin)[0]==401,'callback must be one-use'
             assert 'fixture-private-key' not in reply
             stored=home/'.jazyk/chat-provider.json';saved=json.loads(stored.read_text())
             assert saved['providers']['endpoint:Work']['api_key']=='fixture-private-key'

@@ -276,9 +276,9 @@ pub fn run(proj: Project, llm: Llm, _out: PathBuf, gopts: GuiOptions) -> i32 {
         }
         let url = if std::env::var_os("JAZYK_CHAT_SETUP_READY").is_some() {
             format!(
-                "http://127.0.0.1:{}/chat-setup?token={}",
+                "https://jazyk.dev/account/endpoint-setup#port={}&token={}",
                 addr.port(),
-                st.token.as_deref().unwrap_or_default()
+                chat_setup::nonce(&st)
             )
         } else {
             connect_url(&page, addr.port(), st.token.as_deref())

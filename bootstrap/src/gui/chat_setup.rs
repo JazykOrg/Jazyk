@@ -1,9 +1,9 @@
-//! Bounded native endpoint setup. No hosted page fetches a loopback API.
+//! One-use endpoint configuration callback. It exposes no project API capability.
 use super::state::SharedState;
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::{Html, IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     Form,
 };
 use serde::Deserialize;
@@ -11,22 +11,21 @@ use serde::Deserialize;
 pub struct Token {
     token: String,
 }
+pub(super) fn nonce(st: &SharedState) -> String {
+    use sha2::{Digest, Sha256};
+    format!(
+        "{:x}",
+        Sha256::digest(
+            format!("endpoint-setup:{}", st.token.as_deref().unwrap_or_default()).as_bytes()
+        )
+    )
+}
 fn allowed(st: &SharedState, token: &Token) -> bool {
     std::env::var("JAZYK_CHAT_SETUP").is_ok_and(|s| s.starts_with("endpoint"))
-        && st
-            .token
-            .as_deref()
-            .is_some_and(|expected| super::state::token_matches(Some(&token.token), expected))
+        && st.token.is_some()
+        && super::state::token_matches(Some(&token.token), &nonce(st))
 }
-fn html(body: &str) -> Response {
-    ([("cache-control","no-store"),("referrer-policy","no-referrer"),("content-security-policy","default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")],Html(body.to_string())).into_response()
-}
-pub async fn page(State(st): State<SharedState>, Query(token): Query<Token>) -> Response {
-    if !allowed(&st, &token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    html(include_str!("chat_setup.html"))
-}
+static USED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 #[derive(Deserialize)]
 pub struct Endpoint {
     name: String,
@@ -50,7 +49,7 @@ pub async fn save(
     if headers
         .get("origin")
         .and_then(|s| s.to_str().ok())
-        .is_some_and(|origin| origin != format!("http://{host}"))
+        .is_some_and(|origin| origin != st.gui_origin && origin != format!("http://{host}"))
     {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -67,10 +66,30 @@ pub async fn save(
         )
             .into_response();
     }
+    if USED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
     let result = super::agents::endpoint(
         &serde_json::json!({"baseUrl":body.url,"model":body.model,"apiKey":body.key}),
         st.llm(),
     )
     .and_then(|llm| crate::chat_provider::save(&format!("endpoint:{}", body.name), &llm, None));
-    match result {Ok(())=>html("<!doctype html><title>Jazyk endpoint saved</title><h1>Endpoint saved</h1><p>Return to your Jazyk conversation. Its model picker updates automatically.</p>"),Err(_)=>(StatusCode::BAD_REQUEST,"Could not save endpoint. Check the URL and model, then go back and try again.").into_response()}
+    match result {
+        Ok(()) => (
+            [
+                ("referrer-policy", "no-referrer"),
+                ("cache-control", "no-store"),
+            ],
+            Redirect::to("https://jazyk.dev/account/endpoint-setup?complete=1"),
+        )
+            .into_response(),
+        Err(_) => {
+            USED.store(false, std::sync::atomic::Ordering::SeqCst);
+            (
+                StatusCode::BAD_REQUEST,
+                "Could not save endpoint. Check the URL and model, then go back and try again.",
+            )
+                .into_response()
+        }
+    }
 }

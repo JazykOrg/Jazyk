@@ -70,7 +70,7 @@ pub(super) fn choice(st: &ProxyState, sid: &str) -> String {
 }
 fn catalog(st: &ProxyState) -> BTreeMap<String, String> {
     let mut names: BTreeMap<String, String> = [
-        ("setup", "Setup / Add provider"),
+        ("setup", "[Configure]"),
         ("cloud", "Cloud"),
         ("claude", "Claude Code"),
         ("codex", "Codex"),
@@ -98,6 +98,18 @@ fn catalog(st: &ProxyState) -> BTreeMap<String, String> {
     {
         names.insert("endpoint".into(), "OpenAI-compatible endpoint".into());
     }
+    for (id, url, _, _) in crate::chat_provider::entries()
+        .into_iter()
+        .filter(|(id, _, _, _)| id.starts_with("endpoint"))
+    {
+        names.insert(
+            id.clone(),
+            format!(
+                "{} ({url})",
+                id.strip_prefix("endpoint:").unwrap_or("OpenAI")
+            ),
+        );
+    }
     names.extend(st.chat.models.lock().unwrap().clone());
     names
 }
@@ -110,8 +122,8 @@ pub(super) fn options(st: &ProxyState, sid: &str) -> Vec<SessionConfigOption> {
         "Model",
         SessionConfigKind::Select(SessionConfigSelect::new(
             current,
-            names
-                .into_iter()
+            std::iter::once(("setup".to_string(), "[Configure]".to_string()))
+                .chain(names.into_iter().filter(|(id, _)| id != "setup"))
                 .map(|(id, name)| SessionConfigSelectOption::new(id, name))
                 .collect::<Vec<_>>(),
         )),
@@ -134,10 +146,20 @@ pub(super) fn options(st: &ProxyState, sid: &str) -> Vec<SessionConfigOption> {
 }
 fn publish(st: &Arc<ProxyState>, sid: &str) {
     if let Some(up) = st.up.get() {
-        let _ = up.send_notification(SessionNotification::new(
-            sid_of(sid),
-            SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options(st, sid))),
-        ));
+        let sessions = st
+            .chat
+            .sessions
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>();
+        for id in sessions {
+            let _ = up.send_notification(SessionNotification::new(
+                sid_of(&id),
+                SessionUpdate::ConfigOptionUpdate(ConfigOptionUpdate::new(options(st, &id))),
+            ));
+        }
         advertise_commands(st, up, sid);
     }
 }
@@ -208,7 +230,7 @@ fn activate(st: &Arc<ProxyState>, sid: &str, chosen: &str) -> Result<()> {
     let (source, model) = chosen
         .split_once('/')
         .map_or((chosen.as_str(), None), |(a, b)| (a, Some(b)));
-    let embedded = source == "cloud" || source == "endpoint";
+    let embedded = source == "cloud" || source.starts_with("endpoint");
     let name = if embedded { "embedded" } else { source };
     if source != "setup" {
         st.agent_config(Some(name))?;
@@ -550,7 +572,26 @@ pub(super) fn prompt(st: &Arc<ProxyState>, mut req: PromptRequest) -> Result<Pro
         })
         .collect::<Vec<_>>()
         .join("\n");
-    if let Some((cmd, args)) = crate::acp::commands::split(&text, st.in_project()) {
+    if text.trim() == "/jazyk" || text.trim().starts_with("/jazyk ") {
+        let reply = configure(
+            st,
+            &sid,
+            text.trim()
+                .strip_prefix("/jazyk")
+                .unwrap_or_default()
+                .trim(),
+        );
+        say(st, &sid, reply);
+        return Ok(PromptResponse::new(StopReason::EndTurn));
+    }
+    if let Some((cmd, args)) =
+        crate::acp::commands::split(&text, st.in_project()).filter(|(cmd, _)| {
+            !["login", "setup"].contains(cmd) || {
+                let source = choice(st, &sid);
+                source == "setup" || source == "cloud" || source.starts_with("endpoint")
+            }
+        })
+    {
         if choice(st, &sid) == "setup"
             && !["help", "agent", "model", "login", "setup"].contains(&cmd)
         {
@@ -608,14 +649,14 @@ pub(super) fn prompt(st: &Arc<ProxyState>, mut req: PromptRequest) -> Result<Pro
                     crate::chat_provider::begin(&cwd(st, &sid), "endpoint"),
                 );
             } else {
-                say(st, &sid, crate::chat_provider::ONBOARDING);
+                say(st, &sid, status(st, &sid));
             }
             return Ok(PromptResponse::new(StopReason::EndTurn));
         }
     }
     let selected = choice(st, &sid);
     let source = selected.split('/').next().unwrap_or(&selected);
-    if ["cloud", "endpoint"].contains(&source) {
+    if source == "cloud" || source.starts_with("endpoint") {
         let credentials = crate::chat_provider::for_source_configured(
             &st.llm.lock().unwrap(),
             source,
@@ -779,6 +820,128 @@ pub(super) fn help(st: &ProxyState, sid: &str) -> String {
     text
 }
 
+pub(super) fn status(st: &ProxyState, sid: &str) -> String {
+    let entries = crate::chat_provider::entries();
+    let signed = entries
+        .iter()
+        .any(|(id, _, _, valid)| id == "cloud" && *valid);
+    let mut text = format!(
+        "Current: {}\nJazyk Cloud: {}\n",
+        choice(st, sid),
+        if signed {
+            "signed in (saved grant)"
+        } else {
+            "signed out"
+        }
+    );
+    for agent in ["claude", "codex", "opencode"] {
+        text.push_str(&format!(
+            "{}: {}\n",
+            agent,
+            if crate::setup::which(agent).is_some() {
+                "installed (sign-in managed by agent)"
+            } else {
+                "not installed"
+            }
+        ));
+    }
+    let endpoints = entries
+        .into_iter()
+        .filter(|(id, _, _, _)| id.starts_with("endpoint"))
+        .collect::<Vec<_>>();
+    if endpoints.is_empty() {
+        text.push_str("OpenAI endpoints: none\n");
+    }
+    for (id, url, model, _) in endpoints {
+        text.push_str(&format!(
+            "{}: {} · {}\n",
+            id.strip_prefix("endpoint:").unwrap_or("default"),
+            url,
+            model
+        ));
+    }
+    text.push_str("\n/jazyk login\n/jazyk logout\n/jazyk openai add NAME\n/jazyk openai remove NAME\n/jazyk status");
+    text
+}
+fn configure(st: &Arc<ProxyState>, sid: &str, args: &str) -> String {
+    let words = args.split_whitespace().collect::<Vec<_>>();
+    match words.as_slice() {
+        [] | ["status"] => status(st, sid),
+        ["login"] => setup(st, sid, "cloud"),
+        ["logout"] => match crate::chat_provider::remove("cloud") {
+            Ok(()) => {
+                publish(st, sid);
+                status(st, sid)
+            }
+            Err(e) => e,
+        },
+        ["openai", "add", name]
+            if !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') =>
+        {
+            setup(st, sid, &format!("endpoint:{name}"))
+        }
+        ["openai", "remove", name] => match crate::chat_provider::remove(&if *name == "default" {
+            "endpoint".into()
+        } else {
+            format!("endpoint:{name}")
+        }) {
+            Ok(()) => {
+                st.chat.models.lock().unwrap().clear();
+                publish(st, sid);
+                status(st, sid)
+            }
+            Err(e) => e,
+        },
+        _ => status(st, sid),
+    }
+}
+pub(super) fn watch(st: &Arc<ProxyState>) {
+    let weak = Arc::downgrade(st);
+    std::thread::spawn(move || {
+        let mut revision = crate::chat_provider::revision();
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let Some(st) = weak.upgrade() else {
+                break;
+            };
+            let next = crate::chat_provider::revision();
+            if revision == next {
+                continue;
+            }
+            revision = next;
+            st.chat.models.lock().unwrap().clear();
+            let changed_sid = st.chat.sessions.lock().unwrap().keys().next().cloned();
+            if let Some(sid) = changed_sid {
+                publish(&st, &sid);
+            }
+            for (source, _, _, valid) in crate::chat_provider::entries()
+                .into_iter()
+                .filter(|(id, _, _, valid)| id.starts_with("endpoint") && *valid)
+            {
+                let _ = valid;
+                let llm = crate::chat_provider::for_source_configured(
+                    &st.llm.lock().unwrap(),
+                    &source,
+                    false,
+                );
+                if let Ok(llm) = llm {
+                    let names = llm.list_models();
+                    let mut models = st.chat.models.lock().unwrap();
+                    for model in names {
+                        models.insert(format!("{source}/{model}"), format!("{source}/{model}"));
+                    }
+                }
+            }
+            let sid = st.chat.sessions.lock().unwrap().keys().next().cloned();
+            if let Some(sid) = sid {
+                publish(&st, &sid);
+            }
+        }
+    });
+}
 #[cfg(test)]
 mod tests {
     #[test]

@@ -60,7 +60,7 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
             rpc(1,'initialize',{'protocolVersion':1,'clientCapabilities':{},'clientInfo':{'name':'setup-smoke','version':'1'}})
             session=rpc(2,'session/new',{'cwd':str(project),'mcpServers':[]})['sessionId']
             rpc(3,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'Hello before setup'}]})
-            assert '/login' in json.dumps(messages) and '/setup' in json.dumps(messages)
+            assert '/jazyk login' in json.dumps(messages) and '/jazyk openai' in json.dumps(messages)
             assert not requests,'unconfigured message must not reach a model'
             saved=home/'.jazyk/chat-provider.json'
             provider={'source':'endpoint','base_url':f'http://127.0.0.1:{model.server_port}/v1',
@@ -78,7 +78,7 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
             refused=rpc(40,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'Reject invalid credential'}]})
             assert refused['stopReason']=='refusal',refused
             failure=json.dumps(messages[before:])
-            assert 'Endpoint authentication failed' in failure and '/setup' in failure,failure
+            assert 'Endpoint authentication failed' in failure and '/jazyk openai' in failure,failure
             assert 'transient' not in failure and 'Please retry' not in failure,failure
             assert len(requests)==2,'401 must not be retried'
             before=len(messages)
@@ -109,7 +109,7 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
     cloud=http.server.HTTPServer(('127.0.0.1',0),Cloud)
     threading.Thread(target=cloud.serve_forever,daemon=True).start()
     try:
-        for source in ['endpoint','cloud']:
+        for source in ['endpoint','cloud','endpoint:demo']:
             with (root/f'{source}-gui.log').open('w') as stderr:
                 process=subprocess.Popen([str(binary),'gui','--no-open','--port','0'],cwd=project,
                     env=env|{'JAZYK_CHAT_SETUP':source},stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=stderr,bufsize=0)
@@ -125,7 +125,7 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
                         request=urllib.request.Request(f'http://127.0.0.1:{port}{path}',data=json.dumps(body).encode(),
                           headers={'Content-Type':'application/json','Authorization':f'Bearer {token}','Origin':'https://jazyk.dev'})
                         with urllib.request.urlopen(request,timeout=10) as response:return json.load(response)
-                    if source=='endpoint':
+                    if source.startswith('endpoint'):
                         body={'agent':'embedded','source':'endpoint','baseUrl':'http://127.0.0.1:1/v1','model':'fixture','apiKey':'fixture-key'}
                     else:
                         challenge=api('/api/agents/cloud-challenge',{})
@@ -138,9 +138,9 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
                     provider=provider['providers'][source]
                     if source=='cloud':assert provider['expires_at']>time.time() and provider['api_key']=='f'*64
                     assert (home/'.jazyk/chat-provider.json').stat().st_mode&0o777==0o600
-                    assert process.wait(timeout=15)==0,'setup helper must exit after saving'
+                    assert process.poll() is None,'setup helper must remain available after saving, so the browser stays connected'
                 finally:
                     if process.poll() is None:process.terminate();process.wait(timeout=5)
                     process.stdout.close()
-        print('Browser endpoint and Cloud grant selections save private credentials and stop the setup helper, using loopback fixtures only')
+        print('Browser endpoint and Cloud grant selections save private credentials and keep the setup helper connected, using loopback fixtures only')
     finally:cloud.shutdown()

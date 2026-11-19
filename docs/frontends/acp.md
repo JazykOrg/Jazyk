@@ -894,3 +894,15 @@ endpoint configuration continues to work without Cloud sign-in. Project and glob
 Paseo daemon for the configured local home. It returns without starting Paseo
 Desktop or another daemon. The launcher lists Paseo under Coding agents. The
 provider is selected in the existing Paseo client.
+
+## Chat configuration commands
+
+`[Configure]` is the first chat choice. Its reply lists Cloud sign-in state,
+installed coding agents and saved OpenAI-compatible endpoints without credentials.
+`/jazyk` shows this status from any model. `/jazyk login`, `/jazyk logout`,
+`/jazyk openai add NAME` and `/jazyk openai remove NAME` manage machine chat settings.
+Named endpoints coexist. Adding an endpoint opens browser setup; secrets never enter chat.
+Setup helpers have an independent process group and remain available for one hour,
+including after saving, so the setup browser stays connected.
+Credential changes publish standard ACP `config_option_update` notifications to all
+open conversations, including conversations in other proxy processes.

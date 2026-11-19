@@ -227,12 +227,13 @@ pub async fn select(
             && agent.name == "embedded"
             && matches!(source, "cloud" | "endpoint")
         {
-            crate::chat_provider::save(source, &llm, expires_in)?;
-            let shutdown = st.shutdown.clone();
-            tokio::spawn(async move {
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                shutdown.notify_one();
-            });
+            let setup_source = std::env::var("JAZYK_CHAT_SETUP").unwrap_or_default();
+            let saved_source = if source == "endpoint" && setup_source.starts_with("endpoint:") {
+                setup_source.as_str()
+            } else {
+                source
+            };
+            crate::chat_provider::save(saved_source, &llm, expires_in)?;
         }
         let selected = Arc::new(Selection {
             id: id.clone(),

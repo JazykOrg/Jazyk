@@ -7,7 +7,7 @@ use std::{
 };
 pub const ONBOARDING: &str =
     "Use /login for Jazyk Cloud or /setup for an OpenAI-compatible endpoint.";
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize)]
 struct Saved {
     source: String,
     base_url: String,
@@ -28,18 +28,51 @@ fn path() -> Result<PathBuf, String> {
         .map(|p| p.join(".jazyk/chat-provider.json"))
         .ok_or("cannot locate home directory".into())
 }
-pub fn save(source: &str, llm: &Llm, expires_in: Option<u64>) -> Result<(), String> {
-    let saved = Saved {
-        source: source.into(),
-        base_url: llm.base_url.clone(),
-        model: llm.model.clone(),
-        api: llm.api.clone(),
-        api_key: llm.api_key.clone(),
-        expires_at: expires_in.map(|n| now() + n),
-    };
-    save_at(&path()?, &saved)
+#[derive(Default, Deserialize, Serialize)]
+struct Providers {
+    selected: String,
+    providers: std::collections::BTreeMap<String, Saved>,
 }
-fn save_at(path: &Path, saved: &Saved) -> Result<(), String> {
+fn providers_at(path: &Path) -> Result<Providers, String> {
+    if !path.exists() {
+        return Ok(Providers::default());
+    }
+    let bytes = std::fs::read(path).map_err(|e| e.to_string())?;
+    if let Ok(legacy) = serde_json::from_slice::<Saved>(&bytes) {
+        return Ok(Providers {
+            selected: legacy.source.clone(),
+            providers: [(legacy.source.clone(), legacy)].into(),
+        });
+    }
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+pub fn revision() -> Option<SystemTime> {
+    std::fs::metadata(path().ok()?).ok()?.modified().ok()
+}
+pub fn selected() -> Option<String> {
+    providers_at(&path().ok()?)
+        .ok()
+        .map(|p| p.selected)
+        .filter(|p| !p.is_empty())
+}
+pub fn save(source: &str, llm: &Llm, expires_in: Option<u64>) -> Result<(), String> {
+    let path = path()?;
+    let mut providers = providers_at(&path)?;
+    providers.selected = source.into();
+    providers.providers.insert(
+        source.into(),
+        Saved {
+            source: source.into(),
+            base_url: llm.base_url.clone(),
+            model: llm.model.clone(),
+            api: llm.api.clone(),
+            api_key: llm.api_key.clone(),
+            expires_at: expires_in.map(|n| now() + n),
+        },
+    );
+    save_at(&path, &providers)
+}
+fn save_at(path: &Path, saved: &impl Serialize) -> Result<(), String> {
     let parent = path.parent().ok_or("missing credential parent")?;
     std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     let tmp = path.with_extension(format!("{}.tmp", std::process::id()));
@@ -65,9 +98,7 @@ fn save_at(path: &Path, saved: &Saved) -> Result<(), String> {
     }
     result
 }
-fn load_at(path: &Path, mut llm: Llm) -> Result<Llm, String> {
-    let saved: Saved = serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
-        .map_err(|e| e.to_string())?;
+fn apply(saved: Saved, mut llm: Llm) -> Result<Llm, String> {
     if saved.expires_at.is_some_and(|t| t <= now()) {
         return Err("Jazyk Cloud sign-in expired. Use /login again.".into());
     }
@@ -78,32 +109,38 @@ fn load_at(path: &Path, mut llm: Llm) -> Result<Llm, String> {
     llm.reasoning_summary = None;
     Ok(llm)
 }
-pub fn for_chat(llm: &Llm, cwd: &Path) -> Result<Llm, String> {
-    let path = path()?;
-    if path.exists() {
-        return load_at(&path, llm.clone());
-    }
-    if configured(cwd) {
-        Ok(llm.clone())
-    } else {
-        Err(ONBOARDING.into())
-    }
+#[cfg(test)]
+fn load_at(path: &Path, llm: Llm) -> Result<Llm, String> {
+    let p = providers_at(path)?;
+    apply(p.providers.get(&p.selected).ok_or(ONBOARDING)?.clone(), llm)
 }
-
-pub fn configured(cwd: &Path) -> bool {
-    // The proxy passes resolved defaults too. Preserve whether they came from a user.
+pub fn for_source(llm: &Llm, cwd: &Path, source: &str) -> Result<Llm, String> {
+    for_source_configured(llm, source, configured(cwd))
+}
+pub fn for_source_configured(llm: &Llm, source: &str, configured: bool) -> Result<Llm, String> {
+    let providers = providers_at(&path()?)?;
+    if let Some(saved) = providers.providers.get(source) {
+        return apply(saved.clone(), llm.clone());
+    }
+    if source == "endpoint" && configured {
+        return Ok(llm.clone());
+    }
+    Err(if source == "cloud" {
+        "Sign in to Jazyk Cloud with /login."
+    } else {
+        ONBOARDING
+    }
+    .into())
+}
+pub fn for_chat(llm: &Llm, cwd: &Path) -> Result<Llm, String> {
+    for_source(llm, cwd, selected().as_deref().unwrap_or("endpoint"))
+}
+pub fn configured(_cwd: &Path) -> bool {
+    // Defaults injected by the proxy must not opt human chat into compiler inference.
     if let Ok(value) = std::env::var("JAZYK_CHAT_CONFIGURED") {
         return value == "true";
     }
-    let root = crate::project::find_root(cwd).unwrap_or_else(|| cwd.to_path_buf());
-    let proj = crate::project::Project::load(&root);
-    let global = crate::project::load_global_llm();
     std::env::var_os("JAZYK_LLM_BASE_URL").is_some()
-        || std::env::var_os("JAZYK_MODEL").is_some()
-        || proj.llm.base_url.is_some()
-        || proj.llm.model.is_some()
-        || global.base_url.is_some()
-        || global.model.is_some()
 }
 
 pub fn begin(cwd: &Path, source: &str) -> String {

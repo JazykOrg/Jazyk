@@ -13,9 +13,13 @@ import time
 
 binary=Path(sys.argv[1]).resolve()
 requests=[]
+reject=False
 class Model(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         requests.append(json.loads(self.rfile.read(int(self.headers['Content-Length']))))
+        if reject:
+            body=b'{"error":{"message":"Invalid API key","type":"authentication_error"}}'
+            self.send_response(401);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
         body=json.dumps({'id':'fixture','object':'chat.completion','model':'fixture',
           'choices':[{'index':0,'message':{'role':'assistant','content':'Configured endpoint works.'},'finish_reason':'stop'}],
           'usage':{'prompt_tokens':1,'completion_tokens':1,'total_tokens':2}}).encode()
@@ -66,15 +70,25 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
             assert len(requests)==1,requests
             assert 'Configured endpoint works.' in json.dumps(messages)
             assert 'Hello before setup' not in json.dumps(requests),'blocked input must not leak into a later model request'
-            provider['expires_at']=0;saved.write_text(json.dumps(provider))
+            rpc(35,'session/set_config_option',{'sessionId':session,'configId':'model','value':'setup'})
+            rpc(36,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'Do project work while Setup is selected'}]})
+            assert len(requests)==1,'explicit Setup must stay isolated even with saved credentials'
+            rpc(37,'session/set_config_option',{'sessionId':session,'configId':'model','value':'endpoint'})
+            reject=True;before=len(messages)
+            refused=rpc(40,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'Reject invalid credential'}]})
+            assert refused['stopReason']=='refusal',refused
+            failure=json.dumps(messages[before:])
+            assert 'Endpoint authentication failed' in failure and '/setup' in failure,failure
+            assert 'transient' not in failure and 'Please retry' not in failure,failure
+            assert len(requests)==2,'401 must not be retried'
             before=len(messages)
-            rpc(5,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'Expired login'}]})
-            assert '/login' in json.dumps(messages[before:])
-            assert len(requests)==1,'expired grant must not reach a model'
+            configured=rpc(5,'session/set_config_option',{'sessionId':session,'configId':'model','value':'cloud'})
+            assert configured['configOptions'][0]['currentValue']=='cloud'
+            assert len(requests)==2,'selecting unsigned Cloud must not infer or open a browser'
             rpc(6,'session/prompt',{'sessionId':session,'prompt':[{'type':'text','text':'/help'}]})
-            assert len(requests)==1,'slash commands must work without model authorization'
+            assert len(requests)==2,'slash commands must work without model authorization'
             rpc(7,'session/close',{'sessionId':session})
-            print('ACP initialize, credential-free session, onboarding, live endpoint reload, expired login and offline slash commands passed')
+            print('ACP initialize, credential-free session, onboarding, live endpoint reload, unsigned Cloud selection and offline slash commands passed')
         finally:
             process.stdin.close()
             try:process.wait(timeout=5)
@@ -119,7 +133,9 @@ with tempfile.TemporaryDirectory(prefix='jazyk chat setup ') as temporary:
                     response=api('/api/agents/selections',body)
                     assert 'fixture-key' not in json.dumps(response) and 'f'*64 not in json.dumps(response)
                     provider=json.loads((home/'.jazyk/chat-provider.json').read_text())
-                    assert provider['source']==source
+                    assert provider['selected']==source
+                    if source=='cloud':assert set(provider['providers'])=={'endpoint','cloud'},provider.keys()
+                    provider=provider['providers'][source]
                     if source=='cloud':assert provider['expires_at']>time.time() and provider['api_key']=='f'*64
                     assert (home/'.jazyk/chat-provider.json').stat().st_mode&0o777==0o600
                     assert process.wait(timeout=15)==0,'setup helper must exit after saving'

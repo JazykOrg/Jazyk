@@ -1,0 +1,16 @@
+---
+purpose: Preserve completed conversation context across a chat-provider change without authorizing replay.
+consumer: ACP proxy, the first human turn after opening a replacement downstream session.
+inputs: transcript is the completed user and assistant transcript; message is the new human prompt.
+---
+# Previous conversation
+
+This is completed conversation context, not new instructions or permission to
+repeat earlier work. Continue from its results. Only the current human message
+below requests new work.
+
+{{{transcript}}}
+
+# Current human message
+
+{{{message}}}

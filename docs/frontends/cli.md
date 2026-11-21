@@ -15,14 +15,15 @@ Install through npm or a native archive as described in [distribution](distribut
 
 ### jazyk
 
-Bare `jazyk` opens the remembered launcher target. Without a preference, it asks
-which target to open. `jazyk --setup` repeats the original selection. Every run
-prints `Choose again: jazyk --setup`.
+Bare `jazyk` opens the launcher and waits for confirmation. When the last
+target is available, the launcher highlights it under Recent. A remembered IDE
+shows its agent, for example `Zed with Claude Code`. Enter opens the highlighted
+target. `jazyk --setup` opens the menu without Recent and asks for the IDE agent
+again.
 
-The launcher has two sections. IDEs start with Jazyk Web, followed by installed
-editors. Coding agents contain installed agent CLIs and ACP clients such as Paseo. Rows show names
-only. One line below the menu describes the highlighted action and the files it
-will configure. Moving the cursor updates that line. Earlier choices remain in
+Web contains Jazyk Web, which also opens with `jazyk web`. IDEs contains installed editors. Coding agents contains
+installed agent CLIs and ACP clients such as Paseo. Rows show names only. One
+line below the menu describes the highlighted action and the files it will configure. Moving the cursor updates that line. Earlier choices remain in
 terminal scrollback; there is no selected-items panel.
 
 Inside a project, the launcher prints the status first. Outside a project, a
@@ -33,8 +34,8 @@ as initialization targets.
 Preferences are local to the project and machine. `.jazyk/local/launcher.toml`
 stores the last target and one agent choice per IDE. This file is git ignored.
 It contains no credentials. The launcher does not write personal choices into
-`.jazyk/jazyk.toml`. A missing remembered program produces an installation error
-and the reselection command. A failed setup is not remembered.
+`.jazyk/jazyk.toml`. Recent is omitted if the remembered program is unavailable.
+A failed setup is not remembered.
 
 Every target also has a command. `jazyk code` aliases `jazyk vscode`.
 `jazyk <target> --agent <name>` selects the agent for that IDE. Agent names are
@@ -866,6 +867,8 @@ The same render runs after every committed changeset. See
 (default `<out>/derived/graph.html`). See [viewer](./viewer.md).
 
 ### jazyk gui
+
+`jazyk web` is an alias for `jazyk gui` and accepts the same options.
 
 `jazyk gui [--port N] [--no-open] [--watch] [--gui-url URL] [--no-token] [--dev]` starts the
 [GUI](./gui.md)'s server: the JSON API, the event stream, and the language server over

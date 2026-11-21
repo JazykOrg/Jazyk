@@ -30,6 +30,7 @@ const COMMANDS: &[&str] = &[
     "lsp",
     "viewer",
     "gui",
+    "web",
     "mcp",
     "monitor",
     "release",
@@ -182,6 +183,7 @@ fn every_command_prints_its_help_and_exits_zero() {
             let help = text(&out.stdout);
             let shown = match *cmd {
                 "codegen" | "testgen" => "gen",
+                "web" => "gui",
                 c => c,
             };
             assert!(

@@ -31,11 +31,11 @@ fn load_dotenv() {
 // spawn last, in the order docs/frontends/cli.md#help lists them.
 pub(crate) const COMMAND_GROUPS: &[(&str, &[(&str, &str)])] = &[
     ("start here", &[
-        ("", "open the remembered target; jazyk --setup chooses an IDE or coding agent again"),
+        ("", "choose a launcher target; the recent choice is highlighted"),
         ("<choice> [--agent NAME]", "set up and start one launcher choice: code, vscode, paseo, cursor, zed, idea, phpstorm, webstorm, pycharm, goland, rustrover, clion, rider, rubymine, claude, codex, gemini, opencode, pi, droid"),
         ("init [--mcp LIST] [--agent NAME] [--acp LIST]", "initialize a project here: an empty .jazyk/jazyk.toml and the jazyk section of AGENTS.md"),
         ("setup [ide] [--list] [--remove NAMES]", "check, add, or remove jazyk in IDEs and coding agents"),
-        ("gui [--port N]", "local GUI: web app, API, events, LSP over WebSocket"),
+        ("gui [--port N]", "open Jazyk Web (alias: jazyk web); serve the local API, events, and LSP"),
         ("sets list|add|update|remove|preview", "manage independent document sets"),
         ("status [--set ID] [--json] [--costs]", "every set's state and board on one line each; with --set, that set in full"),
         ("version [--json]", "this jazyk's version, commit, store version, and protocol; --version prints the version line alone"),
@@ -783,6 +783,7 @@ pub fn run() {
             s if s.starts_with('-') && s.len() > 1 => {
                 errors.push(format!("unknown option `{}`", s));
             }
+            "web" if cmd.is_empty() => cmd = "gui".into(),
             s if cmd.is_empty() => cmd = s.to_string(),
             s => positional.push(s.to_string()),
         }

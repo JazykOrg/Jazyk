@@ -119,7 +119,11 @@ pub const CHOICES: &[Choice] = &[
     c("droid", Kind::Agent, "Factory Droid", "https://factory.ai"),
 ];
 
-const GROUPS: [(Kind, &str); 2] = [(Kind::Ide, "IDEs"), (Kind::Agent, "Coding agents")];
+const GROUPS: [(Kind, &str); 3] = [
+    (Kind::Web, "Web"),
+    (Kind::Ide, "IDEs"),
+    (Kind::Agent, "Coding agents"),
+];
 
 // The JetBrains IDEs: Toolbox script name, and the application bundle name prefixes
 // a macOS install may carry.
@@ -155,7 +159,6 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let found = crate::project::find_root(&cwd);
     let tty = interactive();
-    println!("Choose again: jazyk --setup");
     let mut prefs = match Preferences::load(found.as_deref().unwrap_or(&cwd)) {
         Ok(prefs) => prefs,
         Err(e) => {
@@ -176,20 +179,38 @@ pub fn run(opts: &Options, picked: Option<&str>) -> i32 {
                 print!("{}", catalog());
                 return 0;
             }
-            if !opts.launcher_setup && !prefs.target.is_empty() {
+            let mut groups = menu_groups();
+            let recent = (!opts.launcher_setup)
+                .then(|| recent_group(&prefs, &groups))
+                .flatten();
+            if let Some(group) = recent {
+                groups.insert(0, group);
+            }
+            let root = found.as_deref().unwrap_or(&cwd);
+            let Some((g, r)) = crate::menu::pick_preview(&groups, (0, 0), &|id| {
+                let target = if id == "recent" { &prefs.target } else { id };
+                if target == "paseo" {
+                    paseo_preview(launch_opts.paseo_home.as_deref().unwrap())
+                } else if id == "recent" {
+                    match (choice(target), prefs.agents.get(target)) {
+                        (Some(choice), Some(agent)) if choice.kind == Kind::Ide => ide_preview(
+                            choice,
+                            if agent == "jazyk" { "embedded" } else { agent },
+                            root,
+                        ),
+                        _ => target_preview(target),
+                    }
+                } else {
+                    target_preview(target)
+                }
+            }) else {
+                return 0;
+            };
+            let key = &groups[g].rows[r].key;
+            if key == "recent" {
                 prefs.target.clone()
             } else {
-                let groups = menu_groups();
-                let Some((g, r)) = crate::menu::pick_preview(&groups, (0, 0), &|id| {
-                    if id == "paseo" {
-                        paseo_preview(launch_opts.paseo_home.as_deref().unwrap())
-                    } else {
-                        target_preview(id)
-                    }
-                }) else {
-                    return 0;
-                };
-                groups[g].rows[r].key.clone()
+                key.clone()
             }
         }
     };
@@ -485,8 +506,36 @@ fn ide_preview(choice: &Choice, agent: &str, root: &Path) -> String {
     }
 }
 
-// The menu: one group per kind, a row per choice, `not installed` beside a program
-// that cannot be found.
+fn recent_group(prefs: &Preferences, groups: &[crate::menu::Group]) -> Option<crate::menu::Group> {
+    let target = choice(&prefs.target)?;
+    if !groups
+        .iter()
+        .flat_map(|g| &g.rows)
+        .any(|r| r.key == target.id)
+    {
+        return None;
+    }
+    let mut name = target.name.to_string();
+    if target.kind == Kind::Ide {
+        if let Some(agent) = prefs.agents.get(target.id) {
+            let label = match agent.as_str() {
+                "embedded" | "jazyk" => "Jazyk",
+                id => crate::setup::agent_by_name(id).map_or(id, |a| a.label),
+            };
+            name = format!("{name} with {label}");
+        }
+    }
+    Some(crate::menu::Group {
+        heading: "Recent".into(),
+        rows: vec![crate::menu::Row {
+            key: "recent".into(),
+            name,
+            note: String::new(),
+        }],
+    })
+}
+
+// The menu includes only installed choices.
 fn menu_groups() -> Vec<crate::menu::Group> {
     GROUPS
         .iter()
@@ -494,10 +543,7 @@ fn menu_groups() -> Vec<crate::menu::Group> {
             heading: heading.to_string(),
             rows: CHOICES
                 .iter()
-                .filter(|c| {
-                    (c.kind == *kind || (*kind == Kind::Ide && c.kind == Kind::Web))
-                        && program(c.id, Path::new(".")).is_some()
-                })
+                .filter(|c| c.kind == *kind && program(c.id, Path::new(".")).is_some())
                 .map(|c| crate::menu::Row {
                     key: c.id.to_string(),
                     name: c.name.to_string(),
@@ -514,10 +560,7 @@ pub fn catalog() -> String {
     let mut s = String::new();
     for (kind, heading) in GROUPS {
         s.push_str(&format!("{}:\n", heading));
-        for c in CHOICES
-            .iter()
-            .filter(|c| c.kind == kind || (kind == Kind::Ide && c.kind == Kind::Web))
-        {
+        for c in CHOICES.iter().filter(|c| c.kind == kind) {
             s.push_str(&format!("  {} (jazyk {})\n", c.name, c.id));
         }
     }
@@ -1068,11 +1111,7 @@ mod tests {
     #[test]
     fn choices_are_grouped_and_never_shadow_a_command() {
         for c in CHOICES {
-            assert!(
-                c.kind == Kind::Web || GROUPS.iter().any(|(k, _)| *k == c.kind),
-                "{}",
-                c.id
-            );
+            assert!(GROUPS.iter().any(|(k, _)| *k == c.kind), "{}", c.id);
             if c.id != "gui" {
                 assert!(
                     crate::launcher::command_shape(c.id).is_some_and(|(n, extra)| n == Some(0)
@@ -1089,6 +1128,31 @@ mod tests {
         for c in CHOICES {
             assert!(list.contains(c.name), "{}", c.id);
         }
+    }
+
+    #[test]
+    fn recent_uses_the_saved_ide_and_agent_when_the_target_is_available() {
+        let mut prefs: Preferences =
+            toml::from_str("target = \"zed\"\n[agents]\nzed = \"claude\"\n").unwrap();
+        let installed = [crate::menu::Group {
+            heading: "IDEs".into(),
+            rows: vec![crate::menu::Row {
+                key: "zed".into(),
+                name: "Zed".into(),
+                note: String::new(),
+            }],
+        }];
+        assert!(recent_group(&Preferences::default(), &installed).is_none());
+        assert!(recent_group(&prefs, &[]).is_none());
+        let recent = recent_group(&prefs, &installed).unwrap();
+        assert_eq!(recent.heading, "Recent");
+        assert_eq!(recent.rows[0].name, "Zed with Claude Code");
+        prefs.agents.insert("zed".into(), "jazyk".into());
+        assert_eq!(
+            recent_group(&prefs, &installed).unwrap().rows[0].name,
+            "Zed with Jazyk"
+        );
+        assert!(catalog().starts_with("Web:\n  Jazyk Web (jazyk gui)\nIDEs:\n"));
     }
 
     #[test]

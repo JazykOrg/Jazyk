@@ -188,6 +188,41 @@ documents never name as a bounded context is refused, and a case variant of an
 existing scope folds into it; the run minted `Benchmark` beside `benchmark` and
 `Jazyk` beside `public`); the `pairs-per-entity` limit from the pair volume entry.
 
+## Field report: a doc-first project (2026-11-22)
+
+A Claude Code session compiled an external project of 18 documents, 116 sections,
+about 330 requirements, and 50 entities, written docs first. Reported, not yet
+reproduced here:
+
+- Judgment volume blocks generation. After extraction the board held 634 mandatory
+  goals: 535 `rejudge-pair`, 182 `declare-edges`, 49 `review-entity`, 49
+  `derive-criteria`, 31 `diagram-coverage`. Generate goals wait behind every one
+  ("compile goal(s) open in the cone"). Rows of one table on a shared entity pair
+  with each other (about 40 pairs from one networks table). Candidate levers: the
+  `pairs-per-entity` limit from [pair judgment volume](#pair-judgment-volume-2026-09-05),
+  a similarity floor on pair candidates instead of a shared entity alone, and sibling
+  rows of one table or list left to `review-entity` by default. `settle_pairs` already
+  settles a batch in one call; the report does not say whether the session used it.
+- Oversized tool replies. `begin_goals` on a pair batch returned 151k characters and
+  `goals` 155k, past the client's tool output limit, so the agent could not read its
+  own batch contract. Each `reconcile-section` batch also repeated about 8k characters
+  of the per-kind contract after the "(same agent contract ... unchanged)" marker.
+  Wanted: a size bound with paging on `begin_goals` and `goals`, and the per-kind
+  contract sent once per session.
+- Tool list flapping. The MCP server disconnected and reconnected several times,
+  dropping `write_document`, `release_work`, and `save_document_set` mid-session; the
+  agent fell back to plain file writes. Tools unlocked by `edit-documentation` did not
+  appear until the client's tool search ran.
+- `release_work compile` covered only the sections dirty at its call. Documents
+  written afterwards needed a second release, and nothing said so.
+- 17 `broken-link` warnings from a README written before its targets stayed open after
+  the targets existed. Link findings resolve when the deterministic checks re-run; a
+  build that never closes may never re-run them. Unconfirmed.
+- Long headings ("Phase 0 ... a go/no-go gate") mint long section and requirement IDs
+  (`phase-0-de-risk-spike-1-2-weeks-a-go-no-go-gate`). A slug length bound is a
+  candidate.
+- Working well: the `upsert_entity` mention-unnamed refusal was clear.
+
 ## Evidence audit (2026-09-25)
 
 Every model-executed kind's contract was read against its gate: each duty the hints make

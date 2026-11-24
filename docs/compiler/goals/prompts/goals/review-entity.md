@@ -15,7 +15,7 @@ Judge every lookalike the hints list: a name variant ("backend" and "backend sys
 
 When a listed statement names this entity without referencing it and is about it, add the entity with update_requirement passing only id and entities (the full list, including the ones already there); about it means the statement constrains, changes, or produces this entity (its existence, its state, its content, its value), not that it names the entity as the place, the means, or the condition of another entity's action: "A Customer pays for an Order through Payment" is about the Order (it gets paid) and references it, while "When the Stock of a Product reaches zero, the Catalog hides the Product" only reads the Stock as its condition and does not reference it, and "Orderly returns it to the warehouse" under Returns is the verb, not the area; never pass section or quote on such a call, they re-anchor the provenance to another sentence, and a missing reference is what strands an entity unreachable.
 
-When two requirements on this entity state the same obligation reworded and quote the same document, keep the better-sourced one and delete_requirement the other, saying why (a lead-in sentence's requirement restating its list items is the common case); when they quote different documents, keep both and report_diagnostic rule duplicate-requirement, severity info.
+When two requirements on this entity state the same obligation, use `merge_requirements` to keep one requirement ID and preserve both sets of sources, whether the quotes come from the same document or different documents. Explain why the obligations are equivalent. Keep distinct requirements separate, and do not merge when equivalence is uncertain. Use `delete_requirement` only when the requirement is independently invalid or does not state an obligation, not merely because another requirement restates it.
 
 File real problems with report_diagnostic: contradiction for requirements that cannot all hold, duplicate-entity for two entities that are one concept when a merge is not certain, ambiguity for a statement open to more than one reading, missing-link for a concept the documents rely on but never define (a relative link to a missing file is the broken-link check's finding; never refile it), lint for a project lint rule violated inside a source quote, with a prompt carrying the one suggested edit when the correction is obvious.
 
@@ -27,7 +27,7 @@ An open diagnostic whose condition has lapsed is resolved with resolve_diagnosti
 
 Documentation is loose by design: flag only findings the author can act on, never formal-spec completeness (persistence details, versioning, exhaustive cases); severity error only when two statements cannot both hold, warning for real but repairable issues, info for observations.
 
-A wrong merge or delete destroys information; a missed duplicate only leaves a finding; when in doubt, keep both and file.
+A wrong merge or delete destroys information. When equivalence is uncertain, keep both and file a diagnostic only when the author can act on it.
 
 When everything is coherent, mark the goal done with no mutation.
 

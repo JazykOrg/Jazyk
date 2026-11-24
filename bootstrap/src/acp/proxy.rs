@@ -1,4 +1,5 @@
 mod chat;
+mod claude;
 use crate::vfs::VPathExt;
 // `jazyk acp`: the IDE-facing proxy. Upstream it serves the protocol on stdio (the
 // IDE spawned it as its agent); downstream it drives the configured agent. In
@@ -14,13 +15,19 @@ use agent_client_protocol::{AcpAgent, AcpAgentConfig, Agent, Client, ConnectionT
 use serde_json::json;
 use std::sync::{Arc, Mutex, OnceLock};
 
+#[derive(Clone)]
+struct Downstream {
+    connection: ConnectionTo<Agent>,
+    targeted_steering: bool,
+}
+
 struct ProxyState {
     up: OnceLock<ConnectionTo<Client>>,
     chat: chat::Routing,
     chat_explicit: bool,
     // One connection per downstream agent, spawned on first use.
     // Mirrors docs/frontends/acp.md#switching-agents.
-    downs: Mutex<std::collections::HashMap<String, ConnectionTo<Agent>>>,
+    downs: Mutex<std::collections::HashMap<String, Downstream>>,
     // The IDE's initialize, replayed to every agent spawned after the first.
     initialize: Mutex<Option<InitializeRequest>>,
     // The [acp] settings when no project is open, so a bare directory still resolves.
@@ -70,18 +77,22 @@ impl ProxyState {
     }
 
     fn down_of(&self, sid: &str) -> Result<ConnectionTo<Agent>, agent_client_protocol::Error> {
-        let name = self.agent_of(sid);
+        self.down_for(&self.agent_of(sid))
+            .map(|down| down.connection)
+    }
+
+    fn down_for(&self, name: &str) -> Result<Downstream, agent_client_protocol::Error> {
         self.downs
             .lock()
             .unwrap()
-            .get(&name)
+            .get(name)
             .cloned()
             .ok_or_else(not_initialized)
     }
 
     // The spawn configuration of a named agent (None: the configured one), resolved
     // from the settings as they are on disk now, so `/agent` sees its own write.
-    fn agent_config(&self, name: Option<&str>) -> Result<(String, AcpAgentConfig), String> {
+    fn agent_config(&self, name: Option<&str>) -> Result<(String, AcpAgentConfig, bool), String> {
         let proj_acp = self
             .project
             .lock()
@@ -105,6 +116,7 @@ impl ProxyState {
         Ok((
             agent.name.clone(),
             spawn_config(&agent, &llm, self.chat_explicit),
+            supports_targeted_steering(&agent),
         ))
     }
 
@@ -176,6 +188,39 @@ impl ProxyState {
     }
 }
 
+fn supports_targeted_steering(agent: &super::config::ResolvedAgent) -> bool {
+    let embedded = super::config::embedded_profile();
+    agent.name == embedded.name && agent.command == embedded.command && agent.args == embedded.args
+}
+
+// Mirrors docs/frontends/acp.md#claude-transcript-forwarding.
+fn steering_targets_child(
+    backend: &str,
+    targeted_steering: bool,
+    req: &super::steering::SteeringRequest,
+) -> Result<bool, agent_client_protocol::Error> {
+    let Some(jazyk) = req.meta.as_ref().and_then(|meta| meta.get("jazyk")) else {
+        return Ok(false);
+    };
+    let id = jazyk.get("agentId");
+    if id.is_none() && jazyk.get("cancelAgent").is_none() && jazyk.get("deleteAgent").is_none() {
+        return Ok(false);
+    }
+    if !id
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| !id.trim().is_empty())
+    {
+        return Err(agent_client_protocol::Error::invalid_params()
+            .data("_meta.jazyk.agentId must be a nonempty string"));
+    }
+    if !targeted_steering {
+        return Err(agent_client_protocol::Error::invalid_params().data(format!(
+            "ACP backend `{backend}` does not support targeted sub-agent steering"
+        )));
+    }
+    Ok(true)
+}
+
 pub fn run(opts: &crate::cli::Options) -> i32 {
     // An arbitrary folder can acquire its first document set through project tools.
     let in_project = true;
@@ -215,7 +260,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
         runtime_fences: Mutex::new(Default::default()),
         out,
     });
-    let (agent_name, config) = match state.agent_config(None) {
+    let (agent_name, config, targeted_steering) = match state.agent_config(None) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("jazyk acp: {}", e);
@@ -253,7 +298,7 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
                     *st_init.client_fs_write.lock().unwrap() =
                         req.client_capabilities.fs.write_text_file;
                     *st_init.initialize.lock().unwrap() = Some(req.clone());
-                    let down = ensure_down(&st_init, &cx, &agent_name, config.clone())?;
+                    let down = ensure_down(&st_init, &cx, &agent_name, config.clone(), targeted_steering)?;
                     let mirror = st_init.in_project();
                     let st_caps = st_init.clone();
                     let name = agent_name.clone();
@@ -281,13 +326,15 @@ pub fn run(opts: &crate::cli::Options) -> i32 {
             .on_receive_request(
                 async move |mut req: super::steering::SteeringRequest, responder, _cx| {
                     if req.session_id.starts_with("jazyk-run-") { return responder.respond_with_internal_error("recorded runs are read-only"); }
-                    if st_steer.in_project() {
+                    let backend = st_steer.agent_of(&req.session_id);
+                    let down = st_steer.down_for(&backend)?;
+                    let child = steering_targets_child(&backend, down.targeted_steering, &req)?;
+                    if !child && st_steer.in_project() {
                         let text=req.prompt.iter().filter_map(|block|match block {ContentBlock::Text(text)=>Some(text.text.as_str()),_=>None}).collect::<Vec<_>>().join("\n");
                         crate::acp::sessions::append_checked(&st_steer.out,&req.session_id,json!({"kind":"user","at":crate::verify::now_iso(),"text":text,"steering":true,"request":req})).map_err(|error|agent_client_protocol::Error::internal_error().data(error))?;
                     }
-                    let down = st_steer.down_of(&req.session_id)?;
                     req.session_id = st_steer.route_down(&req.session_id);
-                    down.send_request(req).on_receiving_result(async move |result| responder.respond_with_result(result))
+                    down.connection.send_request(req).on_receiving_result(async move |result| responder.respond_with_result(result))
                 },
                 agent_client_protocol::on_receive_request!(),
             )
@@ -589,9 +636,10 @@ fn ensure_down(
     cx: &ConnectionTo<Client>,
     name: &str,
     config: AcpAgentConfig,
+    targeted_steering: bool,
 ) -> Result<ConnectionTo<Agent>, agent_client_protocol::Error> {
     if let Some(d) = state.downs.lock().unwrap().get(name) {
-        return Ok(d.clone());
+        return Ok(d.connection.clone());
     }
     let up_n = state.up.get().cloned();
     let st_rec = state.clone();
@@ -616,7 +664,10 @@ fn ensure_down(
                     return Ok(());
                 };
                 n.session_id = sid_of(&sid);
-                chat::record(&st_rec, &sid, &n.update);
+                let child = name_n == "claude" && claude::tag_transcript(&sid, &mut n.update);
+                if !child {
+                    chat::record(&st_rec, &sid, &n.update);
+                }
                 if let SessionUpdate::AvailableCommandsUpdate(update) = &mut n.update {
                     update.available_commands.retain(|c| c.name != "jazyk");
                     update.available_commands.insert(
@@ -704,11 +755,13 @@ fn ensure_down(
         let result = futures::executor::block_on(backend.connect_with(
             AcpAgent::new(config),
             async move |down| {
-                registered
-                    .downs
-                    .lock()
-                    .unwrap()
-                    .insert(register_name, down.clone());
+                registered.downs.lock().unwrap().insert(
+                    register_name,
+                    Downstream {
+                        connection: down.clone(),
+                        targeted_steering,
+                    },
+                );
                 let _ = ready.send(down.clone());
                 futures::future::select(
                     Box::pin(upstream.incoming_closed()),
@@ -1684,6 +1737,62 @@ fn replay_conversation(records: &[serde_json::Value]) -> Vec<SessionUpdate> {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[test]
+    fn targeted_steering_is_admitted_only_for_the_embedded_backend() {
+        let child: super::super::steering::SteeringRequest = serde_json::from_value(json!({
+            "sessionId":"root", "prompt":[{"type":"text","text":"check"}],
+            "_meta":{"jazyk":{"agentId":"root/claude/toolu_a"}}
+        }))
+        .unwrap();
+        for backend in ["claude", "codex", "opencode", "custom", "embedded"] {
+            let error = steering_targets_child(backend, false, &child).unwrap_err();
+            assert_eq!(
+                error.code,
+                agent_client_protocol::Error::invalid_params().code
+            );
+            assert!(error.data.unwrap().as_str().unwrap().contains(backend));
+        }
+        assert!(steering_targets_child("embedded", true, &child).unwrap());
+
+        let mut root = child.clone();
+        root.meta = Some(json!({"steering":{"idleBehavior":"promptRequired"}}));
+        for backend in ["claude", "codex", "opencode", "embedded"] {
+            assert!(!steering_targets_child(backend, backend == "embedded", &root).unwrap());
+        }
+    }
+
+    #[test]
+    fn malformed_child_target_never_becomes_a_root_prompt() {
+        for jazyk in [
+            json!({"agentId":null}),
+            json!({"agentId":false}),
+            json!({"agentId":""}),
+            json!({"cancelAgent":true}),
+            json!({"deleteAgent":true}),
+            json!({"cancelAgent":true,"agentId":null}),
+            json!({"deleteAgent":true,"agentId":7}),
+        ] {
+            let request = serde_json::from_value(json!({
+                "sessionId":"root", "prompt":[{"type":"text","text":"check"}],
+                "_meta":{"jazyk":jazyk}
+            }))
+            .unwrap();
+            assert!(steering_targets_child("embedded", true, &request).is_err());
+            assert!(steering_targets_child("claude", false, &request).is_err());
+        }
+    }
+
+    #[test]
+    fn a_profile_override_named_embedded_does_not_gain_child_steering() {
+        let mut agent = super::super::config::embedded_profile();
+        assert!(supports_targeted_steering(&agent));
+        agent.command = "opencode".into();
+        agent.args = vec!["acp".into()];
+        assert!(!supports_targeted_steering(&agent));
+    }
+
     // An edit socket an earlier version left at the top of the folder goes once its
     // proxy has ended; a live proxy's stays.
     #[cfg(unix)]

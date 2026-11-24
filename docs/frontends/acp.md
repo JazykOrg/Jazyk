@@ -292,6 +292,29 @@ Cancelling or closing the root session stops every running sub-agent of its tree
 The [GUI](./gui.md#agents) shows each sub-agent as a chat session with its tree
 fields and routes the session's inputs and stop through these requests.
 
+### Claude transcript forwarding
+
+The IDE proxy opts in to the flattened Claude sub-agent transcript on each
+downstream `session/new` for the `claude` profile. It fills
+`_meta.claudeCode.options.forwardSubagentText` with `true` when the option is
+absent. Explicit values and other Claude options pass through. The Claude adapter
+also honors its own negotiated transcript capabilities and can emit tagged live
+updates independently of the session option.
+
+The proxy reads `_meta.claudeCode.parentToolUseId` on Claude text, thought, tool,
+and plan transcript updates. A valid marker identifies a child by
+`<root-session-id>/claude/<parent-tool-use-id>`. The proxy adds the child ID and
+proxied root `parentId` under `_meta.jazyk.agent` and keeps the adapter's metadata.
+The root ID groups flattened transcripts. The adapter marker does not describe a
+child's depth, title, task, or write scope. Child text stays in the update record
+and is excluded from the root answer used for conversation continuation.
+
+Only the native embedded launch accepts Jazyk child targets. The proxy rejects a
+`_session/steering` request with `_meta.jazyk.agentId` on external backends before
+recording a user message or sending the request downstream. Embedded child input
+uses the embedded child transcript. `cancelAgent` and `deleteAgent` require a
+nonempty string `agentId`. Root steering keeps its existing protocol.
+
 ## Sessions
 
 Three session kinds, all the same protocol:

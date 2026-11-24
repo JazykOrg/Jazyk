@@ -785,8 +785,30 @@ impl McpServer {
             }
             let reply = children[&id].handle_local(method, &local)?;
             let text = reply["content"][0]["text"].as_str().unwrap_or_default();
-            let result = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
-            replies.push(json!({"setId":id,"name":w.select(&id).unwrap().name,"result":crate::webapi::sets::qualify_value(result,&id),"isError":reply["isError"]}));
+            let mut result: Value = serde_json::from_str(text).unwrap_or_else(|_| json!(text));
+            let opening = match name {
+                "begin_goals" if reply["isError"] != true => Some(&mut result),
+                "done" => result.get_mut("began"),
+                _ => None,
+            };
+            let opening_goals = opening
+                .and_then(|opening| opening.get_mut("goals")?.as_array_mut())
+                .map(std::mem::take);
+            let mut result = crate::webapi::sets::qualify_value(result, &id);
+            if let Some(goals) = opening_goals {
+                let opening = if name == "done" {
+                    &mut result["began"]
+                } else {
+                    &mut result
+                };
+                opening["goals"] = Value::Array(
+                    goals
+                        .into_iter()
+                        .map(|row| qualify_opening_goal(row, &id))
+                        .collect(),
+                );
+            }
+            replies.push(json!({"setId":id,"name":w.select(&id).unwrap().name,"result":result,"isError":reply["isError"]}));
         }
         if replies.len() == 1 {
             let mut reply = result_value(replies[0]["result"].clone());
@@ -796,6 +818,44 @@ impl McpServer {
             Ok(result_value(json!({"sets":replies})))
         }
     }
+}
+
+// Opening evidence contains verbatim text that can itself look like a wire ID.
+fn qualify_opening_goal(mut row: Value, set: &str) -> Value {
+    use crate::webapi::sets::{qualify, qualify_value};
+
+    let fields = match row["kind"].as_str() {
+        Some("place-anchors") => ["change", "alignmentProposals"],
+        Some("reconcile-section") => ["change", "pendingReevaluation"],
+        _ => return qualify_value(row, set),
+    };
+    let evidence: Vec<_> = fields
+        .into_iter()
+        .filter_map(|key| row.as_object_mut()?.remove(key).map(|value| (key, value)))
+        .collect();
+    let mut row = qualify_value(row, set);
+    for (key, mut value) in evidence {
+        match key {
+            "change" => {
+                for key in ["anchors", "staleAnchors"] {
+                    if let Some(ids) = value.get_mut(key) {
+                        *ids = qualify_value(ids.take(), set);
+                    }
+                }
+            }
+            "alignmentProposals" => {
+                for proposal in value.as_array_mut().into_iter().flatten() {
+                    if let Some(anchor) = proposal["anchor"].as_str() {
+                        proposal["anchor"] = json!(qualify(anchor, set));
+                    }
+                }
+            }
+            "pendingReevaluation" => value = qualify_value(value, set),
+            _ => unreachable!(),
+        }
+        row[key] = value;
+    }
+    row
 }
 
 // A read_document reply's text, cut to the requested lines and to 64 KiB. hash

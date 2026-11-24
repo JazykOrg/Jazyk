@@ -1,5 +1,207 @@
 use super::*;
 
+fn anchor_opening_fixture(
+    tag: &str,
+    docs: &[(&str, &str)],
+) -> (std::path::PathBuf, crate::document_sets::Workspace, Store) {
+    let dir = bare_dir(tag);
+    let workspace = crate::document_sets::Workspace::load(&dir).unwrap();
+    let project = workspace.resolve(Some("ds_main")).unwrap();
+    let mut store = Store::load(&project.out);
+    store.status.generation = 7;
+    for &(doc, text) in docs {
+        crate::vfs::write(dir.join(doc), text).unwrap();
+        let sections = crate::md::parse_sections(text);
+        store.docs.insert(
+            doc.into(),
+            crate::model::DocRecord {
+                content_hash: crate::model::hash_hex(text),
+                coverage: sections
+                    .keys()
+                    .map(|section| {
+                        (
+                            section.clone(),
+                            crate::model::Coverage {
+                                state: "covered".into(),
+                                note: None,
+                                claimed_by: None,
+                            },
+                        )
+                    })
+                    .collect(),
+                sections,
+            },
+        );
+    }
+    crate::board::tests::control_auto().save(&project.out);
+    (dir, workspace, store)
+}
+
+fn workspace_anchor_opening(
+    workspace: &crate::document_sets::Workspace,
+    goal: &str,
+    packaged: bool,
+) -> Value {
+    let project = workspace.files_project();
+    let out = project.out.clone();
+    let server = McpServer::with_bridge(
+        project,
+        out,
+        vec!["compile".into()],
+        false,
+        BridgeFlags {
+            packaged,
+            all_tools: true,
+            ..Default::default()
+        },
+    );
+    let call = |name: &str, arguments: Value| {
+        let reply = server
+            .handle("tools/call", &json!({"name": name, "arguments": arguments}))
+            .unwrap();
+        assert_ne!(reply["isError"], true, "{reply}");
+        serde_json::from_str::<Value>(reply["content"][0]["text"].as_str().unwrap()).unwrap()
+    };
+    let opened = call("begin_goals", json!({"goals": [goal]}));
+    call(
+        "abandon_goals",
+        json!({"setId":"ds_main","reason":"Test complete"}),
+    );
+    opened
+}
+
+#[test]
+fn begin_goals_exposes_document_alignment_proposals_verbatim() {
+    use crate::model::{AnchorCandidate, AnchorProposal, DocAlignment};
+
+    let (dir, workspace, mut store) = anchor_opening_fixture(
+        "opening-alignment-evidence",
+        &[
+            ("docs/a.md", "# A\n\nreq:literal\n"),
+            ("docs/b.md", "# B\n\nOther prose.\n"),
+        ],
+    );
+    // Both documents have pending proposals. Opening A must render its own block.
+    for (doc, section, anchor, generation) in [
+        ("docs/a.md", "/a", "req:a", 6),
+        ("docs/b.md", "/b", "req:b", 7),
+    ] {
+        store.status.alignment.push(DocAlignment {
+            doc: doc.into(),
+            changes: Vec::new(),
+            proposals: vec![AnchorProposal {
+                anchor: anchor.into(),
+                from: format!("{doc}#{section}/old"),
+                quote: "req:literal".into(),
+                excerpt: "ent:literal".into(),
+                candidates: vec![AnchorCandidate {
+                    section: format!("{doc}#{section}"),
+                    similarity: 0.75,
+                    quote_locates: false,
+                    nearest: Some("view:literal".into()),
+                    excerpt: "crit:literal".into(),
+                }],
+            }],
+        });
+        crate::board::tests::record(
+            &mut store,
+            generation,
+            crate::store::CHANGE_ALIGNMENT_PENDING,
+            doc,
+            "alignment",
+            json!({"proposals":[anchor]}),
+        );
+    }
+    store.save_for_test();
+
+    let goal = "g:ds_main::place-anchors:docs/a.md";
+    let opened = workspace_anchor_opening(&workspace, goal, false);
+    let row = opened["goals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == goal)
+        .unwrap();
+    assert_eq!(
+        row["change"],
+        json!({"proposals": 1, "ops": {}, "anchors": ["req:ds_main::a"]})
+    );
+    let mut expected = json!(store.status.alignment[0].proposals);
+    expected[0]["anchor"] = json!("req:ds_main::a");
+    assert_eq!(row["alignmentProposals"], expected);
+    assert!(row.get("pendingReevaluation").is_none());
+
+    let packaged = workspace_anchor_opening(&workspace, goal, true);
+    let ids = packaged["goals"].as_array().unwrap();
+    assert!(ids.iter().all(Value::is_string));
+    assert!(ids.contains(&json!(goal)));
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn begin_goals_exposes_pending_reevaluation_for_its_section() {
+    use crate::model::{Requirement, SourceRef};
+
+    let doc = "docs/a.md";
+    let (dir, workspace, mut store) = anchor_opening_fixture(
+        "opening-reevaluation-evidence",
+        &[(doc, "# A\n\nreq:literal\n\n## Other\n\nreq:elsewhere\n")],
+    );
+    // The first same-ID source already locates after placement. The second is
+    // stale by quote alone. The third owes reevaluation in another section.
+    for (id, section, quote) in [
+        ("req:flagged", "/a", "req:literal"),
+        ("req:stale", "/a", "req:missing"),
+        ("req:other", "/a/other", "req:elsewhere"),
+    ] {
+        store.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: format!("Statement for {id}."),
+                sources: vec![SourceRef {
+                    doc: doc.into(),
+                    section: section.into(),
+                    quote: quote.into(),
+                }],
+                ..Default::default()
+            },
+        );
+    }
+    assert!(store.quote_locates(doc, "/a", "req:literal"));
+    assert!(!store.quote_locates(doc, "/a", "req:missing"));
+    store.status.reevaluate = vec!["req:flagged".into(), "req:other".into()];
+    crate::board::tests::record(
+        &mut store,
+        7,
+        crate::store::CHANGE_SECTION_DIRTY,
+        "docs/a.md#/a",
+        "section",
+        json!({"added":1,"addedLines":["req:literal"],"removed":1,"removedLines":["req:missing"]}),
+    );
+    store.save_for_test();
+
+    let goal = "g:ds_main::reconcile-section:docs/a.md#/a";
+    let opened = workspace_anchor_opening(&workspace, goal, false);
+    let row = opened["goals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["id"] == goal)
+        .unwrap();
+    assert_eq!(
+        row["change"]["staleAnchors"],
+        json!(["req:ds_main::flagged", "req:ds_main::stale"])
+    );
+    assert_eq!(row["pendingReevaluation"], json!(["req:ds_main::flagged"]));
+    assert_eq!(row["change"]["dirty"]["addedLines"], json!(["req:literal"]));
+    assert_eq!(
+        row["change"]["dirty"]["removedLines"],
+        json!(["req:missing"])
+    );
+    assert!(row.get("alignmentProposals").is_none());
+    crate::vfs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn deferred_skills_are_only_marked_delivered_after_their_payload_is_read() {
     let dir = bare_dir("deferred-skill-delivery");

@@ -2,6 +2,390 @@
 use super::*;
 
 #[test]
+fn recorded_pair_survives_frontier_churn_and_is_reused_on_return() {
+    let mut store = Store {
+        out: own_dir("pair-retention"),
+        ..Default::default()
+    };
+    let left = "req:reconciler-batching-s1d1";
+    let right = "req:reconciler-goal-derivation-yra3";
+    let left_text =
+        "A session gets one batch of goals in one class, tier and kind with the same executor.";
+    let right_text = "Goals identify a kind and class, and mandatory goals block convergence.";
+    let requirement = |statement: &str| Requirement {
+        statement: statement.into(),
+        entities: vec!["ent:reconciler".into()],
+        ..Default::default()
+    };
+    store
+        .graph
+        .entities
+        .insert("ent:reconciler".into(), entity("Reconciler"));
+    store
+        .graph
+        .requirements
+        .insert(left.into(), requirement(left_text));
+    store
+        .graph
+        .requirements
+        .insert(right.into(), requirement(right_text));
+    assert!(store
+        .requirement_neighbors(left)
+        .contains(&right.to_string()));
+    let key = crate::goals::pair_target(left, right);
+    let decision = PairDecision {
+        verdict: "distinct".into(),
+        statements: BTreeMap::from([
+            (left.into(), super::super::v5::statement_hash(left_text)),
+            (right.into(), super::super::v5::statement_hash(right_text)),
+        ]),
+    };
+    store.decisions.pairs.insert(key.clone(), decision.clone());
+    for index in 0..6 {
+        for (tag, wording) in [("batch", left_text), ("goals", right_text)] {
+            store.graph.requirements.insert(
+                format!("req:frontier-{tag}-{index}"),
+                requirement(&format!("{wording} Priority {index}.")),
+            );
+        }
+    }
+    store.graph.requirements.insert(
+        "req:frontier-filler-a".into(),
+        requirement("Captures audio."),
+    );
+    store.graph.requirements.insert(
+        "req:frontier-filler-b".into(),
+        requirement("Publishes diagrams."),
+    );
+    assert!(!store
+        .pair_review_neighbors(left)
+        .contains(&right.to_string()));
+    assert!(!store
+        .pair_review_neighbors(right)
+        .contains(&left.to_string()));
+    for id in [
+        "req:reconciler-bubbling-3d89",
+        "req:reconciler-batching-y9gw",
+    ] {
+        store.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: "The preview joins the next board.".into(),
+                ..Default::default()
+            },
+        );
+    }
+    store.save();
+    let report = store.apply(
+        vec![Op::MergeRequirements {
+            keep: "req:reconciler-bubbling-3d89".into(),
+            absorb: "req:reconciler-batching-y9gw".into(),
+            reason: "Both describe preview joining.".into(),
+        }],
+        &session(),
+    );
+    assert_eq!(report.applied, 1, "{:?}", report.skipped);
+    let mut store = Store::load(&store.out);
+    assert_eq!(store.decisions.pairs.get(&key), Some(&decision));
+    store
+        .graph
+        .requirements
+        .retain(|id, _| !id.starts_with("req:frontier-"));
+    assert!(store
+        .requirement_neighbors(left)
+        .contains(&right.to_string()));
+    let mut rebuilt = ChangeRecord::new(0, 0, 0, CHANGE_REQ_REVISED, left, "decision");
+    assert!(!store
+        .pair_review_candidates(&rebuilt)
+        .iter()
+        .any(|(id, _)| id == right));
+    rebuilt.via = "fields".into();
+    assert!(store
+        .pair_review_candidates(&rebuilt)
+        .iter()
+        .any(|(id, _)| id == right));
+    crate::vfs::remove_dir_all(&store.out).unwrap();
+}
+
+#[test]
+fn merging_requirements_preserves_survivor_verdict_and_reopens_absorbed_pair() {
+    let mut store = Store {
+        out: tmp(),
+        ..Default::default()
+    };
+    let keep = "req:a-survivor";
+    let absorb = "req:z-absorb";
+    let peer = "req:m-peer";
+    let incoming = "req:n-incoming";
+    let settled = "req:o-settled";
+    let durable = "ent:durable";
+    let evidence = "ent:evidence";
+    let reporting = "ent:reporting";
+    let keep_statement = "Save the event snapshot after validating its checksum.";
+    let absorb_statement = "Persist the event snapshot once checksum validation succeeds.";
+    let peer_statement = "Expose a saved event snapshot and its checksum in history.";
+    let incoming_statement = "Display the event snapshot checksum when viewing it.";
+    for (id, name) in [
+        (durable, "Durability"),
+        (evidence, "Evidence"),
+        (reporting, "Reporting"),
+    ] {
+        store.graph.entities.insert(id.into(), entity(name));
+    }
+    for (id, statement, entities) in [
+        (keep, keep_statement, vec![durable, evidence, reporting]),
+        (absorb, absorb_statement, vec![durable, evidence, reporting]),
+        (peer, peer_statement, vec![evidence]),
+        (incoming, incoming_statement, vec![durable]),
+        (
+            settled,
+            "Print the event snapshot checksum for inspections.",
+            vec![reporting],
+        ),
+    ] {
+        store.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: statement.into(),
+                entities: entities.into_iter().map(String::from).collect(),
+                ..Default::default()
+            },
+        );
+    }
+    for index in 0..6 {
+        let entity_id = format!("ent:intake-{index}");
+        store
+            .graph
+            .entities
+            .insert(entity_id.clone(), entity("Intake"));
+        store
+            .graph
+            .requirements
+            .get_mut(keep)
+            .unwrap()
+            .entities
+            .push(entity_id.clone());
+        store.graph.requirements.insert(
+            format!("req:intake-{index}"),
+            Requirement {
+                statement: format!("{keep_statement} Priority {index}."),
+                entities: vec![entity_id],
+                ..Default::default()
+            },
+        );
+    }
+    let decision = |left: &str, right: &str, verdict: &str| PairDecision {
+        verdict: verdict.into(),
+        statements: [left, right]
+            .into_iter()
+            .map(|id| {
+                let statement = &store.graph.requirements[id].statement;
+                (id.into(), super::super::v5::statement_hash(statement))
+            })
+            .collect(),
+    };
+    let survivor_decision = decision(keep, peer, "distinct");
+    let absorbed_collision = decision(absorb, peer, "consistent");
+    let absorbed_only = decision(absorb, incoming, "consistent");
+    let absorbed_settled = decision(absorb, settled, "diagnosed");
+    let accepted = decision(keep, settled, "consistent");
+    let survivor_key = crate::goals::pair_target(keep, peer);
+    let reopened_key = crate::goals::pair_target(keep, incoming);
+    store.decisions.pairs.extend([
+        (survivor_key.clone(), survivor_decision.clone()),
+        (crate::goals::pair_target(absorb, peer), absorbed_collision),
+        (crate::goals::pair_target(absorb, incoming), absorbed_only),
+        (crate::goals::pair_target(absorb, settled), absorbed_settled),
+    ]);
+    assert!(store.pair_review_neighbors(peer).contains(&keep.into()));
+    assert!(store.pair_review_neighbors(incoming).contains(&keep.into()));
+    assert!(!store.pair_review_neighbors(keep).contains(&incoming.into()));
+    store.save();
+    let accepted_key = crate::goals::pair_target(keep, settled);
+    let mut commit = session();
+    commit.resolved.push(Resolved {
+        goal: format!("g:rejudge-pair:{accepted_key}"),
+        justification: "The saved snapshot can be printed for inspection.".into(),
+        evidence: serde_json::json!({"verdict": "consistent"}),
+    });
+    let report = store.apply(
+        vec![Op::MergeRequirements {
+            keep: keep.into(),
+            absorb: absorb.into(),
+            reason: "The two statements express the same obligation.".into(),
+        }],
+        &commit,
+    );
+    assert_eq!(report.applied, 1, "{:?}", report.skipped);
+    store.project_decisions();
+    assert!(!store.decisions.pairs.contains_key(&reopened_key));
+    assert_eq!(store.decisions.pairs.get(&accepted_key), Some(&accepted));
+    let store = Store::load(&store.out);
+    assert_eq!(store.resolve_id(absorb), keep);
+    assert_eq!(
+        store.decisions.pairs.get(&survivor_key),
+        Some(&survivor_decision)
+    );
+    assert!(!store.decisions.pairs.contains_key(&reopened_key));
+    assert!(!store
+        .decisions
+        .pairs
+        .values()
+        .any(|decision| decision.statements.contains_key(absorb)));
+    let review = |left: &str, right: &str| {
+        store.status.changes.iter().any(|record| {
+            record.subject == left
+                && record.kind == CHANGE_REQ_REVISED
+                && store
+                    .pair_review_candidates(record)
+                    .iter()
+                    .any(|(partner, _)| partner == right)
+        })
+    };
+    assert!(review(incoming, keep));
+    assert!(!review(peer, keep) && !review(keep, peer));
+    crate::vfs::remove_dir_all(&store.out).unwrap();
+}
+
+#[test]
+fn accepted_unranked_pair_expires_after_an_endpoint_revision() {
+    let mut store = Store {
+        out: tmp(),
+        ..Default::default()
+    };
+    let left = "req:snapshot";
+    let right = "req:history";
+    let parent = "ent:store";
+    let source = "ent:persistence";
+    let mut declared = entity("Persistence");
+    declared.parent = Some(parent.into());
+    declared.provenance = Some(Provenance::Decree {
+        author: "owner".into(),
+        at: "now".into(),
+        note: None,
+    });
+    store.graph.entities.insert(source.into(), declared);
+    store.graph.entities.insert(parent.into(), entity("Store"));
+    let statement = "Save a snapshot of the journal.";
+    store.graph.requirements.insert(
+        left.into(),
+        Requirement {
+            statement: statement.into(),
+            entities: vec![source.into()],
+            ..Default::default()
+        },
+    );
+    store.graph.requirements.insert(
+        right.into(),
+        Requirement {
+            statement: "Read recent history.".into(),
+            ..Default::default()
+        },
+    );
+    assert!(store.pair_review_neighbors(left).is_empty());
+    store.save();
+    let key = crate::goals::pair_target(left, right);
+    let mut commit = session();
+    commit.resolved.push(Resolved {
+        goal: format!("g:rejudge-pair:{key}"),
+        justification: "Reading history does not constrain saving snapshots.".into(),
+        evidence: serde_json::json!({"verdict": "consistent"}),
+    });
+    store.apply(Vec::new(), &commit);
+    let mut store = Store::load(&store.out);
+    assert_eq!(store.decisions.pairs[&key].verdict, "consistent");
+    let report = store.apply(
+        vec![Op::RetractDecree {
+            id: source.into(),
+            reason: "Use its parent for persistence obligations.".into(),
+        }],
+        &session(),
+    );
+    assert_eq!(report.applied, 1, "{:?}", report.skipped);
+    let mut store = Store::load(&store.out);
+    assert_eq!(store.graph.requirements[left].statement, statement);
+    assert_eq!(store.graph.requirements[left].entities, [parent]);
+    assert!(!store.decisions.pairs.contains_key(&key));
+
+    commit.base = Some(Box::new(store.clone()));
+    let report = store.apply(
+        vec![Op::UpdateRequirement {
+            id: right.into(),
+            statement: Some("Keep history private until an administrator requests it.".into()),
+            entities: None,
+            source: None,
+            provenance: None,
+            edges: None,
+            transition: None,
+        }],
+        &session(),
+    );
+    assert_eq!(report.applied, 1, "{:?}", report.skipped);
+    store.apply(Vec::new(), &commit);
+    assert!(!Store::load(&store.out).decisions.pairs.contains_key(&key));
+    crate::vfs::remove_dir_all(&store.out).unwrap();
+}
+
+#[test]
+fn dormant_pairs_require_original_live_endpoints_and_statement_hashes() {
+    let mut store = Store::default();
+    let left = "req:old";
+    let right = "req:partner";
+    let unrelated = "req:unreviewed";
+    let left_text = "Read current sources.";
+    let right_text = "Save current decisions.";
+    for (id, wording) in [
+        (left, left_text),
+        (right, right_text),
+        (unrelated, "Read current sources for the audit."),
+    ] {
+        store.graph.requirements.insert(
+            id.into(),
+            Requirement {
+                statement: wording.into(),
+                ..Default::default()
+            },
+        );
+    }
+    store
+        .graph
+        .entities
+        .insert("ent:audit".into(), entity("Audit"));
+    for id in [left, unrelated] {
+        store
+            .graph
+            .requirements
+            .get_mut(id)
+            .unwrap()
+            .entities
+            .push("ent:audit".into());
+    }
+    assert!(store
+        .pair_review_neighbors(left)
+        .contains(&unrelated.into()));
+    let key = crate::goals::pair_target(left, right);
+    let decision = PairDecision {
+        verdict: "consistent".into(),
+        statements: BTreeMap::from([
+            (left.into(), super::super::v5::statement_hash(left_text)),
+            (right.into(), super::super::v5::statement_hash(right_text)),
+        ]),
+    };
+    store.decisions.pairs.insert(key.clone(), decision.clone());
+    store.project_decisions();
+    assert_eq!(store.decisions.pairs.len(), 1);
+    assert_eq!(store.decisions.pairs.get(&key), Some(&decision));
+    store.graph.requirements.get_mut(left).unwrap().statement = "Discard current sources.".into();
+    store.project_decisions();
+    assert!(store.decisions.pairs.is_empty());
+    store.graph.requirements.remove(left);
+    store.graph.redirects.insert(left.into(), unrelated.into());
+    store.decisions.pairs.insert(key, decision);
+    store.project_decisions();
+    assert!(store.decisions.pairs.is_empty());
+}
+
+#[test]
 fn normalize_statement_keeps_operators_signs_and_decimals() {
     assert_eq!(
         normalize_statement("The reply arrives, under 30 s."),

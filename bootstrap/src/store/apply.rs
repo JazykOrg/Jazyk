@@ -71,7 +71,10 @@ impl Dirt {
         self.named_reqs.entry(id.to_string()).or_insert(m);
     }
     fn revised(&mut self, id: &str, m: usize, via: &'static str) {
-        self.revised.entry(id.to_string()).or_insert((m, via));
+        let revision = self.revised.entry(id.to_string()).or_insert((m, via));
+        if revision.1 == "merge" && via != "merge" {
+            *revision = (m, via);
+        }
     }
     fn named(&mut self, id: &str, m: usize) {
         self.named_reqs.entry(id.to_string()).or_insert(m);
@@ -1292,11 +1295,7 @@ impl Store {
                     }
                     let a = self.graph.requirements.remove(&absorb).unwrap();
                     dirt.named(&keep, m);
-                    if normalize_statement(&a.statement)
-                        != normalize_statement(&self.graph.requirements[&keep].statement)
-                    {
-                        dirt.revised(&keep, m, "merge");
-                    }
+                    dirt.revised(&keep, m, "merge");
                     let k = self.graph.requirements.get_mut(&keep).unwrap();
                     for source in a.sources {
                         if !k.sources.contains(&source) {
@@ -1371,18 +1370,6 @@ impl Store {
                                 from.iter_mut().for_each(rewire);
                                 dedup_keep_order(from);
                             }
-                        }
-                    }
-                    let pairs = std::mem::take(&mut self.decisions.pairs);
-                    for (_, mut decision) in pairs {
-                        if let Some(hash) = decision.statements.remove(&absorb) {
-                            decision.statements.entry(keep.clone()).or_insert(hash);
-                        }
-                        let ids: Vec<_> = decision.statements.keys().cloned().collect();
-                        if ids.len() == 2 {
-                            self.decisions
-                                .pairs
-                                .insert(super::v5::pair_key(&ids[0], &ids[1]), decision);
                         }
                     }
                     self.redirect(&absorb, &keep);
@@ -2847,13 +2834,44 @@ impl Store {
         }
         self.status.spent.rounds += commit.rounds as u64;
         self.status.spent.tokens += commit.tokens.unwrap_or(0);
-        // An accepted pair verdict marks the partner judged on every created or
-        // revised record of either side that stood before this commit; the records
-        // this commit lands start with an empty list, so a side repaired in the
-        // same session derives the pair again with the new cause. The prune then
-        // clears a record with no candidate left.
+        // Authored revisions invalidate even unranked decisions. A merge reuses
+        // matching judgments of the survivor. Earlier work cannot settle an
+        // endpoint revised in this commit.
         // Mirrors docs/compiler/graph.md#change-records.
-        self.mark_pairs_judged(&commit.resolved);
+        let revised = |id: &str| dirt.revised.get(id).is_some_and(|(_, via)| *via != "merge");
+        self.decisions
+            .pairs
+            .retain(|_, decision| !decision.statements.keys().any(|id| revised(id)));
+        for record in &mut self.status.changes {
+            if matches!(
+                record.kind.as_str(),
+                CHANGE_REQ_CREATED | CHANGE_REQ_REVISED
+            ) {
+                if let Some(judged) = record
+                    .detail
+                    .get_mut("judged")
+                    .and_then(|v| v.as_array_mut())
+                {
+                    judged.retain(|id| !id.as_str().is_some_and(revised));
+                }
+            }
+        }
+        let review_base = commit
+            .base
+            .as_deref()
+            .filter(|base| base.status.generation != recovery_before.status.generation);
+        self.mark_pairs_judged(&commit.resolved, |id| {
+            revised(id)
+                || dirt.created.contains_key(id)
+                || review_base.is_some_and(|base| {
+                    let reviewed = base.graph.requirements.get(id);
+                    let current = recovery_before.graph.requirements.get(id);
+                    !reviewed.zip(current).is_some_and(|(reviewed, current)| {
+                        normalize_statement(&reviewed.statement)
+                            == normalize_statement(&current.statement)
+                    })
+                })
+        });
         self.settle_lookalikes(&commit.resolved, generation, &mut batch);
         self.prune_records();
         let changes = self.commit_records(batch);

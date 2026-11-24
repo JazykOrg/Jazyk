@@ -472,51 +472,28 @@ impl Store {
         };
         let changes = self.status.changes.clone();
 
-        // Pairs: a neighbor pair neither side lists as pending was judged.
-        let scoring = self.pair_scoring();
-        let mut pending: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        for c in &changes {
-            if c.kind == CHANGE_REQ_CREATED || c.kind == CHANGE_REQ_REVISED {
-                let p: BTreeSet<String> = self
-                    .pair_review_candidates_with(c, &scoring)
-                    .into_iter()
-                    .map(|(id, _)| id)
-                    .collect();
-                pending.entry(c.subject.clone()).or_default().extend(p);
-            }
-        }
-        let mut pairs: BTreeMap<String, PairDecision> = BTreeMap::new();
-        for (rid, r) in &self.graph.requirements {
-            for other in self.pair_review_neighbors(rid) {
-                let waiting = pending.get(rid).is_some_and(|p| p.contains(&other))
-                    || pending.get(&other).is_some_and(|p| p.contains(rid));
-                if waiting {
-                    continue;
-                }
-                let Some(o) = self.graph.requirements.get(&other) else {
-                    continue;
-                };
-                let key = pair_key(rid, &other);
-                let verdict = self
-                    .decisions
-                    .pairs
-                    .get(&key)
-                    .map(|p| p.verdict.clone())
-                    .unwrap_or_else(|| "consistent".to_string());
-                let statements = BTreeMap::from([
-                    (rid.clone(), statement_hash(&r.statement)),
-                    (other.clone(), statement_hash(&o.statement)),
-                ]);
-                pairs.insert(
-                    key,
-                    PairDecision {
-                        verdict,
-                        statements,
-                    },
-                );
-            }
-        }
-        self.decisions.pairs = pairs;
+        let hashes: BTreeMap<_, _> = self
+            .graph
+            .requirements
+            .iter()
+            .map(|(id, requirement)| (id.as_str(), statement_hash(&requirement.statement)))
+            .collect();
+        let redirects = &self.graph.redirects;
+        self.decisions.pairs.retain(|key, decision| {
+            let Some((left, right)) = crate::goals::pair_members(key) else {
+                return false;
+            };
+            left < right
+                && decision.statements.len() == 2
+                && !redirects.contains_key(left)
+                && !redirects.contains_key(right)
+                && hashes
+                    .get(left)
+                    .is_some_and(|hash| decision.statements.get(left) == Some(hash))
+                && hashes
+                    .get(right)
+                    .is_some_and(|hash| decision.statements.get(right) == Some(hash))
+        });
 
         // Reviews: an entity with no open entity-changed record was reviewed as it is.
         let mut reviews = BTreeMap::new();

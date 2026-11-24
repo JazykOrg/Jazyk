@@ -1155,10 +1155,51 @@ impl Store {
     // A test's seed of a store on disk, written as a commit writes it.
     #[cfg(test)]
     pub(crate) fn save_for_test(&self) {
-        // Written as a commit writes it: the decisions follow what is open in memory.
+        // A fixture treats ranked pairs outside its declared work as already reviewed.
         let mut s = self.clone();
         if s.unreadable().is_none() {
             s.project_decisions();
+            let scoring = s.pair_scoring();
+            let pending: BTreeSet<String> = s
+                .status
+                .changes
+                .iter()
+                .filter(|record| {
+                    matches!(
+                        record.kind.as_str(),
+                        CHANGE_REQ_CREATED | CHANGE_REQ_REVISED
+                    )
+                })
+                .flat_map(|record| {
+                    s.pair_review_candidates_with(record, &scoring)
+                        .into_iter()
+                        .map(|(id, _)| super::v5::pair_key(&record.subject, &id))
+                })
+                .collect();
+            for (id, requirement) in &s.graph.requirements {
+                for other in s.pair_review_neighbors(id) {
+                    let Some(peer) = s.graph.requirements.get(&other) else {
+                        continue;
+                    };
+                    let key = super::v5::pair_key(id, &other);
+                    if pending.contains(&key) {
+                        continue;
+                    }
+                    s.decisions
+                        .pairs
+                        .entry(key)
+                        .or_insert_with(|| PairDecision {
+                            verdict: "consistent".into(),
+                            statements: BTreeMap::from([
+                                (
+                                    id.clone(),
+                                    super::v5::statement_hash(&requirement.statement),
+                                ),
+                                (other, super::v5::statement_hash(&peer.statement)),
+                            ]),
+                        });
+                }
+            }
         }
         s.save();
     }

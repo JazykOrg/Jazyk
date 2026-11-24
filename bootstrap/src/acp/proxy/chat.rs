@@ -196,8 +196,8 @@ fn learn(st: &ProxyState, backend: &str, source: &str, response: &NewSessionResp
 }
 fn connected(st: &Arc<ProxyState>, name: &str) -> Result<ConnectionTo<Agent>> {
     let up = st.up.get().ok_or("initialize first")?;
-    let (_, config) = st.agent_config(Some(name))?;
-    let down = ensure_down(st, up, name, config).map_err(|e| e.to_string())?;
+    let (_, config, targeted_steering) = st.agent_config(Some(name))?;
+    let down = ensure_down(st, up, name, config, targeted_steering).map_err(|e| e.to_string())?;
     if !st.down_loads.lock().unwrap().contains_key(name) {
         let init = st
             .initialize
@@ -259,6 +259,9 @@ fn activate(st: &Arc<ProxyState>, sid: &str, chosen: &str) -> Result<()> {
         ));
         let mut meta = next.meta.take().unwrap_or_default();
         meta.insert("jazyk".into(), json!({"purpose":"chat","source":source}));
+        if name == "claude" {
+            super::claude::opt_in(&mut meta);
+        }
         next.meta = Some(meta);
         let response = wait(down.send_request(next).block_task())?;
         learn(st, name, source, &response);
@@ -342,8 +345,9 @@ fn activate(st: &Arc<ProxyState>, sid: &str, chosen: &str) -> Result<()> {
     // Retired routes are no longer allowed to forward updates, approvals or filesystem requests.
     if let Some((backend, id)) = old_route {
         if st.agent_of(sid) != backend || st.routes.lock().unwrap().get(sid) != Some(&id) {
-            if let Some(down) = st.downs.lock().unwrap().get(&backend) {
+            if let Ok(down) = st.down_for(&backend) {
                 let _ = down
+                    .connection
                     .send_request(agent_client_protocol::schema::v1::CloseSessionRequest::new(
                         sid_of(&id),
                     ))
@@ -480,6 +484,10 @@ pub(super) fn load(
                         .map(|text| ("user".into(), text.into()))
                 } else if r["kind"] == "update"
                     && r["update"]["sessionUpdate"] == "agent_message_chunk"
+                    && r["update"]["_meta"]
+                        .as_object()
+                        .and_then(super::claude::parent_tool_use_id)
+                        .is_none()
                 {
                     r["update"]["content"]["text"]
                         .as_str()

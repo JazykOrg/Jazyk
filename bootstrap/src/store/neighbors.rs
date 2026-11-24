@@ -597,7 +597,26 @@ impl Store {
                 out.push((partner, 0));
             }
         }
-        out.retain(|(id, _)| !judged.contains(id));
+        let stored_hash = matches!(rec.via.as_str(), "decision" | "merge")
+            .then(|| self.graph.requirements.get(&rec.subject))
+            .flatten()
+            .map(|requirement| super::v5::statement_hash(&requirement.statement));
+        out.retain(|(id, _)| {
+            !judged.contains(id)
+                && !stored_hash.as_ref().is_some_and(|hash| {
+                    self.decisions
+                        .pairs
+                        .get(&super::v5::pair_key(&rec.subject, id))
+                        .is_some_and(|decision| {
+                            decision.statements.len() == 2
+                                && decision.statements.get(&rec.subject) == Some(hash)
+                                && self.graph.requirements.get(id).is_some_and(|requirement| {
+                                    decision.statements.get(id)
+                                        == Some(&super::v5::statement_hash(&requirement.statement))
+                                })
+                        })
+                })
+        });
         out
     }
 

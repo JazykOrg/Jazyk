@@ -330,8 +330,14 @@ again until one statement changes. An `edit` option's answer on a pair's diagnos
 that pair's judgment and writes the decision the same way
 ([answers](./model/diagnostic.md#answers)). A goal that leaves the board without a
 resolution (a pair waiting under the cap below, a side deleted by another goal) writes
-no decision. A requirement revised in substance again no longer matches any of its
-decisions, so every candidate derives again.
+no decision. An accepted verdict is written for its exact pair even if the pair
+leaves the ranking before the commit. A recorded verdict stays reusable when the
+pair returns to the ranking and both live IDs and statement hashes still match.
+A requirement revision that opens re-review invalidates its decisions even
+while its pairs are outside the ranking.
+A merge reuses a matching decision already recorded for the survivor and its
+neighbor. A judgment that only named the absorbed requirement cannot settle a
+pair with the survivor, even when both requirements had the same statement.
 
 The degree is capped. Each changed requirement picks six, but a broad statement is
 picked by many (on a sixteen-document corpus one requirement sat in forty pairs and a

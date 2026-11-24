@@ -687,6 +687,18 @@ session marks failed becomes a `goal-failed` [diagnostic](./model/diagnostic.md)
 target, and the reconciler derives no goal on a target with an open `goal-failed`
 diagnostic until a person answers or resolves it.
 
+An accepted pair judgment writes the exact pair's verdict even if the pair
+leaves the current ranking by commit time. Ranking changes only affect which
+pairs are offered for review. A decision expires when either endpoint is
+missing, redirected, or revised for review, or its statement hash no longer
+matches.
+A rebased review only writes a verdict when both endpoint statements still
+match the review's snapshot.
+A requirement merge leaves decisions between other requirements intact.
+Decisions on the survivor remain valid when both endpoint statements still
+match. A decision on the absorbed requirement is never retargeted to the
+survivor. The resulting pair needs its own judgment if eligible.
+
 ### A build's progress
 
 What a build is doing (its batches, the goals it parked when a budget ran out, its

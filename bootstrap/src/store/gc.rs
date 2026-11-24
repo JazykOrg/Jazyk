@@ -234,37 +234,20 @@ impl Store {
             .retain(|c| c.kind != CHANGE_LOOKALIKE || subjects.contains(&c.subject));
     }
 
-    // Append the partner to `detail.judged` on both sides' created and revised
-    // records for every resolved rejudge-pair goal. A goal of another kind, or one
-    // whose target is no pair, marks nothing.
-    pub(super) fn mark_pairs_judged(&mut self, resolved: &[Resolved]) {
+    // Persist the accepted verdict against the exact pair, even if ranking changes.
+    pub(super) fn mark_pairs_judged(
+        &mut self,
+        resolved: &[Resolved],
+        revised: impl Fn(&str) -> bool,
+    ) {
         for r in resolved {
             if r.goal.starts_with("g:consolidate-requirements:") {
                 for pair in r.evidence["distinct"].as_array().into_iter().flatten() {
                     let (Some(a), Some(b)) = (pair["a"].as_str(), pair["b"].as_str()) else {
                         continue;
                     };
-                    let (a, b) = (
-                        self.resolve_id(a).to_string(),
-                        self.resolve_id(b).to_string(),
-                    );
-                    let (Some(ra), Some(rb)) = (
-                        self.graph.requirements.get(&a),
-                        self.graph.requirements.get(&b),
-                    ) else {
-                        continue;
-                    };
-                    if a != b {
-                        self.decisions.pairs.insert(
-                            super::v5::pair_key(&a, &b),
-                            PairDecision {
-                                verdict: "distinct".into(),
-                                statements: BTreeMap::from([
-                                    (a, super::v5::statement_hash(&ra.statement)),
-                                    (b, super::v5::statement_hash(&rb.statement)),
-                                ]),
-                            },
-                        );
+                    if !revised(a) && !revised(b) {
+                        self.write_pair_decision(a, b, "distinct");
                     }
                 }
             }
@@ -274,7 +257,18 @@ impl Store {
             let Some((a, b)) = crate::goals::pair_members(target) else {
                 continue;
             };
-            self.mark_pair_judged(a, b);
+            if revised(a) || revised(b) {
+                continue;
+            }
+            let verdict = r
+                .evidence
+                .as_str()
+                .or_else(|| r.evidence["verdict"].as_str());
+            match verdict.map(str::trim) {
+                Some("consistent") => self.write_pair_decision(a, b, "consistent"),
+                Some("contradiction") => self.write_pair_decision(a, b, "diagnosed"),
+                _ => {}
+            }
         }
     }
 
@@ -296,7 +290,9 @@ impl Store {
             let Some(d) = self.graph.diagnostics.get(id) else {
                 continue;
             };
-            if d.lifecycle != "resolved" {
+            if d.lifecycle != "resolved"
+                || !matches!(d.rule.as_str(), "contradiction" | "duplicate-requirement")
+            {
                 continue;
             }
             let mut reqs: Vec<String> = Vec::new();
@@ -306,15 +302,36 @@ impl Store {
                     reqs.push(sid);
                 }
             }
-            for (i, a) in reqs.iter().enumerate() {
-                for b in &reqs[i + 1..] {
-                    pairs.push((a.clone(), b.clone()));
-                }
+            if let [a, b] = reqs.as_slice() {
+                pairs.push((a.clone(), b.clone()));
             }
         }
         for (a, b) in pairs {
-            self.mark_pair_judged(&a, &b);
+            self.write_pair_decision(&a, &b, "consistent");
         }
+    }
+
+    fn write_pair_decision(&mut self, a: &str, b: &str, verdict: &str) {
+        let (Some(left), Some(right)) = (
+            self.graph.requirements.get(a),
+            self.graph.requirements.get(b),
+        ) else {
+            return;
+        };
+        if a == b {
+            return;
+        }
+        self.decisions.pairs.insert(
+            super::v5::pair_key(a, b),
+            PairDecision {
+                verdict: verdict.into(),
+                statements: BTreeMap::from([
+                    (a.into(), super::v5::statement_hash(&left.statement)),
+                    (b.into(), super::v5::statement_hash(&right.statement)),
+                ]),
+            },
+        );
+        self.mark_pair_judged(a, b);
     }
 
     // Append each side to `detail.judged` on every created and revised record of the

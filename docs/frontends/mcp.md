@@ -553,7 +553,18 @@ serving; what it claims is a batch:
   [`place-anchors`](../compiler/goals/place-anchors.md) goal carries the document's
   alignment proposals in its loaded set; a
   [`reconcile-section`](../compiler/goals/reconcile-section.md) goal stays blocked
-  while its document has pending alignment. The serving's toolset for the batch is
+  while its document has pending alignment. Ordinary structured opening rows for
+  these two kinds also carry `change` from the goal on the opening snapshot. A
+  `place-anchors` row includes `alignmentProposals` for its target document. Each
+  proposal has `anchor`, `from`, `quote`, `excerpt`, and `candidates`. A candidate
+  has `section`, `similarity`, `quoteLocates`, `excerpt`, and optional `nearest`.
+  A `reconcile-section` row includes `pendingReevaluation`, the IDs in its own
+  `change.staleAnchors` that still have a reevaluation flag. A flagged quote can
+  already locate. An empty `pendingReevaluation` array means no flagged anchors
+  in that goal. Workspace serving set-qualifies `change.anchors`,
+  `change.staleAnchors`, `alignmentProposals[].anchor`, and `pendingReevaluation`.
+  Proposal text, section references, and dirty lines retain their exact values.
+  Packaged bridge openings carry goal IDs only. The serving's toolset for the batch is
   the union of its goal kinds' [toolsets](../compiler/sessions.md#toolsets).
 - The write tools stage into the changeset, validated by the same
   [gates](../compiler/graph.md#validation-gates) a session faces, scoped to the

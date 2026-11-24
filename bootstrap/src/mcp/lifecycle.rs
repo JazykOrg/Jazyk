@@ -1,5 +1,43 @@
 use super::*;
 
+// The structured opening carries the same evidence as the session snapshot.
+// Mirrors docs/frontends/mcp.md#compilation-over-mcp.
+fn opening_goal_row(goal: &Goal, store: &Store) -> Value {
+    let mut row = json!({"id": goal.id, "kind": goal.kind, "target": goal.target, "mandatory": goal.mandatory});
+    match goal.kind.as_str() {
+        "place-anchors" => {
+            row["change"] = goal.change.clone();
+            let proposals = store
+                .status
+                .alignment
+                .iter()
+                .find(|block| block.doc == goal.target)
+                .map(|block| block.proposals.as_slice())
+                .unwrap_or_default();
+            row["alignmentProposals"] = json!(proposals);
+        }
+        "reconcile-section" => {
+            row["change"] = goal.change.clone();
+            let pending: Vec<_> = goal.change["staleAnchors"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|id| {
+                    store
+                        .status
+                        .reevaluate
+                        .iter()
+                        .any(|pending| pending.as_str() == *id)
+                })
+                .collect();
+            row["pendingReevaluation"] = json!(pending);
+        }
+        _ => {}
+    }
+    row
+}
+
 impl McpServer {
     pub(crate) fn unfinished_work(&self) -> Option<Value> {
         if !self.modes.iter().any(|mode| mode == "compile") {
@@ -333,18 +371,6 @@ impl McpServer {
                     && *t != crate::tools::SPEND_TOOL
             })
             .collect();
-        let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
-        session.loaded = loaded;
-        session.skills = skills;
-        session.gen = self.current_gen_settings();
-        session.lint = self.project.linting.clone();
-        session.caller = self.caller(&kinds.join("+"), &batch.id);
-        let goal_rows: Vec<Value> = goals
-            .iter()
-            .map(|g| {
-                json!({"id": g.id, "kind": g.kind, "target": g.target, "mandatory": g.mandatory})
-            })
-            .collect();
         let reply = if self.bridge.packaged {
             // The bridge already delivered the contract as the session prompt.
             json!({
@@ -353,6 +379,10 @@ impl McpServer {
                 "note": include_str!(concat!(env!("OUT_DIR"), "/payloads/goals/prompts/inline/mcp-lifecycle/changeset-open-stage-findings-with-the-write-a81e7.md")),
             })
         } else {
+            let goal_rows: Vec<_> = goals
+                .iter()
+                .map(|goal| opening_goal_row(goal, &store))
+                .collect();
             json!({
                 "batch": batch.id,
                 "goals": goal_rows,
@@ -365,6 +395,12 @@ impl McpServer {
                 "next": SERVING.get("begin-goals-next"),
             })
         };
+        let mut session = ToolSession::new(store, scope, self.mutation_limit, self.context_budget);
+        session.loaded = loaded;
+        session.skills = skills;
+        session.gen = self.current_gen_settings();
+        session.lint = self.project.linting.clone();
+        session.caller = self.caller(&kinds.join("+"), &batch.id);
         *self.open.lock().unwrap() = Some(OpenBatch {
             work: None,
             heartbeat: None,

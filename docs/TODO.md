@@ -223,6 +223,63 @@ reproduced here:
   candidate.
 - Working well: the `upsert_entity` mention-unnamed refusal was clear.
 
+## Field report: a stuck tier-0 goal (2026-11-25)
+
+The same project's orchestrator ran about 15 parallel agents editing docs first, then
+one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, about
+600 sections. Reported, not yet reproduced here:
+
+- A `place-anchors` goal outlived its alignment and blocked the board. At generation 72,
+  `g:place-anchors:views.md` aligned with 23 proposals and sat parked. At generation 94 a
+  README `reconcile-section` commit deleted 9 of those anchors' requirements ("source
+  section gone"), and the `views.md` snapshot moved, so the pending alignment vanished.
+  The goal stayed in `local/run.yaml` `parked:` with its frozen `change.proposals`. Then:
+  `load alignment:views.md` reported no pending proposals; `place_anchor` on a surviving
+  requirement refused `unknown-anchor`; `orphan_anchor` refused with a message listing the
+  rejected ID among the batch's proposals; `mark_goal_failed` was accepted, but `done`
+  (plain and `checkpoint`) still refused `undecided-proposal` for all 23. Only
+  `abandon_goals` released the batch. Being tier 0, the goal held about 620 mandatory
+  goals in every document; 40 of 602 sections were covered. Wanted: a commit never
+  deletes anchors a pending `place-anchors` goal holds, or derivation drops or
+  re-derives a goal whose alignment is gone; `done` accepts a goal marked failed; the
+  anchor tier gates its own document only; a supported escape (e.g. `jazyk realign
+  <doc>`) instead of hand edits to generated state.
+- Placing the same anchor twice in one batch (to switch `reevaluate`) made `done` refuse
+  `commit-skipped` "source not found" until the first placement was unstaged.
+- A missing model. `~/.jazyk/config.toml` named a model the endpoint does not serve.
+  `jazyk compile` got HTTP 404, logged it as "session stopped: refusal", parked about
+  800 goals on the session limit, and advanced the generation. `compile_document_sets`
+  over MCP closed the server twice with no error returned, likely the same cause.
+  Wanted: a model preflight before the first session that fails fast and names the
+  served models, and the tool returning the error instead of exiting. `--agent claude`
+  ran cleanly.
+- Reply size again: `done` with `beginNext` returned 60k to 110k characters and
+  `open_work state=all` 54k of committed history. Wanted: replies under about 20k by
+  default, and active work as the default filter.
+- Status drift: `graph_status` read generation 72 while `jazyk status` read 70;
+  "awaiting release" reasons stayed until the next derivation after `release_work`.
+- `jazyk status` listed 31k unclaimed files, Android build output among them; the
+  default source glob should honour `.gitignore`.
+- `report_diagnostic` edit options refuse an empty `edit.new_text`, so a proposed
+  deletion cannot be expressed.
+- Doc churn outruns compilation. With many agents editing and compilation released
+  rarely, hundreds of sections waited. Asked for: cheap incremental per-document
+  reconciliation, independent document batches in parallel, and a short "N sections
+  pending in these documents" status agents can cite.
+- A compile wrote uncommitted `.jazyk/` changes into the shared main checkout while
+  another agent merged and pushed there.
+- Asked for: an integrity re-check after an external history rewrite of `.jazyk/`
+  files, a configurable PII lint at compile time (the graph mirrors doc text), and bulk
+  review of ratification proposals (394 pending `derive-criteria` proposals; group by
+  document or ratify a section at once).
+- Diagnostics mix kinds: about 74 `unjustified-fact` and `stale-provenance` findings
+  that reconciliation clears sit beside findings that need a human. The stale
+  `broken-link` findings recurred here.
+- Working well: agents kept to docs-first scope and said "not reconciled" instead of
+  faking it; skill-gated tools; a real contradiction found between two documents and
+  confirmed against the shipped APK; gated anchor tools with named rules; atomic
+  commits with overwrite notices; `jazyk explain <goal>` for diagnosing a block.
+
 ## Evidence audit (2026-09-25)
 
 Every model-executed kind's contract was read against its gate: each duty the hints make

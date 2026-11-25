@@ -322,6 +322,13 @@ implemented the code. Reported:
   whether code and tests cite requirement IDs; flag sentences elsewhere that a new
   section contradicts, cheaply and before a full compile. The MCP `search` tool may
   cover the first; check whether it returns sections for a feature name.
+- A third agent, working in a git worktree, found the MCP server bound to the main
+  checkout (`project_context` showed another base commit and 206 local changes), so
+  the graph and guarded file tools could not reach its own tree; it used plain file
+  tools and left reconciliation pending. Asked for: a worktree-aware project root, or
+  `project_context` stating plainly which path the server serves; and a read-only
+  "requirements affected by this diff" so an agent can report sync precisely without
+  compiling. It found the docs-first and safety rules clear despite the length.
 
 ## Evidence audit (2026-09-25)
 

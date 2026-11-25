@@ -270,7 +270,17 @@ one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, abo
   reconciliation, independent document batches in parallel, and a short "N sections
   pending in these documents" status agents can cite.
 - A compile wrote uncommitted `.jazyk/` changes into the shared main checkout while
-  another agent merged and pushed there.
+  another agent merged and pushed there. The release agent saw hundreds of modified
+  and deleted graph files plus about 200 new untracked diagnostic files
+  (`stale-provenance`, `unjustified-fact`, `section-too-large`), burying every status
+  check; a `git add -A` would have swept up a half-finished compile. Graph commits
+  (one also changing a product document) landed on the checked-out main between the
+  release's merge and its push, which carried them unseen. The engine runs no `git
+  commit` outside tests, so those commits came from the compiling agent. Asked for:
+  guidance (in the `compile` skill and the generated project block) to compile in its
+  own worktree and land graph state as its own merge, with document edits in separate
+  commits from graph state; and fewer diagnostic files per run so status and diffs
+  stay readable.
 - Asked for: an integrity re-check after an external history rewrite of `.jazyk/`
   files, a configurable PII lint at compile time (the graph mirrors doc text), and bulk
   review of ratification proposals (394 pending `derive-criteria` proposals; group by

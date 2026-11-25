@@ -313,6 +313,15 @@ implemented the code. Reported:
   of this; check what it prints); a one-line cost note per workflow skill in
   `list_jazyk_skills`; a short minimal path for a docs and code change at the top of
   the generated project guidance.
+- A second agent (map layers and exact-address geocoding) reported the same: docs first
+  settled privacy wording, a cache key, and off behaviour, and surfaced three
+  contradicting sentences elsewhere; it skipped every skill and tool for the same
+  reasons, plus a task brief that never mentioned Jazyk. New asks: find the section
+  that owns a feature by name (its brief named the wrong document); say whether a
+  docs edit must be compiled in the same task or can wait for a separate pass; say
+  whether code and tests cite requirement IDs; flag sentences elsewhere that a new
+  section contradicts, cheaply and before a full compile. The MCP `search` tool may
+  cover the first; check whether it returns sections for a feature name.
 
 ## Evidence audit (2026-09-25)
 

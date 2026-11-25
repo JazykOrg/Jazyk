@@ -336,10 +336,18 @@ implemented the code. Reported:
   the MCP server instructions almost verbatim. Asked for: a way to link code to a doc
   section without a full compile, and a short table of fix, doc tweak, and new
   behaviour with the tools each needs.
-- Across the four agents: none ran a workflow skill, and the asks converge on a short
-  task-type recipe at the top of the generated project block, a cost note per
-  workflow, and one model-free view mapping a docs diff to affected requirements and
-  evidence.
+- A fifth agent (a docs-first change across three documents plus Kotlin and Go code)
+  read only the `change-code` skill. The skill lists about 28 tools but says nothing
+  for an agent editing with ordinary file tools in a git worktree: whether skipping
+  `begin_generation` and `record_generation` is acceptable or leaves the graph
+  inconsistent. Asked for one line there: after external edits, report pending
+  reconciliation; the next compile picks it up. It also noted the duplicated project
+  block and MCP instructions.
+- Across the five agents: almost none ran a workflow skill (one read `change-code`
+  only), and the asks converge on a short task-type recipe at the top of the
+  generated project block (deduplicated against the MCP server instructions), a cost
+  note per workflow, an external-edit note in `change-code`, and one model-free view
+  mapping a docs diff to affected requirements and evidence.
 
 ## Evidence audit (2026-09-25)
 

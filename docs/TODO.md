@@ -188,6 +188,98 @@ documents never name as a bounded context is refused, and a case variant of an
 existing scope folds into it; the run minted `Benchmark` beside `benchmark` and
 `Jazyk` beside `public`); the `pairs-per-entity` limit from the pair volume entry.
 
+## Field report: a doc-first project (2026-11-22)
+
+A Claude Code session compiled an external project of 18 documents, 116 sections,
+about 330 requirements, and 50 entities, written docs first. Reported, not yet
+reproduced here:
+
+- Judgment volume blocks generation. After extraction the board held 634 mandatory
+  goals: 535 `rejudge-pair`, 182 `declare-edges`, 49 `review-entity`, 49
+  `derive-criteria`, 31 `diagram-coverage`. Generate goals wait behind every one
+  ("compile goal(s) open in the cone"). Rows of one table on a shared entity pair
+  with each other (about 40 pairs from one networks table). Candidate levers: the
+  `pairs-per-entity` limit from [pair judgment volume](#pair-judgment-volume-2026-09-05),
+  a similarity floor on pair candidates instead of a shared entity alone, and sibling
+  rows of one table or list left to `review-entity` by default. `settle_pairs` already
+  settles a batch in one call; the report does not say whether the session used it.
+- Oversized tool replies. `begin_goals` on a pair batch returned 151k characters and
+  `goals` 155k, past the client's tool output limit, so the agent could not read its
+  own batch contract. Each `reconcile-section` batch also repeated about 8k characters
+  of the per-kind contract after the "(same agent contract ... unchanged)" marker.
+  Wanted: a size bound with paging on `begin_goals` and `goals`, and the per-kind
+  contract sent once per session.
+- Tool list flapping. The MCP server disconnected and reconnected several times,
+  dropping `write_document`, `release_work`, and `save_document_set` mid-session; the
+  agent fell back to plain file writes. Tools unlocked by `edit-documentation` did not
+  appear until the client's tool search ran.
+- `release_work compile` covered only the sections dirty at its call. Documents
+  written afterwards needed a second release, and nothing said so.
+- 17 `broken-link` warnings from a README written before its targets stayed open after
+  the targets existed. Link findings resolve when the deterministic checks re-run; a
+  build that never closes may never re-run them. Unconfirmed.
+- Long headings ("Phase 0 ... a go/no-go gate") mint long section and requirement IDs
+  (`phase-0-de-risk-spike-1-2-weeks-a-go-no-go-gate`). A slug length bound is a
+  candidate.
+- Working well: the `upsert_entity` mention-unnamed refusal was clear.
+
+## Field report: a stuck tier-0 goal (2026-11-25)
+
+The same project's orchestrator ran about 15 parallel agents editing docs first, then
+one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, about
+600 sections. Reported, not yet reproduced here:
+
+- A `place-anchors` goal outlived its alignment and blocked the board. At generation 72,
+  `g:place-anchors:views.md` aligned with 23 proposals and sat parked. At generation 94 a
+  README `reconcile-section` commit deleted 9 of those anchors' requirements ("source
+  section gone"), and the `views.md` snapshot moved, so the pending alignment vanished.
+  The goal stayed in `local/run.yaml` `parked:` with its frozen `change.proposals`. Then:
+  `load alignment:views.md` reported no pending proposals; `place_anchor` on a surviving
+  requirement refused `unknown-anchor`; `orphan_anchor` refused with a message listing the
+  rejected ID among the batch's proposals; `mark_goal_failed` was accepted, but `done`
+  (plain and `checkpoint`) still refused `undecided-proposal` for all 23. Only
+  `abandon_goals` released the batch. Being tier 0, the goal held about 620 mandatory
+  goals in every document; 40 of 602 sections were covered. Wanted: a commit never
+  deletes anchors a pending `place-anchors` goal holds, or derivation drops or
+  re-derives a goal whose alignment is gone; `done` accepts a goal marked failed; the
+  anchor tier gates its own document only; a supported escape (e.g. `jazyk realign
+  <doc>`) instead of hand edits to generated state.
+- Placing the same anchor twice in one batch (to switch `reevaluate`) made `done` refuse
+  `commit-skipped` "source not found" until the first placement was unstaged.
+- A missing model. `~/.jazyk/config.toml` named a model the endpoint does not serve.
+  `jazyk compile` got HTTP 404, logged it as "session stopped: refusal", parked about
+  800 goals on the session limit, and advanced the generation. `compile_document_sets`
+  over MCP closed the server twice with no error returned, likely the same cause.
+  Wanted: a model preflight before the first session that fails fast and names the
+  served models, and the tool returning the error instead of exiting. `--agent claude`
+  ran cleanly.
+- Reply size again: `done` with `beginNext` returned 60k to 110k characters and
+  `open_work state=all` 54k of committed history. Wanted: replies under about 20k by
+  default, and active work as the default filter.
+- Status drift: `graph_status` read generation 72 while `jazyk status` read 70;
+  "awaiting release" reasons stayed until the next derivation after `release_work`.
+- `jazyk status` listed 31k unclaimed files, Android build output among them; the
+  default source glob should honour `.gitignore`.
+- `report_diagnostic` edit options refuse an empty `edit.new_text`, so a proposed
+  deletion cannot be expressed.
+- Doc churn outruns compilation. With many agents editing and compilation released
+  rarely, hundreds of sections waited. Asked for: cheap incremental per-document
+  reconciliation, independent document batches in parallel, and a short "N sections
+  pending in these documents" status agents can cite.
+- A compile wrote uncommitted `.jazyk/` changes into the shared main checkout while
+  another agent merged and pushed there.
+- Asked for: an integrity re-check after an external history rewrite of `.jazyk/`
+  files, a configurable PII lint at compile time (the graph mirrors doc text), and bulk
+  review of ratification proposals (394 pending `derive-criteria` proposals; group by
+  document or ratify a section at once).
+- Diagnostics mix kinds: about 74 `unjustified-fact` and `stale-provenance` findings
+  that reconciliation clears sit beside findings that need a human. The stale
+  `broken-link` findings recurred here.
+- Working well: agents kept to docs-first scope and said "not reconciled" instead of
+  faking it; skill-gated tools; a real contradiction found between two documents and
+  confirmed against the shipped APK; gated anchor tools with named rules; atomic
+  commits with overwrite notices; `jazyk explain <goal>` for diagnosing a block.
+
 ## Evidence audit (2026-09-25)
 
 Every model-executed kind's contract was read against its gate: each duty the hints make

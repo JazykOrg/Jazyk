@@ -274,7 +274,7 @@ one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, abo
   and deleted graph files plus about 200 new untracked diagnostic files
   (`stale-provenance`, `unjustified-fact`, `section-too-large`), burying every status
   check; a `git add -A` would have swept up a half-finished compile. Graph commits
-  (one also changing a product document) landed on the checked-out main between the
+  landed on the checked-out main between the
   release's merge and its push, which carried them unseen. The engine runs no `git
   commit` outside tests, so those commits came from the compiling agent. Asked for:
   guidance (in the `compile` skill and the generated project block) to compile in its

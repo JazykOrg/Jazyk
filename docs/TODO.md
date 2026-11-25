@@ -242,8 +242,11 @@ one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, abo
   goals in every document; 40 of 602 sections were covered. Wanted: a commit never
   deletes anchors a pending `place-anchors` goal holds, or derivation drops or
   re-derives a goal whose alignment is gone; `done` accepts a goal marked failed; the
-  anchor tier gates its own document only; a supported escape (e.g. `jazyk realign
-  <doc>`) instead of hand edits to generated state.
+  anchor tier gates its own document only. Workaround found later: `read_open_work`
+  showed the goal's expired open work (epoch 1, no mutations), and
+  `discard_open_work` on it let the board re-derive fresh goals. Every refusal named
+  the batch's proposals and none named that work or that tool, so the escape exists
+  but went undiscovered for a whole run; the refusals should point at it.
 - Placing the same anchor twice in one batch (to switch `reevaluate`) made `done` refuse
   `commit-skipped` "source not found" until the first placement was unstaged.
 - A missing model. `~/.jazyk/config.toml` named a model the endpoint does not serve.

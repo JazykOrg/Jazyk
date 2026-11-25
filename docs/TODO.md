@@ -280,6 +280,27 @@ one compile from generation 72 to 96 on 0.2.2+203.g3f718b9, store version 7, abo
   confirmed against the shipped APK; gated anchor tools with named rules; atomic
   commits with overwrite notices; `jazyk explain <goal>` for diagnosing a block.
 
+## Field report: a docs and code change (2026-11-25)
+
+A coding agent on the same project wrote four documents first, committed them, then
+implemented the code. Reported:
+
+- Docs first settled questions the agent would have left vague (a button's wording,
+  when a client may close, why a part cannot resume after a restart). The cost was
+  another docs pass for each requirement added mid-task.
+- The agent skipped every workflow skill (no `read_jazyk_skill`, `compile`, `bind`, or
+  `verify`), for three reasons: the user was blocked, a docs edit does not authorize
+  compilation, and the cost of each workflow was unknown. The graph stayed behind the docs and code,
+  reported only as "pending reconciliation".
+- The project guidance is long and abstract for a plain docs-then-code task. It does
+  not say whether an authorized code change obliges compilation, whether `bind` works
+  without a compiled graph, or whether `verify` needs one.
+- Asked for: a model-free command listing sections changed since the last compile and
+  requirements lacking code or test evidence (`jazyk status` may already cover part
+  of this; check what it prints); a one-line cost note per workflow skill in
+  `list_jazyk_skills`; a short minimal path for a docs and code change at the top of
+  the generated project guidance.
+
 ## Evidence audit (2026-09-25)
 
 Every model-executed kind's contract was read against its gate: each duty the hints make

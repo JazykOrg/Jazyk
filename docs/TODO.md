@@ -329,6 +329,17 @@ implemented the code. Reported:
   `project_context` stating plainly which path the server serves; and a read-only
   "requirements affected by this diff" so an agent can report sync precisely without
   compiling. It found the docs-first and safety rules clear despite the length.
+- A fourth agent (profile routing and a full-resolution viewer) also used no skill or
+  tool, for the same reasons. New points: it could not tell whether a small behaviour
+  addition to an existing section is a behaviour change or a repair, or whether pending
+  reconciliation is a blocker or a note to report; the generated project block repeats
+  the MCP server instructions almost verbatim. Asked for: a way to link code to a doc
+  section without a full compile, and a short table of fix, doc tweak, and new
+  behaviour with the tools each needs.
+- Across the four agents: none ran a workflow skill, and the asks converge on a short
+  task-type recipe at the top of the generated project block, a cost note per
+  workflow, and one model-free view mapping a docs diff to affected requirements and
+  evidence.
 
 ## Evidence audit (2026-09-25)
 

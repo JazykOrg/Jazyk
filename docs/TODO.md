@@ -343,11 +343,19 @@ implemented the code. Reported:
   inconsistent. Asked for one line there: after external edits, report pending
   reconciliation; the next compile picks it up. It also noted the duplicated project
   block and MCP instructions.
-- Across the five agents: almost none ran a workflow skill (one read `change-code`
+- A sixth agent, in a fresh git worktree, saw `jazyk status` report generation 0, 58
+  open and 1321 blocked goals, and could not tell whether that was the worktree's own
+  state (local counters and `local/` do not travel with git) or the project's, nor
+  whether to reconcile there. Asked for: a status line saying the store is a fresh
+  worktree copy and where the live graph is; the two or three tools a plain docs and
+  code task needs, named so a client with deferred tools finds them in one search.
+- Across the six agents: almost none ran a workflow skill (one read `change-code`
   only), and the asks converge on a short task-type recipe at the top of the
-  generated project block (deduplicated against the MCP server instructions), a cost
-  note per workflow, an external-edit note in `change-code`, and one model-free view
-  mapping a docs diff to affected requirements and evidence.
+  generated project block (deduplicated against the MCP server instructions, which
+  every subagent pays for twice), a cost note per workflow (is compile a paid session
+  that needs approval, or included in an authorized docs edit), an external-edit note
+  in `change-code`, worktree-aware status, and one model-free view mapping a docs diff
+  to affected requirements and evidence.
 
 ## Evidence audit (2026-09-25)
 
